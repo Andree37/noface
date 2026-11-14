@@ -131,6 +131,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         const lead = catalog.pick_hero(entries);
         const visible = try alloc.alloc(usize, entries.len);
         const count = catalog.select(entries, .all, lead, "", visible);
+        if (count == 0) return error.EmptyLibrary;
         try library.render(alloc, fonts, page, entries, lead, visible[0..count], 0, .all, .recent, "", "", &quick, .{ .unix = core.os.unix_time(), .utc_offset = core.clock.utc_offset() });
         var list: [4]sheet.Option = undefined;
         const confirming = argv.len > 2;
@@ -144,6 +145,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     }
 
     if (std.mem.eql(u8, mode, "lock")) {
+        if (argv.len < 3) return error.Usage;
         const data = try file.map(argv[2]);
         const jpeg = kfx.cover_image(data) orelse return error.NoCover;
         std.debug.print("jpeg {d} bytes\n", .{jpeg.len});

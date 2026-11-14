@@ -1,6 +1,25 @@
 //! A grayscale pixel buffer and the shapes drawn onto it.
 const std = @import("std");
+const assert = std.debug.assert;
 const check = @import("../base/check.zig");
+
+/// Where each pixel of `fill_poly` is sampled, for smooth edges.
+const poly_samples = [_][2]f32{
+    .{ 0.25, 0.25 }, .{ 0.75, 0.25 },
+    .{ 0.25, 0.75 }, .{ 0.75, 0.75 },
+};
+const arc_steps = 48;
+
+comptime {
+    // Each sample lies inside its pixel
+    for (poly_samples) |sample| {
+        assert(sample[0] > 0);
+        assert(sample[0] < 1);
+        assert(sample[1] > 0);
+        assert(sample[1] < 1);
+    }
+    assert(arc_steps > 0);
+}
 
 pub const Page = struct {
     buf: []u8,
@@ -8,31 +27,47 @@ pub const Page = struct {
     height: u32,
     stride: u32,
 
+    /// Whether the buffer holds every row, each `stride` apart and the last at least
+    /// `width` long, with every pixel's index in 32 bits: what drawing relies on to stay
+    /// inside it, checked once per drawing rather than per pixel.
+    pub fn holds_rows(p: Page) bool {
+        if (p.stride < p.width) return false;
+        if (p.height == 0) return true;
+        const needed = @as(u64, p.height - 1) * p.stride + p.width;
+        return needed <= p.buf.len and needed <= std.math.maxInt(u32);
+    }
+
     /// Fills a rectangle, clipped to the page.
     pub fn fill_rect(p: Page, x: u32, y: u32, w: u32, h: u32, value: u8) void {
+        check.that(p.holds_rows(), "fill stays inside the page buffer");
         if (x >= p.width or y >= p.height) return;
         const width = @min(w, p.width - x);
+        const row_end = @min(y +| h, p.height);
+        assert(x + width <= p.width);
         var row = y;
-        while (row < @min(y +| h, p.height)) : (row += 1) {
+        while (row < row_end) : (row += 1) {
             const start = row * p.stride + x;
-            check.that(start + width <= p.buf.len, "fill stays inside the page buffer");
             @memset(p.buf[start .. start + width], value);
         }
     }
 
     /// Fades an area toward white, for disabled controls. Clipped to the page.
     pub fn dim(p: Page, x: u32, y: u32, w: u32, h: u32) void {
+        assert(p.holds_rows());
         if (x >= p.width) return;
+        const width = @min(w, p.width - x);
+        const row_end = @min(y +| h, p.height);
+        assert(x + width <= p.width);
         var row = y;
-        while (row < @min(y +| h, p.height)) : (row += 1) {
+        while (row < row_end) : (row += 1) {
             const start = row * p.stride + x;
-            for (p.buf[start .. start + @min(w, p.width - x)]) |*px| px.* = 0xc8 + px.* / 5;
+            for (p.buf[start .. start + width]) |*px| px.* = 0xc8 + px.* / 5;
         }
     }
 
     fn darken(p: Page, x: i32, y: i32, coverage: f32) void {
         if (x < 0 or y < 0 or x >= p.width or y >= p.height or coverage <= 0) return;
-        const at = @as(usize, @intCast(y)) * p.stride + @as(usize, @intCast(x));
+        const at = @as(u32, @intCast(y)) * p.stride + @as(u32, @intCast(x));
         const value: u8 = @intFromFloat(255 * (1 - std.math.clamp(coverage, 0, 1)));
         p.buf[at] = @min(p.buf[at], value);
     }
@@ -40,6 +75,8 @@ pub const Page = struct {
     /// Fills a rounded bar from `x0` to `x1` at height `cy`, `radius` tall each side,
     /// in any gray, with smooth edges. With `x0 == x1` it is a smooth disc.
     pub fn pill(p: Page, x0: f32, x1: f32, cy: f32, radius: f32, value: u8) void {
+        assert(p.holds_rows());
+        assert(p.width <= std.math.maxInt(i32));
         const top: i32 = @intFromFloat(@floor(cy - radius - 1));
         const bottom: i32 = @intFromFloat(@ceil(cy + radius + 1));
         const left: i32 = @intFromFloat(@floor(x0 - radius - 1));
@@ -54,30 +91,31 @@ pub const Page = struct {
         while (y <= bottom and y < p.height) : (y += 1) {
             const ey = @as(f32, @floatFromInt(y)) + 0.5 - cy;
             if (@abs(ey) >= radius + 0.5) continue;
-            const row = @as(usize, @intCast(y)) * p.stride;
+            const row = @as(u32, @intCast(y)) * p.stride;
             const mid_cover = std.math.clamp(radius + 0.5 - @abs(ey), 0, 1);
             var x: i32 = @max(left, 0);
             while (x <= right and x < p.width) : (x += 1) {
                 if (x >= mid_lo and x <= mid_hi) {
                     if (mid_cover >= 1) {
                         const end = @min(mid_hi, @as(i32, @intCast(p.width)) - 1);
-                        @memset(p.buf[row + @as(usize, @intCast(x)) .. row + @as(usize, @intCast(end)) + 1], value);
+                        const from = row + @as(u32, @intCast(x));
+                        @memset(p.buf[from .. row + @as(u32, @intCast(end)) + 1], value);
                         x = end;
                         continue;
                     }
-                    blend_at(p, row + @as(usize, @intCast(x)), v, mid_cover);
+                    blend_at(p, row + @as(u32, @intCast(x)), v, mid_cover);
                     continue;
                 }
                 const px = @as(f32, @floatFromInt(x)) + 0.5;
                 const ex = px - std.math.clamp(px, x0, x1);
                 const coverage = std.math.clamp(radius + 0.5 - @sqrt(ex * ex + ey * ey), 0, 1);
                 if (coverage <= 0) continue;
-                blend_at(p, row + @as(usize, @intCast(x)), v, coverage);
+                blend_at(p, row + @as(u32, @intCast(x)), v, coverage);
             }
         }
     }
 
-    fn blend_at(p: Page, at: usize, v: f32, coverage: f32) void {
+    fn blend_at(p: Page, at: u32, v: f32, coverage: f32) void {
         if (coverage >= 1) {
             p.buf[at] = @intFromFloat(v);
             return;
@@ -96,6 +134,10 @@ pub const Page = struct {
 
     /// Fills a rectangle with rounded corners, in any gray, with smooth edges.
     pub fn round_rect(p: Page, x: u32, y: u32, w: u32, h: u32, radius: f32, value: u8) void {
+        assert(p.holds_rows());
+        // The far edges are worked out in whole numbers, which must not overflow
+        assert(w <= std.math.maxInt(u32) - x);
+        assert(h <= std.math.maxInt(u32) - y);
         const v: f32 = @floatFromInt(value);
         const fx: f32 = @floatFromInt(x);
         const fy: f32 = @floatFromInt(y);
@@ -117,7 +159,8 @@ pub const Page = struct {
                     col = end;
                     continue;
                 }
-                const c = round_coverage(@as(f32, @floatFromInt(col)) + 0.5, py, fx, fy, fw, fh, radius);
+                const px = @as(f32, @floatFromInt(col)) + 0.5;
+                const c = round_coverage(px, py, fx, fy, fw, fh, radius);
                 if (c <= 0) continue;
                 p.blend_at(row * p.stride + col, v, c);
             }
@@ -126,6 +169,8 @@ pub const Page = struct {
 
     /// Smooth line with round ends.
     pub fn stroke(p: Page, x0: f32, y0: f32, x1: f32, y1: f32, width: f32) void {
+        assert(p.holds_rows());
+        assert(width > 0);
         const r = width / 2;
         const left: i32 = @intFromFloat(@floor(@min(x0, x1) - r - 1));
         const right: i32 = @intFromFloat(@ceil(@max(x0, x1) + r + 1));
@@ -148,18 +193,26 @@ pub const Page = struct {
         }
     }
 
+    /// A smooth arc around (`cx`, `cy`) from angle `from` to `to`, in radians, drawn as
+    /// short strokes.
     pub fn arc(p: Page, cx: f32, cy: f32, radius: f32, from: f32, to: f32, width: f32) void {
-        const steps = 48;
+        assert(radius > 0);
+        assert(width > 0);
         var i: u32 = 0;
-        while (i < steps) : (i += 1) {
-            const a0 = from + (to - from) * @as(f32, @floatFromInt(i)) / steps;
-            const a1 = from + (to - from) * @as(f32, @floatFromInt(i + 1)) / steps;
-            p.stroke(cx + @cos(a0) * radius, cy + @sin(a0) * radius, cx + @cos(a1) * radius, cy + @sin(a1) * radius, width);
+        while (i < arc_steps) : (i += 1) {
+            const a0 = from + (to - from) * @as(f32, @floatFromInt(i)) / arc_steps;
+            const a1 = from + (to - from) * @as(f32, @floatFromInt(i + 1)) / arc_steps;
+            const start_x = cx + @cos(a0) * radius;
+            const start_y = cy + @sin(a0) * radius;
+            p.stroke(start_x, start_y, cx + @cos(a1) * radius, cy + @sin(a1) * radius, width);
         }
     }
 
     /// Fills a polygon, sampling each pixel four times for smooth edges.
     pub fn fill_poly(p: Page, points: []const [2]f32) void {
+        assert(p.holds_rows());
+        // A polygon has at least three corners
+        assert(points.len >= 3);
         var min_x: f32 = std.math.inf(f32);
         var max_x: f32 = -std.math.inf(f32);
         var min_y: f32 = std.math.inf(f32);
@@ -175,27 +228,35 @@ pub const Page = struct {
             var x: i32 = @intFromFloat(@floor(min_x));
             while (x <= @as(i32, @intFromFloat(@ceil(max_x)))) : (x += 1) {
                 var hits: u32 = 0;
-                for ([_][2]f32{ .{ 0.25, 0.25 }, .{ 0.75, 0.25 }, .{ 0.25, 0.75 }, .{ 0.75, 0.75 } }) |s| {
+                for (poly_samples) |s| {
                     const sx = @as(f32, @floatFromInt(x)) + s[0];
                     const sy = @as(f32, @floatFromInt(y)) + s[1];
                     var inside = false;
                     var j = points.len - 1;
                     for (points, 0..) |a, i| {
                         const b = points[j];
-                        if ((a[1] > sy) != (b[1] > sy) and sx < (b[0] - a[0]) * (sy - a[1]) / (b[1] - a[1]) + a[0]) inside = !inside;
+                        const crosses = (a[1] > sy) != (b[1] > sy);
+                        if (crosses and sx < (b[0] - a[0]) * (sy - a[1]) / (b[1] - a[1]) + a[0]) {
+                            inside = !inside;
+                        }
                         j = i;
                     }
                     if (inside) hits += 1;
                 }
-                p.darken(x, y, @as(f32, @floatFromInt(hits)) / 4);
+                p.darken(x, y, @as(f32, @floatFromInt(hits)) / poly_samples.len);
             }
         }
     }
 
     /// White tick for the finished badge.
     pub fn fill_poly_white_check(p: Page, cx: f32, cy: f32) void {
-        const pts = [_][4]f32{ .{ -11, 1, -3, 9 }, .{ -3, 9, 12, -8 } };
-        for (pts) |l| {
+        assert(p.holds_rows());
+        // Two lines, each from (x, y) to (x, y), around the centre
+        const lines = [_][4]f32{ .{ -11, 1, -3, 9 }, .{ -3, 9, 12, -8 } };
+        // The lines meet, so the tick has no gap
+        comptime assert(lines[0][2] == lines[1][0]);
+        comptime assert(lines[0][3] == lines[1][1]);
+        for (lines) |l| {
             var t: f32 = 0;
             while (t <= 1) : (t += 0.02) {
                 const x = cx + l[0] + (l[2] - l[0]) * t;
@@ -207,11 +268,15 @@ pub const Page = struct {
 
     /// Lifts black toward `floor`, for secondary text and lines.
     pub fn tint(p: Page, x: u32, y: u32, w: u32, h: u32, floor: u8) void {
+        assert(p.holds_rows());
         if (x >= p.width) return;
+        const width = @min(w, p.width - x);
+        const row_end = @min(y +| h, p.height);
+        assert(x + width <= p.width);
         var row = y;
-        while (row < @min(y +| h, p.height)) : (row += 1) {
+        while (row < row_end) : (row += 1) {
             const start = row * p.stride + x;
-            for (p.buf[start .. start + @min(w, p.width - x)]) |*px| {
+            for (p.buf[start .. start + width]) |*px| {
                 const span: u32 = 255 - @as(u32, floor);
                 px.* = @intCast(@as(u32, floor) + @as(u32, px.*) * span / 255);
             }
@@ -220,14 +285,22 @@ pub const Page = struct {
 
     /// Forces a band to pure black and white, for waveforms that can't show gray.
     pub fn threshold(p: Page, top: u32, height: u32) void {
+        assert(p.holds_rows());
+        // The band's whole rows lie in the buffer
+        assert((@as(u64, top) + height) * p.stride <= p.buf.len);
         const start = top * p.stride;
-        for (p.buf[start .. start + height * p.stride]) |*px| px.* = if (px.* < 128) 0x00 else 0xff;
+        for (p.buf[start .. start + height * p.stride]) |*px| {
+            px.* = if (px.* < 128) 0x00 else 0xff;
+        }
     }
 
-    /// Filled disc, or a ring when `inner` is above zero.
     /// A disc of radius `outer` centred on pixel (`cx`, `cy`), or a ring when `inner`
     /// is above zero, in any gray, with smooth edges.
     pub fn disc(p: Page, cx: i32, cy: i32, outer: i32, inner: i32, value: u8) void {
+        assert(p.holds_rows());
+        assert(outer > 0);
+        assert(inner >= 0);
+        assert(inner < outer);
         const ro: f32 = @floatFromInt(outer);
         const ri: f32 = @floatFromInt(inner);
         const v: f32 = @floatFromInt(value);
@@ -242,7 +315,7 @@ pub const Page = struct {
                 var c = std.math.clamp(ro + 0.5 - d, 0, 1);
                 if (inner > 0) c = @min(c, std.math.clamp(d - ri + 0.5, 0, 1));
                 if (c <= 0) continue;
-                const at = @as(usize, @intCast(py)) * p.stride + @as(usize, @intCast(px));
+                const at = @as(u32, @intCast(py)) * p.stride + @as(u32, @intCast(px));
                 const old: f32 = @floatFromInt(p.buf[at]);
                 p.buf[at] = @intFromFloat(@round(old + (v - old) * c));
             }
@@ -253,6 +326,8 @@ pub const Page = struct {
     /// centred on (`cx`, `cy`). Each pixel lightens as far as the icon covers it, so
     /// smooth edges stay smooth over black or over gray. Clipped to the page.
     pub fn stamp_white(p: Page, tile: Page, cx: i32, cy: i32) void {
+        assert(p.holds_rows());
+        assert(tile.holds_rows());
         const left = cx - @as(i32, @intCast(tile.width / 2));
         const top = cy - @as(i32, @intCast(tile.height / 2));
         for (0..tile.height) |row| {
@@ -261,7 +336,7 @@ pub const Page = struct {
             for (0..tile.width) |col| {
                 const x = left + @as(i32, @intCast(col));
                 if (x < 0 or x >= p.width) continue;
-                const at = @as(usize, @intCast(y)) * p.stride + @as(usize, @intCast(x));
+                const at = @as(u32, @intCast(y)) * p.stride + @as(u32, @intCast(x));
                 const cover: u32 = 0xff - @as(u32, tile.buf[row * tile.stride + col]);
                 const bg: u32 = p.buf[at];
                 p.buf[at] = @intCast(bg + (0xff - bg) * cover / 0xff);
@@ -269,7 +344,10 @@ pub const Page = struct {
         }
     }
 
+    /// Copies a `w` x `h` picture, one byte per pixel, onto the page at (`x`, `y`).
     pub fn copy_image(p: Page, x: u32, y: u32, src: []const u8, w: u32, h: u32) void {
+        assert(p.holds_rows());
+        assert(src.len >= @as(u64, w) * h);
         var row: u32 = 0;
         while (row < h) : (row += 1) {
             @memcpy(p.buf[(y + row) * p.stride + x ..][0..w], src[row * w ..][0..w]);
@@ -333,44 +411,32 @@ test "dim and tint clip to the page" {
     try std.testing.expect(buf[0] != 0x00);
 }
 
-fn pill_reference(p: Page, x0: f32, x1: f32, cy: f32, radius: f32, value: u8) void {
-    const top: i32 = @intFromFloat(@floor(cy - radius - 1));
-    const bottom: i32 = @intFromFloat(@ceil(cy + radius + 1));
-    const left: i32 = @intFromFloat(@floor(x0 - radius - 1));
-    const right: i32 = @intFromFloat(@ceil(x1 + radius + 1));
-    var y = @max(top, 0);
-    while (y <= bottom and y < p.height) : (y += 1) {
-        var x = @max(left, 0);
-        while (x <= right and x < p.width) : (x += 1) {
-            const px = @as(f32, @floatFromInt(x)) + 0.5;
-            const py = @as(f32, @floatFromInt(y)) + 0.5;
-            const ex = px - std.math.clamp(px, x0, x1);
-            const ey = py - cy;
-            const coverage = std.math.clamp(radius + 0.5 - @sqrt(ex * ex + ey * ey), 0, 1);
-            if (coverage <= 0) continue;
-            const at = @as(usize, @intCast(y)) * p.stride + @as(usize, @intCast(x));
-            const old: f32 = @floatFromInt(p.buf[at]);
-            p.buf[at] = @intFromFloat(@round(old + (@as(f32, @floatFromInt(value)) - old) * coverage));
-        }
-    }
-}
-
-fn round_rect_reference(p: Page, x: u32, y: u32, w: u32, h: u32, radius: f32, value: u8) void {
-    const v: f32 = @floatFromInt(value);
-    var row = y;
-    while (row < @min(y + h, p.height)) : (row += 1) {
-        var col = x;
-        while (col < @min(x + w, p.width)) : (col += 1) {
-            const c = Page.round_coverage(@as(f32, @floatFromInt(col)) + 0.5, @as(f32, @floatFromInt(row)) + 0.5, @floatFromInt(x), @floatFromInt(y), @floatFromInt(w), @floatFromInt(h), radius);
-            if (c <= 0) continue;
-            const at = row * p.stride + col;
-            const old: f32 = @floatFromInt(p.buf[at]);
-            p.buf[at] = @intFromFloat(@round(old + (v - old) * c));
-        }
-    }
-}
-
 test "the fast rounded rectangle draws exactly what the plain one did" {
+    // Every pixel on its own, as drawn before the fast path
+    const round_rect_reference = struct {
+        fn draw(p: Page, x: u32, y: u32, w: u32, h: u32, radius: f32, value: u8) void {
+            const v: f32 = @floatFromInt(value);
+            var row = y;
+            while (row < @min(y + h, p.height)) : (row += 1) {
+                var col = x;
+                while (col < @min(x + w, p.width)) : (col += 1) {
+                    const c = Page.round_coverage(
+                        @as(f32, @floatFromInt(col)) + 0.5,
+                        @as(f32, @floatFromInt(row)) + 0.5,
+                        @floatFromInt(x),
+                        @floatFromInt(y),
+                        @floatFromInt(w),
+                        @floatFromInt(h),
+                        radius,
+                    );
+                    if (c <= 0) continue;
+                    const at = row * p.stride + col;
+                    const old: f32 = @floatFromInt(p.buf[at]);
+                    p.buf[at] = @intFromFloat(@round(old + (v - old) * c));
+                }
+            }
+        }
+    }.draw;
     var prng = std.Random.DefaultPrng.init(11);
     const rand = prng.random();
     var a: [64 * 48]u8 = undefined;
@@ -396,6 +462,32 @@ test "the fast rounded rectangle draws exactly what the plain one did" {
 }
 
 test "the fast pill draws exactly what the plain one did" {
+    // Every pixel on its own, as drawn before the fast path
+    const pill_reference = struct {
+        fn draw(p: Page, x0: f32, x1: f32, cy: f32, radius: f32, value: u8) void {
+            const top: i32 = @intFromFloat(@floor(cy - radius - 1));
+            const bottom: i32 = @intFromFloat(@ceil(cy + radius + 1));
+            const left: i32 = @intFromFloat(@floor(x0 - radius - 1));
+            const right: i32 = @intFromFloat(@ceil(x1 + radius + 1));
+            var y = @max(top, 0);
+            while (y <= bottom and y < p.height) : (y += 1) {
+                var x = @max(left, 0);
+                while (x <= right and x < p.width) : (x += 1) {
+                    const px = @as(f32, @floatFromInt(x)) + 0.5;
+                    const py = @as(f32, @floatFromInt(y)) + 0.5;
+                    const ex = px - std.math.clamp(px, x0, x1);
+                    const ey = py - cy;
+                    const distance = @sqrt(ex * ex + ey * ey);
+                    const coverage = std.math.clamp(radius + 0.5 - distance, 0, 1);
+                    if (coverage <= 0) continue;
+                    const at = @as(usize, @intCast(y)) * p.stride + @as(usize, @intCast(x));
+                    const old: f32 = @floatFromInt(p.buf[at]);
+                    const v: f32 = @floatFromInt(value);
+                    p.buf[at] = @intFromFloat(@round(old + (v - old) * coverage));
+                }
+            }
+        }
+    }.draw;
     var prng = std.Random.DefaultPrng.init(7);
     const rand = prng.random();
     var a: [64 * 48]u8 = undefined;

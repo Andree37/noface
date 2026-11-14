@@ -96,7 +96,9 @@ pub fn main(init: std.process.Init.Minimal) !void {
         var all = try core.kfx.entities(data);
         while (all.next()) |e| {
             if (e.kind != 417 or e.id != want_id) continue;
+            if (e.raw.len < 10) continue;
             const hdr = std.mem.readInt(u32, e.raw[6..10], .little);
+            if (hdr > e.raw.len) continue;
             _ = std.os.linux.write(1, e.raw[hdr..].ptr, e.raw.len - hdr);
         }
         return;

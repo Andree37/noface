@@ -18,7 +18,7 @@ const memory = @import("base/memory.zig");
 const wifi_saver = @import("kindle/wifi_saver.zig");
 const setup = @import("setup.zig");
 const library_screen = @import("screens/library.zig");
-const FakeKindle = @import("fake_kindle.zig").FakeKindle;
+const FakeKindle = @import("testing/fake_kindle.zig").FakeKindle;
 const sys = @import("sys/calls.zig");
 const c = std.c;
 

@@ -28,7 +28,7 @@ fn cardRow(rows: usize, i: usize) Step {
 const highlight_button = tap(122, 1596); // On the definition sheet
 const above_sheet = tap(636, 300);
 const dictionary = @import("model/dictionary.zig");
-const FakeKindle = @import("fake_kindle.zig").FakeKindle;
+const FakeKindle = @import("testing/fake_kindle.zig").FakeKindle;
 const wifi_saver = @import("kindle/wifi_saver.zig");
 const paths = @import("kindle/paths.zig");
 const setup = @import("setup.zig");

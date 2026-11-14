@@ -12,6 +12,8 @@
 //!   ui      Drawing screens and mapping taps. Imports ui, model, layout and gfx.
 //!   kindle  Everything that knows Amazon. Imports kindle, sys and model.
 //!   epub    The open EPUB format, read into our model. Imports epub and model.
+//!   testing What only the tests and the simulator use: the pretend Kindle. Imports
+//!           testing, kindle, sys and model. No folder above may import it.
 //!   screens, and files at the top of src/: may import anything.
 //! Every folder may import base.
 const std = @import("std");
@@ -27,6 +29,7 @@ const rules = [_]Rule{
     .{ .folder = "ui", .allowed = &.{ "ui", "model", "layout", "gfx" } },
     .{ .folder = "kindle", .allowed = &.{ "kindle", "sys", "model" } },
     .{ .folder = "epub", .allowed = &.{ "epub", "model" } },
+    .{ .folder = "testing", .allowed = &.{ "testing", "kindle", "sys", "model" } },
 };
 
 /// The top-level folder of a path inside src/, or "" for files at the top.
@@ -128,6 +131,7 @@ test "imports are judged by folder" {
     try std.testing.expectEqual(@as(usize, 0), try check("screens/a.zig", "const k = @import(\"../kindle/kfx.zig\");", &out, alloc));
     try std.testing.expectEqual(@as(usize, 1), try check("ui/a.zig", "const p = @import(\"../sys/os.zig\");", &out, alloc));
     try std.testing.expectEqual(@as(usize, 0), try check("ui/a.zig", "const std = @import(\"std\");", &out, alloc));
+    try std.testing.expectEqual(@as(usize, 1), try check("kindle/a.zig", "const f = @import(\"../testing/fake_kindle.zig\");", &out, alloc));
 }
 
 test "a file with tests must be listed" {

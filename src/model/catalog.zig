@@ -167,8 +167,13 @@ pub fn next_in_series(entries: []const Entry, e: *const Entry) ?u32 {
 /// Where a book stands, for sorting by progress: under way first, then not started,
 /// then finished.
 fn stage(e: Entry) u2 {
-    if (e.in_progress()) return 0;
+    if (e.in_progress()) {
+        assert(!e.is_read()); // Under way and finished are told apart
+        return 0;
+    }
     if (e.is_read()) return 2;
+    // Neither under way nor finished: at most stock's 1% of a new book
+    assert(e.percent <= untouched_percent);
     return 1;
 }
 
@@ -182,7 +187,11 @@ fn by_progress(a: Entry, b: Entry) bool {
 /// What a book sorts under alphabetically: its series, so a series stays together,
 /// or else its title.
 fn title_key(e: Entry) []const u8 {
-    return if (e.series.len > 0) without_the(e.series) else e.title;
+    const key = if (e.series.len > 0) without_the(e.series) else e.title;
+    // A series' name sorts without its "The", and never as nothing
+    if (e.series.len > 0) assert(key.len > 0);
+    assert(key.len <= @max(e.series.len, e.title.len));
+    return key;
 }
 
 /// Alphabetical by series or title. Within one key: the books outside a series, then

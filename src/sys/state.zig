@@ -136,6 +136,7 @@ pub fn write_small(path: [*:0]const u8, data: []const u8) void {
     var tmp: [320]u8 = undefined;
     const name = std.mem.sliceTo(path, 0);
     const tmp_path = std.fmt.bufPrintSentinel(&tmp, "{s}.tmp", .{name}, 0) catch return;
+    assert(std.mem.endsWith(u8, tmp_path, ".tmp")); // Beside the real file, never it
     const rc = linux.open(
         tmp_path,
         .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true, .CLOEXEC = true },

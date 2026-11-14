@@ -17,6 +17,10 @@ const fake_day_unix = 1_794_700_800;
 
 comptime {
     assert(fake_day_unix % std.time.s_per_day == 0); // Its midnight, so clocks read 00:00
+    // A call's success (0, a count, a descriptor) never reads as a failure, and -1
+    // (EPERM, the first error) does
+    assert(!failed(0));
+    assert(failed(@bitCast(@as(isize, -1))));
 }
 
 /// Microseconds on the monotonic clock, which stops while the Kindle sleeps.

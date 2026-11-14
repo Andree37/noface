@@ -31,6 +31,7 @@ fn lseek64(fd: i32, offset: u64, result: *linux.off_t, whence: usize) usize {
     const rc = linux.lseek(fd, @bitCast(offset), @intCast(whence));
     if (failed(rc)) return rc;
     result.* = @intCast(rc);
+    assert(result.* >= 0); // An offset is never before the file's start
     return 0;
 }
 pub const mmap = chosen.mmap;

@@ -38,6 +38,7 @@ pub fn exists(path: [*:0]const u8) bool {
     assert(path[0] != 0);
     const fd = linux.open(path, .{ .ACCMODE = .RDONLY }, 0);
     if (failed(fd)) return false;
+    assert(fd <= std.math.maxInt(i32)); // A descriptor, as every call taking one expects
     _ = linux.close(@intCast(fd)); // Only opened to see that it could be
     return true;
 }

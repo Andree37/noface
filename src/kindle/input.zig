@@ -298,9 +298,16 @@ pub const Input = struct {
         switch (action) {
             .lock, .power, .computer, .stop => {
                 in.stashed = action;
+                // Kept for the loop underneath, as `next_tap` relies on
+                assert(in.stashed != null);
                 return null;
             },
-            else => return action,
+            else => {
+                // What ends a screen never reaches it
+                assert(action != .lock);
+                assert(action != .stop);
+                return action;
+            },
         }
     }
 

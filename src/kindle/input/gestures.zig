@@ -134,12 +134,14 @@ pub fn lifted(in: *Input) ?Action {
 /// down from the top, or a new touch landed.
 pub fn on_packet_end(in: *Input) ?Action {
     if (in.drag_slot) |slot| {
+        assert(slot < slots_count); // One of the panel's, as `begin_drag` took it
         in.pending = null;
         const point = screen_point(in, slot);
         in.drag_y = point.y;
         return .{ .drag = point.x };
     }
     if (in.top_slot) |slot| {
+        assert(slot < slots_count); // One of the panel's, as `touched_down` took it
         const point = screen_point(in, slot);
         if (touch_zones.moved_off(in.top_x, in.top_y, point.x, point.y)) in.top_moved = true;
         if (in.top_y < touch_zones.top_zone and touch_zones.is_pull(in.top_y, point.y)) {

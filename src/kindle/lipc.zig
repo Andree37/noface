@@ -101,6 +101,9 @@ pub fn read(previous: quick_model.Quick) quick_model.Quick {
         const text = std.mem.trim(u8, buffer[0 .. length orelse 0], " \n");
         if (text.len > 0) reading.apply(&quick, text);
     }
+    // Wi-Fi's state is applied before its signal, so no bars show while it's off
+    if (!quick.wifi_on) assert(quick.wifi_bars == 0);
+    assert(quick.clock_len <= quick.clock.len);
     // Plugged in, whether or not it's charging: a computer's port can be too weak to
     // charge, and a full battery stops; the stock Kindle shows the bolt either way.
     // The usbState of powerd stays 1 after the cable is pulled, so on a Kindle the
@@ -257,6 +260,7 @@ pub fn still_active() void {
 pub fn in_screen_saver() ?bool {
     var buffer: [32]u8 = undefined;
     const state = get_text("com.lab126.powerd", "state", &buffer, lipc_deadline());
+    assert(state.len <= buffer.len); // Read into `buffer`
     if (state.len == 0) return null;
     return std.mem.eql(u8, state, "screenSaver");
 }
@@ -282,12 +286,16 @@ pub fn watch_power_events() ?process.Child {
     // The script noface.sh finds this watcher by the start of its arguments, which
     // stays the same
     const events = "goingToScreenSaver,outOfScreenSaver,charging,notCharging";
-    return watch_events("com.lab126.powerd", events);
+    const child = watch_events("com.lab126.powerd", events);
+    if (child) |c| assert(c.pid > 0); // Its whole group is killed on the way out
+    return child;
 }
 
 /// A computer setting up the USB connection, from the volume manager.
 pub fn watch_usb_events() ?process.Child {
-    return watch_events("com.lab126.volumd", "usbConfigured");
+    const child = watch_events("com.lab126.volumd", "usbConfigured");
+    if (child) |c| assert(c.pid > 0); // Its whole group is killed on the way out
+    return child;
 }
 
 /// True while USB carries a network (as Jobman's SSH does) rather than file transfer.
@@ -337,6 +345,7 @@ pub fn set_airplane(on: bool) void {
 pub fn wifi_connected() ?bool {
     var buffer: [32]u8 = undefined;
     const state = get_text("com.lab126.wifid", "cmState", &buffer, lipc_deadline());
+    assert(state.len <= buffer.len); // Read into `buffer`
     if (state.len == 0) return null;
     return std.mem.eql(u8, state, "CONNECTED");
 }

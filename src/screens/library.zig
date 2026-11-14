@@ -21,6 +21,7 @@ const series_screen = @import("series.zig");
 const cover_image = @import("../gfx/image.zig");
 const panel = @import("panel.zig");
 const lock = @import("lock.zig");
+const input_mod = @import("../kindle/input.zig");
 const reader = @import("reader.zig");
 const keyboard = @import("../ui/keyboard.zig");
 const search_sheet = @import("../ui/search_sheet.zig");
@@ -240,9 +241,6 @@ pub fn logPage(lib: *const Library, index: usize, count: usize) void {
 
 /// The books to show: the filter's, without the hero, or while searching every match,
 /// the hero too.
-fn choose(lib: *Library, filter: catalog.Filter, hero: ?usize, query: []const u8) usize {
-    return catalog.select(lib.entries, filter, if (query.len > 0) null else hero, query, lib.visible);
-}
 
 const SearchEnd = union(enum) { cancel, search, open: usize };
 
@@ -299,7 +297,7 @@ fn moment(a: *const app.App) library.Moment {
 
 /// Shows a library page, and while the screen refreshes, gets the covers of the
 /// pages either side ready, so turning to them is quick.
-fn showPage(a: *app.App, lib: *Library, buf: []const u8, refresh: hwtcon.Refresh, index: usize, count: usize) !void {
+fn showWithCovers(a: *app.App, lib: *Library, buf: []const u8, refresh: hwtcon.Refresh, index: usize, count: usize) !void {
     @memcpy(a.screen.pixels, buf);
     const marker = try a.screen.show(refresh);
     const alloc = lib.arena.allocator();
@@ -308,275 +306,341 @@ fn showPage(a: *app.App, lib: *Library, buf: []const u8, refresh: hwtcon.Refresh
     try a.screen.waitComplete(marker);
 }
 
+/// What the library does after an action: nothing, draw the page again (a new filter,
+/// a page turn, a notice), draw everything again with a flash (back from a book, a
+/// reloaded library), or leave noface.
+const Next = enum { nothing, page, everything, leave };
+
 pub fn runLibrary(a: *app.App) !void {
-    var lib = try loadLibrary(a);
-    defer lib.deinit();
+    var b = Browser{ .a = a, .lib = try loadLibrary(a), .buf = a.slots[0].buf };
+    defer b.lib.deinit();
+    defer a.input.tick_us = 0;
+    a.slots[0].page = -1;
     // Started while the Kindle is locked: the "going to lock" event has passed, so
     // show the lock screen now, as if it had just arrived. Otherwise the library
     // would sit under a locked Kindle with touch switched off.
     if (lipc.inScreenSaver() == true) a.input.stashed = .lock;
     a.quick = lipc.read(a.quick); // Once up front, so the first screen never shows blanks
-    var filter: catalog.Filter = .all;
-    var order: catalog.Order = .recent;
-    var query = search.Query{};
-    var message: []const u8 = "";
-    var index: usize = 0;
-    const buf = a.slots[0].buf;
-    a.slots[0].page = -1;
-    // Set only for a download started here. Catalog flags can stay stuck, so
-    // they must never drive this, and checking must never touch the screen.
-    var watch_until: u64 = 0;
-    // After a book, Wi-Fi takes a while to come back: the status is read again until then
-    var status_until: u64 = 0;
-    defer a.input.tick_us = 0;
+    try b.run();
+}
 
-    while (true) {
-        // The pager and the keyboard sit along the bottom edge, where the reader ignores
-        // a resting thumb. Nothing else is down there, so the library takes every touch.
-        // Set each time round, as reading a book turns it back on.
-        a.input.grips = false;
-        // Taps act on lift, so pressing and holding a book can bring up its actions
-        a.input.deferred = true;
-        const alloc = lib.arena.allocator();
-        catalog.sort(lib.entries, order);
-        var hero = catalog.pickHero(lib.entries);
-        var count = choose(&lib, filter, hero, query.words());
-        index = @min(index, library.pageCount(count) - 1);
-        // Otherwise once a minute, for the clock and the battery (a charger unplugged)
-        a.input.tick_us = if (nowUs() < watch_until) download_poll_us else if (nowUs() < status_until) status_poll_us else idle_tick_us;
-        // A book still coming down keeps Wi-Fi on, even once a book is open
-        for (lib.entries) |e| {
-            if (e.availability == .downloading) a.downloads_until = @max(a.downloads_until, nowUs() + download_watch_us);
-        }
-        const r0 = nowUs();
-        try library.render(alloc, a.ui, a.page(buf), lib.entries, hero, lib.visible[0..count], index, filter, order, query.words(), message, &a.quick, moment(a));
-        std.debug.print("library render {d} ms\n", .{(nowUs() - r0) / 1000});
-        try showPage(a, &lib, buf, .flash, index, count);
-        logPage(&lib, index, count);
-        // Drawn with the last status at once; read again now, and redrawn (only what
-        // changed, without a flash) if the battery, Wi-Fi or clock moved on
-        const status = lipc.read(a.quick);
-        a.noteBattery();
-        if (!status.same(&a.quick)) {
-            a.quick = status;
-            try library.render(alloc, a.ui, a.page(buf), lib.entries, hero, lib.visible[0..count], index, filter, order, query.words(), message, &a.quick, moment(a));
-            try a.present(buf, .screen);
-        }
-        message = "";
+/// The library on screen: which books, in what order, which page of them, and what
+/// it's keeping an eye on (a download, the status after a book). `run` draws what the
+/// last action asked for, then hands the next action to its handler.
+const Browser = struct {
+    a: *app.App,
+    lib: Library,
+    buf: []u8, // The library as last drawn
+    filter: catalog.Filter = .all,
+    order: catalog.Order = .recent,
+    query: search.Query = .{},
+    index: usize = 0, // The page of books shown
+    hero: ?usize = null, // The book to continue, at the top
+    count: usize = 0, // How many books the filter and search let through
+    notice: []const u8 = "", // A line for the next drawing only
+    /// Set only for a download started here: the library is reloaded every few seconds
+    /// until then. Catalog flags can stay stuck, so they never drive this.
+    watch_until: u64 = 0,
+    /// After a book, Wi-Fi takes a while to come back: the status is read again until then.
+    status_until: u64 = 0,
 
-        browse: while (true) {
-            var opening: ?*catalog.Entry = null;
-            var acting: ?*catalog.Entry = null;
-            var notice: []const u8 = "";
-            switch (a.input.next()) {
-                .tap => |t| switch (loggedHit(t.x, t.y, index, count, query.words().len > 0)) {
-                    .none => continue,
-                    .search => switch (typeSearch(a, &lib, &query)) {
-                        .cancel => {
-                            try a.present(buf, .screen);
-                            continue;
-                        },
-                        .search => {
-                            count = choose(&lib, filter, hero, query.words());
-                            index = 0;
-                        },
-                        .open => |e| {
-                            query = .{};
-                            count = choose(&lib, filter, hero, "");
-                            index = 0;
-                            opening = &lib.entries[e];
-                        },
-                    },
-                    .stats => {
-                        try stats_screen.run(a, lib.entries);
-                        try a.present(buf, .screen);
-                        continue;
-                    },
-                    .clear_search => {
-                        query = .{};
-                        count = choose(&lib, filter, hero, "");
-                        index = 0;
-                    },
-                    .menu => {
-                        if (try panel.libraryMenu(a, buf)) return;
-                        continue;
-                    },
-                    .battery => {
-                        try battery_screen.show(a);
-                        continue;
-                    },
-                    .tab => |f| {
-                        filter = f;
-                        count = choose(&lib, filter, hero, query.words());
-                        index = 0;
-                    },
-                    .sort => {
-                        order = order.next();
-                        catalog.sort(lib.entries, order);
-                        hero = catalog.pickHero(lib.entries);
-                        count = choose(&lib, filter, hero, query.words());
-                        index = 0;
-                    },
-                    .next => {
-                        if (index + 1 >= library.pageCount(count)) continue;
-                        index += 1;
-                    },
-                    .prev => {
-                        if (index == 0) continue;
-                        index -= 1;
-                    },
-                    .hero => {
-                        const h = hero orelse continue;
-                        a.flash(library.heroRect(a.screen.width));
-                        opening = &lib.entries[h];
-                    },
-                    .hero_dots => acting = &lib.entries[hero orelse continue],
-                    .book => |i| {
-                        const entry = &lib.entries[lib.visible[i]];
-                        if (entry.isLocal()) {
-                            a.flash(library.bookRect(i, index));
-                            opening = entry;
-                        } else if (entry.availability == .downloading) {
-                            notice = "Still downloading. It will open once it's finished.";
-                        } else {
-                            notice = "Not on this Kindle yet. Use the three dots to download it.";
-                        }
-                    },
-                },
-                .tick => {
-                    // Once a minute: the clock, the battery and the charger, from the
-                    // Kindle itself. Only the status strip is redrawn, without a flash,
-                    // so a notice on the page stays
-                    const charger = a.input.charger_changed;
-                    a.input.charger_changed = false;
-                    if (charger or (nowUs() >= status_until and nowUs() >= watch_until)) {
-                        const fresh = lipc.read(a.quick);
-                        if (charger) std.debug.print("charger changed: plugged {}\n", .{fresh.plugged});
-                        if (!fresh.same(&a.quick)) {
-                            a.quick = fresh;
-                            try library.render(alloc, a.ui, a.page(buf), lib.entries, hero, lib.visible[0..count], index, filter, order, query.words(), "", &a.quick, moment(a));
-                            const band = library.status_height * a.screen.stride;
-                            @memcpy(a.screen.pixels[0..band], buf[0..band]);
-                            try a.screen.waitComplete(try a.screen.showRegion(0, 0, a.screen.width, library.status_height, .clock));
-                        }
-                    }
-                    if (nowUs() < status_until) {
-                        const fresh_status = lipc.read(a.quick);
-                        if (!fresh_status.same(&a.quick)) {
-                            a.quick = fresh_status;
-                            try library.render(alloc, a.ui, a.page(buf), lib.entries, hero, lib.visible[0..count], index, filter, order, query.words(), "", &a.quick, moment(a));
-                            try a.present(buf, .screen);
-                        }
-                    }
-                    if (nowUs() >= watch_until) {
-                        if (watch_until == 0) {
-                            if (nowUs() >= status_until) a.input.tick_us = idle_tick_us;
-                            continue;
-                        }
-                        // The watch is over: one last look, for a download that
-                        // finished since the last one
-                        watch_until = 0;
-                        if (nowUs() >= status_until) a.input.tick_us = idle_tick_us;
-                    }
-                    catalog_db.exportLibrary();
-                    var fresh = loadLibrary(a) catch continue;
-                    if (fresh.localCount() == lib.localCount()) {
-                        fresh.deinit();
-                        continue;
-                    }
-                    lib.deinit();
-                    lib = fresh;
-                    watch_until = 0;
-                    break :browse;
-                },
-                .hold => |h| switch (loggedHit(h.x, h.y, index, count, query.words().len > 0)) {
-                    .book => |i| acting = &lib.entries[lib.visible[i]],
-                    .hero, .hero_dots => acting = &lib.entries[hero orelse continue],
-                    else => continue,
-                },
-                .swipe => |direction| {
-                    // Swiping pages through the library, like the arrows
-                    if (direction > 0) {
-                        if (index + 1 >= library.pageCount(count)) continue;
-                        index += 1;
-                    } else {
-                        if (index == 0) continue;
-                        index -= 1;
-                    }
-                },
-                .drag, .drag_end, .unlock => continue,
-                .lock => {
-                    // Not put back on waking: it's all drawn again, fresh, below
-                    if (lock.lockScreen(a, if (hero) |h| &lib.entries[h] else null, .{ .restore = false }) == .leaving) continue;
-                    a.noteBattery(); // What sleeping (or charging) did
-                    a.quick = lipc.read(a.quick); // The clock and battery may be hours old
-                    // A download may have finished while the Kindle slept
-                    for (lib.entries) |e| {
-                        if (e.availability != .downloading) continue;
-                        catalog_db.exportLibrary();
-                        var fresh = loadLibrary(a) catch break;
-                        lib.deinit();
-                        lib = fresh;
-                        fresh = undefined;
-                        break;
-                    }
-                    break :browse;
-                },
-                .pull => {
-                    if (try panel.libraryMenu(a, buf)) return;
-                    continue;
-                },
-                .power, .computer, .stop => return,
+    fn run(b: *Browser) !void {
+        var next: Next = .everything;
+        while (true) {
+            switch (next) {
+                .nothing => {},
+                .page => try b.showPage(),
+                .everything => try b.showEverything(),
+                .leave => return,
             }
-            if (opening) |first| {
-                a.input.tick_us = 0;
-                var entry = first;
-                // Finishing a book of a series offers the next one, and may go straight on
-                while (true) {
-                    const was_read = entry.isRead();
-                    const outcome = reader.readBook(a, entry) catch |err| blk: {
-                        std.debug.print("could not open book: {s}\n", .{@errorName(err)});
-                        message = "This book can't be opened here.";
-                        break :blk reader.Outcome.library;
-                    };
-                    if (outcome == .quit) return;
-                    a.slots[0].page = -1;
-                    status_until = nowUs() + status_watch_us;
-                    if (was_read or !entry.isRead()) break;
-                    const next = &lib.entries[catalog.nextInSeries(lib.entries, entry) orelse break];
-                    if (!try upNext(a, next, buf)) break;
-                    entry = next;
-                }
-                break :browse;
-            }
-            if (acting) |entry| {
-                const change = try bookSheet(a, entry, lib.entries, buf);
-                if (change == .redraw) break :browse;
-                if (change == .reload) {
-                    var fresh = loadLibrary(a) catch break :browse;
-                    lib.deinit();
-                    lib = fresh;
-                    fresh = undefined;
-                    break :browse;
-                }
-                if (change != .none) {
-                    // Only a download needs watching; nothing else finishes later.
-                    if (change == .downloading) {
-                        watch_until = nowUs() + download_watch_us;
-                        a.downloads_until = watch_until; // Wi-Fi stays on for it while reading
-                    }
-                    catalog_db.exportLibrary();
-                    var fresh = loadLibrary(a) catch break :browse;
-                    lib.deinit();
-                    lib = fresh;
-                    fresh = undefined;
-                    break :browse;
-                }
-                continue;
-            }
-            try library.render(alloc, a.ui, a.page(buf), lib.entries, hero, lib.visible[0..count], index, filter, order, query.words(), notice, &a.quick, moment(a));
-            try showPage(a, &lib, buf, .screen, index, count);
-            logPage(&lib, index, count);
+            b.setInput();
+            next = try b.onAction(b.a.input.next());
         }
     }
-}
+
+    /// The library takes every touch, even along the bottom edge where the reader
+    /// ignores a resting thumb (the pager and keyboard are there), and taps act on lift
+    /// so pressing and holding a book can bring up its actions. Set each time round, as
+    /// reading a book changes them. It ticks often while watching a download or the
+    /// status, else once a minute for the clock and the battery.
+    fn setInput(b: *Browser) void {
+        const in = b.a.input;
+        in.grips = false;
+        in.deferred = true;
+        const now = nowUs();
+        in.tick_us = if (now < b.watch_until) download_poll_us else if (now < b.status_until) status_poll_us else idle_tick_us;
+    }
+
+    fn onAction(b: *Browser, action: input_mod.Action) !Next {
+        return switch (action) {
+            .tap => |t| b.onTap(t.x, t.y),
+            .hold => |h| b.onHold(h.x, h.y),
+            .swipe => |direction| b.turn(direction),
+            .pull => if (try panel.libraryMenu(b.a, b.buf)) .leave else .nothing,
+            .tick => b.onTick(),
+            .lock => b.onLock(),
+            .power, .computer, .stop => .leave,
+            .drag, .drag_end, .unlock => .nothing,
+        };
+    }
+
+    // Drawing
+
+    /// The books in order, the one to continue, and those the filter and search let
+    /// through, with the page kept in range.
+    fn arrange(b: *Browser) void {
+        catalog.sort(b.lib.entries, b.order);
+        b.hero = catalog.pickHero(b.lib.entries);
+        b.count = catalog.select(b.lib.entries, b.filter, if (b.query.words().len > 0) null else b.hero, b.query.words(), b.lib.visible);
+        b.index = @min(b.index, library.pageCount(b.count) - 1);
+    }
+
+    fn render(b: *Browser) !void {
+        const a = b.a;
+        try library.render(b.lib.arena.allocator(), a.ui, a.page(b.buf), b.lib.entries, b.hero, b.lib.visible[0..b.count], b.index, b.filter, b.order, b.query.words(), b.notice, &a.quick, moment(a));
+    }
+
+    /// Back from a book or a reload: everything drawn again with a flash, then the
+    /// status read (it may be minutes old) and redrawn without one if it moved on.
+    fn showEverything(b: *Browser) !void {
+        const a = b.a;
+        b.arrange();
+        // A book still coming down keeps Wi-Fi on, even once a book is open
+        for (b.lib.entries) |e| {
+            if (e.availability == .downloading) a.downloads_until = @max(a.downloads_until, nowUs() + download_watch_us);
+        }
+        const t0 = nowUs();
+        try b.render();
+        std.debug.print("library render {d} ms\n", .{(nowUs() - t0) / 1000});
+        try b.present(.flash);
+        b.notice = "";
+        a.noteBattery();
+        try b.refreshStatus(.screen);
+    }
+
+    fn showPage(b: *Browser) !void {
+        b.arrange();
+        try b.render();
+        try b.present(.screen);
+        b.notice = "";
+    }
+
+    fn present(b: *Browser, refresh: hwtcon.Refresh) !void {
+        try showWithCovers(b.a, &b.lib, b.buf, refresh, b.index, b.count);
+        logPage(&b.lib, b.index, b.count);
+    }
+
+    /// Reads the clock, battery, charger and Wi-Fi again, and if anything moved on,
+    /// redraws them: the whole screen, or only the status strip along the top (no
+    /// flash, and a notice on the page stays).
+    fn refreshStatus(b: *Browser, area: enum { screen, strip }) !void {
+        const a = b.a;
+        const fresh = lipc.read(a.quick);
+        if (fresh.same(&a.quick)) return;
+        a.quick = fresh;
+        try b.render();
+        switch (area) {
+            .screen => try a.present(b.buf, .screen),
+            .strip => {
+                const band = library.status_height * a.screen.stride;
+                @memcpy(a.screen.pixels[0..band], b.buf[0..band]);
+                try a.screen.waitComplete(try a.screen.showRegion(0, 0, a.screen.width, library.status_height, .clock));
+            },
+        }
+    }
+
+    /// The library read again from the Kindle's catalog (after `export`, which has the
+    /// Kindle write it out afresh) and the EPUBs, in place of what was shown.
+    fn reload(b: *Browser, how: enum { export_first, as_is }) bool {
+        if (how == .export_first) catalog_db.exportLibrary();
+        const fresh = loadLibrary(b.a) catch return false;
+        b.lib.deinit();
+        b.lib = fresh;
+        return true;
+    }
+
+    // Actions
+
+    fn onTap(b: *Browser, x: i32, y: i32) !Next {
+        const a = b.a;
+        switch (loggedHit(x, y, b.index, b.count, b.query.words().len > 0)) {
+            .none => return .nothing,
+            .next => return b.turn(1),
+            .prev => return b.turn(-1),
+            .search => return b.searchBooks(),
+            .clear_search => {
+                b.query = .{};
+                b.index = 0;
+                return .page;
+            },
+            .tab => |f| {
+                b.filter = f;
+                b.index = 0;
+                return .page;
+            },
+            .sort => {
+                b.order = b.order.next();
+                b.index = 0;
+                return .page;
+            },
+            .stats => {
+                try stats_screen.run(a, b.lib.entries);
+                return .page;
+            },
+            .menu => return if (try panel.libraryMenu(a, b.buf)) .leave else .nothing,
+            .battery => {
+                try battery_screen.show(a);
+                return .nothing;
+            },
+            .hero => {
+                const h = b.hero orelse return .nothing;
+                a.flash(library.heroRect(a.screen.width));
+                return b.openBook(&b.lib.entries[h]);
+            },
+            .hero_dots => return b.actOn(&b.lib.entries[b.hero orelse return .nothing]),
+            .book => |i| {
+                const entry = &b.lib.entries[b.lib.visible[i]];
+                if (entry.isLocal()) {
+                    a.flash(library.bookRect(i, b.index));
+                    return b.openBook(entry);
+                }
+                b.notice = if (entry.availability == .downloading)
+                    "Still downloading. It will open once it's finished."
+                else
+                    "Not on this Kindle yet. Use the three dots to download it.";
+                return .page;
+            },
+        }
+    }
+
+    /// Holding a book brings up its actions.
+    fn onHold(b: *Browser, x: i32, y: i32) !Next {
+        return switch (loggedHit(x, y, b.index, b.count, b.query.words().len > 0)) {
+            .book => |i| b.actOn(&b.lib.entries[b.lib.visible[i]]),
+            .hero, .hero_dots => b.actOn(&b.lib.entries[b.hero orelse return .nothing]),
+            else => .nothing,
+        };
+    }
+
+    /// A page of books on (1) or back (-1), if there is one.
+    fn turn(b: *Browser, direction: i32) Next {
+        if (direction > 0 and b.index + 1 < library.pageCount(b.count)) {
+            b.index += 1;
+            return .page;
+        }
+        if (direction < 0 and b.index > 0) {
+            b.index -= 1;
+            return .page;
+        }
+        return .nothing;
+    }
+
+    fn searchBooks(b: *Browser) !Next {
+        switch (typeSearch(b.a, &b.lib, &b.query)) {
+            .cancel => {
+                try b.a.present(b.buf, .screen); // What was there before the sheet
+                return .nothing;
+            },
+            .search => {
+                b.index = 0;
+                return .page;
+            },
+            .open => |e| {
+                b.query = .{};
+                b.index = 0;
+                return b.openBook(&b.lib.entries[e]);
+            },
+        }
+    }
+
+    /// Reads a book, and on finishing one of a series offers the next, maybe going
+    /// straight on with it.
+    fn openBook(b: *Browser, first: *catalog.Entry) !Next {
+        const a = b.a;
+        a.input.tick_us = 0;
+        var entry = first;
+        while (true) {
+            const was_read = entry.isRead();
+            const outcome = reader.readBook(a, entry) catch |err| blk: {
+                std.debug.print("could not open book: {s}\n", .{@errorName(err)});
+                b.notice = "This book can't be opened here.";
+                break :blk reader.Outcome.library;
+            };
+            if (outcome == .quit) return .leave;
+            a.slots[0].page = -1;
+            b.status_until = nowUs() + status_watch_us; // Wi-Fi coming back, and the like
+            if (was_read or !entry.isRead()) break;
+            const next = &b.lib.entries[catalog.nextInSeries(b.lib.entries, entry) orelse break];
+            if (!try upNext(a, next, b.buf)) break;
+            entry = next;
+        }
+        return .everything;
+    }
+
+    /// A book's actions sheet, and the library read again if they changed it.
+    fn actOn(b: *Browser, entry: *catalog.Entry) !Next {
+        switch (try bookSheet(b.a, entry, b.lib.entries, b.buf)) {
+            .none => return .nothing,
+            .redraw => return .everything,
+            .reload => _ = b.reload(.as_is),
+            .other => _ = b.reload(.export_first),
+            .downloading => {
+                // Only a download finishes later, so only it is watched
+                b.watch_until = nowUs() + download_watch_us;
+                b.a.downloads_until = b.watch_until; // Wi-Fi stays on for it while reading
+                _ = b.reload(.export_first);
+            },
+        }
+        return .everything;
+    }
+
+    fn onTick(b: *Browser) !Next {
+        const now = nowUs();
+        // The status: the whole screen while it's settling after a book; else just the
+        // strip, once a minute or at once when a charger comes or goes
+        const charger = b.a.input.charger_changed;
+        b.a.input.charger_changed = false;
+        if (now < b.status_until) {
+            try b.refreshStatus(.screen);
+        } else if (charger or now >= b.watch_until) {
+            try b.refreshStatus(.strip);
+        }
+        // A download being watched: the library again, in case it's finished. When the
+        // watch runs out, one last look, for one that finished since the last
+        if (b.watch_until == 0) return .nothing;
+        if (now >= b.watch_until) b.watch_until = 0;
+        return b.reloadIfDownloaded();
+    }
+
+    /// The library read again, kept only if a book has arrived: a swap without a
+    /// redraw would leave the screen showing books by places that moved.
+    fn reloadIfDownloaded(b: *Browser) Next {
+        catalog_db.exportLibrary();
+        var fresh = loadLibrary(b.a) catch return .nothing;
+        if (fresh.localCount() == b.lib.localCount()) {
+            fresh.deinit();
+            return .nothing;
+        }
+        b.lib.deinit();
+        b.lib = fresh;
+        b.watch_until = 0;
+        return .everything;
+    }
+
+    fn onLock(b: *Browser) !Next {
+        const a = b.a;
+        const hero: ?*const catalog.Entry = if (b.hero) |h| &b.lib.entries[h] else null;
+        // Not put back on waking: it's all drawn again, fresh
+        if (lock.lockScreen(a, hero, .{ .restore = false }) == .leaving) return .nothing;
+        a.noteBattery(); // What sleeping (or charging) did
+        a.quick = lipc.read(a.quick); // The clock and battery may be hours old
+        // A download may have finished while the Kindle slept
+        for (b.lib.entries) |e| {
+            if (e.availability == .downloading) {
+                _ = b.reload(.export_first);
+                break;
+            }
+        }
+        return .everything;
+    }
+};

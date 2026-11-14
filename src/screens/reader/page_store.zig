@@ -5,6 +5,7 @@
 //! and replaced. The code part is a fingerprint of the source files themselves, taken
 //! at compile time, so an update that changes layout can never serve stale pages.
 const std = @import("std");
+const assert = std.debug.assert;
 const settings_model = @import("../../model/settings.zig");
 const book_model = @import("../../model/book.zig");
 const file = @import("../../sys/file.zig");
@@ -39,23 +40,25 @@ const code_fingerprint: u64 = blk: {
 };
 
 /// Everything the breaks depend on, besides the code.
-pub fn key(a: *const app.App, book_bytes: usize) u64 {
+pub fn key(a: *const app.App, book_bytes: u64) u64 {
+    assert(a.screen.width > 0);
+    assert(a.screen.height > 0);
     var h = std.hash.Wyhash.init(code_fingerprint);
     const s = a.settings;
     const l = a.layout;
     const parts = [_]u64{
-        book_bytes,                       a.screen.width,                      a.screen.height,
-        @bitCast(@as(i64, l.margin_top)), @bitCast(@as(i64, l.margin_bottom)), @as(u32, @bitCast(l.indent)),
+        book_bytes,
+        a.screen.width,
+        a.screen.height,
+        @bitCast(@as(i64, l.margin_top)),
+        @bitCast(@as(i64, l.margin_bottom)),
+        @as(u32, @bitCast(l.indent)),
     };
     h.update(std.mem.sliceAsBytes(&parts));
     // Every setting that moves breaks, so a new one can't be left out by mistake
     inline for (@typeInfo(settings_model.Settings).@"struct".field_names) |name| {
         if (comptime settings_model.moves_breaks(name)) {
-            const value: u64 = switch (@TypeOf(@field(s, name))) {
-                bool => @intFromBool(@field(s, name)),
-                usize => @field(s, name),
-                else => @compileError("page_store.key: say how to key the setting " ++ name),
-            };
+            const value: u64 = key_setting(name, @field(s, name));
             h.update(std.mem.asBytes(&value));
         }
     }
@@ -65,63 +68,130 @@ pub fn key(a: *const app.App, book_bytes: usize) u64 {
     return h.final();
 }
 
+/// One setting's part of the key: a switch as 0 or 1, a choice by its number.
+fn key_setting(comptime name: []const u8, value: anytype) u64 {
+    return switch (@typeInfo(@TypeOf(value))) {
+        .bool => @intFromBool(value),
+        .int => |int| blk: {
+            if (int.signedness != .unsigned or int.bits > 64) {
+                @compileError("page_store.key: say how to key the setting " ++ name);
+            }
+            break :blk value;
+        },
+        else => @compileError("page_store.key: say how to key the setting " ++ name),
+    };
+}
+
 /// "<dir>/pages-<book>", beside the book's state file "<dir>/state-<book>".
 pub fn path_for(buf: []u8, state_path: []const u8) ![:0]u8 {
-    return state.sibling(buf, state_path, "pages");
+    assert(state_path.len > 0);
+    const path = try state.sibling(buf, state_path, "pages");
+    assert(path.len < buf.len); // Room for the sentinel too
+    return path;
 }
 
+/// The magic, the key, then the page count; each page's break follows in 8 bytes.
 const header_len = magic.len + 8 + 4;
+const page_len = 8;
+
+comptime {
+    // The header's offsets below are written out by hand
+    assert(magic.len == 4);
+    assert(header_len == 16);
+    assert(page_len == 2 * @sizeOf(u32));
+}
 
 /// The saved breaks, or null when there are none for this key.
-pub fn load(alloc: std.mem.Allocator, path: [*:0]const u8, want: u64, paragraphs: usize) ?[]const book_model.Pos {
+pub fn load(
+    alloc: std.mem.Allocator,
+    path: [*:0]const u8,
+    want: u64,
+    paragraph_count: u32,
+) ?[]const book_model.Pos {
+    assert(std.mem.len(path) > 0);
     const data = file.map(path) catch return null;
     defer file.unmap(data);
-    return decode(alloc, data, want, paragraphs);
+    const pages = decode(alloc, data, want, paragraph_count) orelse return null;
+    assert(pages.len > 0);
+    return pages;
 }
 
-pub fn save(alloc: std.mem.Allocator, path: [*:0]const u8, k: u64, pages: []const book_model.Pos) void {
+pub fn save(
+    alloc: std.mem.Allocator,
+    path: [*:0]const u8,
+    k: u64,
+    pages: []const book_model.Pos,
+) void {
+    assert(std.mem.len(path) > 0);
+    assert(pages.len > 0);
+    // The breaks move forward as they're saved, as `decode` insists when they're read back
+    for (pages[1..], pages[0 .. pages.len - 1]) |page, previous| {
+        assert(is_before(previous, page));
+    }
+    // Not saving only costs laying the book out again next time
     const bytes = encode(alloc, k, pages) catch return;
     defer alloc.free(bytes);
     state.write_small(path, bytes);
 }
 
+/// Whether `first` comes strictly before `second` in the book.
+fn is_before(first: book_model.Pos, second: book_model.Pos) bool {
+    if (first.para != second.para) return first.para < second.para;
+    return first.byte < second.byte;
+}
+
 pub fn encode(alloc: std.mem.Allocator, k: u64, pages: []const book_model.Pos) ![]u8 {
-    const out = try alloc.alloc(u8, header_len + pages.len * 8);
+    const count: u32 = @intCast(pages.len);
+    const out = try alloc.alloc(u8, header_len + pages.len * page_len);
     @memcpy(out[0..magic.len], magic);
     std.mem.writeInt(u64, out[4..12], k, .little);
-    std.mem.writeInt(u32, out[12..16], @intCast(pages.len), .little);
+    std.mem.writeInt(u32, out[12..16], count, .little);
     for (pages, 0..) |p, i| {
-        const at = header_len + i * 8;
+        const at = header_len + i * page_len;
         std.mem.writeInt(u32, out[at..][0..4], @intCast(p.para), .little);
         std.mem.writeInt(u32, out[at + 4 ..][0..4], @intCast(p.byte), .little);
     }
+    assert(out.len == header_len + @as(u64, count) * page_len);
+    assert(std.mem.readInt(u32, out[12..16], .little) == pages.len);
     return out;
 }
 
 /// Reads saved breaks. The file comes from disk, so anything off means "not saved",
 /// including a break past the book's last paragraph.
-pub fn decode(alloc: std.mem.Allocator, data: []const u8, want: u64, paragraphs: usize) ?[]const book_model.Pos {
-    if (data.len < header_len or !std.mem.eql(u8, data[0..magic.len], magic)) return null;
+pub fn decode(
+    alloc: std.mem.Allocator,
+    data: []const u8,
+    want: u64,
+    paragraph_count: u32,
+) ?[]const book_model.Pos {
+    if (data.len < header_len) return null;
+    if (!std.mem.eql(u8, data[0..magic.len], magic)) return null;
     if (std.mem.readInt(u64, data[4..12], .little) != want) return null;
     const count = std.mem.readInt(u32, data[12..16], .little);
-    if (count == 0 or data.len != header_len + @as(usize, count) * 8) return null;
+    if (count == 0) return null;
+    if (data.len != header_len + @as(u64, count) * page_len) return null;
     const pages = alloc.alloc(book_model.Pos, count) catch return null;
     for (pages, 0..) |*p, i| {
-        const at = header_len + i * 8;
-        p.* = .{ .para = std.mem.readInt(u32, data[at..][0..4], .little), .byte = std.mem.readInt(u32, data[at + 4 ..][0..4], .little) };
-        if (p.para >= paragraphs) {
+        const at = header_len + i * page_len;
+        p.* = .{
+            .para = std.mem.readInt(u32, data[at..][0..4], .little),
+            .byte = std.mem.readInt(u32, data[at + 4 ..][0..4], .little),
+        };
+        if (p.para >= paragraph_count) {
             alloc.free(pages);
             return null;
         }
         // Breaks only move forward; anything else is a damaged file.
         if (i > 0) {
-            const prev = pages[i - 1];
-            if (p.para < prev.para or (p.para == prev.para and p.byte <= prev.byte)) {
+            if (!is_before(pages[i - 1], p.*)) {
                 alloc.free(pages);
                 return null;
             }
         }
     }
+    // What the checks above let through: a page on every break, all inside the book
+    assert(pages.len == count);
+    assert(pages[pages.len - 1].para < paragraph_count);
     return pages;
 }
 
@@ -134,7 +204,8 @@ test "saved breaks come back only for the same key" {
     defer alloc.free(back);
     try std.testing.expectEqualSlices(book_model.Pos, &pages, back);
     try std.testing.expect(decode(alloc, bytes, 43, 10) == null);
-    try std.testing.expect(decode(alloc, bytes, 42, 9) == null); // The book has fewer paragraphs now
+    // The book has fewer paragraphs now
+    try std.testing.expect(decode(alloc, bytes, 42, 9) == null);
     try std.testing.expect(decode(alloc, bytes[0 .. bytes.len - 1], 42, 10) == null);
 }
 
@@ -149,5 +220,6 @@ test "damaged files read as not saved" {
 
 test "pages files sit beside state files" {
     var buf: [128]u8 = undefined;
-    try std.testing.expectEqualStrings("/d/pages-0bee89b07a248e27", try path_for(&buf, "/d/state-0bee89b07a248e27"));
+    const path = try path_for(&buf, "/d/state-0bee89b07a248e27");
+    try std.testing.expectEqualStrings("/d/pages-0bee89b07a248e27", path);
 }

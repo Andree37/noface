@@ -42,7 +42,7 @@ pub const Session = struct {
     marks: std.ArrayList(book_model.Mark) = .empty, // What layout shades, rebuilt from highlights
     pages_path: [:0]const u8 = "", // Where this book's page breaks are saved
     notes_path: [:0]const u8 = "", // Where highlights and bookmarks are kept, for books Amazon doesn't sync
-    book_bytes: usize = 0, // The book file's size, part of the saved breaks' key
+    book_bytes: u64 = 0, // The book file's size, part of the saved breaks' key
     // A first open still being laid out: pages count from the reader's place until done
     progress: ?*paginate.Progressive = null,
     query: Query = .{}, // The last search, kept while the book is open
@@ -411,7 +411,7 @@ pub fn relayout(a: *app.App, alloc: std.mem.Allocator, s: *Session) !void {
     a.forget_pages();
     const t0 = now_us();
     const pages_key = page_store.key(a, s.book_bytes);
-    const stored = page_store.load(alloc, s.pages_path, pages_key, s.paragraphs.len);
+    const stored = page_store.load(alloc, s.pages_path, pages_key, @intCast(s.paragraphs.len));
     s.progress = null; // A layout still running was for the old settings
     if (stored) |pages| {
         s.pages = pages;

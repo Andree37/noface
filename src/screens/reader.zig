@@ -126,7 +126,8 @@ pub fn read_book(a: *app.App, entry: *catalog.Entry) !Outcome {
     var pages_buf: [320]u8 = undefined;
     const pages_path = try alloc.dupeSentinel(u8, try page_store.path_for(&pages_buf, state_path), 0);
     const pages_key = page_store.key(a, data.len);
-    const stored_pages = page_store.load(alloc, pages_path, pages_key, book.paragraphs.len);
+    const paragraph_count: u32 = @intCast(book.paragraphs.len);
+    const stored_pages = page_store.load(alloc, pages_path, pages_key, paragraph_count);
     const saved = state.load(state_path);
     const from_kindle = state.prefer_kindle(saved, entry.kindle_last);
     // Without saved breaks, lay out a little from the reader's place and show it at

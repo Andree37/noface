@@ -18,7 +18,9 @@ pub fn run(
     chapters: []const book_model.Chapter,
 ) !?usize {
     assert(s.current < s.pages.len);
-    const reading = goto.current(chapters, s.pages[s.current].para);
+    assert(chapters.len <= std.math.maxInt(u32));
+    const current = goto.current(chapters, s.pages[s.current].para);
+    const reading: ?u32 = if (current) |r| @intCast(r) else null;
     if (reading) |r| assert(r < chapters.len);
     var go = GoTo{
         .a = a,
@@ -41,7 +43,7 @@ const GoTo = struct {
     background: []const u8, // The page under it
     contents: []const goto.Row,
     notes: []const goto.Row,
-    reading: ?usize, // The chapter being read, in the contents
+    reading: ?u32, // The chapter being read, in the contents
     tab: goto.Tab = .contents,
     pages: goto.Pages,
 
@@ -58,9 +60,17 @@ const GoTo = struct {
         // The toolbar stays drawn above, from what's on screen now
         const toolbar_bytes = goto.top * a.screen.stride;
         @memcpy(a.overlay[0..toolbar_bytes], a.screen.pixels[0..toolbar_bytes]);
-        const reading = if (go.tab == .contents) go.reading else null;
         const page = a.page(a.overlay);
-        try goto.render(a.ui, page, go.tab, go.list(), reading, go.pages.page);
+        // The chapter being read is marked in the contents only
+        const marked = go.tab == .contents and go.reading != null;
+        try goto.render(
+            a.ui,
+            page,
+            go.tab,
+            go.list(),
+            if (marked) go.reading.? else null,
+            go.pages.page,
+        );
         @memcpy(a.screen.pixels, a.overlay);
         try a.show_band(goto.top, a.screen.height - goto.top);
     }

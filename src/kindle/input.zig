@@ -3,6 +3,7 @@
 //! input/gestures.zig, what's heard besides touches in input/watchers.zig, and the
 //! kernel's event format in input/evdev.zig.
 const std = @import("std");
+const assert = std.debug.assert;
 const linux = @import("../sys/calls.zig");
 const os = @import("../sys/os.zig");
 const devices = @import("devices.zig");
@@ -20,16 +21,28 @@ pub const power_pressed = watchers.power_pressed;
 pub const turn_direction = gestures.turn_direction;
 const InputEvent = evdev.InputEvent;
 
+/// The longest a wait for input lasts before looking again, so ticks and a stop
+/// request are seen within a second.
+const wait_ms_max = 1000;
+/// How often a press is looked at while it may yet become a hold.
+const hold_poll_ms = 30;
+
+/// Set by a signal; the loop reads it, as nothing is done inside a signal handler.
 var stop_requested = std.atomic.Value(bool).init(false);
 
-fn on_signal(_: linux.SIG) callconv(.c) void {
+fn on_signal(signal: linux.SIG) callconv(.c) void {
+    assert(signal == .TERM or signal == .INT or signal == .HUP);
     stop_requested.store(true, .release);
 }
 
 pub fn install_signals() void {
-    var act = std.mem.zeroes(linux.Sigaction);
-    act.handler = .{ .handler = on_signal };
-    for ([_]linux.SIG{ .TERM, .INT, .HUP }) |sig| _ = linux.sigaction(sig, &act, null);
+    var action = std.mem.zeroes(linux.Sigaction);
+    action.handler = .{ .handler = on_signal };
+    for ([_]linux.SIG{ .TERM, .INT, .HUP }) |signal| {
+        const rc = linux.sigaction(signal, &action, null);
+        // Only KILL and STOP can't be caught, and a handler of ours is a valid address
+        assert(!failed(rc));
+    }
 }
 
 /// A tap: where, and when the finger touched (microseconds on the monotonic clock).
@@ -50,6 +63,16 @@ pub const Action = union(enum) {
     stop,
 };
 
+comptime {
+    // The simulator writes whole Actions to a pipe: one that size is written at once,
+    // never split, as long as it's within PIPE_BUF (at least 512 bytes on any system)
+    assert(@sizeOf(Action) <= 512);
+    assert(wait_ms_max >= 1);
+    // A hold is noticed within a small part of the time it takes
+    assert(hold_poll_ms * 10 <= touch_zones.hold_ms);
+    assert(hold_poll_ms < wait_ms_max);
+}
+
 /// What a scenario test does, in order: an action as the reader's finger or the power
 /// button would give it, or a wait on the virtual clock (os.fake_us).
 pub const Step = union(enum) { act: Action, wait_ms: u64 };
@@ -58,51 +81,67 @@ pub const Step = union(enum) { act: Action, wait_ms: u64 };
 /// times they'd come; once the steps run out the app is told to stop.
 pub const Script = struct {
     steps: []const Step,
-    at: usize = 0,
+    at: u32 = 0,
     waiting_us: u64 = 0, // What's left of the current wait
     /// Called once, when the steps run out and before noface is told to stop: the
     /// screen as the script left it, for a test to keep.
     at_end: ?struct { ctx: *anyopaque, call: *const fn (ctx: *anyopaque) void } = null,
     ended: bool = false,
 
-    fn next(sc: *Script, in: *Input) Action {
-        while (true) {
-            if (sc.waiting_us > 0) {
-                const now = now_us();
-                const tick_at = if (in.tick_us != 0) in.last_tick + in.tick_us else std.math.maxInt(u64);
-                if (tick_at <= now + sc.waiting_us) {
-                    const step = tick_at -| now;
-                    os.fake_us = now + step;
-                    sc.waiting_us -= step;
-                    in.last_tick = now_us();
-                    return .tick;
-                }
-                os.fake_us = now + sc.waiting_us;
-                sc.waiting_us = 0;
+    fn next(script: *Script, in: *Input) Action {
+        assert(script.at <= script.steps.len);
+        // Each pass that doesn't return takes a step, and one with none left returns
+        const passes_max = script.steps.len - script.at + 1;
+        for (0..passes_max) |_| {
+            if (script.waiting_us > 0) {
+                if (script.next_tick(in)) |tick| return tick;
             }
-            if (sc.at >= sc.steps.len) {
-                if (!sc.ended) if (sc.at_end) |e| e.call(e.ctx);
-                sc.ended = true;
+            assert(script.waiting_us == 0);
+            if (script.at >= script.steps.len) {
+                if (!script.ended) {
+                    if (script.at_end) |at_end| at_end.call(at_end.ctx);
+                }
+                script.ended = true;
                 return .stop;
             }
-            const step = sc.steps[sc.at];
-            sc.at += 1;
+            const step = script.steps[script.at];
+            script.at += 1;
             switch (step) {
-                .act => |a| {
+                .act => |action| {
                     os.fake_us = now_us() + 1000; // A touch takes a moment
                     // Through the same grip zones as a finger, so a test can't tap what
                     // a reader couldn't
-                    switch (a) {
-                        .tap => |t| if (in.ignores(t.x, t.y)) continue,
-                        .hold => |h| if (in.ignores(h.x, h.y)) continue,
+                    switch (action) {
+                        .tap => |tap| if (in.ignores(tap.x, tap.y)) continue,
+                        .hold => |hold| if (in.ignores(hold.x, hold.y)) continue,
                         else => {},
                     }
                     in.last_input = now_us();
-                    return a;
+                    return action;
                 },
-                .wait_ms => |ms| sc.waiting_us = ms * 1000,
+                .wait_ms => |ms| script.waiting_us = ms * 1000,
             }
         }
+        unreachable; // See `passes_max`: the last pass always returns
+    }
+
+    /// Moves the virtual clock on through the current wait: to the next tick, if one
+    /// falls inside it, or else to its end.
+    fn next_tick(script: *Script, in: *Input) ?Action {
+        assert(script.waiting_us > 0);
+        const now = now_us();
+        const tick_at = if (in.tick_us != 0) in.last_tick + in.tick_us else std.math.maxInt(u64);
+        if (tick_at <= now + script.waiting_us) {
+            const step = tick_at -| now;
+            assert(step <= script.waiting_us);
+            os.fake_us = now + step;
+            script.waiting_us -= step;
+            in.last_tick = now_us();
+            return .tick;
+        }
+        os.fake_us = now + script.waiting_us;
+        script.waiting_us = 0;
+        return null;
     }
 };
 
@@ -125,25 +164,25 @@ pub const Input = struct {
     x_max: i32,
     y_max: i32,
     events: [64]InputEvent = undefined,
-    event_count: usize = 0,
-    event_next: usize = 0,
-    slot: usize = 0,
-    xs: [2]i32 = .{ 0, 0 },
-    ys: [2]i32 = .{ 0, 0 },
-    pending: ?usize = null,
+    event_count: u32 = 0,
+    event_next: u32 = 0,
+    slot: u32 = 0,
+    xs: [slots_count]i32 = .{ 0, 0 },
+    ys: [slots_count]i32 = .{ 0, 0 },
+    pending: ?u32 = null,
     down_us: u64 = 0,
-    top_slot: ?usize = null,
+    top_slot: ?u32 = null,
     top_x: i32 = 0,
     top_y: i32 = 0,
     top_us: u64 = 0,
     top_moved: bool = false,
     deferred: bool = false, // On book pages: taps wait for lift, so a press can become a hold
-    last_touched: usize = 0,
+    last_touched: u32 = 0,
     grips: bool = true, // Off while controls sit where a thumb usually rests
     edge_zones: bool = true, // Off while handles can sit at the screen edges
     tick_us: u64 = 0, // When set, `next` returns .tick this often
     last_tick: u64 = 0,
-    drag_slot: ?usize = null,
+    drag_slot: ?u32 = null,
     drag_y: i32 = 0,
     last_input: u64 = 0,
     stashed: ?Action = null,
@@ -159,6 +198,9 @@ pub const Input = struct {
     /// A control inside the grip zones (the reader's Back button): touches there count.
     grip_exempt: ?Zone = null,
 
+    /// The touch slots the panel reports, one per finger.
+    pub const slots_count = 2;
+
     /// How touches are taken: whether a resting thumb along the edges is ignored
     /// (`grips`), whether taps wait for the finger to lift so a press can become a hold
     /// (`deferred`), and whether the top edge is held back for the toolbar (`edge_zones`).
@@ -171,7 +213,32 @@ pub const Input = struct {
         /// bottom edge where its buttons sit, and taps act as they land (nothing on it
         /// becomes a hold, and a tap kept for the lift could reach whatever replaces it).
         pub const sheet = Modes{ .grips = false, .deferred = false, .edge_zones = true };
+
+        comptime {
+            assert(!sheet.grips);
+            assert(!sheet.deferred);
+        }
     };
+
+    /// Everything about taking input that a screen sets for itself while it's open.
+    pub const Scope = struct { modes: Modes, tick_us: u64, grip_exempt: ?Zone };
+
+    /// What holds of the input's state between any two calls: the events read are
+    /// within the buffer, every finger is one of the panel's slots, and the panel's
+    /// range is never empty (it's divided by).
+    pub fn invariants(in: *const Input) void {
+        assert(in.event_count <= in.events.len);
+        assert(in.event_next <= in.event_count);
+        assert(in.slot < slots_count);
+        assert(in.last_touched < slots_count);
+        if (in.pending) |slot| assert(slot < slots_count);
+        if (in.top_slot) |slot| assert(slot < slots_count);
+        if (in.drag_slot) |slot| assert(slot < slots_count);
+        assert(in.x_max >= 1);
+        assert(in.y_max >= 1);
+        // Actions come from one place: the panel, a test's script or the simulator
+        if (in.script != null) assert(in.remote < 0);
+    }
 
     pub fn modes(in: *const Input) Modes {
         return .{ .grips = in.grips, .deferred = in.deferred, .edge_zones = in.edge_zones };
@@ -182,10 +249,8 @@ pub const Input = struct {
         in.grips = m.grips;
         in.deferred = m.deferred;
         in.edge_zones = m.edge_zones;
+        assert(std.meta.eql(in.modes(), m));
     }
-
-    /// Everything about taking input that a screen sets for itself while it's open.
-    pub const Scope = struct { modes: Modes, tick_us: u64, grip_exempt: ?Zone };
 
     /// For a screen opening: takes touches as `m` says, ticks every `tick_us` (0:
     /// never) counting from now, with no control exempt from the grip zones. Returns
@@ -194,7 +259,11 @@ pub const Input = struct {
     ///     const was = in.enter(modes, tick_us);
     ///     defer in.leave(was);
     pub fn enter(in: *Input, m: Modes, tick_us: u64) Scope {
-        const was = Scope{ .modes = in.modes(), .tick_us = in.tick_us, .grip_exempt = in.grip_exempt };
+        const was = Scope{
+            .modes = in.modes(),
+            .tick_us = in.tick_us,
+            .grip_exempt = in.grip_exempt,
+        };
         in.take(m);
         in.tick_us = tick_us;
         in.last_tick = now_us();
@@ -239,10 +308,12 @@ pub const Input = struct {
     pub fn next_tap(in: *Input) ?Tap {
         while (in.next_for()) |action| {
             switch (action) {
-                .tap => |t| return t,
+                .tap => |tap| return tap,
                 else => {},
             }
         }
+        // `next_for` keeps what ended it for the screen underneath
+        assert(in.stashed != null);
         return null;
     }
 
@@ -250,14 +321,20 @@ pub const Input = struct {
 
     /// The next action from the simulator's pipe, or a tick when one is due first.
     fn from_remote(in: *Input) Action {
+        assert(in.remote >= 0);
+        assert(in.script == null);
+        // Unbounded: the simulator's page sends taps whenever its viewer makes them
         while (true) {
             const now = now_us();
+            assert(in.last_tick <= now);
             if (in.tick_us != 0 and now - in.last_tick >= in.tick_us) {
                 in.last_tick = now;
                 return .tick;
             }
-            const wait: i32 = if (in.tick_us == 0) 1000 else @intCast(@max(1, @min(1000, (in.last_tick + in.tick_us -| now) / 1000)));
-            var fds = [_]linux.pollfd{.{ .fd = in.remote, .events = linux.POLL.IN, .revents = 0 }};
+            const wait = in.wait_ms_for_tick(now);
+            var fds = [_]linux.pollfd{
+                .{ .fd = in.remote, .events = linux.POLL.IN, .revents = 0 },
+            };
             const woke = linux.poll(&fds, 1, wait);
             if (stop_requested.load(.acquire)) return .stop;
             if (failed(woke) or woke == 0) continue;
@@ -270,6 +347,17 @@ pub const Input = struct {
         }
     }
 
+    /// How long to wait for input with a tick due: no longer than until the tick, so a
+    /// short one (a double tap's window) isn't stretched, and no longer than a second.
+    fn wait_ms_for_tick(in: *const Input, now: u64) i32 {
+        if (in.tick_us == 0) return wait_ms_max;
+        const until_tick_ms = (in.last_tick + in.tick_us -| now) / 1000;
+        const wait_ms_tick: i32 = @intCast(@max(1, @min(wait_ms_max, until_tick_ms)));
+        assert(wait_ms_tick >= 1);
+        assert(wait_ms_tick <= wait_ms_max);
+        return wait_ms_tick;
+    }
+
     const news_waiting = watchers.news_waiting;
 
     const beat = watchers.beat;
@@ -280,25 +368,37 @@ pub const Input = struct {
 
     const start_watcher = watchers.start_watcher;
 
+    /// The most reads of the panel one call takes in: each holds up to 64 events, so
+    /// this is minutes of a finger moving without a pause.
+    const panel_reads_max = 4096;
+
     /// The next action from touch events already waiting, reading more only when the
     /// panel has them ready. Null once nothing more is waiting.
     fn waiting(in: *Input) ?Action {
-        while (true) {
+        in.invariants();
+        for (0..panel_reads_max) |_| {
             while (in.event_next < in.event_count) {
-                const e = in.events[in.event_next];
+                const event = in.events[in.event_next];
                 in.event_next += 1;
-                if (in.handle(e)) |action| return action;
+                if (in.handle(event)) |action| return action;
             }
-            const n = linux.read(in.touch, @ptrCast(&in.events), @sizeOf(@TypeOf(in.events)));
+            assert(in.event_next == in.event_count);
+            const buffer_size = @sizeOf(@TypeOf(in.events));
+            const n = linux.read(in.touch, @ptrCast(&in.events), buffer_size);
             if (failed(n) or n < @sizeOf(InputEvent)) return null;
-            in.event_count = n / @sizeOf(InputEvent);
+            assert(n <= buffer_size);
+            in.event_count = @intCast(n / @sizeOf(InputEvent));
             in.event_next = 0;
             in.last_input = now_us();
         }
+        // Still more: what's read so far is handled, and the caller's poll finds the
+        // rest waiting and comes straight back
+        return null;
     }
 
     /// Follows the finger of the last tap until it lifts.
     pub fn begin_drag(in: *Input) void {
+        assert(in.last_touched < slots_count);
         in.drag_slot = in.last_touched;
     }
 
@@ -313,6 +413,8 @@ pub const Input = struct {
                 else => in.stashed = action,
             }
         }
+        // Stopped by something other than a drag, kept for the next call to `next`
+        assert(in.stashed != null);
         return latest;
     }
 
@@ -323,22 +425,26 @@ pub const Input = struct {
         while (in.stashed == null) {
             const action = in.waiting() orelse return delta;
             switch (action) {
-                .tap => |t| {
-                    if (t.y < touch_zones.top_zone) {
+                .tap => |tap| {
+                    if (tap.y < touch_zones.top_zone) {
                         in.stashed = action;
                     } else {
-                        delta += turn_direction(t.x, in.width);
+                        delta += turn_direction(tap.x, in.width);
                     }
                 },
                 else => in.stashed = action,
             }
         }
+        // Stopped by something other than a page turn, kept for the next call to `next`
+        assert(in.stashed != null);
         return delta;
     }
 
     /// The next action: a touch, the power button, the Kindle locking or waking, a USB
     /// computer, a tick of the timer, or a request to stop. Waits until there is one.
     pub fn next(in: *Input) Action {
+        in.invariants();
+        // Unbounded: the reader's event loop, which waits for as long as they read
         while (true) {
             if (in.ready()) |action| return action;
             in.keep_alive();
@@ -359,7 +465,7 @@ pub const Input = struct {
             in.stashed = null;
             return action;
         }
-        if (in.script) |sc| return sc.next(in);
+        if (in.script) |script| return script.next(in);
         if (in.remote >= 0) return in.from_remote();
         if (in.waiting()) |action| return action;
         if (in.held_long_enough()) |action| return action;
@@ -372,7 +478,9 @@ pub const Input = struct {
     /// ticks (a book laid out in idle moments) they'd otherwise go unread for seconds.
     fn tick_due(in: *Input) ?Action {
         if (in.tick_us == 0) return null;
-        if (now_us() - in.last_tick < in.tick_us) return null;
+        const now = now_us();
+        assert(in.last_tick <= now);
+        if (now - in.last_tick < in.tick_us) return null;
         if (in.news_waiting()) return null;
         in.last_tick = now_us();
         return .tick;
@@ -391,16 +499,18 @@ pub const Input = struct {
             .{ .fd = in.usb_events, .events = linux.POLL.IN, .revents = 0 },
             .{ .fd = key_fd, .events = linux.POLL.IN, .revents = 0 },
         };
+        // Woken, timed out or interrupted, the loop looks at every source alike
         _ = linux.poll(&fds, fds.len, in.wait_ms());
     }
 
     fn wait_ms(in: *const Input) i32 {
-        if (in.top_slot != null) return 30; // A press that may become a hold
-        if (in.locked and in.tick_us == 0) return if (in.power_events < 0) watchers.watcher_retry_ms else -1;
-        // No longer than until the next tick, so a short one (a double tap's window)
-        // isn't stretched to the full second
-        if (in.tick_us == 0) return 1000;
-        return @intCast(@max(1, @min(1000, (in.last_tick + in.tick_us -| now_us()) / 1000)));
+        if (in.top_slot != null) return hold_poll_ms; // A press that may become a hold
+        if (in.locked and in.tick_us == 0) {
+            return if (in.power_events < 0) watchers.watcher_retry_ms else -1;
+        }
+        const wait = in.wait_ms_for_tick(now_us());
+        assert(wait >= 1);
+        return wait;
     }
 
     const from_power_key = watchers.from_power_key;
@@ -415,9 +525,7 @@ pub const Input = struct {
 
     pub const handle = gestures.handle;
 
-    const screen_x = gestures.screen_x;
-
-    const screen_y = gestures.screen_y;
+    const screen_point = gestures.screen_point;
 
     const on_axis = gestures.on_axis;
 
@@ -430,18 +538,30 @@ pub const Input = struct {
     const touched_down = gestures.touched_down;
 };
 
+/// The device file of input device `number`, or `fallback` when none was found.
+fn open_path(buffer: []u8, number: ?u8, fallback: [:0]const u8) [:0]const u8 {
+    // Room for any u8's three digits and the closing zero, so the fallback below is
+    // only ever taken when nothing was found
+    assert(buffer.len >= "/dev/input/event".len + 3 + 1);
+    assert(fallback.len > 0);
+    const found = number orelse return fallback;
+    const format = "/dev/input/event{d}";
+    return std.fmt.bufPrintSentinel(buffer, format, .{found}, 0) catch fallback;
+}
+
 /// Opens touch and power, and takes the touchscreen from the stock UI.
 pub fn open(width: u32, height: u32) !Input {
     // Found by what they report, as Kindles number them differently; this model's
     // numbers if nothing answers
     const found = devices.find_inputs();
-    var touch_buf: [24]u8 = undefined;
-    var power_buf: [24]u8 = undefined;
-    const touch_path = if (found.touch) |n| std.fmt.bufPrintSentinel(&touch_buf, "/dev/input/event{d}", .{n}, 0) catch evdev.touch_device else evdev.touch_device;
-    const power_path = if (found.power) |n| std.fmt.bufPrintSentinel(&power_buf, "/dev/input/event{d}", .{n}, 0) catch evdev.power_device else evdev.power_device;
+    var touch_buffer: [24]u8 = undefined;
+    var power_buffer: [24]u8 = undefined;
+    const touch_path = open_path(&touch_buffer, found.touch, evdev.touch_device);
+    const power_path = open_path(&power_buffer, found.power, evdev.power_device);
     std.debug.print("input: touch {s}, power {s}\n", .{ touch_path, power_path });
     const touch = try evdev.open_input(touch_path);
     const power = try evdev.open_input(power_path);
+    assert(touch != power);
     if (failed(linux.ioctl(touch, eviocgrab, 1))) return error.GrabFailed;
     // The kernel only reports coordinates that change, so start from the current ones.
     var in = Input{
@@ -455,6 +575,7 @@ pub fn open(width: u32, height: u32) !Input {
         .ys = evdev.slot_values(touch, evdev.abs_mt_y),
         .last_input = now_us(),
     };
+    in.invariants();
     in.start_watcher();
     in.start_usb_watcher();
     return in;
@@ -462,9 +583,15 @@ pub fn open(width: u32, height: u32) !Input {
 
 /// Gives the touchscreen back to the stock UI.
 pub fn release(in: *const Input) void {
+    // Only an Input from `open` has devices to give back: not a test's or the simulator's
+    assert(in.touch >= 0);
+    assert(in.script == null);
+    assert(in.remote < 0);
+    // On the way out: if the grab won't let go, closing the device does it anyway
     _ = linux.ioctl(in.touch, eviocgrab, 0);
     for ([_]i32{ in.watcher_pid, in.usb_watcher_pid }) |pid| {
         if (pid <= 0) continue;
+        // A watcher already gone needs neither: both are only to leave no child behind
         _ = linux.kill(pid, linux.SIG.TERM);
         var status: i32 = 0;
         _ = linux.waitpid(pid, &status, 0);

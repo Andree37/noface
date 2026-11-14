@@ -1,5 +1,6 @@
 //! Touch and power input: raw events in, taps, holds, drags and power changes out.
 const std = @import("std");
+const paths = @import("paths.zig");
 const state = @import("../sys/state.zig");
 const linux = @import("../sys/calls.zig");
 const os = @import("../sys/os.zig");
@@ -10,7 +11,7 @@ const touch_zones = @import("touch.zig");
 const failed = os.failed;
 const nowUs = os.nowUs;
 const heartbeat_every_us = 30 * 1000 * 1000;
-const heartbeat_path = "/tmp/noface-alive"; // In RAM: device/noface.sh's watchdog reads it
+const heartbeat_path = paths.heartbeat; // In RAM: device/noface.sh's watchdog reads it
 const watcher_retry_ms = 5000;
 const activity_every_us = 60 * 1000 * 1000;
 const activity_fresh_us = 5 * 1000 * 1000;

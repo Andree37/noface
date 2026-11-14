@@ -128,6 +128,8 @@ pub fn build(b: *std.Build) void {
         }),
     });
     addFontAndImageCode(b, tests.root_module); // So text measuring can be tested with a real font
+    // So src/kindle/paths.zig can check the shell scripts name the same places
+    tests.root_module.addAnonymousImport("data_sh", .{ .root_source_file = b.path("device/data.sh") });
     test_step.dependOn(&b.addRunArtifact(tests).step);
 }
 

@@ -3,6 +3,7 @@
 //! was set, and starts nothing. With it the self-test can run on the reader's own
 //! Kindle and change nothing on it, and a test can check what noface asked for.
 const std = @import("std");
+const paths = @import("kindle/paths.zig");
 const process = @import("sys/process.zig");
 
 const Prop = struct { key: []const u8, value: []const u8 };
@@ -134,7 +135,7 @@ test "the fake Kindle answers and remembers lipc" {
     _ = answerFor(&k, &.{ "/usr/bin/lipc-set-prop", "com.lab126.cmd", "wirelessEnable", "0" }, &out);
     try std.testing.expect(k.wasSet("com.lab126.cmd wirelessEnable 0"));
     try std.testing.expectEqualStrings("0", k.get("com.lab126.cmd wirelessEnable"));
-    _ = answerFor(&k, &.{ "/bin/sh", "/mnt/us/noface/export.sh" }, &out);
+    _ = answerFor(&k, &.{ "/bin/sh", paths.export_script }, &out);
     try std.testing.expect(k.didRun("sh"));
 }
 

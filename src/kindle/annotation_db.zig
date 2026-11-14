@@ -1,5 +1,6 @@
 //! The Kindle's annotation database: reading a book's records and queuing changes for sync.
 const std = @import("std");
+const paths = @import("paths.zig");
 const linux = @import("../sys/calls.zig");
 const os = @import("../sys/os.zig");
 const failed = os.failed;
@@ -9,7 +10,7 @@ const safe = @import("safe.zig");
 
 /// While this file exists, annotation writes are skipped. Used by device tests.
 pub fn dryRun() bool {
-    const rc = linux.open("/tmp/noface-dry-run", .{ .ACCMODE = .RDONLY }, 0);
+    const rc = linux.open(paths.dry_run, .{ .ACCMODE = .RDONLY }, 0);
     if (failed(rc)) return false;
     _ = linux.close(@intCast(rc));
     return true;
@@ -41,7 +42,7 @@ pub fn completeLines(output: []const u8, filled: bool) []const u8 {
 
 /// Runs a SQL statement against the annotation database.
 pub fn runAnnotationSql(sql: []const u8) bool {
-    const path = "/tmp/noface-annotation.sql";
+    const path = paths.annotation_sql;
     const rc = linux.open(path, .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, 0o600);
     if (failed(rc)) return false;
     const fd: i32 = @intCast(rc);

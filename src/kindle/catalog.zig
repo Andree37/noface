@@ -1,6 +1,7 @@
 //! The Kindle's book catalog: exported by device/export.sh into library.tsv, and read
 //! back into the library model.
 const std = @import("std");
+const paths = @import("paths.zig");
 const library = @import("../model/catalog.zig");
 const process = @import("../sys/process.zig");
 
@@ -14,7 +15,7 @@ pub fn cleanTitle(raw: []const u8) []const u8 {
 
 /// Rebuilds library.tsv from the catalog.
 pub fn exportLibrary() void {
-    const argv = [_:null]?[*:0]const u8{ "/bin/sh", "/mnt/us/noface/export.sh" };
+    const argv = [_:null]?[*:0]const u8{ "/bin/sh", paths.export_script };
     var out: [16]u8 = undefined;
     _ = process.run(&argv, &out);
 }

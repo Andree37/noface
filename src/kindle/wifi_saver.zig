@@ -12,12 +12,24 @@ const std = @import("std");
 const lipc = @import("lipc.zig");
 const state = @import("../sys/state.zig");
 const linux = @import("../sys/calls.zig");
+const paths = @import("paths.zig");
 
 /// How long into a book before the radio goes off: a quick look in doesn't toggle it.
 pub const after_us: u64 = 2 * 60 * 1000 * 1000;
 
-/// In the data folder; the scenario tests point it at their own.
-pub var marker: [*:0]const u8 = "/mnt/us/noface-data/wifi-paused";
+/// The note, in the data folder noface was started with (see `useDataDir`).
+var marker: [*:0]const u8 = paths.data_dir ++ "/" ++ paths.data.wifi_paused;
+var marker_buf: [256]u8 = undefined;
+
+/// Keeps the note in `dir`: the data folder noface was started with, or a test's own.
+pub fn useDataDir(dir: []const u8) void {
+    marker = std.fmt.bufPrintSentinel(&marker_buf, "{s}/" ++ paths.data.wifi_paused, .{dir}, 0) catch return;
+}
+
+/// Where the note is kept now.
+pub fn notePath() [*:0]const u8 {
+    return marker;
+}
 
 pub const Outcome = enum {
     paused, // Off now

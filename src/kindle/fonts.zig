@@ -2,13 +2,14 @@
 //! reader's in the fonts folder on the Kindle's drive (the one the Kindle itself reads
 //! sideloaded fonts from). Noface's families map onto these by index.
 const std = @import("std");
+const paths = @import("paths.zig");
 const settings = @import("../model/settings.zig");
 const file = @import("../sys/file.zig");
 const process = @import("../sys/process.zig");
 const linux = @import("../sys/calls.zig");
 
 const font_dir = "/usr/java/lib/fonts/";
-pub const own_dir = "/mnt/us/fonts";
+pub const own_dir = paths.own_fonts;
 
 /// Each family's four files: regular, bold, italic and bold italic.
 const faces = [_][4][*:0]const u8{
@@ -156,8 +157,8 @@ pub fn findOwn(alloc: std.mem.Allocator, usable_font: *const fn ([]const u8) boo
             continue;
         }
         const files = complete(f.files);
-        var paths: [4][:0]const u8 = undefined;
-        const usable = for (&paths, files) |*p, name| {
+        var full: [4][:0]const u8 = undefined;
+        const usable = for (&full, files) |*p, name| {
             p.* = std.fmt.allocPrintSentinel(alloc, "{s}/{s}", .{ own_dir, name }, 0) catch break false;
             const data = file.map(p.*) catch break false;
             // Tried in a child process: a damaged font can crash the font library
@@ -168,7 +169,7 @@ pub fn findOwn(alloc: std.mem.Allocator, usable_font: *const fn ([]const u8) boo
             continue;
         }
         if (!settings.addFamily(f.name)) continue;
-        own[added] = paths;
+        own[added] = full;
         added += 1;
         std.debug.print("fonts: added {s}\n", .{f.name});
     }

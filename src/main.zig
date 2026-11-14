@@ -7,6 +7,7 @@
 //! The power button locks, showing the current book's cover. Waking returns to the
 //! same place. The panel's Kindle button and Wi-Fi settings hand over to the stock UI.
 const std = @import("std");
+const paths = @import("kindle/paths.zig");
 const fonts_db = @import("kindle/fonts.zig");
 const memory = @import("base/memory.zig");
 const c_memory = @import("gfx/c_memory.zig");
@@ -54,7 +55,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         std.process.exit(if (@import("scenarios.zig").selftest()) 0 else 1);
     }
     if (argv.len >= 2 and std.mem.eql(u8, std.mem.sliceTo(argv[1], 0), "battery-report")) {
-        battery_log.report(1, if (argv.len >= 3) std.mem.sliceTo(argv[2], 0) else "/mnt/us/noface-data");
+        battery_log.report(1, if (argv.len >= 3) std.mem.sliceTo(argv[2], 0) else paths.data_dir);
         return;
     }
     if (argv.len != 7) return error.Usage;
@@ -94,6 +95,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     defer input_mod.release(&input);
 
     input_mod.installSignals();
+    wifi_saver.useDataDir(state_dir);
     wifi_saver.restore(); // Left off by a crash or a reboot mid-book
     const saved_screen = try alloc.alloc(u8, screen.pixels.len);
     @memcpy(saved_screen, screen.pixels);
@@ -105,13 +107,13 @@ pub fn main(init: std.process.Init.Minimal) !void {
     }
 
     var settings_buf: [320]u8 = undefined;
-    const settings_path = try std.fmt.bufPrintSentinel(&settings_buf, "{s}/settings", .{state_dir}, 0);
+    const settings_path = try std.fmt.bufPrintSentinel(&settings_buf, "{s}/" ++ paths.data.settings, .{state_dir}, 0);
     var speed_buf: [320]u8 = undefined;
-    const speed_path = try std.fmt.bufPrintSentinel(&speed_buf, "{s}/speed", .{state_dir}, 0);
+    const speed_path = try std.fmt.bufPrintSentinel(&speed_buf, "{s}/" ++ paths.data.speed, .{state_dir}, 0);
     var journal_buf: [320]u8 = undefined;
-    const journal_path = try std.fmt.bufPrintSentinel(&journal_buf, "{s}/journal", .{state_dir}, 0);
+    const journal_path = try std.fmt.bufPrintSentinel(&journal_buf, "{s}/" ++ paths.data.journal, .{state_dir}, 0);
     var battery_buf: [320]u8 = undefined;
-    const battery_path = try std.fmt.bufPrintSentinel(&battery_buf, "{s}/battery", .{state_dir}, 0);
+    const battery_path = try std.fmt.bufPrintSentinel(&battery_buf, "{s}/" ++ paths.data.battery, .{state_dir}, 0);
     fonts_db.findOwn(alloc, setsText); // Before the settings: a chosen typeface of the reader's is found by name
     const ui = Fonts{ .title = &title, .small = &small, .caption = &caption, .hero = &hero, .cover = &cover_type };
 
@@ -134,7 +136,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         .journal_path = journal_path,
         .battery_path = battery_path,
         // A different folder for EPUBs, for a demo or test run beside the real library
-        .documents = if (init.environ.getPosix("NOFACE_DOCUMENTS")) |d| d else "/mnt/us/documents",
+        .documents = if (init.environ.getPosix("NOFACE_DOCUMENTS")) |d| d else paths.documents,
         .dictionary_base = init.environ.getPosix("NOFACE_DICT_URL") orelse @import("kindle/dict_download.zig").default_base,
         .journal = app.loadJournal(journal_path),
         .app_budget = &app_budget,

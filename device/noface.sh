@@ -14,12 +14,7 @@ restore() {
         tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -q -E -- "-m com.lab126.powerd goingToScreenSaver outOfScreenSaver|-m com.lab126.volumd usbConfigured" && kill "$p"
     done
     [ -n "$watchdog" ] && kill "$watchdog" 2>/dev/null
-    # Wi-Fi noface turned off while reading, in case it couldn't turn it back on
-    # The note goes only once airplane mode is really off, so a later try can still act.
-    if [ -e "$DIR/wifi-paused" ]; then
-        lipc-set-prop com.lab126.cmd wirelessEnable 1 2>/dev/null
-        [ "$(lipc-get-prop com.lab126.cmd wirelessEnable 2>/dev/null)" = 1 ] && rm -f "$DIR/wifi-paused"
-    fi
+    restore_wifi # In case noface couldn't turn it back on itself
 }
 trap restore EXIT
 
@@ -30,12 +25,12 @@ lipc-set-prop com.lab126.pillow disableEnablePillow disable
 killall -STOP awesome
 
 # Keep the log small: start over once it passes 512 KB, keeping one old copy.
-if [ "$(wc -c < "$DIR/noface.log" 2>/dev/null || echo 0)" -gt 524288 ]; then
-    mv "$DIR/noface.log" "$DIR/noface.log.old"
+if [ "$(wc -c < "$LOG" 2>/dev/null || echo 0)" -gt 524288 ]; then
+    mv "$LOG" "$DIR/noface.log.old"
 fi
 
 # Background plus wait, so a signal reaches noface instead of waiting on it.
-"$APP/noface" "$DIR/library.tsv" "$FONTS/Bookerly-Regular.ttf" "$FONTS/Bookerly-Bold.ttf" "$FONTS/Amazon-Ember-Regular.ttf" "$FONTS/Amazon-Ember-Bold.ttf" "$DIR" >> "$DIR/noface.log" 2>&1 &
+"$APP/noface" "$DIR/library.tsv" "$FONTS/Bookerly-Regular.ttf" "$FONTS/Bookerly-Bold.ttf" "$FONTS/Amazon-Ember-Regular.ttf" "$FONTS/Amazon-Ember-Bold.ttf" "$DIR" >> "$LOG" 2>&1 &
 pid=$!
 trap 'kill "$pid" 2>/dev/null' INT TERM HUP
 
@@ -49,9 +44,9 @@ trap 'kill "$pid" 2>/dev/null' INT TERM HUP
     while kill -0 "$pid" 2>/dev/null; do
         sleep 30
         [ "$(lipc-get-prop -s com.lab126.powerd state 2>/dev/null)" = active ] || continue
-        beat=$(cat /tmp/noface-alive 2>/dev/null || echo 0)
+        beat=$(cat "$HEARTBEAT" 2>/dev/null || echo 0)
         if [ $(( $(date +%s) - beat )) -gt 120 ]; then
-            echo "watchdog: no heartbeat for 2 minutes, stopping noface" >> "$DIR/noface.log"
+            echo "watchdog: no heartbeat for 2 minutes, stopping noface" >> "$LOG"
             kill -9 "$pid" 2>/dev/null
         fi
     done
@@ -64,6 +59,6 @@ if kill -0 "$pid" 2>/dev/null; then
     wait "$pid"
     code=$?
 fi
-echo "exit code $code" >> "$DIR/noface.log"
+echo "exit code $code" >> "$LOG"
 # Leaving on purpose is a good start too, even within the first minute.
 [ "$code" -eq 0 ] && rm -f "$DIR/boot-attempts"

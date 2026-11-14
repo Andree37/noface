@@ -1,13 +1,14 @@
 //! Pictures in JPEG XR, decoded by the Kindle's own library through the jxr2pgm helper.
 const std = @import("std");
+const paths = @import("paths.zig");
 const linux = @import("../sys/calls.zig");
 const os = @import("../sys/os.zig");
 const failed = os.failed;
 const process = @import("../sys/process.zig");
 
-const jxr_helper = "/mnt/us/noface/jxr2pgm";
+const jxr_helper = paths.jxr_helper;
 
-const jxr_input = "/tmp/noface-picture.jxr";
+const jxr_input = paths.jxr_input;
 
 /// True for JPEG XR data, which most pictures in Kindle books are.
 pub fn isJpegXr(data: []const u8) bool {

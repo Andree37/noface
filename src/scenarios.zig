@@ -31,6 +31,7 @@ const above_sheet = tap(636, 300);
 const dictionary = @import("model/dictionary.zig");
 const FakeKindle = @import("fake_kindle.zig").FakeKindle;
 const wifi_saver = @import("kindle/wifi_saver.zig");
+const paths = @import("kindle/paths.zig");
 const linux = @import("sys/calls.zig");
 
 const go_regular = @embedFile("testdata/fonts/Go-Regular.ttf");
@@ -237,10 +238,8 @@ fn playOn(kindle: Kindle, steps: []const Step) !Outcome {
     if (kindle.radio_slow) fake.busy_after_set = "com.lab126.cmd wirelessEnable";
     fake.install();
     defer fake.release();
-    var marker_buf: [128]u8 = undefined;
-    const real_marker = wifi_saver.marker;
-    wifi_saver.marker = try std.fmt.bufPrintSentinel(&marker_buf, "{s}/wifi-paused", .{dir}, 0);
-    defer wifi_saver.marker = real_marker;
+    wifi_saver.useDataDir(dir);
+    defer wifi_saver.useDataDir(paths.data_dir);
 
     var screen = try hwtcon.Screen.fake(alloc, width, height);
     var script = input_mod.Script{ .steps = steps };
@@ -276,11 +275,11 @@ fn playOn(kindle: Kindle, steps: []const Step) !Outcome {
     var slots: [3]app.Slot = undefined;
     for (&slots) |*s| s.* = .{ .buf = try alloc.alloc(u8, screen.pixels.len) };
 
-    var paths: [4][160]u8 = undefined;
-    const settings_path = try std.fmt.bufPrintSentinel(&paths[0], "{s}/settings", .{dir}, 0);
-    const speed_path = try std.fmt.bufPrintSentinel(&paths[1], "{s}/speed", .{dir}, 0);
-    const journal_path = try std.fmt.bufPrintSentinel(&paths[2], "{s}/journal", .{dir}, 0);
-    const battery_path = try std.fmt.bufPrintSentinel(&paths[3], "{s}/battery", .{dir}, 0);
+    var path_bufs: [4][160]u8 = undefined;
+    const settings_path = try std.fmt.bufPrintSentinel(&path_bufs[0], "{s}/" ++ paths.data.settings, .{dir}, 0);
+    const speed_path = try std.fmt.bufPrintSentinel(&path_bufs[1], "{s}/" ++ paths.data.speed, .{dir}, 0);
+    const journal_path = try std.fmt.bufPrintSentinel(&path_bufs[2], "{s}/" ++ paths.data.journal, .{dir}, 0);
+    const battery_path = try std.fmt.bufPrintSentinel(&path_bufs[3], "{s}/" ++ paths.data.battery, .{dir}, 0);
     var a = app.App{
         .alloc = alloc,
         .screen = &screen,
@@ -364,7 +363,7 @@ fn playOn(kindle: Kindle, steps: []const Step) !Outcome {
         .updates = screen.updates,
         .airplane_asked_on = fake.wasSet("com.lab126.cmd wirelessEnable 0"),
         .airplane_at_end = std.mem.eql(u8, fake.get("com.lab126.cmd wirelessEnable"), "0"),
-        .wifi_note_left = state.readSmall(wifi_saver.marker, &note_buf).len > 0,
+        .wifi_note_left = state.readSmall(wifi_saver.notePath(), &note_buf).len > 0,
     };
 }
 
@@ -644,7 +643,7 @@ pub fn selftest() bool {
     }
     for ([_][]const u8{ "dict-en", "dict-pt" }) |name| {
         var buf: [96]u8 = undefined;
-        const path = std.fmt.bufPrintSentinel(&buf, "/mnt/us/noface-data/{s}", .{name}, 0) catch continue;
+        const path = std.fmt.bufPrintSentinel(&buf, paths.data_dir ++ "/{s}", .{name}, 0) catch continue;
         const data = file.map(path) catch {
             std.debug.print("--    {s} not installed\n", .{name});
             continue;
@@ -653,7 +652,7 @@ pub fn selftest() bool {
         std.debug.print("{s}  {s}\n", .{ if (readable) "ok  " else "FAIL", name });
         ok = ok and readable;
     }
-    const helper = file.exists("/mnt/us/noface/jxr2pgm");
+    const helper = file.exists(paths.jxr_helper);
     std.debug.print("{s}  picture helper (jxr2pgm)\n", .{if (helper) "ok  " else "FAIL"});
     ok = ok and helper;
 
@@ -662,7 +661,7 @@ pub fn selftest() bool {
     defer arena.deinit();
     const dir = @import("sys/dir.zig");
     for ([_][]const u8{ ".epub", ".kfx" }) |suffix| {
-        const found = dir.findFiles(arena.allocator(), "/mnt/us/documents", suffix) catch continue;
+        const found = dir.findFiles(arena.allocator(), paths.documents, suffix) catch continue;
         // Up to three that noface can open; protected ones (most bought from Amazon)
         // open in the Kindle's own reader instead, so they're passed over, not failed
         var opened: usize = 0;

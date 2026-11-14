@@ -1,5 +1,6 @@
 //! What every screen shares: the screen, input, fonts, settings and page buffers.
 const std = @import("std");
+const paths = @import("kindle/paths.zig");
 const card = @import("ui/card.zig");
 const memory = @import("base/memory.zig");
 const fonts_db = @import("kindle/fonts.zig");
@@ -70,7 +71,7 @@ pub const App = struct {
     speed_path: [*:0]const u8,
     journal_path: [*:0]const u8,
     battery_path: [*:0]const u8,
-    documents: []const u8 = "/mnt/us/documents", // Where EPUBs copied over USB are found
+    documents: []const u8 = paths.documents, // Where EPUBs copied over USB are found
     battery_last: ?battery_model.Sample = null, // Last level noted, so only changes are logged
     downloads_until: u64 = 0, // A download may still be running until then (nowUs)
     dictionary_base: []const u8 = @import("kindle/dict_download.zig").default_base, // Where dictionaries download from

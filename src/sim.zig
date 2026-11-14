@@ -53,7 +53,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     try fake.put("com.lab126.powerd battLevel", "100");
     try fake.put("com.lab126.powerd usbState", "1");
     fake.install();
-    wifi_saver.marker = data ++ "/wifi-paused";
+    wifi_saver.useDataDir(data);
 
     var app_budget = memory.Budget{ .name = "app", .child = alloc, .limit = 512 << 20 };
     var stb_budget = memory.Budget{ .name = "stb", .child = alloc, .limit = 256 << 20 };

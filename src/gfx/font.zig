@@ -2,6 +2,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const Page = @import("page.zig").Page;
+const truetype = @import("truetype.zig");
 
 comptime {
     _ = @import("c_memory.zig"); // The malloc and free stb's C shim calls
@@ -298,4 +299,109 @@ test "words fit by whole characters, at least one" {
     try std.testing.expectEqual(@as(usize, 4), try font.fit("wide", 10_000));
     try std.testing.expectEqual(@as(usize, 0), try font.fit("", 10));
     try std.testing.expectEqual(@as(f32, 0), try font.measure(""));
+}
+
+/// A hash of every glyph's metrics, then of every glyph's bitmap at each size, so a
+/// test can hold the whole font to what stb_truetype drew.
+fn test_font_digest(info: *const truetype.Info, sizes: []const f32) !u64 {
+    assert(sizes.len > 0);
+    assert(info.glyph_count > 0);
+    var hasher = std.hash.Wyhash.init(0);
+    for (0..info.glyph_count) |glyph| {
+        const metrics = truetype.horizontal_metrics(info, @intCast(glyph));
+        hasher.update(std.mem.asBytes(&metrics.advance));
+        hasher.update(std.mem.asBytes(&metrics.left_side_bearing));
+    }
+    for (sizes) |px| {
+        const scale = truetype.scale_for_pixel_height(info, px);
+        for (0..info.glyph_count) |glyph| {
+            const allocator = std.testing.allocator;
+            const bitmap = try truetype.glyph_bitmap(info, allocator, scale, @intCast(glyph));
+            defer if (bitmap.pixels) |pixels| allocator.free(pixels);
+            const box = [_]i32{ bitmap.width, bitmap.height, bitmap.x_offset, bitmap.y_offset };
+            for (box) |value| hasher.update(std.mem.asBytes(&value));
+            if (bitmap.pixels) |pixels| hasher.update(pixels);
+        }
+    }
+    return hasher.final();
+}
+
+test "fonts draw the glyphs stb_truetype drew" {
+    // Digests of stb_truetype's metrics and bitmaps, built without fused
+    // multiply-adds (with them, a pixel in a few million comes out one gray apart)
+    const cases = .{
+        .{ "Go-Regular.ttf", 712, 0x02e5b2a7673601b3 },
+        .{ "Go-Bold.ttf", 712, 0x434e5d8b4ebbfe99 },
+        .{ "GoKernGpos.ttf", 13, 0x0c58cf1ea5e5ffc7 },
+        .{ "GoKernTable.ttf", 13, 0x0c58cf1ea5e5ffc7 },
+        .{ "GoCubic.otf", 13, 0xe6b79c084d80d4cd },
+    };
+    inline for (cases) |case| {
+        const info = truetype.init(@embedFile("../testdata/fonts/" ++ case[0])).?;
+        try std.testing.expectEqual(@as(u32, case[1]), info.glyph_count);
+        const digest = try test_font_digest(&info, &.{ 26, 46, 80.5 });
+        try std.testing.expectEqual(@as(u64, case[2]), digest);
+    }
+}
+
+test "kerning comes from GPOS pairs and classes, or from the kern table" {
+    const gpos = truetype.init(@embedFile("../testdata/fonts/GoKernGpos.ttf")).?;
+    const table = truetype.init(@embedFile("../testdata/fonts/GoKernTable.ttf")).?;
+    const cubic = truetype.init(@embedFile("../testdata/fonts/GoCubic.otf")).?;
+    const fonts = [_]*const truetype.Info{ &gpos, &table, &cubic };
+    for (fonts) |info| {
+        const a = truetype.glyph_index(info, 'A');
+        const v = truetype.glyph_index(info, 'V');
+        try std.testing.expectEqual(@as(i32, -120), truetype.kern_advance(info, a, v));
+        try std.testing.expectEqual(@as(i32, 0), truetype.kern_advance(info, v, a));
+    }
+    // A pair by classes: V or W, then o or e
+    for ([_]*const truetype.Info{ &gpos, &cubic }) |info| {
+        const w = truetype.glyph_index(info, 'W');
+        const e = truetype.glyph_index(info, 'e');
+        try std.testing.expectEqual(@as(i32, -45), truetype.kern_advance(info, w, e));
+    }
+    const o = truetype.glyph_index(&table, 'o');
+    const v = truetype.glyph_index(&table, 'V');
+    try std.testing.expectEqual(@as(i32, -40), truetype.kern_advance(&table, v, o));
+}
+
+test "damaged fonts draw blank or wrong glyphs, never crash" {
+    const fonts = [_][]const u8{
+        @embedFile("../testdata/fonts/GoKernGpos.ttf"),
+        @embedFile("../testdata/fonts/GoCubic.otf"),
+    };
+    var prng = std.Random.DefaultPrng.init(0xf0e7);
+    const random = prng.random();
+    var buffer: [16 << 10]u8 = undefined;
+    for (fonts) |font| {
+        for (0..300) |round| {
+            const damaged = buffer[0..font.len];
+            @memcpy(damaged, font);
+            // Cut short, or bytes changed anywhere
+            const cut = random.uintLessThan(u32, @intCast(font.len));
+            const length = if (round % 3 == 0) cut else font.len;
+            for (0..1 + random.uintLessThan(u32, 8)) |_| {
+                damaged[random.uintLessThan(u32, @intCast(font.len))] = random.int(u8);
+            }
+            const info = truetype.init(damaged[0..length]) orelse continue;
+            try test_draw_everything(&info);
+        }
+    }
+}
+
+fn test_draw_everything(info: *const truetype.Info) !void {
+    assert(info.data.len > 0);
+    assert(info.index_map != 0);
+    const allocator = std.testing.allocator;
+
+    for ([_]u32{ 'A', 'V', 'a', 'o', 'y', 0xf6, 0x1f600 }) |code_point| {
+        const glyph = truetype.glyph_index(info, code_point);
+        _ = truetype.horizontal_metrics(info, glyph);
+        _ = truetype.kern_advance(info, glyph, truetype.glyph_index(info, 'V'));
+        const scale = truetype.scale_for_pixel_height(info, 40);
+        if (!std.math.isFinite(scale) or scale <= 0) return;
+        const bitmap = try truetype.glyph_bitmap(info, allocator, scale, glyph);
+        if (bitmap.pixels) |pixels| allocator.free(pixels);
+    }
 }

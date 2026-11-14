@@ -4,7 +4,8 @@ const std = @import("std");
 const battery = @import("../model/battery.zig");
 const battery_log = @import("../kindle/battery_log.zig");
 const stats = @import("../model/stats.zig");
-const draw = @import("../ui/draw.zig");
+const draw_ui = @import("../ui/draw.zig");
+const screen = @import("screen.zig");
 const style = @import("../ui/style.zig");
 const app = @import("../app.zig");
 
@@ -41,19 +42,35 @@ pub fn show(a: *app.App) !void {
     const said = lines(&buf, log, battery_log.now(), per_day);
     std.debug.print("battery: {s} ({d} samples)\n", .{ said.title, log.len });
 
-    @memcpy(a.overlay, a.screen.pixels);
-    const page = a.page(a.screen.pixels);
-    draw.box(page, left, top, width, height);
-    const x: f32 = left + 36;
-    const avail: f32 = width - 72;
-    try draw.clipped(a.ui.title, page, x, top + 72, said.title, avail);
-    try draw.clipped(a.ui.caption, page, x, top + 128, said.detail, avail);
-    page.tint(left + 36, top + 96, width - 72, 44, style.faded);
-    try a.showRect(left, top, width, height);
-    _ = a.input.nextTap(); // Any tap closes it, as does locking
+    @memcpy(a.overlay, a.screen.pixels); // The library under it, put back after
+    var bubble = Bubble{ .a = a, .said = said };
+    _ = try screen.run(a, &bubble);
     @memcpy(a.screen.pixels, a.overlay);
     try a.showRect(left, top, width, height);
 }
+
+/// The estimate, in a bubble by the battery. Any tap closes it.
+const Bubble = struct {
+    pub const Result = void;
+    a: *app.App,
+    said: Lines,
+
+    pub fn draw(b: *Bubble, _: screen.Part) !void {
+        const a = b.a;
+        const page = a.page(a.screen.pixels);
+        draw_ui.box(page, left, top, width, height);
+        const x: f32 = left + 36;
+        const avail: f32 = width - 72;
+        try draw_ui.clipped(a.ui.title, page, x, top + 72, b.said.title, avail);
+        try draw_ui.clipped(a.ui.caption, page, x, top + 128, b.said.detail, avail);
+        page.tint(left + 36, top + 96, width - 72, 44, style.faded);
+        try a.showRect(left, top, width, height);
+    }
+
+    pub fn onTap(_: *Bubble, _: screen.Tap) !screen.Step(void) {
+        return .close;
+    }
+};
 
 test "the bubble says what it knows" {
     var buf: [160]u8 = undefined;

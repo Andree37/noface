@@ -1,5 +1,6 @@
 //! Holding a word without dragging: its definition, in a sheet over the page.
 const std = @import("std");
+const input_mod = @import("../../kindle/input.zig");
 const definition = @import("../../ui/definition.zig");
 const dictionary = @import("../../model/dictionary.zig");
 const book_model = @import("../../model/book.zig");
@@ -56,7 +57,7 @@ pub fn run(a: *app.App, s: *const sess.Session, word: book_model.Word, lang: ?hy
     @memcpy(a.screen.pixels, page_copy); // Not over a card that was just answered
     try definition.render(a.ui, a.page(a.screen.pixels), found);
     try a.showBand(0, a.screen.height);
-    const was = a.input.forSheet(); // Highlight sits on the bottom edge
+    const was = a.input.use(input_mod.Input.Modes.sheet); // Highlight sits on the bottom edge
     defer a.input.restore(was);
     const choice: Choice = while (a.input.nextTap()) |t| {
         switch (definition.hit(t.x, t.y)) {

@@ -289,7 +289,7 @@ pub fn chooseFromCardWith(a: *App, background: []const u8, title: []const u8, su
     @memcpy(a.screen.pixels, a.overlay);
     // The whole screen dims behind the sheet
     try a.showBand(0, a.screen.height);
-    const was = a.input.forSheet();
+    const was = a.input.use(input_mod.Input.Modes.sheet);
     defer a.input.restore(was);
     // A row tapped; a tap above the card, or locking, closes it
     const chosen: ?usize = while (a.input.nextTap()) |t| {

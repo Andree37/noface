@@ -208,23 +208,35 @@ pub const Input = struct {
     /// A control inside the grip zones (the reader's Back button): touches there count.
     grip_exempt: ?Zone = null,
 
-    /// How touches were before a sheet changed them, for `restore`.
-    pub const Modes = struct { grips: bool, deferred: bool };
+    /// How touches are taken: whether a resting thumb along the edges is ignored
+    /// (`grips`), whether taps wait for the finger to lift so a press can become a hold
+    /// (`deferred`), and whether the top edge is held back for the toolbar (`edge_zones`).
+    pub const Modes = struct {
+        grips: bool,
+        deferred: bool,
+        edge_zones: bool,
 
-    /// Touches for a sheet or card over the page: every touch counts, even along the
-    /// bottom edge where its buttons sit (a resting thumb is otherwise ignored there),
-    /// and taps act as they land (nothing on a sheet becomes a hold, and a tap kept for
-    /// the lift could reach whatever replaces it). Returns what was there before.
-    pub fn forSheet(in: *Input) Modes {
-        const was = Modes{ .grips = in.grips, .deferred = in.deferred };
-        in.grips = false;
-        in.deferred = false;
+        /// A sheet, card or list over the page: every touch counts, even along the
+        /// bottom edge where its buttons sit, and taps act as they land (nothing on it
+        /// becomes a hold, and a tap kept for the lift could reach whatever replaces it).
+        pub const sheet = Modes{ .grips = false, .deferred = false, .edge_zones = true };
+    };
+
+    pub fn modes(in: *const Input) Modes {
+        return .{ .grips = in.grips, .deferred = in.deferred, .edge_zones = in.edge_zones };
+    }
+
+    /// Takes touches as `m` says. Returns how they were, for `restore`.
+    pub fn use(in: *Input, m: Modes) Modes {
+        const was = in.modes();
+        in.restore(m);
         return was;
     }
 
-    pub fn restore(in: *Input, was: Modes) void {
-        in.grips = was.grips;
-        in.deferred = was.deferred;
+    pub fn restore(in: *Input, m: Modes) void {
+        in.grips = m.grips;
+        in.deferred = m.deferred;
+        in.edge_zones = m.edge_zones;
     }
 
     /// For a screen of its own (a sheet, a list, a card): the next action, or null when

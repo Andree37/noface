@@ -26,6 +26,7 @@ test {
     _ = @import("sys/clock.zig");
     _ = @import("screens/lock.zig");
     _ = @import("fake_kindle.zig");
+    _ = @import("screens/screen.zig");
     _ = @import("sys/process.zig");
     _ = @import("app.zig");
     _ = @import("model/stats.zig");

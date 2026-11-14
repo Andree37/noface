@@ -1,5 +1,6 @@
 //! Reading stats, opened from the library. Any tap goes back.
 const std = @import("std");
+const screen = @import("screen.zig");
 const stats_ui = @import("../ui/stats.zig");
 const catalog = @import("../model/catalog.zig");
 const journal = @import("../model/journal.zig");
@@ -38,11 +39,25 @@ pub fn summarize(a: *const app.App, entries: []const catalog.Entry) stats_ui.Sum
     return s;
 }
 
-/// Shows the stats over `buf`'s screen until a tap. Passes on a lock or quit.
+/// Shows the stats over the library until a tap.
 pub fn run(a: *app.App, entries: []const catalog.Entry) !void {
-    try stats_ui.render(a.ui, a.page(a.screen.pixels), summarize(a, entries));
-    try a.showBand(stats_ui_top, a.screen.height - stats_ui_top);
-    _ = a.input.nextTap(); // Any tap closes it, as does locking
+    var stats = Stats{ .a = a, .summary = summarize(a, entries) };
+    _ = try screen.run(a, &stats);
 }
+
+const Stats = struct {
+    pub const Result = void;
+    a: *app.App,
+    summary: stats_ui.Summary,
+
+    pub fn draw(s: *Stats, _: screen.Part) !void {
+        try stats_ui.render(s.a.ui, s.a.page(s.a.screen.pixels), s.summary);
+        try s.a.showBand(stats_ui_top, s.a.screen.height - stats_ui_top);
+    }
+
+    pub fn onTap(_: *Stats, _: screen.Tap) !screen.Step(void) {
+        return .close; // Any tap closes it
+    }
+};
 
 const stats_ui_top = 96; // Under the status strip, which stays

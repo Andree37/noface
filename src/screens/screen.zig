@@ -1,0 +1,108 @@
+//! A screen of its own over the library or a page: a card, a sheet, a list, a
+//! keyboard. Every one works the same way, so this runs them all:
+//!
+//!     var go_to = GoTo{ ... };
+//!     const page = try screen.run(a, &go_to) orelse return; // null: closed, or locked
+//!
+//! A screen is a struct that says what makes it different, and nothing else (its
+//! functions `pub`, as they're called from here):
+//!
+//!   - `pub const Result = T;` what it gives back when it's done (`void` for none).
+//!   - `pub const touches: Input.Modes = ...;` how it takes touches, usually
+//!     `Input.Modes.sheet`. Optional: without it, touches stay as they were.
+//!   - `pub const tick_us: u64 = ...;` a tick this often, for a screen that changes on
+//!     its own. Optional: without it, no ticks.
+//!   - `fn draw(s, part: Part) !void` draws it: all of it, or what changes as it's used.
+//!   - `fn onTap(s, Tap) !Step(Result)` what a tap does.
+//!   - `fn onTick(s) !Step(Result)` what a tick does, if it asks for ticks.
+//!   - `fn onAction(s, Action) !Step(Result)` holds, swipes and drags, if it cares.
+//!
+//! `run` draws it whole first, then waits and hands it each action, drawing what each
+//! step asks for. When the Kindle locks or noface is told to leave, the screen closes
+//! (`run` returns null) and the action is kept for the screen underneath, so it locks
+//! or leaves in turn. Touch modes and the tick are put back as they were either way.
+const std = @import("std");
+const app = @import("../app.zig");
+const input_mod = @import("../kindle/input.zig");
+
+pub const Tap = input_mod.Tap;
+pub const Action = input_mod.Action;
+
+/// What to draw: everything (the first time, or after a big change), or only what
+/// changes as the screen is used (a field, a list, a number), quicker and without
+/// redrawing what stays, like a keyboard.
+pub const Part = enum { all, changing };
+
+/// What a screen wants after an action.
+pub fn Step(comptime Result: type) type {
+    return union(enum) {
+        stay, // Nothing changed on screen
+        redraw: Part, // Draw it again
+        done: Result, // Finished, with this result
+        close, // Finished with nothing: cancelled, or tapped outside it
+    };
+}
+
+/// Runs screen `s` until it's done (its result), or closes or the Kindle locks (null).
+pub fn run(a: *app.App, s: anytype) !?@TypeOf(s.*).Result {
+    const S = @TypeOf(s.*);
+    const was = if (@hasDecl(S, "touches")) a.input.use(S.touches) else a.input.modes();
+    defer a.input.restore(was);
+    const tick = a.input.tick_us;
+    defer a.input.tick_us = tick;
+    a.input.tick_us = if (@hasDecl(S, "tick_us")) S.tick_us else 0;
+    a.input.last_tick = @import("../sys/os.zig").nowUs();
+
+    var part: ?Part = .all;
+    while (true) {
+        if (part) |p| try s.draw(p);
+        part = null;
+        const action = a.input.nextFor() orelse return null; // Locked, or leaving
+        const step: Step(S.Result) = switch (action) {
+            .tap => |t| try s.onTap(t),
+            .tick => if (@hasDecl(S, "onTick")) try s.onTick() else .stay,
+            else => if (@hasDecl(S, "onAction")) try s.onAction(action) else .stay,
+        };
+        switch (step) {
+            .stay => {},
+            .redraw => |p| part = p,
+            .done => |result| return result,
+            .close => return null,
+        }
+    }
+}
+
+test "a screen draws whole, takes taps until done, and gives back its result" {
+    const Counter = struct {
+        pub const Result = u32;
+        taps: u32 = 0,
+        drawn: [2]u32 = .{ 0, 0 },
+        fn draw(c: *@This(), part: Part) !void {
+            c.drawn[@intFromEnum(part)] += 1;
+        }
+        fn onTap(c: *@This(), _: Tap) !Step(u32) {
+            c.taps += 1;
+            if (c.taps == 3) return .{ .done = c.taps };
+            return .{ .redraw = .changing };
+        }
+    };
+    // Scripted taps move the test clock: the real one comes back after, for the tests that follow
+    const os = @import("../sys/os.zig");
+    defer os.fake_us = null;
+    const middle: input_mod.Step = .{ .act = .{ .tap = .{ .x = 600, .y = 800, .us = 0 } } }; // Clear of the thumb zones
+    var steps = [_]input_mod.Step{ middle, middle, middle };
+    var script = input_mod.Script{ .steps = &steps };
+    var input = input_mod.Input{ .touch = -1, .power = -1, .width = 1272, .height = 1696, .x_max = 1272, .y_max = 1696, .script = &script };
+    var a: app.App = undefined;
+    a.input = &input;
+    var c = Counter{};
+    try std.testing.expectEqual(@as(?u32, 3), try run(&a, &c));
+    try std.testing.expectEqual(@as(u32, 1), c.drawn[0]); // Whole, once, first
+    try std.testing.expectEqual(@as(u32, 2), c.drawn[1]);
+    // A script that runs out stops noface: the screen closes, and the stop is kept
+    var none = [_]input_mod.Step{};
+    script = .{ .steps = &none };
+    c = .{};
+    try std.testing.expect(try run(&a, &c) == null);
+    try std.testing.expect(input.stashed.? == .stop);
+}

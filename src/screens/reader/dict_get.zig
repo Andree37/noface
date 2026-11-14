@@ -2,6 +2,7 @@
 //! in a book whose dictionary is missing, or from "Get dictionary" on the sheet. It
 //! downloads over Wi-Fi, showing how far it's got, and can be cancelled.
 const std = @import("std");
+const input_mod = @import("../../kindle/input.zig");
 const app = @import("../../app.zig");
 const card = @import("../../ui/card.zig");
 const hyphen = @import("../../layout/hyphen.zig");
@@ -96,7 +97,7 @@ fn showProgress(a: *app.App, background: []const u8, title: []const u8, subtitle
     try card.renderWith(a.ui, a.page(a.overlay), title, subtitle, rows, null);
     @memcpy(a.screen.pixels, a.overlay);
     try a.showBand(0, a.screen.height);
-    const was = a.input.forSheet();
+    const was = a.input.use(input_mod.Input.Modes.sheet);
     defer a.input.restore(was);
     const tick = a.input.tick_us;
     defer a.input.tick_us = tick;

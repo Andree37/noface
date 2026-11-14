@@ -3,6 +3,7 @@
 //! you type; book search and Go to page use the same bar. Every tap target is at least
 //! a fingertip (about 100 px) tall.
 const std = @import("std");
+const assert = std.debug.assert;
 const Page = @import("../gfx/page.zig").Page;
 const draw = @import("draw.zig");
 const style = @import("style.zig");
@@ -28,6 +29,19 @@ const rows_bottom = keyboard.top - 16;
 /// How many matching books fit between the bar and the keyboard.
 pub const max_rows = (rows_bottom - rows_top) / row_height;
 
+comptime {
+    // The bar, the rows and the keyboard each have their own band, top to bottom.
+    assert(bar_top + bar_height + 12 <= rows_top);
+    assert(rows_top + max_rows * row_height <= rows_bottom);
+    assert(rows_bottom < keyboard.top);
+    assert(max_rows >= 5);
+    assert(style.margin + 2 * bar_height < field_right); // The field is wider than its ends
+    // Every tap target is a fingertip tall, or wide.
+    assert(row_height >= 100);
+    assert(bar_height >= 100);
+    assert(cancel_width >= 100);
+}
+
 pub const Hit = union(enum) { none, cancel, field, row: usize };
 
 /// The bar's own taps, or null below it.
@@ -37,9 +51,11 @@ pub fn bar_hit(x: i32, y: i32) ?Hit {
 }
 
 pub fn hit(x: i32, y: i32, rows: usize) Hit {
+    assert(rows <= max_rows);
     if (bar_hit(x, y)) |h| return h;
     if (y >= rows_top and y < rows_bottom) {
-        const row: usize = @intCast(@divTrunc(y - rows_top, row_height));
+        const row: u32 = @intCast(@divTrunc(y - rows_top, row_height));
+        assert(row < max_rows + 1); // The band below the last whole row is a part row
         if (row < rows) return .{ .row = row };
     }
     return .none;
@@ -50,7 +66,16 @@ pub const Icon = enum { search, none };
 /// Clears from `from` (the bottom of the status strip above) down to `content_top`
 /// and draws the bar: a magnifier when searching, what's typed (or the
 /// `placeholder`), a cursor, and Cancel.
-pub fn render_bar(fonts: Fonts, page: Page, from: u32, query: []const u8, placeholder: []const u8, icon: Icon) !void {
+pub fn render_bar(
+    fonts: Fonts,
+    page: Page,
+    from: u32,
+    query: []const u8,
+    placeholder: []const u8,
+    icon: Icon,
+) !void {
+    assert(from <= content_top);
+    assert(placeholder.len > 0);
     page.fill_rect(0, from, page.width, content_top - from, style.white);
     const r: f32 = bar_height / 2;
     const cy: f32 = bar_top + r;
@@ -64,7 +89,8 @@ pub fn render_bar(fonts: Fonts, page: Page, from: u32, query: []const u8, placeh
     const avail = right - r / 2 - text_x;
     if (query.len == 0) {
         try fonts.small.draw(page, text_x, baseline, placeholder);
-        page.tint(@intFromFloat(text_x), bar_top + 20, @intFromFloat(avail), bar_height - 40, 0x90);
+        const avail_px: u32 = @intFromFloat(avail);
+        page.tint(@intFromFloat(text_x), bar_top + 20, avail_px, bar_height - 40, 0x90);
     } else {
         try draw.clipped(fonts.small, page, text_x, baseline, query, avail);
     }
@@ -75,6 +101,8 @@ pub fn render_bar(fonts: Fonts, page: Page, from: u32, query: []const u8, placeh
 }
 
 fn draw_row(fonts: Fonts, page: Page, y: u32, e: *const catalog.Entry) !void {
+    assert(y >= rows_top);
+    assert(y + row_height <= rows_bottom);
     const avail: f32 = @floatFromInt(page.width - 2 * style.margin);
     try draw.clipped(fonts.small, page, style.margin, @intCast(y + 50), e.title, avail);
     if (e.author.len > 0) {
@@ -86,19 +114,35 @@ fn draw_row(fonts: Fonts, page: Page, y: u32, e: *const catalog.Entry) !void {
 
 /// The sheet over the status strip's screen. `matches` are indexes into `entries`,
 /// at most `max_rows` of them; `more` says whether others matched too.
-pub fn render(fonts: Fonts, page: Page, query: []const u8, entries: []const catalog.Entry, matches: []const usize, more: bool) !void {
+pub fn render(
+    fonts: Fonts,
+    page: Page,
+    query: []const u8,
+    entries: []const catalog.Entry,
+    matches: []const usize,
+    more: bool,
+) !void {
+    assert(matches.len <= max_rows);
+    assert(page.height > rows_bottom);
     page.fill_rect(0, top, page.width, page.height - top, style.white);
     try render_bar(fonts, page, top, query, "Title or author", .search);
+    const width = page.width - 2 * style.margin;
     if (query.len == 0) {
-        try fonts.small.draw(page, style.margin, rows_top + 56, "Find a book by its title or its author.");
-        page.tint(style.margin, rows_top + 20, page.width - 2 * style.margin, 50, style.quiet);
+        const hint = "Find a book by its title or its author.";
+        try fonts.small.draw(page, style.margin, rows_top + 56, hint);
+        page.tint(style.margin, rows_top + 20, width, 50, style.quiet);
     } else if (matches.len == 0) {
         try fonts.small.draw(page, style.margin, rows_top + 56, "No books match.");
     }
-    for (matches, 0..) |m, i| try draw_row(fonts, page, rows_top + @as(u32, @intCast(i)) * row_height, &entries[m]);
+    for (matches, 0..) |match, index| {
+        assert(match < entries.len); // An index into `entries`
+        const y = rows_top + @as(u32, @intCast(index)) * row_height;
+        try draw_row(fonts, page, y, &entries[match]);
+    }
     if (more) {
-        try fonts.caption.draw(page, style.margin, @intCast(rows_bottom - 12), "Press Search to see them all.");
-        page.tint(style.margin, rows_bottom - 40, page.width - 2 * style.margin, 36, style.quiet);
+        const see_all = "Press Search to see them all.";
+        try fonts.caption.draw(page, style.margin, @intCast(rows_bottom - 12), see_all);
+        page.tint(style.margin, rows_bottom - 40, width, 36, style.quiet);
     }
     try keyboard.render(fonts, page);
 }
@@ -114,5 +158,7 @@ test "bar, rows and keyboard each get their own taps" {
 test "rows fit above the keyboard and are a fingertip tall" {
     try std.testing.expect(max_rows >= 5);
     try std.testing.expect(rows_top + max_rows * row_height <= rows_bottom);
-    try std.testing.expect(row_height >= 100 and bar_height >= 100 and cancel_width >= 100);
+    try std.testing.expect(row_height >= 100);
+    try std.testing.expect(bar_height >= 100);
+    try std.testing.expect(cancel_width >= 100);
 }

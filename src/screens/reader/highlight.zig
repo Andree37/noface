@@ -67,7 +67,9 @@ pub fn draw_delete_bubble(a: *app.App, band: selection.Band) !usize {
     const below = band.top + band.height + 12;
     const top: u32 = if (below + bubble_height < a.screen.height - 130) below else band.top -| (bubble_height + 12);
     const left = (a.screen.width - bubble_width) / 2;
-    screen_page.fill_rect(left - 4, top - 4, bubble_width + 8, bubble_height + 8, 0xff);
+    // Saturating: a highlight from the page's first line to near its last puts the
+    // bubble at the very top, where `top - 4` would overflow and stop noface
+    screen_page.fill_rect(left - 4, top -| 4, bubble_width + 8, bubble_height + 8, 0xff);
     draw.box(screen_page, left, top, bubble_width, bubble_height);
     try draw.centered(a.ui.small, screen_page, @floatFromInt(a.screen.width / 2), @intCast(top + 62), "Delete");
     return top;

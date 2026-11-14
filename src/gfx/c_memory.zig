@@ -32,15 +32,14 @@ pub fn use(b: *memory.Budget) void {
     // A budget too small for one header could never give C anything
     assert(b.limit > header);
     budget = b;
-    assert(budget.limit > header);
 }
 
 /// Back to the built-in budget: for a caller whose budget is about to go away (a
 /// test's, or a scenario's), so nothing is left pointing at it.
 pub fn use_default() void {
     budget = &default_budget;
+    // Nothing changes the built-in budget's limit
     assert(budget.limit == default_limit);
-    assert(budget.limit > header);
 }
 
 /// The size a block was asked for, from its header.

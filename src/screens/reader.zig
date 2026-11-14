@@ -48,18 +48,36 @@ const wifi_retry_us = 60 * 1000 * 1000;
 
 pub const Outcome = enum { library, quit };
 
-pub const View = enum { page, toolbar, sheet, panel, note, highlight };
+/// What the reader shows: the page alone, or something over it. The toolbar may have
+/// its Aa sheet open below it (`Reader.sheet_open`).
+pub const View = enum { page, toolbar, panel, note, highlight };
+
+/// What a view means for the rest of the reader. While `reading`, the page alone is in
+/// front of the reader: the reading clock runs, the clock in the corner keeps time,
+/// Wi-Fi may go off, and the Back button can be tapped. On the page a press may become
+/// a hold, so taps wait for the finger to lift; controls that sit where a thumb rests
+/// turn the thumb filter off; a highlight's handles can reach the screen's edges.
+const Mode = struct { reading: bool, taps_on_lift: bool, thumb_filter: bool, edge_zones: bool };
+
+fn modeOf(view: View) Mode {
+    return switch (view) {
+        .page => .{ .reading = true, .taps_on_lift = true, .thumb_filter = true, .edge_zones = true },
+        .toolbar => .{ .reading = false, .taps_on_lift = false, .thumb_filter = false, .edge_zones = true },
+        .highlight => .{ .reading = false, .taps_on_lift = false, .thumb_filter = true, .edge_zones = false },
+        .note, .panel => .{ .reading = false, .taps_on_lift = false, .thumb_filter = true, .edge_zones = true },
+    };
+}
 
 /// Whether an action needs every page laid out first: anything but reading on, as
 /// menus, Go To and page numbers count from the start of the book.
-fn needsAllPages(action: input_mod.Action, view: View, s: *const sess.Session) bool {
+fn needsAllPages(action: input_mod.Action, view: View, sheet: ?@import("../ui/aa.zig").Tab, s: *const sess.Session) bool {
     return switch (action) {
         .tick, .drag, .drag_end => false,
         .tap => |t| switch (view) {
             // The toolbar, going back from the first page, or the Back button: all count pages
             .page => t.y < touch_zones.top_zone or s.onBack(t.x, t.y) or (input_mod.turnDirection(t.x, s.app.input.width) < 0 and s.current == 0),
             // Text settings and closing don't count pages; the toolbar's other buttons do
-            .toolbar, .sheet => switch (toolbar.hit(t.x, t.y, if (view == .sheet) s.app.tab else null)) {
+            .toolbar => switch (toolbar.hit(t.x, t.y, sheet)) {
                 .sheet, .close, .stay, .text => false,
                 else => true,
             },
@@ -71,22 +89,6 @@ fn needsAllPages(action: input_mod.Action, view: View, s: *const sess.Session) b
         .lock, .unlock, .power, .computer, .stop, .hold => false,
         else => true,
     };
-}
-
-/// Turns `delta` pages, stopping at either end, and saves the place every few turns.
-fn turnBy(session: *sess.Session, entry: *catalog.Entry, state_path: [*:0]const u8, since_save: *u32, delta: i64, touched_us: ?u64) !void {
-    // On a first open, pages ahead may not be laid out yet
-    if (delta > 0) try session.layoutUntil(session.current + @as(usize, @intCast(delta)) + 1);
-    const last: i64 = @intCast(session.pages.len - 1);
-    const target = std.math.clamp(@as(i64, @intCast(session.current)) + delta, 0, last);
-    if (target == session.current) return;
-    session.turning = true; // Reading on, not a jump
-    try session.show(@intCast(target), touched_us, false);
-    since_save.* += 1;
-    if (since_save.* >= save_every) {
-        sess.saveProgress(entry, state_path, session);
-        since_save.* = 0;
-    }
 }
 
 pub fn readBook(a: *app.App, entry: *catalog.Entry) !Outcome {
@@ -171,292 +173,409 @@ pub fn readBook(a: *app.App, entry: *catalog.Entry) !Outcome {
     try session.show(start, null, true);
     sess.saveProgress(entry, state_path, &session);
 
-    var since_save: u32 = 0;
-    // A while into the book, Wi-Fi goes off; leaving it, it comes back
-    var wifi_try_at: ?u64 = nowUs() + wifi_saver.after_us; // Null once settled
     a.wifi_hands_off = false;
-    var battery_minute: u64 = 0; // The battery is noted once a minute at most
-    defer wifi_saver.restore();
-    var view: View = .page;
-    var active: ?[]const u8 = null;
-    var delete_top: ?usize = null;
-    a.input.grips = true;
-    a.input.tick_us = clock_check_us;
-    defer a.input.grips = true;
-    defer a.input.tick_us = 0;
+    defer wifi_saver.restore(); // Leaving the book, Wi-Fi comes back
     defer sess.saveProgress(entry, state_path, &session);
-    defer a.input.deferred = false;
-    defer a.input.edge_zones = true;
-    defer a.input.grip_exempt = null;
-    var last_place = session.current;
-    while (true) {
-        _ = scratch_arena.reset(.retain_capacity); // Nothing from the last action is still needed
-        // A jump (Go To, search, a chapter, the scrubber) is saved at once: turning
-        // page by page saves every few turns, but a jump may cross half the book
-        const moved = if (session.current > last_place) session.current - last_place else last_place - session.current;
-        if (moved > 1 and !session.layoutPending()) {
-            sess.saveProgress(entry, state_path, &session);
-            since_save = 0;
-        }
-        last_place = session.current;
-        // The reading clock runs only while the page itself is in front of the reader.
-        if (view == .page) session.resumeClock() else session.pauseClock();
-        a.input.deferred = view == .page;
-        a.input.edge_zones = view != .highlight;
-        // The Back button sits where a resting thumb is ignored: taps on it count
-        a.input.grip_exempt = if (view == .page and session.back != null) blk: {
-            const r = session.backRect();
-            break :blk .{ .x = @intCast(r.x - 12), .y = @intCast(r.y - 12), .w = @intCast(r.w + 24), .h = @intCast(r.h + 24) };
-        } else null;
-        // A first open's layout goes on in idle moments, about 40 ms at a time
-        a.input.tick_us = if (session.layoutPending()) 1000 else clock_check_us;
-        const action = a.input.next();
-        if (session.layoutPending() and needsAllPages(action, view, &session)) {
-            try session.finishLayout();
-            if (view == .page) try session.showFooter(); // The page count it was missing
-        }
-        switch (action) {
-            .unlock => {},
-            .hold => |h| {
-                if (view != .page) continue;
-                // Holding a picture shows it on the whole screen
-                if (try session.pictureAt(h.x, h.y)) |img| {
-                    a.input.drag_slot = null;
-                    session.pauseClock();
-                    try picture_view.show(a, img);
-                    continue;
-                }
-                // Holding an existing highlight selects it, rather than starting over it.
-                if (selection.wordUnder(hl.pageWords(a, &session), h.x, h.y)) |word| {
-                    if (highlights.atWord(session.highlights.items, word)) |id| {
-                        a.input.drag_slot = null;
-                        active = id;
-                        view = .highlight;
-                        delete_top = try hl.showPage(a, &session, active);
-                        continue;
-                    }
-                }
-                const held = try hl.selectFromHold(a, &session, h.x, h.y) orelse continue;
-                // Held without moving: look the word up, and highlight it only if asked
-                if (held.head == held.fixed) {
-                    const word = hl.pageWords(a, &session)[held.fixed];
-                    if (try define.run(a, &session, word, lang) == .close) {
-                        _ = try hl.showPage(a, &session, null); // Takes the underline off
-                        continue;
-                    }
-                }
-                active = try hl.newHighlight(a, &session, alloc, entry, held.fixed, held.head);
-                if (active != null) {
-                    view = .highlight;
-                    delete_top = try hl.showPage(a, &session, active);
-                }
-            },
-            .lock => {
-                session.pauseClock(); // Asleep isn't reading
-                // Saved now: a lock is a natural stop, and anything after it may end noface
-                sess.saveProgress(entry, state_path, &session);
-                since_save = 0;
-                if (lock.lockScreen(a, entry, .{}) == .leaving) continue;
-                a.noteBattery(); // What sleeping cost
-                a.quick = lipc.read(a.quick); // Hours may have passed: the clock, battery and Wi-Fi
-                switch (view) {
-                    .page => try a.updateClock(),
-                    .toolbar, .sheet => try controls.drawToolbar(a, &session, entry.title, view == .sheet, false),
-                    else => {},
-                }
-            },
-            .tap => |t| switch (view) {
-                .highlight => {
-                    const id = active.?;
-                    const words = hl.pageWords(a, &session);
-                    const range = highlights.wordRange(words, session.highlights.items, id);
-                    if (delete_top) |top| {
-                        if (hl.inDeleteBubble(a, top, t.x, t.y)) {
-                            try hl.removeHighlight(a, &session, alloc, entry, id);
-                            view = .page;
-                            active = null;
-                            delete_top = try hl.showPage(a, &session, null);
-                            continue;
-                        }
-                    }
-                    if (range) |r| {
-                        const chosen = words[r.lo .. r.hi + 1];
-                        const grab_start = selection.nearHandle(selection.startHandle(chosen), t.x, t.y);
-                        if (grab_start or selection.nearHandle(selection.endHandle(chosen), t.x, t.y)) {
-                            try hl.extendHighlight(a, &session, alloc, entry, id, grab_start);
-                            delete_top = try hl.showPage(a, &session, active);
-                            continue;
-                        }
-                    }
-                    view = .page;
-                    active = null;
-                    delete_top = try hl.showPage(a, &session, null);
-                },
-                .note => {
-                    if (t.y >= session.note_top and session.note_next != null) {
-                        try note_view.showNote(a, &session, session.note_next.?, a.screen.height - session.note_top);
-                    } else {
-                        view = .page;
-                        try note_view.closeNote(a, &session);
-                    }
-                },
-                .panel => {
-                    const choice = menu.hit(t.x, t.y);
-                    const page = try session.ensure(session.current, session.current);
-                    if (try panel.panelControl(a, page, choice, t.x)) continue;
-                    switch (choice) {
-                        .settings => {
-                            lipc.openSettings();
-                            return .quit;
-                        },
-                        .kindle => return .quit, // noface.sh brings back the Kindle's home
-                        .close => {
-                            view = .page;
-                            try panel.closeMenu(a, page);
-                            try a.updateClock();
-                        },
-                        else => {},
-                    }
-                },
-                .toolbar, .sheet => {
-                    const sheet = view == .sheet;
-                    switch (toolbar.hit(t.x, t.y, if (sheet) a.tab else null)) {
-                        .stay => {},
-                        .more => switch (try more.run(a, &session, entry)) {
-                            .stay => try controls.drawToolbar(a, &session, entry.title, sheet, true),
-                            .page => |target| {
-                                view = .page;
-                                a.input.grips = true;
-                                try session.show(target, null, true);
-                            },
-                            .refresh => {
-                                view = .page;
-                                a.input.grips = true;
-                                try session.show(session.current, null, true);
-                            },
-                        },
-                        .search => {
-                            if (try search.run(a, &session, scratch)) |target| {
-                                view = .page;
-                                a.input.grips = true;
-                                try session.show(target, null, true);
-                            } else {
-                                try controls.drawToolbar(a, &session, entry.title, sheet, true);
-                            }
-                        },
-                        .bookmark => {
-                            try bookmark.toggle(a, &session, alloc, entry);
-                            try controls.drawToolbar(a, &session, entry.title, sheet, true);
-                        },
-                        .goto => {
-                            if (try goto.run(a, &session, scratch, book.chapters)) |target| {
-                                view = .page;
-                                a.input.grips = true;
-                                try session.show(target, null, true);
-                            } else {
-                                try controls.drawToolbar(a, &session, entry.title, sheet, true);
-                            }
-                        },
-                        .close => {
-                            view = .page;
-                            a.input.grips = true;
-                            try controls.closeToolbar(a, &session, sheet);
-                            try a.updateClock();
-                        },
-                        .home => return .library,
-                        .text => {
-                            view = if (sheet) .toolbar else .sheet;
-                            // Shrinking needs the page back under where the sheet was.
-                            try controls.drawToolbar(a, &session, entry.title, view == .sheet, sheet);
-                        },
-                        .chapter_prev, .chapter_next => |direction| {
-                            const sections = try scratch.alloc(u32, session.pages.len);
-                            for (session.pages, sections) |p, *out| out.* = session.paragraphs[p.para].section;
-                            session.setPage(toolbar.chapterTarget(sections, session.current, direction == .chapter_next));
-                            try controls.drawToolbar(a, &session, entry.title, sheet, true);
-                        },
-                        .scrub => try controls.dragScrub(a, &session, entry.title, sheet, t.x),
-                        .sheet => try controls.tapSheet(a, alloc, &session, entry.title, t.x, t.y),
-                    }
-                },
-                .page => {
-                    if (session.onBack(t.x, t.y)) {
-                        if (session.backPage()) |back| try session.show(back, t.us, false);
-                        continue;
-                    }
-                    if (selection.wordUnder(hl.pageWords(a, &session), t.x, t.y)) |word| {
-                        if (highlights.atWord(session.highlights.items, word)) |id| {
-                            active = id;
-                            view = .highlight;
-                            delete_top = try hl.showPage(a, &session, active);
-                            continue;
-                        }
-                    }
-                    if (session.referenceAt(t.x, t.y)) |target| {
-                        view = .note;
-                        try note_view.openNote(a, &session, target);
-                        continue;
-                    }
-                    if (t.y < touch_zones.top_zone) {
-                        view = .toolbar;
-                        a.input.grips = false;
-                        // Drawn with the last status at once, then again if it changed
-                        try controls.drawToolbar(a, &session, entry.title, false, false);
-                        const fresh = lipc.read(a.quick);
-                        if (!fresh.same(&a.quick)) {
-                            a.quick = fresh;
-                            try controls.drawToolbar(a, &session, entry.title, false, false);
-                        }
-                        continue;
-                    }
-                    const delta = input_mod.turnDirection(t.x, a.input.width) + a.input.takeTurns();
-                    try turnBy(&session, entry, state_path, &since_save, delta, t.us);
-                },
-            },
-            .swipe => |direction| {
-                if (view != .page) continue;
-                try turnBy(&session, entry, state_path, &since_save, direction + a.input.takeTurns(), null);
-            },
-            .tick => {
-                // A charger came or went: an open toolbar shows the bolt, so it follows
-                if (a.input.charger_changed) {
-                    a.input.charger_changed = false;
-                    if (view == .toolbar or view == .sheet) {
-                        a.quick = lipc.read(a.quick);
-                        try controls.drawToolbar(a, &session, entry.title, view == .sheet, false);
-                    }
-                }
-                if (session.layoutPending()) {
-                    // Once done, show the page count that was missing: in the footer,
-                    // or in the toolbar when it's open
-                    if (try session.layoutStep()) switch (view) {
-                        .page => try session.showFooter(),
-                        .toolbar, .sheet => try controls.drawToolbar(a, &session, entry.title, view == .sheet, false),
-                        else => {},
-                    };
-                    continue;
-                }
-                if (wifi_try_at) |at| if (view == .page and nowUs() >= at) {
-                    if (a.wifi_hands_off) {
-                        wifi_try_at = null;
-                    } else switch (wifi_saver.pause(nowUs() < a.downloads_until)) {
-                        .paused, .never => wifi_try_at = null,
-                        .later => wifi_try_at = nowUs() + wifi_retry_us,
-                    }
-                };
-                if (unixTime() / 60 != battery_minute) {
-                    battery_minute = unixTime() / 60;
-                    a.noteBattery();
-                }
-                if (view == .page and unixTime() / 60 != a.clock_minute) try a.updateClock();
-            },
-            .drag, .drag_end => {},
-            .pull => {
-                if (view != .page) continue;
-                view = .panel;
-                try panel.drawFresh(a, try session.ensure(session.current, session.current));
-            },
-            .power, .computer, .stop => return .quit,
+    defer {
+        a.input.grips = true;
+        a.input.deferred = false;
+        a.input.edge_zones = true;
+        a.input.grip_exempt = null;
+        a.input.tick_us = 0;
+    }
+    var reader = Reader{
+        .a = a,
+        .s = &session,
+        .entry = entry,
+        .alloc = alloc,
+        .scratch = scratch,
+        .chapters = book.chapters,
+        .lang = lang,
+        .state_path = state_path,
+        .last_place = session.current,
+        .wifi_try_at = nowUs() + wifi_saver.after_us,
+    };
+    return reader.run(&scratch_arena);
+}
+
+/// An open book and what's on screen over it. `run` takes each action: what's the
+/// same in every view (locking, the clock's tick, leaving) here, and touches by the
+/// view they land on, each in a handler of its own.
+const Reader = struct {
+    a: *app.App,
+    s: *sess.Session,
+    entry: *catalog.Entry,
+    alloc: std.mem.Allocator, // The book's, kept while it's open
+    scratch: std.mem.Allocator, // One action's, emptied after it
+    chapters: []const book_model.Chapter,
+    lang: ?hyphen.Lang,
+    state_path: [*:0]const u8,
+    view: View = .page,
+    sheet_open: bool = false, // The toolbar's Aa sheet, in the toolbar view
+    active: ?[]const u8 = null, // The highlight being changed, in the highlight view
+    delete_top: ?usize = null, // Where its Delete bubble is, when there is one
+    since_save: u32 = 0,
+    last_place: usize = 0,
+    wifi_try_at: ?u64 = null, // When to turn Wi-Fi off; null once that's settled
+    battery_minute: u64 = 0, // The battery is noted once a minute at most
+
+    fn run(r: *Reader, scratch_arena: *std.heap.ArenaAllocator) !Outcome {
+        while (true) {
+            _ = scratch_arena.reset(.retain_capacity); // Nothing from the last action is still needed
+            r.saveAfterJump();
+            if (r.mode().reading) r.s.resumeClock() else r.s.pauseClock();
+            r.setInput();
+            const action = r.a.input.next();
+            if (r.s.layoutPending() and needsAllPages(action, r.view, r.sheet(), r.s)) {
+                try r.s.finishLayout();
+                // The page's footer gains its count; anything else is about to be redrawn
+                if (r.mode().reading) try r.s.showFooter();
+            }
+            switch (action) {
+                .lock => try r.onLock(),
+                .tick => try r.onTick(),
+                .power, .computer, .stop => return .quit,
+                .unlock, .drag, .drag_end => {},
+                .tap, .hold, .swipe, .pull => if (try r.onTouch(action)) |outcome| return outcome,
+            }
         }
     }
-}
+
+    fn mode(r: *const Reader) Mode {
+        return modeOf(r.view);
+    }
+
+    /// The Aa sheet's tab, while it's open.
+    fn sheet(r: *const Reader) ?@import("../ui/aa.zig").Tab {
+        return if (r.sheet_open) r.a.tab else null;
+    }
+
+    /// The input modes for the view on screen, and how often to tick: often while a
+    /// first open is still laid out in idle moments, else for the clock.
+    fn setInput(r: *Reader) void {
+        const in = r.a.input;
+        const m = r.mode();
+        in.deferred = m.taps_on_lift;
+        in.grips = m.thumb_filter;
+        in.edge_zones = m.edge_zones;
+        in.grip_exempt = if (m.reading) r.s.backZone() else null; // The Back button counts
+        in.tick_us = if (r.s.layoutPending()) 1000 else clock_check_us;
+    }
+
+    /// A jump (Go To, search, a chapter, the slider) is saved at once: turning page by
+    /// page saves every few turns, but a jump may cross half the book.
+    fn saveAfterJump(r: *Reader) void {
+        const now = r.s.current;
+        const moved = if (now > r.last_place) now - r.last_place else r.last_place - now;
+        if (moved > 1 and !r.s.layoutPending()) r.save();
+        r.last_place = now;
+    }
+
+    fn save(r: *Reader) void {
+        sess.saveProgress(r.entry, r.state_path, r.s);
+        r.since_save = 0;
+    }
+
+    fn onTouch(r: *Reader, action: input_mod.Action) !?Outcome {
+        return switch (r.view) {
+            .page => r.onPage(action),
+            .toolbar => r.onToolbar(action),
+            .highlight => r.onHighlight(action),
+            .note => r.onNote(action),
+            .panel => r.onPanel(action),
+        };
+    }
+
+    // What's on screen, drawn again
+
+    /// After the clock, battery or charger changed: wherever they show.
+    fn showStatus(r: *Reader) !void {
+        switch (r.view) {
+            .page => try r.a.updateClock(),
+            .toolbar => try r.drawToolbar(false),
+            .panel, .note, .highlight => {},
+        }
+    }
+
+    /// After the whole book is laid out: the page count, where it shows.
+    fn showPageCount(r: *Reader) !void {
+        switch (r.view) {
+            .page => try r.s.showFooter(),
+            .toolbar => try r.drawToolbar(false),
+            .panel, .note, .highlight => {},
+        }
+    }
+
+    fn drawToolbar(r: *Reader, whole_page: bool) !void {
+        try controls.drawToolbar(r.a, r.s, r.entry.title, r.sheet_open, whole_page);
+    }
+
+    /// Back to the page alone, at `target`, from whatever was over it.
+    fn toPage(r: *Reader, target: usize) !void {
+        r.view = .page;
+        r.sheet_open = false;
+        try r.s.show(target, null, true);
+    }
+
+    // Actions in every view
+
+    fn onLock(r: *Reader) !void {
+        r.s.pauseClock(); // Asleep isn't reading
+        r.save(); // A lock is a natural stop, and anything after it may end noface
+        if (lock.lockScreen(r.a, r.entry, .{}) == .leaving) return;
+        r.a.noteBattery(); // What sleeping cost
+        r.a.quick = lipc.read(r.a.quick); // Hours may have passed
+        try r.showStatus();
+    }
+
+    fn onTick(r: *Reader) !void {
+        const a = r.a;
+        if (a.input.charger_changed) { // A charger came or went: the bolt follows
+            a.input.charger_changed = false;
+            a.quick = lipc.read(a.quick);
+            try r.showStatus();
+        }
+        if (r.s.layoutPending()) { // A first open laid out a little more
+            if (try r.s.layoutStep()) try r.showPageCount();
+            return;
+        }
+        if (unixTime() / 60 != r.battery_minute) { // In every view
+            r.battery_minute = unixTime() / 60;
+            a.noteBattery();
+        }
+        if (!r.mode().reading) return; // The rest only while the page alone is up
+        r.pauseWifi();
+        if (unixTime() / 60 != a.clock_minute) try a.updateClock();
+    }
+
+    /// A couple of minutes into the book, Wi-Fi goes off (wifi_saver.zig).
+    fn pauseWifi(r: *Reader) void {
+        const at = r.wifi_try_at orelse return;
+        if (nowUs() < at) return;
+        if (r.a.wifi_hands_off) {
+            r.wifi_try_at = null;
+            return;
+        }
+        r.wifi_try_at = switch (wifi_saver.pause(nowUs() < r.a.downloads_until)) {
+            .paused, .never => null,
+            .later => nowUs() + wifi_retry_us,
+        };
+    }
+
+    // The page alone
+
+    fn onPage(r: *Reader, action: input_mod.Action) !?Outcome {
+        switch (action) {
+            .tap => |t| try r.tapPage(t.x, t.y, t.us),
+            .hold => |h| try r.holdPage(h.x, h.y),
+            .swipe => |direction| try r.turnBy(direction + r.a.input.takeTurns(), null),
+            .pull => {
+                r.view = .panel;
+                try panel.drawFresh(r.a, try r.s.ensure(r.s.current, r.s.current));
+            },
+            else => {},
+        }
+        return null;
+    }
+
+    fn tapPage(r: *Reader, x: i32, y: i32, us: u64) !void {
+        const a = r.a;
+        if (r.s.onBack(x, y)) {
+            if (r.s.backPage()) |back| try r.s.show(back, us, false);
+            return;
+        }
+        if (r.highlightAt(x, y)) |id| return r.selectHighlight(id);
+        if (r.s.referenceAt(x, y)) |target| {
+            r.view = .note;
+            return note_view.openNote(a, r.s, target);
+        }
+        if (y < touch_zones.top_zone) return r.openToolbar();
+        try r.turnBy(input_mod.turnDirection(x, a.input.width) + a.input.takeTurns(), us);
+    }
+
+    /// Holding a picture shows it whole; holding a highlight selects it; holding a word
+    /// looks it up; holding and dragging highlights.
+    fn holdPage(r: *Reader, x: i32, y: i32) !void {
+        const a = r.a;
+        if (try r.s.pictureAt(x, y)) |img| {
+            a.input.drag_slot = null;
+            r.s.pauseClock();
+            return picture_view.show(a, img);
+        }
+        if (r.highlightAt(x, y)) |id| {
+            a.input.drag_slot = null;
+            return r.selectHighlight(id);
+        }
+        const held = try hl.selectFromHold(a, r.s, x, y) orelse return;
+        if (held.head == held.fixed) { // Held without moving: look it up, highlight only if asked
+            const word = hl.pageWords(a, r.s)[held.fixed];
+            if (try define.run(a, r.s, word, r.lang) == .close) {
+                _ = try hl.showPage(a, r.s, null); // Takes the underline off
+                return;
+            }
+        }
+        if (try hl.newHighlight(a, r.s, r.alloc, r.entry, held.fixed, held.head)) |id| try r.selectHighlight(id);
+    }
+
+    fn highlightAt(r: *Reader, x: i32, y: i32) ?[]const u8 {
+        const word = selection.wordUnder(hl.pageWords(r.a, r.s), x, y) orelse return null;
+        return highlights.atWord(r.s.highlights.items, word);
+    }
+
+    /// Turns `delta` pages, stopping at either end, and saves the place every few turns.
+    fn turnBy(r: *Reader, delta: i64, touched_us: ?u64) !void {
+        const s = r.s;
+        // On a first open, pages ahead may not be laid out yet
+        if (delta > 0) try s.layoutUntil(s.current + @as(usize, @intCast(delta)) + 1);
+        const last: i64 = @intCast(s.pages.len - 1);
+        const target = std.math.clamp(@as(i64, @intCast(s.current)) + delta, 0, last);
+        if (target == s.current) return;
+        s.turning = true; // Reading on, not a jump
+        try s.show(@intCast(target), touched_us, false);
+        r.since_save += 1;
+        if (r.since_save >= save_every) r.save();
+    }
+
+    // The toolbar, and its Aa sheet
+
+    /// Drawn with the last status at once, then again if it has changed since.
+    fn openToolbar(r: *Reader) !void {
+        r.view = .toolbar;
+        r.sheet_open = false;
+        r.setInput(); // Its controls reach the bottom edge before the next touch arrives
+        try r.drawToolbar(false);
+        const fresh = lipc.read(r.a.quick);
+        if (fresh.same(&r.a.quick)) return;
+        r.a.quick = fresh;
+        try r.drawToolbar(false);
+    }
+
+    fn onToolbar(r: *Reader, action: input_mod.Action) !?Outcome {
+        const t = switch (action) {
+            .tap => |t| t,
+            else => return null,
+        };
+        const a = r.a;
+        const s = r.s;
+        switch (toolbar.hit(t.x, t.y, r.sheet())) {
+            .stay => {},
+            .home => return .library,
+            .close => {
+                try controls.closeToolbar(a, s, r.sheet_open);
+                r.view = .page;
+                r.sheet_open = false;
+                try a.updateClock();
+            },
+            .text => {
+                r.sheet_open = !r.sheet_open;
+                try r.drawToolbar(!r.sheet_open); // Closing it needs the page back under where it was
+            },
+            .more => switch (try more.run(a, s, r.entry)) {
+                .stay => try r.drawToolbar(true),
+                .page => |target| try r.toPage(target),
+                .refresh => try r.toPage(s.current),
+            },
+            .search => if (try search.run(a, s, r.scratch)) |target| try r.toPage(target) else try r.drawToolbar(true),
+            .goto => if (try goto.run(a, s, r.scratch, r.chapters)) |target| try r.toPage(target) else try r.drawToolbar(true),
+            .bookmark => {
+                try bookmark.toggle(a, s, r.alloc, r.entry);
+                try r.drawToolbar(true);
+            },
+            .chapter_prev, .chapter_next => |direction| {
+                const sections = try r.scratch.alloc(u32, s.pages.len);
+                for (s.pages, sections) |p, *out| out.* = s.paragraphs[p.para].section;
+                s.setPage(toolbar.chapterTarget(sections, s.current, direction == .chapter_next));
+                try r.drawToolbar(true);
+            },
+            .scrub => try controls.dragScrub(a, s, r.entry.title, r.sheet_open, t.x),
+            .sheet => try controls.tapSheet(a, r.alloc, s, r.entry.title, t.x, t.y),
+        }
+        return null;
+    }
+
+    // A highlight, selected to change or delete
+
+    fn selectHighlight(r: *Reader, id: []const u8) !void {
+        r.view = .highlight;
+        r.active = id;
+        r.delete_top = try hl.showPage(r.a, r.s, id);
+    }
+
+    fn unselectHighlight(r: *Reader) !void {
+        r.view = .page;
+        r.active = null;
+        r.delete_top = try hl.showPage(r.a, r.s, null);
+    }
+
+    /// Delete in its bubble, or a handle dragged to change it; any other tap lets go.
+    fn onHighlight(r: *Reader, action: input_mod.Action) !?Outcome {
+        const t = switch (action) {
+            .tap => |t| t,
+            else => return null,
+        };
+        const a = r.a;
+        const id = r.active.?;
+        if (r.delete_top) |top| if (hl.inDeleteBubble(a, top, t.x, t.y)) {
+            try hl.removeHighlight(a, r.s, r.alloc, r.entry, id);
+            try r.unselectHighlight();
+            return null;
+        };
+        const words = hl.pageWords(a, r.s);
+        if (highlights.wordRange(words, r.s.highlights.items, id)) |range| {
+            const chosen = words[range.lo .. range.hi + 1];
+            const grab_start = selection.nearHandle(selection.startHandle(chosen), t.x, t.y);
+            if (grab_start or selection.nearHandle(selection.endHandle(chosen), t.x, t.y)) {
+                try hl.extendHighlight(a, r.s, r.alloc, r.entry, id, grab_start);
+                r.delete_top = try hl.showPage(a, r.s, id);
+                return null;
+            }
+        }
+        try r.unselectHighlight();
+        return null;
+    }
+
+    // A note, in a panel over the page
+
+    /// A tap on the panel shows the note's next part, if it has one; anywhere else closes it.
+    fn onNote(r: *Reader, action: input_mod.Action) !?Outcome {
+        const t = switch (action) {
+            .tap => |t| t,
+            else => return null,
+        };
+        const s = r.s;
+        if (t.y >= s.note_top) if (s.note_next) |next| {
+            try note_view.showNote(r.a, s, next, r.a.screen.height - s.note_top);
+            return null;
+        };
+        r.view = .page;
+        try note_view.closeNote(r.a, s);
+        return null;
+    }
+
+    // The light and wireless panel, pulled down from the top
+
+    fn onPanel(r: *Reader, action: input_mod.Action) !?Outcome {
+        const t = switch (action) {
+            .tap => |t| t,
+            else => return null,
+        };
+        const a = r.a;
+        const choice = menu.hit(t.x, t.y);
+        const page = try r.s.ensure(r.s.current, r.s.current);
+        if (try panel.panelControl(a, page, choice, t.x)) return null;
+        switch (choice) {
+            .settings => {
+                lipc.openSettings();
+                return .quit;
+            },
+            .kindle => return .quit, // noface.sh brings back the Kindle's home
+            .close => {
+                r.view = .page;
+                try panel.closeMenu(a, page);
+                try a.updateClock();
+            },
+            else => {},
+        }
+        return null;
+    }
+};

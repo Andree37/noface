@@ -152,6 +152,9 @@ pub const Script = struct {
     }
 };
 
+/// An area of the screen, in screen pixels.
+pub const Zone = struct { x: i32, y: i32, w: i32, h: i32 };
+
 /// Turns raw touch events into taps.
 /// The panel reports two slots. Every new finger counts, so a resting thumb
 /// can't block taps from another finger.
@@ -200,7 +203,7 @@ pub const Input = struct {
     /// again and clears this.
     charger_changed: bool = false,
     /// A control inside the grip zones (the reader's Back button): touches there count.
-    grip_exempt: ?struct { x: i32, y: i32, w: i32, h: i32 } = null,
+    grip_exempt: ?Zone = null,
 
     /// Whether a touch at (x, y) is taken for a resting thumb and ignored.
     pub fn ignores(in: *const Input, x: i32, y: i32) bool {

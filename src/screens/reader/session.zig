@@ -257,6 +257,14 @@ pub const Session = struct {
         return .{ .x = 40, .y = s.app.screen.height - 112, .w = back_width, .h = 84 };
     }
 
+    /// Where touches count as the Back button although the thumb filter is on there:
+    /// its rectangle and a fingertip around it. Null with no button.
+    pub fn backZone(s: *const Session) ?@import("../../kindle/input.zig").Zone {
+        if (s.back == null) return null;
+        const r = s.backRect();
+        return .{ .x = @as(i32, @intCast(r.x)) - 12, .y = @as(i32, @intCast(r.y)) - 12, .w = @intCast(r.w + 24), .h = @intCast(r.h + 24) };
+    }
+
     pub fn onBack(s: *const Session, x: i32, y: i32) bool {
         if (s.back == null) return false;
         const r = s.backRect();

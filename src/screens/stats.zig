@@ -42,17 +42,7 @@ pub fn summarize(a: *const app.App, entries: []const catalog.Entry) stats_ui.Sum
 pub fn run(a: *app.App, entries: []const catalog.Entry) !void {
     try stats_ui.render(a.ui, a.page(a.screen.pixels), summarize(a, entries));
     try a.showBand(stats_ui_top, a.screen.height - stats_ui_top);
-    while (true) {
-        const action = a.input.next();
-        switch (action) {
-            .tap => return,
-            .lock, .power, .computer, .stop => {
-                a.input.stashed = action;
-                return;
-            },
-            else => {},
-        }
-    }
+    _ = a.input.nextTap(); // Any tap closes it, as does locking
 }
 
 const stats_ui_top = 96; // Under the status strip, which stays

@@ -50,17 +50,7 @@ pub fn show(a: *app.App) !void {
     try draw.clipped(a.ui.caption, page, x, top + 128, said.detail, avail);
     page.tint(left + 36, top + 96, width - 72, 44, style.faded);
     try a.showRect(left, top, width, height);
-    while (true) {
-        const action = a.input.next();
-        switch (action) {
-            .tap => break,
-            .lock, .power, .computer, .stop => {
-                a.input.stashed = action;
-                break;
-            },
-            else => {},
-        }
-    }
+    _ = a.input.nextTap(); // Any tap closes it, as does locking
     @memcpy(a.screen.pixels, a.overlay);
     try a.showRect(left, top, width, height);
 }

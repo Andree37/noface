@@ -10,6 +10,18 @@ const dict_get = @import("dict_get.zig");
 
 pub const Choice = enum { close, highlight };
 
+/// "Get dictionary" on the sheet: downloads it, and shows the sheet again, with the
+/// definition if it came.
+fn getDictionary(a: *app.App, s: *const sess.Session, word: book_model.Word, lang: ?hyphen.Lang, page_copy: []const u8, found: *definition.Found) !void {
+    const l = lang orelse return;
+    if (!found.no_dictionary) return;
+    if (try dict_get.get(a, page_copy, l)) found.* = find(a, s, word, lang);
+    if (found.no_dictionary) found.can_get = dict_get.languageOf(l).name;
+    @memcpy(a.screen.pixels, page_copy);
+    try definition.render(a.ui, a.page(a.screen.pixels), found.*);
+    try a.showBand(0, a.screen.height);
+}
+
 /// What the dictionary has for a word of the book.
 pub fn find(a: *app.App, s: *const sess.Session, word: book_model.Word, lang: ?hyphen.Lang) definition.Found {
     const text = dictionary.trimmed(s.paragraphs[word.para].text[word.start..word.end]);
@@ -44,34 +56,16 @@ pub fn run(a: *app.App, s: *const sess.Session, word: book_model.Word, lang: ?hy
     @memcpy(a.screen.pixels, page_copy); // Not over a card that was just answered
     try definition.render(a.ui, a.page(a.screen.pixels), found);
     try a.showBand(0, a.screen.height);
-    // Highlight sits along the bottom, where a resting thumb is otherwise ignored
-    a.input.grips = false;
-    defer a.input.grips = true;
-    const deferred = a.input.deferred; // Taps as they land, as on any sheet
-    a.input.deferred = false;
-    defer a.input.deferred = deferred;
-    const choice: Choice = while (true) {
-        const action = a.input.next();
-        switch (action) {
-            .tap => |t| switch (definition.hit(t.x, t.y)) {
-                .close => break .close,
-                .highlight => break .highlight,
-                .get_dictionary => if (found.no_dictionary) if (lang) |l| {
-                    if (try dict_get.get(a, page_copy, l)) found = find(a, s, word, lang);
-                    @memcpy(a.screen.pixels, page_copy);
-                    if (found.no_dictionary) found.can_get = dict_get.languageOf(l).name;
-                    try definition.render(a.ui, a.page(a.screen.pixels), found);
-                    try a.showBand(0, a.screen.height);
-                },
-                .none => {},
-            },
-            .lock, .power, .computer, .stop => {
-                a.input.stashed = action;
-                break .close;
-            },
-            else => {},
+    const was = a.input.forSheet(); // Highlight sits on the bottom edge
+    defer a.input.restore(was);
+    const choice: Choice = while (a.input.nextTap()) |t| {
+        switch (definition.hit(t.x, t.y)) {
+            .close => break .close,
+            .highlight => break .highlight,
+            .get_dictionary => try getDictionary(a, s, word, lang, page_copy, &found),
+            .none => {},
         }
-    };
+    } else .close; // Locked, or leaving
     @memcpy(a.screen.pixels, page_copy); // The cards drew into the overlay; this is the page
     try a.showBand(0, a.screen.height);
     return choice;

@@ -30,36 +30,27 @@ pub fn run(a: *app.App, s: *sess.Session) !?usize {
         try a.showBand(toolbar.status_row, bottom - toolbar.status_row);
         whole = false;
 
-        const action = a.input.next();
-        switch (action) {
-            .tap => |t| {
-                if (search_sheet.barHit(t.x, t.y)) |h| {
-                    if (h == .cancel) return null;
-                    continue;
-                }
-                if (t.y < search_sheet.top) return null;
-                note = "";
-                switch (keyboard.hit(t.x, t.y) orelse continue) {
-                    .char => |c| {
-                        // Only digits mean anything here; letters are ignored.
-                        if (std.ascii.isDigit(c) and len < digits.len) {
-                            digits[len] = c;
-                            len += 1;
-                        }
-                    },
-                    .backspace => len -|= 1,
-                    .space => {},
-                    .enter => {
-                        if (pageIndex(digits[0..len], s.pages.len)) |index| return index;
-                        note = "There's no such page in this book.";
-                    },
+        const t = a.input.nextTap() orelse return null; // Locked, or leaving
+        if (search_sheet.barHit(t.x, t.y)) |h| {
+            if (h == .cancel) return null;
+            continue;
+        }
+        if (t.y < search_sheet.top) return null; // Above the sheet
+        note = "";
+        switch (keyboard.hit(t.x, t.y) orelse continue) {
+            .char => |c| {
+                // Only digits mean anything here; letters are ignored
+                if (std.ascii.isDigit(c) and len < digits.len) {
+                    digits[len] = c;
+                    len += 1;
                 }
             },
-            .lock, .power, .computer, .stop => {
-                a.input.stashed = action;
-                return null;
+            .backspace => len -|= 1,
+            .space => {},
+            .enter => {
+                if (pageIndex(digits[0..len], s.pages.len)) |index| return index;
+                note = "There's no such page in this book.";
             },
-            else => {},
         }
     }
 }

@@ -260,33 +260,25 @@ fn typeSearch(a: *app.App, lib: *const Library, q: *search.Query) SearchEnd {
         const bottom: u32 = if (first) a.screen.height else keyboard.top;
         a.showBand(search_sheet.top, bottom - search_sheet.top) catch {};
         first = false;
-        const action = a.input.next();
-        switch (action) {
-            .tap => |t| {
-                if (keyboard.hit(t.x, t.y)) |k| switch (k) {
-                    .char => |c| q.push(c),
-                    .space => q.push(' '),
-                    .backspace => q.pop(),
-                    .enter => return .search,
-                } else switch (search_sheet.hit(t.x, t.y, if (q.words().len > 0) shown.len else 0)) {
-                    .cancel => {
-                        q.* = kept;
-                        return .cancel;
-                    },
-                    .row => |i| {
-                        const entry = shown[i];
-                        if (lib.entries[entry].isLocal()) return .{ .open = entry };
-                        return .search;
-                    },
-                    .field, .none => {},
-                }
-            },
-            .lock, .power, .computer, .stop => {
-                a.input.stashed = action;
+        const t = a.input.nextTap() orelse { // Locked, or leaving: as if cancelled
+            q.* = kept;
+            return .cancel;
+        };
+        if (keyboard.hit(t.x, t.y)) |k| switch (k) {
+            .char => |c| q.push(c),
+            .space => q.push(' '),
+            .backspace => q.pop(),
+            .enter => return .search,
+        } else switch (search_sheet.hit(t.x, t.y, if (q.words().len > 0) shown.len else 0)) {
+            .cancel => {
                 q.* = kept;
                 return .cancel;
             },
-            else => {},
+            .row => |i| {
+                const entry = shown[i];
+                return if (lib.entries[entry].isLocal()) .{ .open = entry } else .search;
+            },
+            .field, .none => {},
         }
     }
 }

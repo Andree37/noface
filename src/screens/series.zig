@@ -51,20 +51,12 @@ fn pick(a: *app.App, heading: []const u8, about: []const u8, rows: []const goto_
         page.tint(style.margin, 250, page.width - 2 * style.margin, 36, style.faded);
         try goto_ui.renderList(a.ui, page, rows, null, list_page, "");
         try a.showBand(0, a.screen.height);
-        const choice = while (true) {
-            const action = a.input.next();
-            switch (action) {
-                .tap => |t| switch (goto_ui.hit(t.x, t.y, list_page, rows.len)) {
-                    .none, .tab => continue,
-                    else => |h| break h,
-                },
-                .lock, .power, .computer, .stop => {
-                    a.input.stashed = action;
-                    return null;
-                },
-                else => {},
+        const choice = while (a.input.nextTap()) |t| {
+            switch (goto_ui.hit(t.x, t.y, list_page, rows.len)) {
+                .none, .tab => {},
+                else => |h| break h,
             }
-        };
+        } else return null; // Locked, or leaving
         switch (choice) {
             .close, .none, .tab => return null,
             .row => |i| return i,
@@ -85,22 +77,13 @@ fn typeName(a: *app.App, alloc: std.mem.Allocator) !?[]const u8 {
         if (first) keyboard.render(a.ui, page) catch {};
         try a.showBand(0, if (first) a.screen.height else keyboard.top);
         first = false;
-        const action = a.input.next();
-        switch (action) {
-            .tap => |t| {
-                if (keyboard.hit(t.x, t.y)) |k| switch (k) {
-                    .char => |c| q.push(c),
-                    .space => q.push(' '),
-                    .backspace => q.pop(),
-                    .enter => if (q.words().len > 0) return try overrides.titleCase(alloc, q.slice()),
-                } else if (search_sheet.hit(t.x, t.y, 0) == .cancel) return null;
-            },
-            .lock, .power, .computer, .stop => {
-                a.input.stashed = action;
-                return null;
-            },
-            else => {},
-        }
+        const t = a.input.nextTap() orelse return null; // Locked, or leaving
+        if (keyboard.hit(t.x, t.y)) |k| switch (k) {
+            .char => |c| q.push(c),
+            .space => q.push(' '),
+            .backspace => q.pop(),
+            .enter => if (q.words().len > 0) return try overrides.titleCase(alloc, q.slice()),
+        } else if (search_sheet.hit(t.x, t.y, 0) == .cancel) return null;
     }
 }
 

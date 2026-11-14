@@ -11,6 +11,7 @@ const touch_zones = @import("../../kindle/touch.zig");
 const draw = @import("../../ui/draw.zig");
 const style = @import("../../ui/style.zig");
 const app = @import("../../app.zig");
+const input_mod = @import("../../kindle/input.zig");
 const os = @import("../../sys/os.zig");
 
 /// Bigger than this and it isn't worth the memory: a page-sized scan is ~5M.
@@ -138,48 +139,38 @@ const Follow = struct {
 /// What came after a tap, within the double tap's moment.
 const After = enum { nothing, double_tap, other_tap, quit };
 
-/// Waits briefly for a second tap near the first. One that lands elsewhere, or
-/// moves, is left for the main loop as a tap of its own.
+/// Waits briefly for a second tap near the first. One that lands elsewhere is left
+/// for the main loop as a tap of its own.
 fn afterTap(a: *app.App, x: i32, y: i32) After {
     const tick = a.input.tick_us;
     defer a.input.tick_us = tick;
     a.input.tick_us = double_tap_us;
     a.input.last_tick = os.nowUs();
-    while (true) {
-        const action = a.input.next();
-        switch (action) {
-            .tick => return .nothing,
-            .tap => |t| {
-                if (@abs(t.x - x) > double_tap_reach or @abs(t.y - y) > double_tap_reach) {
-                    a.input.stashed = action;
-                    return .other_tap;
-                }
-                // Its lift isn't a new tap: follow it to the end. Moving, it was a
-                // drag after all, not a double tap
-                a.input.beginDrag();
-                var still = true;
-                while (true) {
-                    const other = a.input.next();
-                    switch (other) {
-                        .drag => |dx| {
-                            if (touch_zones.movedOff(t.x, t.y, dx, a.input.drag_y)) still = false;
-                        },
-                        .drag_end => return if (still) .double_tap else .nothing,
-                        .lock, .power, .computer, .stop => {
-                            a.input.stashed = other;
-                            return .quit;
-                        },
-                        else => {},
-                    }
-                }
-            },
-            .lock, .power, .computer, .stop => {
-                a.input.stashed = action;
-                return .quit;
-            },
-            else => {},
-        }
-    }
+    while (a.input.nextFor()) |action| switch (action) {
+        .tick => return .nothing, // No second tap in time
+        .tap => |t| {
+            if (@abs(t.x - x) <= double_tap_reach and @abs(t.y - y) <= double_tap_reach) return followSecondTap(a, t);
+            a.input.stashed = action;
+            return .other_tap;
+        },
+        else => {},
+    };
+    return .quit;
+}
+
+/// The second tap's finger, followed to its lift (which isn't a new tap): a double tap
+/// if it stayed put, else a drag after all.
+fn followSecondTap(a: *app.App, t: input_mod.Tap) After {
+    a.input.beginDrag();
+    var still = true;
+    while (a.input.nextFor()) |action| switch (action) {
+        .drag => |dx| {
+            if (touch_zones.movedOff(t.x, t.y, dx, a.input.drag_y)) still = false;
+        },
+        .drag_end => return if (still) .double_tap else .nothing,
+        else => {},
+    };
+    return .quit;
 }
 
 fn onClose(x: i32, y: i32) bool {
@@ -187,6 +178,40 @@ fn onClose(x: i32, y: i32) bool {
     const dy = y - close_cy;
     const reach = close_r + 30;
     return dx * dx + dy * dy <= reach * reach;
+}
+
+/// A finger on the picture: a drag pans it; a tap on the close button closes it; a
+/// double tap shows it whole; a single tap goes a step closer, centred on it. False
+/// when the viewer should close.
+fn onPictureTap(a: *app.App, v: *View, t: input_mod.Tap) !bool {
+    a.input.beginDrag();
+    var follow = Follow{ .a = a, .v = v, .x0 = t.x, .y0 = t.y, .start_cx = v.cx, .start_cy = v.cy };
+    _ = try app.followDrag(a, null, &follow);
+    if (a.input.stashed != null) return false; // Locked, or leaving
+    if (follow.panned) {
+        if (v.step > 0) try render(a, v.*); // Its grays back
+        return true;
+    }
+    // Closing on the lift, so a drag that starts by the button still pans
+    if (onClose(t.x, t.y)) return false;
+    switch (afterTap(a, t.x, t.y)) {
+        .quit => return false,
+        .double_tap => {
+            if (v.step == 0) return true;
+            v.whole();
+        },
+        .nothing, .other_tap => {
+            if (v.step + 1 == steps.len) return true; // Already at the closest step
+            const at = v.pictureAt(t.x, t.y);
+            v.step += 1;
+            v.cx = at.x;
+            v.cy = at.y;
+        },
+    }
+    v.clamp();
+    std.debug.print("picture zoom {d}x\n", .{@as(u32, @intFromFloat(steps[v.step]))});
+    try render(a, v.*);
+    return true;
 }
 
 /// Shows the picture until it's closed, then puts the page back as it was.
@@ -220,47 +245,10 @@ pub fn show(a: *app.App, img: book_model.Image) !void {
         a.input.deferred = deferred;
         a.input.edge_zones = edges;
     }
-    while (true) {
-        const action = a.input.next();
-        switch (action) {
-            .tap => |t| {
-                // A thumb resting where the Kindle is held isn't a tap
-                if (touch_zones.isGrip(t.x, t.y, a.input.width, a.input.height)) continue;
-                a.input.beginDrag();
-                var follow = Follow{ .a = a, .v = &v, .x0 = t.x, .y0 = t.y, .start_cx = v.cx, .start_cy = v.cy };
-                _ = try app.followDrag(a, null, &follow);
-                if (a.input.stashed != null) break;
-                if (follow.panned) {
-                    if (v.step > 0) try render(a, v); // Its grays back
-                    continue;
-                }
-                // Closing on the lift, so a drag that starts by the button still pans
-                if (onClose(t.x, t.y)) break;
-                switch (afterTap(a, t.x, t.y)) {
-                    .quit => break,
-                    .double_tap => {
-                        if (v.step == 0) continue;
-                        v.whole();
-                    },
-                    // One step closer, centred on the tap, up to the closest step
-                    .nothing, .other_tap => {
-                        if (v.step + 1 == steps.len) continue;
-                        const at = v.pictureAt(t.x, t.y);
-                        v.step += 1;
-                        v.cx = at.x;
-                        v.cy = at.y;
-                    },
-                }
-                v.clamp();
-                std.debug.print("picture zoom {d}x\n", .{@as(u32, @intFromFloat(steps[v.step]))});
-                try render(a, v);
-            },
-            .lock, .power, .computer, .stop => {
-                a.input.stashed = action;
-                break;
-            },
-            else => {},
-        }
+    while (a.input.nextTap()) |t| {
+        // A thumb resting where the Kindle is held isn't a tap
+        if (touch_zones.isGrip(t.x, t.y, a.input.width, a.input.height)) continue;
+        if (!try onPictureTap(a, &v, t)) break;
     }
     try a.present(saved, .flash);
 }

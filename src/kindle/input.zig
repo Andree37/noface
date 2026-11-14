@@ -81,8 +81,11 @@ fn slotValues(fd: i32, code: u32) [2]i32 {
     return .{ request[1], request[2] };
 }
 
+/// A tap: where, and when the finger touched (microseconds on the monotonic clock).
+pub const Tap = struct { x: i32, y: i32, us: u64 };
+
 pub const Action = union(enum) {
-    tap: struct { x: i32, y: i32, us: u64 },
+    tap: Tap,
     hold: struct { x: i32, y: i32 },
     pull,
     drag: i32, // Finger x while a drag is being followed
@@ -204,6 +207,50 @@ pub const Input = struct {
     charger_changed: bool = false,
     /// A control inside the grip zones (the reader's Back button): touches there count.
     grip_exempt: ?Zone = null,
+
+    /// How touches were before a sheet changed them, for `restore`.
+    pub const Modes = struct { grips: bool, deferred: bool };
+
+    /// Touches for a sheet or card over the page: every touch counts, even along the
+    /// bottom edge where its buttons sit (a resting thumb is otherwise ignored there),
+    /// and taps act as they land (nothing on a sheet becomes a hold, and a tap kept for
+    /// the lift could reach whatever replaces it). Returns what was there before.
+    pub fn forSheet(in: *Input) Modes {
+        const was = Modes{ .grips = in.grips, .deferred = in.deferred };
+        in.grips = false;
+        in.deferred = false;
+        return was;
+    }
+
+    pub fn restore(in: *Input, was: Modes) void {
+        in.grips = was.grips;
+        in.deferred = was.deferred;
+    }
+
+    /// For a screen of its own (a sheet, a list, a card): the next action, or null when
+    /// the Kindle locks or noface is told to leave. That action is kept for the loop
+    /// underneath, and the screen should close.
+    pub fn nextFor(in: *Input) ?Action {
+        const action = in.next();
+        switch (action) {
+            .lock, .power, .computer, .stop => {
+                in.stashed = action;
+                return null;
+            },
+            else => return action,
+        }
+    }
+
+    /// The next tap, anything else passed over; null as with `nextFor`.
+    pub fn nextTap(in: *Input) ?Tap {
+        while (in.nextFor()) |action| {
+            switch (action) {
+                .tap => |t| return t,
+                else => {},
+            }
+        }
+        return null;
+    }
 
     /// Whether a touch at (x, y) is taken for a resting thumb and ignored.
     pub fn ignores(in: *const Input, x: i32, y: i32) bool {

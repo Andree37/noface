@@ -24,20 +24,12 @@ pub fn run(a: *app.App, s: *sess.Session, alloc: std.mem.Allocator, chapters: []
         try goto.render(a.ui, a.page(a.overlay), tab, list, if (tab == .contents) reading else null, list_page);
         @memcpy(a.screen.pixels, a.overlay);
         try a.showBand(goto.top, a.screen.height - goto.top);
-        const choice = while (true) {
-            const action = a.input.next();
-            switch (action) {
-                .tap => |t| switch (goto.hit(t.x, t.y, list_page, list.len)) {
-                    .none => continue,
-                    else => |h| break h,
-                },
-                .lock, .power, .computer, .stop => {
-                    a.input.stashed = action;
-                    return null;
-                },
-                else => {},
+        const choice = while (a.input.nextTap()) |t| {
+            switch (goto.hit(t.x, t.y, list_page, list.len)) {
+                .none => {},
+                else => |h| break h,
             }
-        };
+        } else return null; // Locked, or leaving
         switch (choice) {
             .close, .none => return null,
             .tab => |t| {

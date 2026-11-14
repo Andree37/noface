@@ -96,30 +96,18 @@ fn showProgress(a: *app.App, background: []const u8, title: []const u8, subtitle
     try card.renderWith(a.ui, a.page(a.overlay), title, subtitle, rows, null);
     @memcpy(a.screen.pixels, a.overlay);
     try a.showBand(0, a.screen.height);
+    const was = a.input.forSheet();
+    defer a.input.restore(was);
     const tick = a.input.tick_us;
     defer a.input.tick_us = tick;
-    const grips = a.input.grips; // Cancel sits on the bottom edge
-    a.input.grips = false;
-    defer a.input.grips = grips;
-    const deferred = a.input.deferred;
-    a.input.deferred = false;
-    defer a.input.deferred = deferred;
-    a.input.tick_us = 1_000_000;
+    a.input.tick_us = 1_000_000; // Back to the caller in a second, to show progress
     a.input.last_tick = os.nowUs();
-    while (true) {
-        const action = a.input.next();
-        switch (action) {
-            .tick => return false,
-            .tap => |t| if (card.hitWith(t.x, t.y, rows.len, null)) |i| {
-                if (i == 0) return true;
-            },
-            .lock, .power, .computer, .stop => {
-                a.input.stashed = action;
-                return true;
-            },
-            else => {},
-        }
-    }
+    while (a.input.nextFor()) |action| switch (action) {
+        .tick => return false,
+        .tap => |t| if (card.hitWith(t.x, t.y, rows.len, null) == 0) return true, // Cancel
+        else => {},
+    };
+    return true; // Locked, or leaving: stop the download
 }
 
 fn tell(a: *app.App, background: []const u8, title: []const u8, subtitle: []const u8) !void {

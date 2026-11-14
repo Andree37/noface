@@ -289,29 +289,13 @@ pub fn chooseFromCardWith(a: *App, background: []const u8, title: []const u8, su
     @memcpy(a.screen.pixels, a.overlay);
     // The whole screen dims behind the sheet
     try a.showBand(0, a.screen.height);
-    // Its rows reach the bottom edge, where the reader otherwise ignores a resting thumb
-    const grips = a.input.grips;
-    a.input.grips = false;
-    defer a.input.grips = grips;
-    // Taps as they land: nothing here becomes a hold, and a tap kept for the lift
-    // could reach whatever replaces the card
-    const deferred = a.input.deferred;
-    a.input.deferred = false;
-    defer a.input.deferred = deferred;
-    const chosen: ?usize = while (true) {
-        const action = a.input.next();
-        switch (action) {
-            .tap => |t| {
-                const index = card.hitWith(t.x, t.y, rows.len, book_cover) orelse break null;
-                if (index < rows.len) break index;
-            },
-            .lock, .power, .computer, .stop => {
-                a.input.stashed = action;
-                break null;
-            },
-            else => {},
-        }
-    };
+    const was = a.input.forSheet();
+    defer a.input.restore(was);
+    // A row tapped; a tap above the card, or locking, closes it
+    const chosen: ?usize = while (a.input.nextTap()) |t| {
+        const index = card.hitWith(t.x, t.y, rows.len, book_cover) orelse break null;
+        if (index < rows.len) break index;
+    } else null;
     @memcpy(a.screen.pixels, background);
     try a.showBand(0, a.screen.height);
     return chosen;
@@ -349,26 +333,14 @@ pub fn cleanRect(a: *App, left: u32, top: u32, width: u32, height: u32) !void {
 pub fn followDrag(a: *App, first: ?u32, follow: anytype) !bool {
     var marker = first;
     var lifted = true;
-    while (true) {
-        const action = a.input.next();
-        switch (action) {
-            .drag => |x0| {
-                if (marker) |m| {
-                    try a.screen.waitComplete(m);
-                    marker = null;
-                }
-                const x = a.input.latestDrag() orelse x0;
-                marker = try follow.moved(x, a.input.drag_y);
-            },
-            .drag_end => break,
-            .tap, .hold, .pull, .swipe, .tick, .unlock => {},
-            .lock, .power, .computer, .stop => {
-                a.input.stashed = action;
-                lifted = false;
-                break;
-            },
-        }
-    }
+    while (a.input.nextFor()) |action| switch (action) {
+        .drag => |x0| {
+            if (marker) |m| try a.screen.waitComplete(m);
+            marker = try follow.moved(a.input.latestDrag() orelse x0, a.input.drag_y);
+        },
+        .drag_end => break,
+        else => {},
+    } else lifted = false; // Locked, or leaving, before the finger lifted
     if (marker) |m| try a.screen.waitComplete(m);
     return lifted;
 }

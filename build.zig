@@ -361,7 +361,8 @@ fn build_tests(b: *std.Build) void {
         const tool_tests = b.addTest(.{ .root_module = host_tool_module(b, name) });
         test_step.dependOn(&b.addRunArtifact(tool_tests).step);
     }
-    assert(tests.root_module.link_libc == true); // Tests run on this computer, through its C library
+    // Tests run on this computer, through its C library
+    assert(tests.root_module.link_libc == true);
     assert(tests.root_module.resolved_target != null);
 }
 

@@ -1,6 +1,5 @@
 # Tiger Style debt: rule, times broken, file. It may only shrink; see docs/TIGER_STYLE.md.
 usize_used 7 src/base/memory.zig
-usize_used 1 src/gfx/c_memory.zig
 usize_used 1 src/gfx/font.zig
 usize_used 14 src/gfx/image.zig
 assertion_density 2 src/kindle/devices.zig

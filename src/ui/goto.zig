@@ -65,6 +65,40 @@ pub fn hit(x: i32, y: i32, list_page: usize, count: usize) Hit {
     return if (index < count) .{ .row = index } else .none;
 }
 
+/// A list shown a page of rows at a time: which page is up, and what a tap on it
+/// means. Turning the page happens here, so a screen with a list only says what a
+/// tapped row does.
+pub const Pages = struct {
+    page: usize = 0,
+
+    pub const Tap = union(enum) {
+        none, // Nothing: an empty row, or the page already first or last
+        close, // Above the list
+        tab: Tab,
+        row: usize, // The index of the row tapped, in the whole list
+        turned, // The page turned: draw it again
+    };
+
+    pub fn tap(p: *Pages, x: i32, y: i32, count: usize) Tap {
+        return switch (hit(x, y, p.page, count)) {
+            .prev => if (p.turn(-1, count)) .turned else .none,
+            .next => if (p.turn(1, count)) .turned else .none,
+            .none => .none,
+            .close => .close,
+            .tab => |t| .{ .tab = t },
+            .row => |i| .{ .row = i },
+        };
+    }
+
+    fn turn(p: *Pages, by: i2, count: usize) bool {
+        const last = pageCount(count) - 1;
+        const to = if (by < 0) p.page -| 1 else @min(p.page + 1, last);
+        if (to == p.page) return false;
+        p.page = to;
+        return true;
+    }
+};
+
 fn drawMark(page: Page, mark: Mark, x: f32, y: u32) void {
     const cy: f32 = @floatFromInt(y + row_height / 2);
     switch (mark) {
@@ -138,6 +172,19 @@ test "taps pick a tab, a row on the shown page, or close" {
     try std.testing.expectEqual(Hit.none, hit(600, list_top + 9 * row_height + 10, 2, 30)); // Past the last
     try std.testing.expectEqual(@as(usize, 3), pageCount(30));
     try std.testing.expectEqual(@as(usize, 1), pageCount(0));
+}
+
+test "a list turns a page at a time, and not past either end" {
+    var p = Pages{};
+    const y = pager.top + 20;
+    const prev_x = draw.Pager.prev_left + 10;
+    const next_x = draw.Pager.next_left + 10;
+    try std.testing.expect(p.tap(prev_x, y, 3 * rows) == .none); // Already first
+    try std.testing.expect(p.tap(next_x, y, 3 * rows) == .turned);
+    try std.testing.expect(p.tap(next_x, y, 3 * rows) == .turned);
+    try std.testing.expect(p.tap(next_x, y, 3 * rows) == .none); // Already last
+    try std.testing.expectEqual(@as(usize, 2), p.page);
+    try std.testing.expectEqual(Pages.Tap{ .row = 2 * rows }, p.tap(100, list_top + 10, 3 * rows));
 }
 
 test "the list fits on screen" {

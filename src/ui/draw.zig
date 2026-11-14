@@ -82,8 +82,8 @@ pub const Pager = struct {
     reach: u32 = 0, // Taps count down to here, when that's past `bottom`
 
     const button = 200;
-    const prev_left = 340;
-    const next_left = 732;
+    pub const prev_left = 340;
+    pub const next_left = 732;
 
     pub const Hit = enum { prev, next };
 

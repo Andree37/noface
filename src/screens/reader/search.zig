@@ -29,7 +29,7 @@ const Search = struct {
     alloc: std.mem.Allocator,
     typing: bool = true, // The keyboard is up; else the results are
     results: []const goto.Row = &.{},
-    list_page: usize = 0,
+    pages: goto.Pages = .{},
 
     /// The bar always; under it the keyboard or the results when all is drawn.
     pub fn draw(se: *Search, part: screen.Part) !void {
@@ -53,7 +53,7 @@ const Search = struct {
         const n = se.results.len;
         const count = if (n >= max_results) "500+ results" else std.fmt.bufPrint(&count_buf, "{d} result{s}", .{ n, if (n == 1) "" else "s" }) catch "";
         try a.ui.caption.draw(page, style.margin, search_sheet.content_top + 56, count);
-        try goto.renderList(a.ui, page, se.results, null, se.list_page, "No matches in this book.");
+        try goto.renderList(a.ui, page, se.results, null, se.pages.page, "No matches in this book.");
     }
 
     pub fn onTap(se: *Search, t: screen.Tap) !screen.Step(usize) {
@@ -77,20 +77,18 @@ const Search = struct {
                 se.results = try find(se.alloc, se.s, words);
                 std.debug.print("search: {d} results\n", .{se.results.len});
                 se.typing = false;
-                se.list_page = 0;
+                se.pages = .{};
                 return .{ .redraw = .all };
             },
         }
     }
 
     fn onResults(se: *Search, t: screen.Tap) screen.Step(usize) {
-        switch (goto.hit(t.x, t.y, se.list_page, se.results.len)) {
-            .row => |i| return .{ .done = se.results[i].page },
-            .prev => se.list_page -|= 1,
-            .next => se.list_page = @min(se.list_page + 1, goto.pageCount(se.results.len) - 1),
-            .close, .none, .tab => return .stay,
-        }
-        return .{ .redraw = .all };
+        return switch (se.pages.tap(t.x, t.y, se.results.len)) {
+            .row => |i| .{ .done = se.results[i].page },
+            .turned => .{ .redraw = .all },
+            .close, .none, .tab => .stay, // The sheet's bar is above the list, not a close
+        };
     }
 };
 

@@ -18,7 +18,7 @@ pub fn run(a: *app.App, s: *sess.Session, alloc: std.mem.Allocator, chapters: []
         .contents = try contentsRows(alloc, s, chapters),
         .notes = try notesRows(alloc, s),
         .reading = reading,
-        .list_page = if (reading) |r| goto.listPageOf(r) else 0,
+        .pages = .{ .page = if (reading) |r| goto.listPageOf(r) else 0 },
     };
     return screen.run(a, &go);
 }
@@ -33,7 +33,7 @@ const GoTo = struct {
     notes: []const goto.Row,
     reading: ?usize, // The chapter being read, in the contents
     tab: goto.Tab = .contents,
-    list_page: usize,
+    pages: goto.Pages,
 
     fn list(go: *const GoTo) []const goto.Row {
         return if (go.tab == .contents) go.contents else go.notes;
@@ -44,16 +44,17 @@ const GoTo = struct {
         @memcpy(a.overlay, go.background);
         // The toolbar stays drawn above, from what's on screen now
         @memcpy(a.overlay[0 .. goto.top * a.screen.stride], a.screen.pixels[0 .. goto.top * a.screen.stride]);
-        try goto.render(a.ui, a.page(a.overlay), go.tab, go.list(), if (go.tab == .contents) go.reading else null, go.list_page);
+        try goto.render(a.ui, a.page(a.overlay), go.tab, go.list(), if (go.tab == .contents) go.reading else null, go.pages.page);
         @memcpy(a.screen.pixels, a.overlay);
         try a.showBand(goto.top, a.screen.height - goto.top);
     }
 
     pub fn onTap(go: *GoTo, t: screen.Tap) !screen.Step(usize) {
         const rows = go.list();
-        switch (goto.hit(t.x, t.y, go.list_page, rows.len)) {
+        switch (go.pages.tap(t.x, t.y, rows.len)) {
             .none => return .stay,
             .close => return .close,
+            .turned => return .{ .redraw = .all },
             .row => |i| {
                 std.debug.print("goto {s} row {d} of {d}: page {d}\n", .{ @tagName(go.tab), i + 1, rows.len, rows[i].page + 1 });
                 return .{ .done = rows[i].page };
@@ -61,12 +62,10 @@ const GoTo = struct {
             .tab => |tab| {
                 if (tab == go.tab) return .stay;
                 go.tab = tab;
-                go.list_page = if (tab == .contents) (if (go.reading) |r| goto.listPageOf(r) else 0) else 0;
+                go.pages.page = if (tab == .contents) (if (go.reading) |r| goto.listPageOf(r) else 0) else 0;
+                return .{ .redraw = .all };
             },
-            .prev => go.list_page -|= 1,
-            .next => go.list_page = @min(go.list_page + 1, goto.pageCount(rows.len) - 1),
         }
-        return .{ .redraw = .all };
     }
 };
 

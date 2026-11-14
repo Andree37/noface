@@ -49,7 +49,7 @@ const Choices = struct {
     heading: []const u8,
     about: []const u8, // The book it's for, under the heading
     rows: []const goto_ui.Row,
-    list_page: usize = 0,
+    pages: goto_ui.Pages = .{},
 
     pub fn draw(c: *Choices, _: screen.Part) !void {
         const a = c.a;
@@ -62,19 +62,17 @@ const Choices = struct {
         try draw_ui.clipped(a.ui.hero, page, style.margin, 222, c.heading, avail);
         try draw_ui.clipped(a.ui.caption, page, style.margin, 278, c.about, avail);
         page.tint(style.margin, 250, page.width - 2 * style.margin, 36, style.faded);
-        try goto_ui.renderList(a.ui, page, c.rows, null, c.list_page, "");
+        try goto_ui.renderList(a.ui, page, c.rows, null, c.pages.page, "");
         try a.showBand(0, a.screen.height);
     }
 
     pub fn onTap(c: *Choices, t: screen.Tap) !screen.Step(usize) {
-        switch (goto_ui.hit(t.x, t.y, c.list_page, c.rows.len)) {
-            .none, .tab => return .stay,
-            .close => return .close,
-            .row => |i| return .{ .done = i },
-            .prev => c.list_page -|= 1,
-            .next => c.list_page = @min(c.list_page + 1, goto_ui.pageCount(c.rows.len) - 1),
-        }
-        return .{ .redraw = .all };
+        return switch (c.pages.tap(t.x, t.y, c.rows.len)) {
+            .none, .tab => .stay,
+            .close => .close, // "Library" along the top
+            .turned => .{ .redraw = .all },
+            .row => |i| .{ .done = i },
+        };
     }
 };
 

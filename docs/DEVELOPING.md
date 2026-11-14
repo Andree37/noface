@@ -104,7 +104,13 @@ _ = try screen.run(a, &bubble); // null: closed, or the Kindle locked
 the touch modes and puts them back after, and when the Kindle locks or noface is told
 to leave, it closes the screen and keeps that action for the one underneath. A screen
 that changes on its own adds `tick_us` and `onTick`; holds and swipes go to `onAction`.
-Typing on the keyboard is `screens/typing.zig`, shared by every screen with a field.
+Typing on the keyboard is `screens/typing.zig`, shared by every screen with a field, and
+a list shown a page at a time is `goto.Pages` (`ui/goto.zig`), which turns the page
+itself, so the screen only says what a tapped row does.
+
+The build checks each screen: anything else made `pub` on it, a misspelled hook
+(`onTik`), or `tick_us` without `onTick` fails with a message saying what's wrong. The
+`Example` at the end of `screens/screen.zig` is the screen to copy from.
 
 So a new screen never writes its own wait loop, redraw flags or touch settings. The
 loops left are the two above, the lock screen (which waits for the unlock, not a tap),

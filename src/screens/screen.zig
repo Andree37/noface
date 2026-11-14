@@ -17,6 +17,11 @@
 //!   - `fn onTick(s) !Step(Result)` what a tick does, if it asks for ticks.
 //!   - `fn onAction(s, Action) !Step(Result)` holds, swipes and drags, if it cares.
 //!
+//! Anything else `pub` on it, or a name spelled wrong (`onTik`), doesn't compile, nor
+//! does a tick without `onTick`: a screen can't quietly miss what it meant to handle.
+//! Helpers of its own stay private. The test at the end of this file is a screen to
+//! copy from.
+//!
 //! `run` draws it whole first, then waits and hands it each action, drawing what each
 //! step asks for. When the Kindle locks or noface is told to leave, the screen closes
 //! (`run` returns null) and the action is kept for the screen underneath, so it locks
@@ -43,9 +48,28 @@ pub fn Step(comptime Result: type) type {
     };
 }
 
+/// What a screen may declare `pub`.
+const hooks = [_][]const u8{ "Result", "touches", "tick_us", "draw", "onTap", "onTick", "onAction" };
+
+/// Fails the build when `S` isn't a screen as described above.
+fn check(comptime S: type) void {
+    const name = @typeName(S);
+    for (std.meta.declarations(S)) |decl| {
+        for (hooks) |h| {
+            if (std.mem.eql(u8, decl, h)) break;
+        } else @compileError(name ++ ": a screen has no `" ++ decl ++ "` (it may have Result, touches, tick_us, draw, onTap, onTick, onAction); make a helper private");
+    }
+    for ([_][]const u8{ "Result", "draw", "onTap" }) |needed| {
+        if (!@hasDecl(S, needed)) @compileError(name ++ ": a screen needs a pub `" ++ needed ++ "`");
+    }
+    if (@hasDecl(S, "tick_us") != @hasDecl(S, "onTick")) @compileError(name ++ ": `tick_us` and `onTick` go together");
+    if (@hasDecl(S, "touches") and @TypeOf(S.touches) != input_mod.Input.Modes) @compileError(name ++ ": `touches` is an Input.Modes");
+}
+
 /// Runs screen `s` until it's done (its result), or closes or the Kindle locks (null).
 pub fn run(a: *app.App, s: anytype) !?@TypeOf(s.*).Result {
     const S = @TypeOf(s.*);
+    comptime check(S);
     const was = if (@hasDecl(S, "touches")) a.input.use(S.touches) else a.input.modes();
     defer a.input.restore(was);
     const tick = a.input.tick_us;
@@ -72,20 +96,29 @@ pub fn run(a: *app.App, s: anytype) !?@TypeOf(s.*).Result {
     }
 }
 
+/// A screen to copy from: a counter that finishes on its third tap. A real one draws
+/// in `draw` (see battery.zig, the smallest), and keeps what it shows in its fields.
+const Example = struct {
+    pub const Result = u32; // What `run` gives back when it's done
+    pub const touches = input_mod.Input.Modes.sheet; // Optional: how it takes touches
+
+    taps: u32 = 0,
+    drawn: [2]u32 = .{ 0, 0 }, // How often each part was drawn, for the test
+
+    /// `.all` the first time and when a step asks; `.changing` for what taps change.
+    pub fn draw(e: *Example, part: Part) !void {
+        e.drawn[@intFromEnum(part)] += 1;
+    }
+
+    /// Every tap comes here; holds, swipes and ticks go to `onAction` and `onTick`.
+    pub fn onTap(e: *Example, _: Tap) !Step(u32) {
+        e.taps += 1;
+        if (e.taps == 3) return .{ .done = e.taps };
+        return .{ .redraw = .changing };
+    }
+};
+
 test "a screen draws whole, takes taps until done, and gives back its result" {
-    const Counter = struct {
-        pub const Result = u32;
-        taps: u32 = 0,
-        drawn: [2]u32 = .{ 0, 0 },
-        fn draw(c: *@This(), part: Part) !void {
-            c.drawn[@intFromEnum(part)] += 1;
-        }
-        fn onTap(c: *@This(), _: Tap) !Step(u32) {
-            c.taps += 1;
-            if (c.taps == 3) return .{ .done = c.taps };
-            return .{ .redraw = .changing };
-        }
-    };
     // Scripted taps move the test clock: the real one comes back after, for the tests that follow
     const os = @import("../sys/os.zig");
     defer os.fake_us = null;
@@ -95,14 +128,16 @@ test "a screen draws whole, takes taps until done, and gives back its result" {
     var input = input_mod.Input{ .touch = -1, .power = -1, .width = 1272, .height = 1696, .x_max = 1272, .y_max = 1696, .script = &script };
     var a: app.App = undefined;
     a.input = &input;
-    var c = Counter{};
-    try std.testing.expectEqual(@as(?u32, 3), try run(&a, &c));
-    try std.testing.expectEqual(@as(u32, 1), c.drawn[0]); // Whole, once, first
-    try std.testing.expectEqual(@as(u32, 2), c.drawn[1]);
+    const before = input.modes();
+    var e = Example{};
+    try std.testing.expectEqual(@as(?u32, 3), try run(&a, &e));
+    try std.testing.expectEqual(@as(u32, 1), e.drawn[0]); // Whole, once, first
+    try std.testing.expectEqual(@as(u32, 2), e.drawn[1]);
+    try std.testing.expectEqual(before, input.modes()); // Touches as they were
     // A script that runs out stops noface: the screen closes, and the stop is kept
     var none = [_]input_mod.Step{};
     script = .{ .steps = &none };
-    c = .{};
-    try std.testing.expect(try run(&a, &c) == null);
+    e = .{};
+    try std.testing.expect(try run(&a, &e) == null);
     try std.testing.expect(input.stashed.? == .stop);
 }

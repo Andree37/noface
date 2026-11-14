@@ -428,9 +428,6 @@ pub const Input = struct {
     const touchedDown = gestures.touchedDown;
 };
 
-
-
-
 /// Opens touch and power, and takes the touchscreen from the stock UI.
 pub fn open(width: u32, height: u32) !Input {
     // Found by what they report, as Kindles number them differently; this model's
@@ -473,4 +470,3 @@ pub fn release(in: *const Input) void {
 }
 
 // A pretend panel, the size of the screen, with no devices behind it.
-

@@ -137,9 +137,9 @@ fn entity(name: []const u8) ?u21 {
         return if (v == 0 or (v >= 0xd800 and v <= 0xdfff) or v > 0x10ffff) null else v;
     }
     const named = [_]struct { []const u8, u21 }{
-        .{ "amp", '&' },    .{ "lt", '<' },     .{ "gt", '>' },     .{ "quot", '"' },  .{ "apos", '\'' },
-        .{ "nbsp", 0xa0 },  .{ "mdash", 0x2014 }, .{ "ndash", 0x2013 }, .{ "hellip", 0x2026 },
-        .{ "lsquo", 0x2018 }, .{ "rsquo", 0x2019 }, .{ "ldquo", 0x201c }, .{ "rdquo", 0x201d },
+        .{ "amp", '&' },      .{ "lt", '<' },       .{ "gt", '>' },       .{ "quot", '"' },      .{ "apos", '\'' },
+        .{ "nbsp", 0xa0 },    .{ "mdash", 0x2014 }, .{ "ndash", 0x2013 }, .{ "hellip", 0x2026 }, .{ "lsquo", 0x2018 },
+        .{ "rsquo", 0x2019 }, .{ "ldquo", 0x201c }, .{ "rdquo", 0x201d },
     };
     for (named) |n| {
         if (std.mem.eql(u8, n[0], name)) return n[1];

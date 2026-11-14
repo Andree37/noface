@@ -167,7 +167,7 @@ pub fn hit(tab: Tab, x: i32, y: i32) Hit {
     if (y < top + tabs_height) {
         const cell: i32 = screen_width / tab_labels.len;
         const at = @divTrunc(std.math.clamp(x, @as(i32, 0), screen_width - 1), cell);
-        return .{ .tab = @enumFromInt(at) };
+        return .{ .tab = @fromBackingInt(@intCast(at)) };
     }
     switch (tab) {
         .themes => {
@@ -249,7 +249,7 @@ fn drawTabs(fonts: Fonts, page: Page, tab: Tab) !void {
     const cell: u32 = page.width / @as(u32, tab_labels.len);
     for (tab_labels, 0..) |label, i| {
         const left: u32 = @as(u32, @intCast(i)) * cell;
-        const active = i == @intFromEnum(tab);
+        const active = i == @backingInt(tab);
         try draw.choice(fonts, page, @floatFromInt(left + cell / 2), .center, top + 60, label, active, top + 78);
         if (!active) page.tint(left + 8, top + 20, cell - 16, 54, style.faded);
     }

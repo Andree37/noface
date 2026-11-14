@@ -150,7 +150,6 @@ pub fn bookRect(index: usize, page: usize) Rect {
     return .{ .x = at.x, .y = at.y, .w = cover.width, .h = cover.height };
 }
 
-
 /// Bytes of `s` that fit on one line, breaking at a space when possible.
 /// A thin gray track with a thick rounded black fill. Any progress at all shows as
 /// at least a dot.

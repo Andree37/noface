@@ -57,7 +57,6 @@ pub const Entry = struct {
 
 pub const Filter = enum { all, unread, read };
 
-
 const finished_percent = 99;
 
 const untouched_percent = 1; // Stock gives new books 1% without them being opened

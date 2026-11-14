@@ -9,8 +9,6 @@ const hyphen = @import("hyphen.zig");
 /// Where a note reference landed on a page.
 pub const Hit = struct { x: i32, y: i32, w: i32, h: i32, target: u32 };
 
-
-
 const mark_shade = 0xe4; // Very faint, so highlighted text reads like any other
 
 fn isMarked(marks: []const book_model.Mark, para: usize, start: usize, end: usize) bool {
@@ -76,7 +74,6 @@ test "tap near a reference finds it" {
     try std.testing.expectEqual(@as(u32, 7), hits.find(90, 190).?);
     try std.testing.expect(hits.find(300, 200) == null);
 }
-
 
 /// Where layout gets the font for a weight, slant and size. Without one, every
 /// word uses the base font.

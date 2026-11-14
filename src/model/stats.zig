@@ -157,9 +157,9 @@ test "time since steps through units at their edges" {
     const now: u64 = 1_800_000_000 - (1_800_000_000 % 86400) + 43200; // Midday
     const day: u64 = 86400;
     const cases = [_]struct { days: u64, want: []const u8 }{
-        .{ .days = 1, .want = "yesterday" },     .{ .days = 2, .want = "2 days ago" },
-        .{ .days = 13, .want = "13 days ago" },  .{ .days = 14, .want = "2 weeks ago" },
-        .{ .days = 59, .want = "8 weeks ago" },  .{ .days = 60, .want = "2 months ago" },
+        .{ .days = 1, .want = "yesterday" },       .{ .days = 2, .want = "2 days ago" },
+        .{ .days = 13, .want = "13 days ago" },    .{ .days = 14, .want = "2 weeks ago" },
+        .{ .days = 59, .want = "8 weeks ago" },    .{ .days = 60, .want = "2 months ago" },
         .{ .days = 700, .want = "23 months ago" }, .{ .days = 729, .want = "23 months ago" },
         .{ .days = 730, .want = "2 years ago" },
     };

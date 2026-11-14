@@ -36,9 +36,9 @@ pub fn ring(page: Page, cx: f32, cy: f32, radius: f32) void {
 
 pub fn airplane(page: Page, cx: f32, cy: f32) void {
     const outline = [_][2]f32{
-        .{ 0, -36 },  .{ 4, -31 },  .{ 5, -11 },  .{ 33, 7 },   .{ 33, 14 },  .{ 5, 4 },
-        .{ 4, 21 },   .{ 13, 29 },  .{ 13, 34 },  .{ 0, 29 },   .{ -13, 34 }, .{ -13, 29 },
-        .{ -4, 21 },  .{ -5, 4 },   .{ -33, 14 }, .{ -33, 7 },  .{ -5, -11 }, .{ -4, -31 },
+        .{ 0, -36 }, .{ 4, -31 }, .{ 5, -11 },  .{ 33, 7 },  .{ 33, 14 },  .{ 5, 4 },
+        .{ 4, 21 },  .{ 13, 29 }, .{ 13, 34 },  .{ 0, 29 },  .{ -13, 34 }, .{ -13, 29 },
+        .{ -4, 21 }, .{ -5, 4 },  .{ -33, 14 }, .{ -33, 7 }, .{ -5, -11 }, .{ -4, -31 },
     };
     var points: [outline.len][2]f32 = undefined;
     const c = @cos(pi / 4);
@@ -153,8 +153,8 @@ pub fn bookmarkFilled(page: Page, cx: f32, cy: f32) void {
     const left = cx - 17;
     const top = cy - 24;
     const shape = [_][2]f32{
-        .{ left, top },      .{ left + 34, top }, .{ left + 34, top + 48 },
-        .{ cx, top + 33 },   .{ left, top + 48 },
+        .{ left, top },    .{ left + 34, top }, .{ left + 34, top + 48 },
+        .{ cx, top + 33 }, .{ left, top + 48 },
     };
     page.fillPoly(&shape);
 }

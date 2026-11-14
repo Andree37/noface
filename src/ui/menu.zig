@@ -264,7 +264,6 @@ pub fn render(fonts: Fonts, page: Page, quick: *const quick_model.Quick) !void {
     page.stroke(w - 66, 766, w - 80, 780, 4);
     try drawSlider(fonts, page, warmth_row, quick.warmth, false);
     icons.chevron(page, w / 2, 934);
-
 }
 
 test "panel maps taps like the stock layout" {

@@ -57,6 +57,27 @@ pub fn build(b: *std.Build) void {
     const boundary_tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("tools/check/boundaries.zig"), .target = host }) });
     check_step.dependOn(&b.addRunArtifact(boundary_tests).step);
 
+    // Tiger Style (docs/TIGER_STYLE.md): `zig build check` fails when a file breaks a
+    // rule more than tools/check/style_baseline.txt allows, or less without the
+    // baseline being lowered to match. `zig build style-baseline` lowers it.
+    const style = b.addExecutable(.{
+        .name = "style",
+        .root_module = b.createModule(.{ .root_source_file = b.path("tools/check/style.zig"), .target = host }),
+    });
+    const run_style = b.addRunArtifact(style);
+    run_style.addArgs(&.{ ".", "check" });
+    run_style.has_side_effects = true; // Reads the sources itself, so always runs
+    check_step.dependOn(&run_style.step);
+    const style_tests = b.addTest(.{ .root_module = b.createModule(.{ .root_source_file = b.path("tools/check/style.zig"), .target = host }) });
+    check_step.dependOn(&b.addRunArtifact(style_tests).step);
+    const write_baseline = b.addRunArtifact(style);
+    write_baseline.addArgs(&.{ ".", "baseline" });
+    write_baseline.has_side_effects = true;
+    b.step("style-baseline", "Lower the Tiger Style baseline to what the code breaks now (never raise it)").dependOn(&write_baseline.step);
+    // zig fmt, as Tiger Style asks: the code is formatted as the formatter has it
+    const fmt = b.addFmt(.{ .paths = &.{ b.path("src"), b.path("tools"), b.path("build.zig") }, .check = true });
+    check_step.dependOn(&fmt.step);
+
     // Development tools, kept out of the app. Built with `zig build tools`.
     const core = b.createModule(.{
         .root_source_file = b.path("src/core.zig"),

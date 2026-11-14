@@ -99,4 +99,3 @@ test "removal asks first" {
     const local = entry(.local, 0);
     try std.testing.expectEqualSlices(Option, &.{ .confirm_remove, .cancel }, options(&local, true, &out));
 }
-

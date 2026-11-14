@@ -121,7 +121,7 @@ const Example = struct {
 
     /// `.all` the first time and when a step asks; `.changing` for what taps change.
     pub fn draw(e: *Example, part: Part) !void {
-        e.drawn[@intFromEnum(part)] += 1;
+        e.drawn[@backingInt(part)] += 1;
     }
 
     /// Every tap comes here; holds, swipes and ticks go to `onAction` and `onTick`.

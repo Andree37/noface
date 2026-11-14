@@ -85,7 +85,6 @@ pub fn choice(fonts: Fonts, page: Page, x: f32, align_to: Align, y: i32, label: 
     const left = if (align_to == .center) x - w / 2 else x;
     try font.draw(page, left, y, label);
     if (chosen) page.fillRect(@intFromFloat(left), underline_y, @intFromFloat(w), style.underline, style.black);
-
 }
 
 /// The "1 of 4" row with back and forward arrows, under a list shown a page at a time.

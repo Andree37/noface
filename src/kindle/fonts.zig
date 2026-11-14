@@ -86,15 +86,15 @@ fn isSeparator(c: u8) bool {
 /// null outside for a word that isn't a style at all.
 fn styleOf(word: []const u8) ??usize {
     const styles = [_]struct { []const u8, ?usize }{
-        .{ "Regular", 0 },          .{ "Rg", 0 },               .{ "Book", 0 },
-        .{ "Bold", 1 },             .{ "Bd", 1 },               .{ "Italic", 2 },
-        .{ "It", 2 },               .{ "Oblique", 2 },          .{ "RegularItalic", 2 },
-        .{ "BoldItalic", 3 },       .{ "BdIt", 3 },             .{ "BoldOblique", 3 },
-        .{ "Thin", null },          .{ "ExtraLight", null },    .{ "Light", null },
-        .{ "Medium", null },        .{ "SemiBold", null },      .{ "ExtraBold", null },
-        .{ "Black", null },         .{ "LightItalic", null },   .{ "MediumItalic", null },
-        .{ "SemiBoldItalic", null }, .{ "ExtraBoldItalic", null }, .{ "BlackItalic", null },
-        .{ "ThinItalic", null },    .{ "ExtraLightItalic", null },
+        .{ "Regular", 0 },           .{ "Rg", 0 },                  .{ "Book", 0 },
+        .{ "Bold", 1 },              .{ "Bd", 1 },                  .{ "Italic", 2 },
+        .{ "It", 2 },                .{ "Oblique", 2 },             .{ "RegularItalic", 2 },
+        .{ "BoldItalic", 3 },        .{ "BdIt", 3 },                .{ "BoldOblique", 3 },
+        .{ "Thin", null },           .{ "ExtraLight", null },       .{ "Light", null },
+        .{ "Medium", null },         .{ "SemiBold", null },         .{ "ExtraBold", null },
+        .{ "Black", null },          .{ "LightItalic", null },      .{ "MediumItalic", null },
+        .{ "SemiBoldItalic", null }, .{ "ExtraBoldItalic", null },  .{ "BlackItalic", null },
+        .{ "ThinItalic", null },     .{ "ExtraLightItalic", null },
     };
     for (styles) |st| {
         if (std.ascii.eqlIgnoreCase(word, st[0])) return st[1];

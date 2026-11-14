@@ -26,7 +26,7 @@ pub fn fixTitle(alloc: std.mem.Allocator, raw: []const u8) ![]const u8 {
     var t = cleanTitle(raw);
     const bullet = "\u{2022} ";
     if (t.len > 0 and t[0] == '[') {
-        if (std.mem.indexOf(u8, t, bullet)) |at| t = t[at + bullet.len..];
+        if (std.mem.indexOf(u8, t, bullet)) |at| t = t[at + bullet.len ..];
     }
     var out: std.ArrayList(u8) = .empty;
     var i: usize = 0;

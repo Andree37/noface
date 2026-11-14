@@ -73,5 +73,3 @@ fn details(a: *app.App, s: *sess.Session, entry: *const catalog.Entry, backgroun
     };
     _ = try app.chooseFromCard(a, background, entry.title, entry.author, &rows);
 }
-
-

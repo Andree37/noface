@@ -149,7 +149,7 @@ pub const Usage = struct {
 /// The level at `t`, from the samples either side of it, if both are off the charger
 /// and it didn't rise between them.
 fn levelAt(log: []const Sample, t: u64) ?f64 {
-    for (log[0 .. log.len -| 1], log[1..]) |a, b| {
+    for (log[0..log.len -| 1], log[1..]) |a, b| {
         if (a.time > t or b.time < t) continue;
         if (a.plugged or b.plugged or b.level > a.level or b.time <= a.time) return null;
         const f = @as(f64, @floatFromInt(t - a.time)) / @as(f64, @floatFromInt(b.time - a.time));

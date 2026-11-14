@@ -385,28 +385,34 @@ const scenarios = [_]Scenario{
             try expect(samePlace(tapped.saved, swiped.saved), "a swipe went somewhere else");
         }
     }.run },
-    .{ .name = "reading time counts only while the page shows", .run = struct {
-        fn run() !void {
-            // A minute on the page, then a minute with the toolbar open
-            const r = try play(&.{ wait(60_000), forward, top, wait(60_000), page_middle });
-            try expect(r.saved.seconds >= 55 and r.saved.seconds <= 70, "reading time off");
-        }
-    }.run },
-    .{ .name = "common actions on a page run and leave the place alone", .run = struct {
-        fn run() !void {
-            const plain = try play(&.{forward});
-            const busy = try play(&.{
-                forward,
-                hold(600, 700), lift, above_sheet, above_sheet, // The dictionary question, then the definition, each closed above it
-                top, tap(696, 118), page_middle, // The text settings, closed
-                top, tap(816, 118), tap(636, 120), // Contents, closed above it
-                top, tap(1176, 118), tap(636, 200), // The menu, closed above the card
-                wait(130_000), // Past the Wi-Fi pause
-            });
-            try expect(samePlace(plain.saved, busy.saved), "the place moved");
-            try expect(busy.updates > plain.updates, "nothing was drawn");
-        }
-    }.run },
+    .{
+        .name = "reading time counts only while the page shows",
+        .run = struct {
+            fn run() !void {
+                // A minute on the page, then a minute with the toolbar open
+                const r = try play(&.{ wait(60_000), forward, top, wait(60_000), page_middle });
+                try expect(r.saved.seconds >= 55 and r.saved.seconds <= 70, "reading time off");
+            }
+        }.run,
+    },
+    .{
+        .name = "common actions on a page run and leave the place alone",
+        .run = struct {
+            fn run() !void {
+                const plain = try play(&.{forward});
+                const busy = try play(&.{
+                    forward,
+                    hold(600, 700), lift, above_sheet, above_sheet, // The dictionary question, then the definition, each closed above it
+                    top, tap(696, 118), page_middle, // The text settings, closed
+                    top, tap(816, 118), tap(636, 120), // Contents, closed above it
+                    top, tap(1176, 118), tap(636, 200), // The menu, closed above the card
+                    wait(130_000), // Past the Wi-Fi pause
+                });
+                try expect(samePlace(plain.saved, busy.saved), "the place moved");
+                try expect(busy.updates > plain.updates, "nothing was drawn");
+            }
+        }.run,
+    },
     .{ .name = "locking and waking mid-book keeps the place and the screen", .run = struct {
         fn run() !void {
             const plain = try play(&.{ forward, forward });
@@ -423,33 +429,39 @@ const scenarios = [_]Scenario{
             try expect(!r.wifi_note_left, "the note was left behind");
         }
     }.run },
-    .{ .name = "Wi-Fi comes back even when the Kindle was slow to say it went off", .run = struct {
-        fn run() !void {
-            const r = try playOn(.{ .radio_slow = true }, &.{ wait(150_000), forward });
-            try expect(r.airplane_asked_on, "airplane mode wasn't turned on");
-            try expect(!r.airplane_at_end, "Wi-Fi was left off");
-            // The note may stay, as Wi-Fi coming back went unconfirmed too: noface.sh or
-            // the next start checks again, so it's kept until Wi-Fi is seen on
-        }
-    }.run },
-    .{ .name = "after jumping to a chapter, Back returns to the page being read", .run = struct {
-        fn run() !void {
-            const read_on = try play(&.{ forward, forward, forward });
-            const contents = tap(816, 118);
-            const first_chapter = tap(636, 390);
-            const back_button = tap(205, 1626);
-            const jumped = try play(&.{ forward, forward, forward, top, contents, first_chapter });
-            try expect(!samePlace(read_on.saved, jumped.saved), "the chapter didn't move the place");
-            const returned = try play(&.{ forward, forward, forward, top, contents, first_chapter, back_button });
-            try expect(samePlace(read_on.saved, returned.saved), "Back didn't return to the page");
-            // The toolbar's chapter skip is a jump too
-            const chapter_back = tap(110, 1450);
-            const moved = try play(&.{ forward, forward, forward, top, chapter_back, page_middle });
-            try expect(!samePlace(read_on.saved, moved.saved), "the chapter skip didn't move the place");
-            const skipped = try play(&.{ forward, forward, forward, top, chapter_back, page_middle, back_button });
-            try expect(samePlace(read_on.saved, skipped.saved), "Back didn't follow a chapter skip");
-        }
-    }.run },
+    .{
+        .name = "Wi-Fi comes back even when the Kindle was slow to say it went off",
+        .run = struct {
+            fn run() !void {
+                const r = try playOn(.{ .radio_slow = true }, &.{ wait(150_000), forward });
+                try expect(r.airplane_asked_on, "airplane mode wasn't turned on");
+                try expect(!r.airplane_at_end, "Wi-Fi was left off");
+                // The note may stay, as Wi-Fi coming back went unconfirmed too: noface.sh or
+                // the next start checks again, so it's kept until Wi-Fi is seen on
+            }
+        }.run,
+    },
+    .{
+        .name = "after jumping to a chapter, Back returns to the page being read",
+        .run = struct {
+            fn run() !void {
+                const read_on = try play(&.{ forward, forward, forward });
+                const contents = tap(816, 118);
+                const first_chapter = tap(636, 390);
+                const back_button = tap(205, 1626);
+                const jumped = try play(&.{ forward, forward, forward, top, contents, first_chapter });
+                try expect(!samePlace(read_on.saved, jumped.saved), "the chapter didn't move the place");
+                const returned = try play(&.{ forward, forward, forward, top, contents, first_chapter, back_button });
+                try expect(samePlace(read_on.saved, returned.saved), "Back didn't return to the page");
+                // The toolbar's chapter skip is a jump too
+                const chapter_back = tap(110, 1450);
+                const moved = try play(&.{ forward, forward, forward, top, chapter_back, page_middle });
+                try expect(!samePlace(read_on.saved, moved.saved), "the chapter skip didn't move the place");
+                const skipped = try play(&.{ forward, forward, forward, top, chapter_back, page_middle, back_button });
+                try expect(samePlace(read_on.saved, skipped.saved), "Back didn't follow a chapter skip");
+            }
+        }.run,
+    },
     .{ .name = "a quick look into a book leaves Wi-Fi alone", .run = struct {
         fn run() !void {
             const r = try play(&.{ wait(60_000), forward });
@@ -476,24 +488,30 @@ const scenarios = [_]Scenario{
             try expect(r.highlights == 1, "the word wasn't highlighted");
         }
     }.run },
-    .{ .name = "without a dictionary, holding a word asks once to get it, and Not now stops the asking", .run = struct {
-        fn run() !void {
-            const r = try play(&.{
-                hold(600, 700), lift, cardRow(2, 1), above_sheet, // Asked: Not now, then the sheet closed
-                hold(600, 700), lift, highlight_button, page_middle, // Not asked again: straight to the sheet
-            });
-            try expect(!r.offers_dictionary, "it would ask again");
-            try expect(r.highlights == 1, "the word wasn't highlighted");
-        }
-    }.run },
-    .{ .name = "a dictionary download that can't start says so, and the word can still be highlighted", .run = struct {
-        fn run() !void {
-            // The pretend Kindle starts no programs, so curl never runs
-            const r = try play(&.{ hold(600, 700), lift, cardRow(2, 0), cardRow(1, 0), highlight_button, page_middle });
-            try expect(!r.looked_up, "a dictionary appeared from nowhere");
-            try expect(r.highlights == 1, "the word wasn't highlighted");
-        }
-    }.run },
+    .{
+        .name = "without a dictionary, holding a word asks once to get it, and Not now stops the asking",
+        .run = struct {
+            fn run() !void {
+                const r = try play(&.{
+                    hold(600, 700), lift, cardRow(2, 1), above_sheet, // Asked: Not now, then the sheet closed
+                    hold(600, 700), lift, highlight_button, page_middle, // Not asked again: straight to the sheet
+                });
+                try expect(!r.offers_dictionary, "it would ask again");
+                try expect(r.highlights == 1, "the word wasn't highlighted");
+            }
+        }.run,
+    },
+    .{
+        .name = "a dictionary download that can't start says so, and the word can still be highlighted",
+        .run = struct {
+            fn run() !void {
+                // The pretend Kindle starts no programs, so curl never runs
+                const r = try play(&.{ hold(600, 700), lift, cardRow(2, 0), cardRow(1, 0), highlight_button, page_middle });
+                try expect(!r.looked_up, "a dictionary appeared from nowhere");
+                try expect(r.highlights == 1, "the word wasn't highlighted");
+            }
+        }.run,
+    },
     .{ .name = "the toolbar's bookmark marks the page, and again unmarks it", .run = struct {
         fn run() !void {
             const once = try play(&.{ top, tap(936, 118), page_middle });
@@ -508,23 +526,26 @@ const scenarios = [_]Scenario{
             try expect(r.opened[0], "the book didn't open");
         }
     }.run },
-    .{ .name = "finishing a book of a series offers the next, and it opens", .run = struct {
-        fn run() !void {
-            const r = try playOn(.{
-                .library = true,
-                .books = &.{ "Scenario Book -- noface tests -- Scenario Saga #1.epub", "Scenario Book -- noface tests -- Scenario Saga #2.epub" },
-                .read_before = 0,
-            }, &.{
-                tapIn(library_ui.heroRect(width)), wait(2_000), // Continue the first
-                top, tap(1176, 118), tap(600, 1600), // ⋮, Mark as finished
-                top, tap(150, 118), // Home, where the next one is offered
-                tap(600, 1604), // Up next: Read it now
-                wait(2_000), top, tap(150, 118), // Home
-            });
-            try expect(r.finished[0], "the first wasn't marked finished");
-            try expect(r.opened[1], "the next one didn't open");
-        }
-    }.run },
+    .{
+        .name = "finishing a book of a series offers the next, and it opens",
+        .run = struct {
+            fn run() !void {
+                const r = try playOn(.{
+                    .library = true,
+                    .books = &.{ "Scenario Book -- noface tests -- Scenario Saga #1.epub", "Scenario Book -- noface tests -- Scenario Saga #2.epub" },
+                    .read_before = 0,
+                }, &.{
+                    tapIn(library_ui.heroRect(width)), wait(2_000), // Continue the first
+                    top, tap(1176, 118), tap(600, 1600), // ⋮, Mark as finished
+                    top, tap(150, 118), // Home, where the next one is offered
+                    tap(600, 1604), // Up next: Read it now
+                    wait(2_000), top, tap(150, 118), // Home
+                });
+                try expect(r.finished[0], "the first wasn't marked finished");
+                try expect(r.opened[1], "the next one didn't open");
+            }
+        }.run,
+    },
     .{ .name = "the page, toolbar, text settings, a definition and the library look as they should", .run = struct {
         fn run() !void {
             const shots = .{

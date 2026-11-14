@@ -14,7 +14,7 @@ pub fn showNote(a: *app.App, s: *sess.Session, start: book_model.Pos, fixed: ?u3
     const stride = a.screen.stride;
     const fitted = try notes.fit(font, s.note_parts[0..s.note_len], start, a.screen.width, stride, fixed);
     const top = a.screen.height - fitted.height;
-    const panel = Page{ .buf = a.overlay[top * stride..], .width = a.screen.width, .height = fitted.height, .stride = stride };
+    const panel = Page{ .buf = a.overlay[top * stride ..], .width = a.screen.width, .height = fitted.height, .stride = stride };
     try notes.render(font, a.ui, panel, s.note_parts[0..s.note_len], start, fitted.next != null);
     @memcpy(a.screen.pixels, a.overlay);
     try a.showBand(top, fitted.height);

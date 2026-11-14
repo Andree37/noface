@@ -13,7 +13,6 @@ const app = @import("../../app.zig");
 const sess = @import("session.zig");
 const records = @import("records.zig");
 
-
 pub fn saveHighlight(s: *sess.Session, entry: *const catalog.Entry, id: []const u8, span: highlights.Span) bool {
     const start = records.pointFor(s, span.first_para, span.first_byte) orelse return false;
     const end = records.pointFor(s, span.last_para, span.last_byte) orelse return false;

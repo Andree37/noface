@@ -120,7 +120,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         const parts = [_]book_model.Paragraph{.{ .text = sample_note, .style = 0 }};
         const fitted = try notes.fit(&note_font, &parts, .{}, w, w, null);
         const top = h - fitted.height;
-        try notes.render(&note_font, fonts, .{ .buf = buf[top * w..], .width = w, .height = fitted.height, .stride = w }, &parts, .{}, false);
+        try notes.render(&note_font, fonts, .{ .buf = buf[top * w ..], .width = w, .height = fitted.height, .stride = w }, &parts, .{}, false);
         writeImage(buf, w, h);
         return;
     }
@@ -202,7 +202,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     }
 
     if (std.mem.eql(u8, mode, "toolbar")) {
-        const tab: ?core.aa.Tab = if (argv.len > 2) @enumFromInt(argv[2][0] - '0') else null;
+        const tab: ?core.aa.Tab = if (argv.len > 2) @fromBackingInt(@intCast(argv[2][0] - '0')) else null;
         @memset(buf, 0xe8);
         try toolbar.render(fonts, page, "A sample book title", 36, 280, &quick, tab, .{}, tab != null and tab.? == .font);
         writeImage(buf, w, h);

@@ -32,7 +32,6 @@ const battery_log = @import("kindle/battery_log.zig");
 const Input = input_mod.Input;
 const unixTime = os.unixTime;
 
-
 pub const clock_top = 16;
 
 pub const clock_height = 56;
@@ -92,15 +91,15 @@ pub const App = struct {
     /// Forgets a language's dictionary, so the next lookup maps the file again: after
     /// one has just been downloaded.
     pub fn forgetDictionary(a: *App, lang: hyphen.Lang) void {
-        if (a.dictionaries[@intFromEnum(lang)]) |d| file.unmap(d.data);
-        a.dictionaries[@intFromEnum(lang)] = null;
+        if (a.dictionaries[@backingInt(lang)]) |d| file.unmap(d.data);
+        a.dictionaries[@backingInt(lang)] = null;
     }
 
     /// The dictionary for a book's language, from dict-en or dict-pt beside the
     /// settings. Null when the language isn't known or its file isn't there.
     pub fn dictionaryFor(a: *App, lang: ?hyphen.Lang) ?dictionary.Dictionary {
         const l = lang orelse return null;
-        const slot = &a.dictionaries[@intFromEnum(l)];
+        const slot = &a.dictionaries[@backingInt(l)];
         if (slot.* == null) {
             var buf: [320]u8 = undefined;
             const name = switch (l) {
@@ -126,7 +125,7 @@ pub const App = struct {
     /// Hyphenation for a book's language, or null to break only at spaces and dashes.
     pub fn hyphenatorFor(a: *App, lang: ?hyphen.Lang) ?*const hyphen.Hyphenator {
         const l = lang orelse return null;
-        const slot = &a.hyphenators[@intFromEnum(l)];
+        const slot = &a.hyphenators[@backingInt(l)];
         if (slot.* == null) slot.* = hyphen.Hyphenator.init(a.alloc, l) catch |err| {
             std.debug.print("hyphenation not loaded: {s}\n", .{@errorName(err)});
             return null;

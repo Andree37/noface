@@ -156,8 +156,8 @@ pub const Screen = struct {
         s.next_marker += 1;
         var data = UpdateData{
             .region = .{ .top = top, .left = left, .width = width, .height = height },
-            .waveform = @intFromEnum(waveform),
-            .update_mode = @intFromEnum(mode),
+            .waveform = @backingInt(waveform),
+            .update_mode = @backingInt(mode),
             .marker = marker,
         };
         s.updates += 1;

@@ -127,7 +127,7 @@ pub fn waitpid(pid: i32, status: *i32, flags: u32) usize {
 }
 pub const SIG = enum(u32) { HUP = 1, INT = 2, KILL = 9, TERM = 15 };
 pub fn kill(pid: i32, sig: SIG) usize {
-    return ret(c.kill(pid, @enumFromInt(@intFromEnum(sig))));
+    return ret(c.kill(pid, @fromBackingInt(@intCast(@backingInt(sig)))));
 }
 pub const pollfd = c.pollfd;
 pub const POLL = struct {
@@ -164,6 +164,5 @@ pub fn sigaction(sig: SIG, act: *const Sigaction, old: ?*Sigaction) usize {
     _ = old;
     var a: c.Sigaction = std.mem.zeroes(c.Sigaction);
     a.handler = .{ .handler = act.handler.handler };
-    return ret(c.sigaction(@enumFromInt(@intFromEnum(sig)), &a, null));
+    return ret(c.sigaction(@fromBackingInt(@intCast(@backingInt(sig))), &a, null));
 }
-

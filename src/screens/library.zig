@@ -61,7 +61,6 @@ pub fn logPage(lib: *const Library, index: usize, count: usize) void {
 
 /// The books to show: the filter's, without the hero, or while searching every match,
 /// the hero too.
-
 const SearchEnd = union(enum) { cancel, search, open: usize };
 
 /// The search sheet, with books matching what's typed listed as it changes. Ends by

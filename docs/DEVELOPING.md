@@ -172,7 +172,7 @@ reads only EPUBs. `NOFACE_SIM_PORT` picks another port.
 ```sh
 zig build scenarios                                  # builds zig-out/bin/noface-scenarios for the Kindle
 NOFACE_WRITE_SNAPSHOTS=/tmp/snaps <noface-scenarios> # on the Kindle or a computer: writes <name>.pgm
-for n in page toolbar aa-font definition library; do
-  tools/pgm2png.py /tmp/snaps/$n.pgm src/testdata/snapshots/$n.png
+for f in /tmp/snaps/*.pgm; do
+  tools/pgm2png.py "$f" src/testdata/snapshots/$(basename "$f" .pgm).png
 done
 ```

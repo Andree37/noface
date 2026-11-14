@@ -197,6 +197,7 @@ test "a check that crashes only ends its child" {
     }.check;
     const crashes = struct {
         fn check(_: void) bool {
+            _ = linux.close(2); // Crash quietly: no stack trace in the test output
             const p: ?*volatile u8 = null;
             return p.?.* == 0; // A read through nothing, as a damaged font can cause
         }

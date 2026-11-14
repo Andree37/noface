@@ -35,7 +35,7 @@ pub fn readAnnotations(key: []const u8, kind: annotations.Kind, out: []u8) []con
 /// rather than read as a highlight with a wrong end.
 pub fn completeLines(output: []const u8, filled: bool) []const u8 {
     if (!filled) return output;
-    std.debug.print("highlight list cut off at {d} bytes\n", .{output.len});
+    if (!@import("builtin").is_test) std.debug.print("highlight list cut off at {d} bytes\n", .{output.len});
     const end = std.mem.lastIndexOfScalar(u8, output, '\n') orelse return "";
     return output[0 .. end + 1];
 }

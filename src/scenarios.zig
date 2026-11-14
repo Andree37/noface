@@ -98,7 +98,7 @@ const Kindle = struct {
     /// Wi-Fi's on/off goes unanswered right after it's set.
     radio_slow: bool = false,
     /// Compares the screen at the end with the reference image of this name.
-    snapshot: ?[]const u8 = null,
+    snapshot: ?Snapshot = null,
 };
 
 /// Built as noface-scenarios (GitHub's tests) rather than inside noface: only then are
@@ -113,17 +113,13 @@ fn referenceImage(comptime name: []const u8) []const u8 {
     return if (with_snapshots) @embedFile("testdata/snapshots/" ++ name ++ ".png") else "";
 }
 
-const references = .{
-    .{ "page", referenceImage("page") },
-    .{ "toolbar", referenceImage("toolbar") },
-    .{ "aa-font", referenceImage("aa-font") },
-    .{ "definition", referenceImage("definition") },
-    .{ "library", referenceImage("library") },
-};
+/// The screens compared with a reference image, each src/testdata/snapshots/<name>.png.
+const Snapshot = enum { page, toolbar, @"aa-font", definition, library };
 
 /// Whether `pixels` match the reference image `name`, allowing for anti-aliasing:
 /// pixels more than a few grays apart may be at most 0.3% of the screen.
-fn matchesReference(alloc: std.mem.Allocator, name: []const u8, pixels: []const u8) !bool {
+fn matchesReference(alloc: std.mem.Allocator, which: Snapshot, pixels: []const u8) !bool {
+    const name = @tagName(which);
     if (write_snapshots) |dir| {
         var dir_buf: [256]u8 = undefined;
         _ = linux.mkdir(try std.fmt.bufPrintSentinel(&dir_buf, "{s}", .{dir}, 0), 0o755);
@@ -138,9 +134,9 @@ fn matchesReference(alloc: std.mem.Allocator, name: []const u8, pixels: []const 
         return true;
     }
     if (!with_snapshots) return true; // The self-test doesn't carry them
-    const encoded = inline for (references) |r| {
-        if (std.mem.eql(u8, r[0], name)) break r[1];
-    } else return error.NoSuchSnapshot;
+    const encoded = switch (which) {
+        inline else => |w| referenceImage(@tagName(w)),
+    };
     const image = @import("gfx/image.zig");
     const want = image.decodeGray(alloc, encoded) orelse return error.BadSnapshot;
     if (want.width != width or want.height != height) return false;
@@ -555,16 +551,16 @@ const scenarios = [_]Scenario{
     .{ .name = "the page, toolbar, text settings, a definition and the library look as they should", .run = struct {
         fn run() !void {
             const shots = .{
-                .{ "page", &[_]Step{forward} },
-                .{ "toolbar", &[_]Step{ forward, top } },
-                .{ "aa-font", &[_]Step{ forward, top, tap(696, 118), tap(477, 270) } },
-                .{ "definition", &[_]Step{ forward, hold(600, 700), lift } },
+                .{ Snapshot.page, &[_]Step{forward} },
+                .{ Snapshot.toolbar, &[_]Step{ forward, top } },
+                .{ Snapshot.@"aa-font", &[_]Step{ forward, top, tap(696, 118), tap(477, 270) } },
+                .{ Snapshot.definition, &[_]Step{ forward, hold(600, 700), lift } },
             };
             inline for (shots) |shot| {
                 const r = try playOn(.{ .dictionary = true, .snapshot = shot[0] }, shot[1]);
-                try expect(r.looks_right, shot[0] ++ " looks different");
+                try expect(r.looks_right, @tagName(shot[0]) ++ " looks different");
             }
-            const lib = try playOn(.{ .library = true, .snapshot = "library" }, &.{});
+            const lib = try playOn(.{ .library = true, .snapshot = .library }, &.{});
             try expect(lib.looks_right, "library looks different");
         }
     }.run },

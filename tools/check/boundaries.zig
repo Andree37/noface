@@ -1,5 +1,6 @@
-//! Fails when a source file imports across an ownership boundary.
-//! Run with `zig build check`. Usage: boundaries <src dir>
+//! Fails when a source file imports across an ownership boundary, or has tests that
+//! src/tests.zig doesn't list (they'd never run). Run with `zig build check`.
+//! Usage: boundaries <src dir>
 //!
 //! Who may import whom, by top-level folder of src/:
 //!   base    Building blocks for everything: memory budgets, checks. Imports only base.
@@ -73,6 +74,23 @@ pub fn check(file: []const u8, source: []const u8, out: *std.ArrayList(u8), allo
     return found;
 }
 
+/// Whether a file has tests of its own.
+fn hasTests(source: []const u8) bool {
+    return std.mem.startsWith(u8, source, "test ") or std.mem.indexOf(u8, source, "\ntest \"") != null or
+        std.mem.indexOf(u8, source, "\ntest {") != null;
+}
+
+/// Whether src/tests.zig lists `file`, so its tests run with `zig build test`.
+fn listed(tests_source: []const u8, file: []const u8) bool {
+    var at: usize = 0;
+    while (std.mem.indexOfPos(u8, tests_source, at, file)) |i| {
+        at = i + 1;
+        const quoted = i > 0 and tests_source[i - 1] == '"' and i + file.len < tests_source.len and tests_source[i + file.len] == '"';
+        if (quoted) return true;
+    }
+    return false;
+}
+
 pub fn main(init: std.process.Init) !void {
     const alloc = init.arena.allocator();
     const args = try init.minimal.args.toSlice(alloc);
@@ -83,16 +101,22 @@ pub fn main(init: std.process.Init) !void {
     var walker = try dir.walk(alloc);
     var out: std.ArrayList(u8) = .empty;
     var problems: usize = 0;
+    const tests_source = try dir.readFileAlloc(io, "tests.zig", alloc, .limited(1 << 20));
+    var unlisted: usize = 0;
     while (try walker.next(io)) |entry| {
         if (entry.kind != .file or !std.mem.endsWith(u8, entry.path, ".zig")) continue;
         const source = try dir.readFileAlloc(io, entry.path, alloc, .limited(4 << 20));
         problems += try check(entry.path, source, &out, alloc);
+        if (hasTests(source) and !std.mem.eql(u8, entry.path, "tests.zig") and !listed(tests_source, entry.path)) {
+            unlisted += 1;
+            try out.print(alloc, "{s}: has tests, but src/tests.zig doesn't list it, so they never run\n", .{entry.path});
+        }
     }
-    if (problems > 0) {
-        std.debug.print("{s}{d} imports cross a boundary\n", .{ out.items, problems });
+    if (problems + unlisted > 0) {
+        std.debug.print("{s}{d} imports cross a boundary, {d} files of tests left out\n", .{ out.items, problems, unlisted });
         std.process.exit(1);
     }
-    std.debug.print("boundaries ok\n", .{});
+    std.debug.print("boundaries ok, every test listed\n", .{});
 }
 
 test "imports are judged by folder" {
@@ -104,4 +128,13 @@ test "imports are judged by folder" {
     try std.testing.expectEqual(@as(usize, 0), try check("screens/a.zig", "const k = @import(\"../kindle/kfx.zig\");", &out, alloc));
     try std.testing.expectEqual(@as(usize, 1), try check("ui/a.zig", "const p = @import(\"../sys/os.zig\");", &out, alloc));
     try std.testing.expectEqual(@as(usize, 0), try check("ui/a.zig", "const std = @import(\"std\");", &out, alloc));
+}
+
+test "a file with tests must be listed" {
+    try std.testing.expect(hasTests("const x = 1;\ntest \"a\" {}"));
+    try std.testing.expect(!hasTests("// a test of nothing\nconst t = 1;"));
+    const list = "    _ = @import(\"model/book.zig\");\n";
+    try std.testing.expect(listed(list, "model/book.zig"));
+    try std.testing.expect(!listed(list, "book.zig"));
+    try std.testing.expect(!listed(list, "model/catalog.zig"));
 }

@@ -28,7 +28,7 @@ pub const Budget = struct {
 
     fn fits(b: *Budget, more: usize) bool {
         if (b.live + more <= b.limit) return true;
-        if (b.refused == 0) std.debug.print("memory {s}: over its {d} KB limit\n", .{ b.name, b.limit / 1024 });
+        if (b.refused == 0 and !@import("builtin").is_test) std.debug.print("memory {s}: over its {d} KB limit\n", .{ b.name, b.limit / 1024 });
         b.refused += 1;
         return false;
     }

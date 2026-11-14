@@ -271,9 +271,9 @@ pub const Input = struct {
             }
             const wait: i32 = if (in.tick_us == 0) 1000 else @intCast(@max(1, @min(1000, (in.last_tick + in.tick_us -| now) / 1000)));
             var fds = [_]linux.pollfd{.{ .fd = in.remote, .events = linux.POLL.IN, .revents = 0 }};
-            const ready = linux.poll(&fds, 1, wait);
+            const woke = linux.poll(&fds, 1, wait);
             if (stop_requested.load(.acquire)) return .stop;
-            if (failed(ready) or ready == 0) continue;
+            if (failed(woke) or woke == 0) continue;
             var action: Action = undefined;
             const got = linux.read(in.remote, @ptrCast(&action), @sizeOf(Action));
             if (got == 0) return .stop; // The simulator closed it
@@ -380,156 +380,220 @@ pub const Input = struct {
         return delta;
     }
 
+    /// The next action: a touch, the power button, the Kindle locking or waking, a USB
+    /// computer, a tick of the timer, or a request to stop. Waits until there is one.
     pub fn next(in: *Input) Action {
         while (true) {
-            if (stop_requested.load(.acquire)) return .stop;
-            if (in.stashed) |action| {
-                in.stashed = null;
-                return action;
-            }
-            if (in.script) |sc| return sc.next(in);
-            if (in.remote >= 0) return in.fromRemote();
-            if (in.waiting()) |action| return action;
-            if (in.deferred and !in.top_moved) {
-                if (in.top_slot) |slot| {
-                    if (nowUs() -| in.top_us >= touch_zones.hold_ms * 1000) {
-                        in.top_slot = null;
-                        in.drag_slot = slot;
-                        return .{ .hold = .{ .x = in.top_x, .y = in.top_y } };
-                    }
-                }
-            }
-            // A tick waits for powerd and USB news already in: with short ticks (a
-            // book laid out in idle moments) they'd otherwise go unread for seconds
-            if (in.tick_us != 0 and nowUs() - in.last_tick >= in.tick_us and !in.newsWaiting()) {
-                in.last_tick = nowUs();
-                return .tick;
-            }
-
-            // The power key matters only while locked with no watcher, as the way to unlock.
-            const key_fd = if (in.locked and in.power_events < 0) in.power else -1;
-            var fds = [_]linux.pollfd{
-                .{ .fd = in.touch, .events = linux.POLL.IN, .revents = 0 },
-                .{ .fd = in.power_events, .events = linux.POLL.IN, .revents = 0 },
-                .{ .fd = in.usb_events, .events = linux.POLL.IN, .revents = 0 },
-                .{ .fd = key_fd, .events = linux.POLL.IN, .revents = 0 },
-            };
-            // Tells the watchdog in device/noface.sh that noface is still running its loop.
-            if (nowUs() > in.heartbeat_us + heartbeat_every_us) in.beat();
-
-            // Touches are grabbed, so powerd can't see them and would lock the Kindle
-            // 10 minutes into reading. Tell it, while there's nothing else to do anyway.
-            if (shouldTellPowerd(in.locked, nowUs(), in.last_input, in.told_powerd_us)) {
-                in.told_powerd_us = in.last_input;
-                lipc.stillActive();
-            }
-
-            // Locked with no watcher, wake now and then to start a new one.
-            const sleep_ms: i32 = if (in.power_events < 0) watcher_retry_ms else -1;
-            // Awake, no longer than until the next tick is due, so a short tick (a
-            // double tap's window) isn't stretched to the full second
-            const until_tick: i32 = if (in.tick_us == 0) 1000 else @intCast(@max(1, @min(1000, (in.last_tick + in.tick_us -| nowUs()) / 1000)));
-            const wait: i32 = if (in.top_slot != null) 30 else if (in.locked and in.tick_us == 0) sleep_ms else until_tick;
-            _ = linux.poll(&fds, fds.len, wait);
-
-            // powerd acts on the key itself. Read only so it can't pile up, except
-            // while locked without a watcher, when a press is the only way to unlock.
-            var drained: [16]InputEvent = undefined;
-            const keys = linux.read(in.power, @ptrCast(&drained), @sizeOf(@TypeOf(drained)));
-            if (in.locked and in.power_events < 0 and !failed(keys) and powerPressed(drained[0 .. keys / @sizeOf(InputEvent)])) return in.unlocked();
-
-            if (in.power_events < 0 and nowUs() >= in.watcher_retry_us) {
-                in.watcher_retry_us = nowUs() + watcher_retry_ms * 1000;
-                in.startWatcher();
-                std.debug.print("power watcher restarted: {}\n", .{in.power_events >= 0});
-                // A wake-up while no one listened is gone for good, so ask instead.
-                if (in.locked and lipc.inScreenSaver() == false) return in.unlocked();
-            }
-
-            if (in.usb_events >= 0) {
-                var line: [512]u8 = undefined;
-                const got = linux.read(in.usb_events, &line, line.len);
-                if (got == 0) {
-                    // That watcher died; USB handover is lost until restart, nothing else is.
-                    _ = linux.close(in.usb_events);
-                    in.usb_events = -1;
-                    std.debug.print("usb watcher stopped\n", .{});
-                } else if (!failed(got) and std.mem.indexOf(u8, line[0..got], "usbConfigured") != null) {
-                    // USB used for networking (as for SSH) isn't a computer asking for files.
-                    if (!lipc.usbForNetwork()) return .computer;
-                }
-            }
-
-            if (in.power_events >= 0) {
-                var line: [512]u8 = undefined;
-                const got = linux.read(in.power_events, &line, line.len);
-                if (got == 0) {
-                    // The watcher died. Without this the closed pipe wakes poll forever.
-                    _ = linux.close(in.power_events);
-                    in.power_events = -1;
-                    in.watcher_retry_us = nowUs() + watcher_retry_ms * 1000;
-                    var status: i32 = 0;
-                    while (true) {
-                        const reaped = linux.waitpid(-1, &status, linux.W.NOHANG);
-                        if (reaped == 0 or failed(reaped)) break;
-                    }
-                } else if (!failed(got)) {
-                    if (touch_zones.lastPowerEvent(line[0..got])) |event| {
-                        return if (event == .lock) .lock else in.unlocked();
-                    }
-                    // A charger plugged in or pulled: a tick, for the status bar to catch up
-                    if (touch_zones.chargerChanged(line[0..got])) {
-                        in.charger_changed = true;
-                        return .tick;
-                    }
-                }
-            }
-
+            if (in.ready()) |action| return action;
+            in.keepAlive();
+            in.waitForEvents();
+            if (in.fromPowerKey()) |action| return action;
+            if (in.restartWatcherIfDead()) |action| return action;
+            if (in.fromUsbWatcher()) |action| return action;
+            if (in.fromPowerWatcher()) |action| return action;
         }
     }
 
-    pub fn handle(in: *Input, e: InputEvent) ?Action {
-        if (e.kind == ev_abs) {
-            switch (e.code) {
-                abs_mt_slot => in.slot = @min(@as(usize, @intCast(@max(e.value, 0))), 1),
-                abs_mt_x => in.xs[in.slot] = e.value,
-                abs_mt_y => in.ys[in.slot] = e.value,
-                abs_mt_tracking => {
-                    if (e.value >= 0) {
-                        in.pending = in.slot;
-                        in.down_us = @as(u64, e.sec) * 1_000_000 + e.usec;
-                    } else if (in.drag_slot == in.slot) {
-                        in.drag_slot = null;
-                        return .drag_end;
-                    } else if (in.top_slot == in.slot) {
-                        // Lifted without being followed: a sideways stroke is a swipe, and
-                        // a finger that stayed put or only rolled a little a tap where it
-                        // began. A real stroke some other way is neither: turning a page
-                        // by where an arc began would be a guess, often the wrong way.
-                        in.top_slot = null;
-                        const x = @divTrunc(in.xs[in.slot] * in.width, in.x_max);
-                        const y = @divTrunc(in.ys[in.slot] * in.height, in.y_max);
-                        if (in.top_moved) {
-                            if (touch_zones.swipeDirection(in.top_x, in.top_y, x, y)) |dir| return .{ .swipe = dir };
-                            if (touch_zones.isStroke(in.top_x, in.top_y, x, y)) return null;
-                        }
-                        return .{ .tap = .{ .x = in.top_x, .y = in.top_y, .us = in.top_us } };
-                    }
-                },
-                else => {},
-            }
-            return null;
+    /// An action already known, without waiting: a request to stop, one kept back for
+    /// the next call, the tests' script or the simulator's, touches already read, a
+    /// press held long enough to be a hold, or a tick that's due.
+    fn ready(in: *Input) ?Action {
+        if (stop_requested.load(.acquire)) return .stop;
+        if (in.stashed) |action| {
+            in.stashed = null;
+            return action;
         }
-        // Coordinates of a new touch arrive just before the SYN that ends its packet.
-        if (e.kind != 0) return null;
+        if (in.script) |sc| return sc.next(in);
+        if (in.remote >= 0) return in.fromRemote();
+        if (in.waiting()) |action| return action;
+        if (in.heldLongEnough()) |action| return action;
+        return in.tickDue();
+    }
+
+    /// A press on a page that stayed put long enough: a hold, followed from here as a drag.
+    fn heldLongEnough(in: *Input) ?Action {
+        const slot = in.top_slot orelse return null;
+        if (!in.deferred or in.top_moved) return null;
+        if (nowUs() -| in.top_us < touch_zones.hold_ms * 1000) return null;
+        in.top_slot = null;
+        in.drag_slot = slot;
+        return .{ .hold = .{ .x = in.top_x, .y = in.top_y } };
+    }
+
+    /// A tick, if one is due. It waits for powerd and USB news already in: with short
+    /// ticks (a book laid out in idle moments) they'd otherwise go unread for seconds.
+    fn tickDue(in: *Input) ?Action {
+        if (in.tick_us == 0 or nowUs() - in.last_tick < in.tick_us or in.newsWaiting()) return null;
+        in.last_tick = nowUs();
+        return .tick;
+    }
+
+    /// What noface owes others while it waits: a heartbeat for the watchdog in
+    /// device/noface.sh, and, as touches are grabbed and powerd can't see them, a word
+    /// to powerd now and then so it doesn't lock the Kindle ten minutes into a book.
+    fn keepAlive(in: *Input) void {
+        if (nowUs() > in.heartbeat_us + heartbeat_every_us) in.beat();
+        if (shouldTellPowerd(in.locked, nowUs(), in.last_input, in.told_powerd_us)) {
+            in.told_powerd_us = in.last_input;
+            lipc.stillActive();
+        }
+    }
+
+    /// Sleeps until a touch or a watcher has something, or the next tick is due. Locked,
+    /// with nothing to tick, it sleeps on (waking now and then to restart a dead watcher).
+    fn waitForEvents(in: *Input) void {
+        // The power key matters only while locked with no watcher, as the way to unlock
+        const key_fd = if (in.locked and in.power_events < 0) in.power else -1;
+        var fds = [_]linux.pollfd{
+            .{ .fd = in.touch, .events = linux.POLL.IN, .revents = 0 },
+            .{ .fd = in.power_events, .events = linux.POLL.IN, .revents = 0 },
+            .{ .fd = in.usb_events, .events = linux.POLL.IN, .revents = 0 },
+            .{ .fd = key_fd, .events = linux.POLL.IN, .revents = 0 },
+        };
+        _ = linux.poll(&fds, fds.len, in.waitMs());
+    }
+
+    fn waitMs(in: *const Input) i32 {
+        if (in.top_slot != null) return 30; // A press that may become a hold
+        if (in.locked and in.tick_us == 0) return if (in.power_events < 0) watcher_retry_ms else -1;
+        // No longer than until the next tick, so a short one (a double tap's window)
+        // isn't stretched to the full second
+        if (in.tick_us == 0) return 1000;
+        return @intCast(@max(1, @min(1000, (in.last_tick + in.tick_us -| nowUs()) / 1000)));
+    }
+
+    /// powerd acts on the power key itself: it's read only so presses don't pile up,
+    /// except while locked with no watcher, when a press is the only way to wake.
+    fn fromPowerKey(in: *Input) ?Action {
+        var drained: [16]InputEvent = undefined;
+        const got = linux.read(in.power, @ptrCast(&drained), @sizeOf(@TypeOf(drained)));
+        if (failed(got) or !in.locked or in.power_events >= 0) return null;
+        return if (powerPressed(drained[0 .. got / @sizeOf(InputEvent)])) in.unlocked() else null;
+    }
+
+    /// The power watcher died: start another now and then. A wake-up while no one
+    /// listened is gone for good, so then powerd is asked instead.
+    fn restartWatcherIfDead(in: *Input) ?Action {
+        if (in.power_events >= 0 or nowUs() < in.watcher_retry_us) return null;
+        in.watcher_retry_us = nowUs() + watcher_retry_ms * 1000;
+        in.startWatcher();
+        std.debug.print("power watcher restarted: {}\n", .{in.power_events >= 0});
+        if (in.locked and lipc.inScreenSaver() == false) return in.unlocked();
+        return null;
+    }
+
+    /// A computer setting up USB for files (not for a network, as SSH uses).
+    fn fromUsbWatcher(in: *Input) ?Action {
+        if (in.usb_events < 0) return null;
+        var buf: [512]u8 = undefined;
+        const line = readWatcher(in.usb_events, &buf) orelse {
+            // That watcher died; handing over to the computer is lost until a restart
+            _ = linux.close(in.usb_events);
+            in.usb_events = -1;
+            std.debug.print("usb watcher stopped\n", .{});
+            return null;
+        };
+        if (std.mem.indexOf(u8, line, "usbConfigured") == null) return null;
+        return if (lipc.usbForNetwork()) null else .computer;
+    }
+
+    /// Locking, waking, and a charger coming or going, from powerd.
+    fn fromPowerWatcher(in: *Input) ?Action {
+        if (in.power_events < 0) return null;
+        var buf: [512]u8 = undefined;
+        const line = readWatcher(in.power_events, &buf) orelse {
+            in.powerWatcherDied();
+            return null;
+        };
+        if (touch_zones.lastPowerEvent(line)) |event| return if (event == .lock) .lock else in.unlocked();
+        if (touch_zones.chargerChanged(line)) {
+            in.charger_changed = true;
+            return .tick; // For the status bar to catch up
+        }
+        return null;
+    }
+
+    /// Without closing it, the dead pipe would wake every wait at once, forever.
+    fn powerWatcherDied(in: *Input) void {
+        _ = linux.close(in.power_events);
+        in.power_events = -1;
+        in.watcher_retry_us = nowUs() + watcher_retry_ms * 1000;
+        var status: i32 = 0;
+        while (true) {
+            const reaped = linux.waitpid(-1, &status, linux.W.NOHANG);
+            if (reaped == 0 or failed(reaped)) break;
+        }
+    }
+
+    /// One raw event from the touch panel, turned into an action when one is complete.
+    pub fn handle(in: *Input, e: InputEvent) ?Action {
+        if (e.kind == ev_abs) return in.onAxis(e);
+        // A packet of events ends with a SYN: a new touch's place is known only then
+        if (e.kind == 0) return in.onPacketEnd();
+        return null;
+    }
+
+    fn screenX(in: *const Input, slot: usize) i32 {
+        return @divTrunc(in.xs[slot] * in.width, in.x_max);
+    }
+
+    fn screenY(in: *const Input, slot: usize) i32 {
+        return @divTrunc(in.ys[slot] * in.height, in.y_max);
+    }
+
+    /// A finger's slot, place, or touching down or lifting.
+    fn onAxis(in: *Input, e: InputEvent) ?Action {
+        switch (e.code) {
+            abs_mt_slot => in.slot = @min(@as(usize, @intCast(@max(e.value, 0))), 1),
+            abs_mt_x => in.xs[in.slot] = e.value,
+            abs_mt_y => in.ys[in.slot] = e.value,
+            abs_mt_tracking => {
+                if (e.value < 0) return in.fingerUp();
+                in.pending = in.slot; // Down: where is known at the packet's end
+                in.down_us = @as(u64, e.sec) * 1_000_000 + e.usec;
+            },
+            else => {},
+        }
+        return null;
+    }
+
+    fn fingerUp(in: *Input) ?Action {
+        if (in.drag_slot == in.slot) {
+            in.drag_slot = null;
+            return .drag_end;
+        }
+        if (in.top_slot == in.slot) {
+            in.top_slot = null;
+            return in.lifted();
+        }
+        return null;
+    }
+
+    /// A finger lifted that nothing was following: a sideways stroke is a swipe, and a
+    /// finger that stayed put or only rolled a little a tap where it began. A real
+    /// stroke some other way is neither: turning a page by where an arc began would be
+    /// a guess, often the wrong way.
+    fn lifted(in: *Input) ?Action {
+        const x = in.screenX(in.slot);
+        const y = in.screenY(in.slot);
+        if (in.top_moved) {
+            if (touch_zones.swipeDirection(in.top_x, in.top_y, x, y)) |dir| return .{ .swipe = dir };
+            if (touch_zones.isStroke(in.top_x, in.top_y, x, y)) return null;
+        }
+        return .{ .tap = .{ .x = in.top_x, .y = in.top_y, .us = in.top_us } };
+    }
+
+    /// The end of a packet: a followed finger moved, a pressed one moved or pulled
+    /// down from the top, or a new touch landed.
+    fn onPacketEnd(in: *Input) ?Action {
         if (in.drag_slot) |slot| {
             in.pending = null;
-            in.drag_y = @divTrunc(in.ys[slot] * in.height, in.y_max);
-            return .{ .drag = @divTrunc(in.xs[slot] * in.width, in.x_max) };
+            in.drag_y = in.screenY(slot);
+            return .{ .drag = in.screenX(slot) };
         }
         if (in.top_slot) |slot| {
-            const x = @divTrunc(in.xs[slot] * in.width, in.x_max);
-            const y = @divTrunc(in.ys[slot] * in.height, in.y_max);
+            const x = in.screenX(slot);
+            const y = in.screenY(slot);
             if (touch_zones.movedOff(in.top_x, in.top_y, x, y)) in.top_moved = true;
             if (in.top_y < touch_zones.top_zone and touch_zones.isPull(in.top_y, y)) {
                 in.top_slot = null;
@@ -538,21 +602,35 @@ pub const Input = struct {
         }
         const touched = in.pending orelse return null;
         in.pending = null;
-        in.last_touched = touched;
-        const px = @divTrunc(in.xs[touched] * in.width, in.x_max);
-        const py = @divTrunc(in.ys[touched] * in.height, in.y_max);
-        if (in.ignores(px, py)) return null;
-        if (in.deferred or (in.edge_zones and py < touch_zones.top_zone)) {
-            in.top_slot = touched;
-            in.top_x = px;
-            in.top_y = py;
-            in.top_us = in.down_us;
-            in.top_moved = false;
-            return null;
-        }
-        return .{ .tap = .{ .x = px, .y = py, .us = in.down_us } };
+        return in.touchedDown(touched);
+    }
+
+    /// A new touch: ignored as a resting thumb, a tap at once, or (on a book page, and
+    /// at the top edge) a press to watch until it lifts, moves or is held.
+    fn touchedDown(in: *Input, slot: usize) ?Action {
+        in.last_touched = slot;
+        const x = in.screenX(slot);
+        const y = in.screenY(slot);
+        if (in.ignores(x, y)) return null;
+        const watch = in.deferred or (in.edge_zones and y < touch_zones.top_zone);
+        if (!watch) return .{ .tap = .{ .x = x, .y = y, .us = in.down_us } };
+        in.top_slot = slot;
+        in.top_x = x;
+        in.top_y = y;
+        in.top_us = in.down_us;
+        in.top_moved = false;
+        return null;
     }
 };
+
+/// A line from a lipc watcher's pipe, or null when it has closed (the watcher died).
+/// Nothing waiting gives an empty line.
+fn readWatcher(fd: i32, buf: []u8) ?[]const u8 {
+    const got = linux.read(fd, buf.ptr, buf.len);
+    if (got == 0) return null;
+    if (failed(got)) return "";
+    return buf[0..got];
+}
 
 /// Left third goes back a page, the rest forward.
 pub fn turnDirection(x: i32, width: i32) i32 {

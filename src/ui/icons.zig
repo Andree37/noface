@@ -1,5 +1,10 @@
 //! Panel icons, drawn as smooth vector shapes.
+//!
+//! Every icon asserts the point it's drawn around is on the page it's drawn on: one
+//! centred off the page is a mistake in a screen's layout, and would draw nothing,
+//! or half of itself, without a word.
 const std = @import("std");
+const assert = std.debug.assert;
 const style = @import("style.zig");
 const Page = @import("../gfx/page.zig").Page;
 const Font = @import("../gfx/font.zig").Font;
@@ -12,29 +17,54 @@ const Pen = struct {
     scale: f32 = 1,
 
     fn x(p: Pen, v: f32) f32 {
-        return p.cx + v * p.scale;
+        assert(p.scale > 0);
+        const at = p.cx + v * p.scale;
+        assert(std.math.isFinite(at));
+        return at;
     }
 
     fn y(p: Pen, v: f32) f32 {
-        return p.cy + v * p.scale;
+        assert(p.scale > 0);
+        const at = p.cy + v * p.scale;
+        assert(std.math.isFinite(at));
+        return at;
     }
 
     fn line(p: Pen, x0: f32, y0: f32, x1: f32, y1: f32, width: f32) void {
+        assert(width > 0);
+        assert(p.scale > 0);
         p.page.stroke(p.x(x0), p.y(y0), p.x(x1), p.y(y1), width * p.scale);
     }
 
     fn arc(p: Pen, ox: f32, oy: f32, radius: f32, from: f32, to: f32, width: f32) void {
-        p.page.arc(p.x(ox), p.y(oy), radius * p.scale, std.math.degreesToRadians(from), std.math.degreesToRadians(to), width * p.scale);
+        assert(radius > 0);
+        assert(width > 0);
+        const from_radians = std.math.degreesToRadians(from);
+        const to_radians = std.math.degreesToRadians(to);
+        const radius_scaled = radius * p.scale;
+        p.page.arc(p.x(ox), p.y(oy), radius_scaled, from_radians, to_radians, width * p.scale);
     }
 };
 
 const pi: f32 = std.math.pi;
 
+/// Whether `at` lies within a page's `size` along one side.
+fn inside(at: f32, size: u32) bool {
+    assert(size > 0);
+    assert(!std.math.isNan(at));
+    return at >= 0 and at <= @as(f32, @floatFromInt(size));
+}
+
 pub fn ring(page: Page, cx: f32, cy: f32, radius: f32) void {
+    assert(inside(cx, page.width));
+    assert(inside(cy, page.height));
+    assert(radius > 0);
     page.arc(cx, cy, radius, 0, 2 * pi, 3);
 }
 
 pub fn airplane(page: Page, cx: f32, cy: f32) void {
+    assert(inside(cx, page.width));
+    assert(inside(cy, page.height));
     const outline = [_][2]f32{
         .{ 0, -36 }, .{ 4, -31 }, .{ 5, -11 },  .{ 33, 7 },  .{ 33, 14 },  .{ 5, 4 },
         .{ 4, 21 },  .{ 13, 29 }, .{ 13, 34 },  .{ 0, 29 },  .{ -13, 34 }, .{ -13, 29 },
@@ -49,6 +79,8 @@ pub fn airplane(page: Page, cx: f32, cy: f32) void {
 }
 
 pub fn bluetooth(page: Page, cx: f32, cy: f32) void {
+    assert(inside(cx, page.width));
+    assert(inside(cy, page.height));
     const p = Pen{ .page = page, .cx = cx, .cy = cy };
     p.line(0, -32, 0, 32, 4);
     p.line(0, -32, 17, -16, 4);
@@ -58,9 +90,13 @@ pub fn bluetooth(page: Page, cx: f32, cy: f32) void {
 }
 
 pub fn wifi(page: Page, cx: f32, cy: f32, scale: f32, bars: u32) void {
+    assert(inside(cx, page.width));
+    assert(inside(cy, page.height));
+    assert(scale > 0);
     // Drawn around its own middle, so it can share a line with text.
     const p = Pen{ .page = page, .cx = cx, .cy = cy + 2 * scale, .scale = scale };
-    page.disc(@intFromFloat(p.x(0)), @intFromFloat(p.y(24)), @intFromFloat(@max(6 * scale, 2)), 0, 0x00);
+    const dot_radius: i32 = @intFromFloat(@max(6 * scale, 2));
+    page.disc(@intFromFloat(p.x(0)), @intFromFloat(p.y(24)), dot_radius, 0, 0x00);
     const radii = [_]f32{ 19, 34, 49 };
     for (radii, 0..) |r, i| {
         if (bars > 0 and i >= bars) continue;
@@ -69,6 +105,8 @@ pub fn wifi(page: Page, cx: f32, cy: f32, scale: f32, bars: u32) void {
 }
 
 pub fn sync(page: Page, cx: f32, cy: f32) void {
+    assert(inside(cx, page.width));
+    assert(inside(cy, page.height));
     const p = Pen{ .page = page, .cx = cx, .cy = cy };
     p.arc(0, 0, 28, 200, 330, 4);
     p.arc(0, 0, 28, 20, 150, 4);
@@ -78,6 +116,9 @@ pub fn sync(page: Page, cx: f32, cy: f32) void {
 
 /// Barbs at the end of a clockwise arc, pointing along it.
 fn arrow_head(p: Pen, radius: f32, degrees: f32) void {
+    assert(radius > 0);
+    assert(degrees >= 0);
+    assert(degrees < 360);
     const a = std.math.degreesToRadians(degrees);
     const tip_x = @cos(a) * radius;
     const tip_y = @sin(a) * radius;
@@ -90,6 +131,8 @@ fn arrow_head(p: Pen, radius: f32, degrees: f32) void {
 
 /// A smile arrow, for going back to the Kindle's own home screen.
 pub fn smile(page: Page, cx: f32, cy: f32) void {
+    assert(inside(cx, page.width));
+    assert(inside(cy, page.height));
     const p = Pen{ .page = page, .cx = cx, .cy = cy };
     // The smile: the lower part of a circle, a little flatter than a half.
     p.arc(0, -26, 36, 25, 155, 6);
@@ -101,6 +144,8 @@ pub fn smile(page: Page, cx: f32, cy: f32) void {
 }
 
 pub fn gear(page: Page, cx: f32, cy: f32) void {
+    assert(inside(cx, page.width));
+    assert(inside(cy, page.height));
     const p = Pen{ .page = page, .cx = cx, .cy = cy };
     p.arc(0, 0, 25, 0, 360, 5);
     p.arc(0, 0, 11, 0, 360, 4);
@@ -113,14 +158,20 @@ pub fn gear(page: Page, cx: f32, cy: f32) void {
 
 /// Width of the charge bar. Kept in u32: @min with a literal narrows the type.
 pub fn battery_fill(inner: u32, percent: u32) u32 {
+    assert(inner > 0);
+    // The percent is the Kindle's to report, so anything over a full charge is clamped.
     const level: u32 = @min(percent, 100);
-    return inner * level / 100;
+    const fill = inner * level / 100;
+    assert(fill <= inner);
+    return fill;
 }
 
 pub const battery_width = 85; // Including the terminal
 
 /// `cy` is the vertical centre.
 pub fn battery(page: Page, x: f32, cy: f32, percent: u32) void {
+    assert(inside(x, page.width));
+    assert(inside(cy, page.height));
     const w = 78;
     const h = 36;
     const y = cy - h / 2;
@@ -134,12 +185,16 @@ pub fn battery(page: Page, x: f32, cy: f32, percent: u32) void {
 }
 
 pub fn back(page: Page, cx: f32, cy: f32) void {
+    assert(inside(cx, page.width));
+    assert(inside(cy, page.height));
     page.stroke(cx - 18, cy, cx + 18, cy, 4);
     page.stroke(cx - 18, cy, cx - 4, cy - 14, 4);
     page.stroke(cx - 18, cy, cx - 4, cy + 14, 4);
 }
 
 pub fn lines(page: Page, cx: f32, cy: f32) void {
+    assert(inside(cx, page.width));
+    assert(inside(cy, page.height));
     var i: f32 = -1;
     while (i <= 1) : (i += 1) {
         page.stroke(cx - 22, cy + i * 14, cx - 16, cy + i * 14, 4);
@@ -150,6 +205,8 @@ pub fn lines(page: Page, cx: f32, cy: f32) void {
 /// The toolbar's bookmark, filled when the page has one.
 /// A filled ribbon with a notch at the bottom, smooth on every edge like the outline.
 pub fn bookmark_filled(page: Page, cx: f32, cy: f32) void {
+    assert(inside(cx, page.width));
+    assert(inside(cy, page.height));
     const left = cx - 17;
     const top = cy - 24;
     const shape = [_][2]f32{
@@ -161,11 +218,15 @@ pub fn bookmark_filled(page: Page, cx: f32, cy: f32) void {
 
 /// The ribbon in a bookmarked page's top-right corner.
 pub fn ribbon(page: Page, screen_width: u32) void {
+    assert(screen_width > 60);
+    assert(screen_width <= page.width);
     const right: f32 = @floatFromInt(screen_width - 60);
     bookmark_filled(page, right, 24);
 }
 
 pub fn bookmark(page: Page, cx: f32, cy: f32) void {
+    assert(inside(cx, page.width));
+    assert(inside(cy, page.height));
     page.stroke(cx - 15, cy - 22, cx + 15, cy - 22, 4);
     page.stroke(cx - 15, cy - 22, cx - 15, cy + 22, 4);
     page.stroke(cx + 15, cy - 22, cx + 15, cy + 22, 4);
@@ -174,16 +235,23 @@ pub fn bookmark(page: Page, cx: f32, cy: f32) void {
 }
 
 pub fn search(page: Page, cx: f32, cy: f32) void {
+    assert(inside(cx, page.width));
+    assert(inside(cy, page.height));
     search_scaled(page, cx, cy, 1);
 }
 
 /// The magnifier at another size, centred on (`cx`, `cy`).
 pub fn search_scaled(page: Page, cx: f32, cy: f32, scale: f32) void {
+    assert(inside(cx, page.width));
+    assert(inside(cy, page.height));
+    assert(scale > 0);
     page.arc(cx - 5 * scale, cy - 5 * scale, 17 * scale, 0, 2 * pi, 4);
     page.stroke(cx + 8 * scale, cy + 8 * scale, cx + 23 * scale, cy + 23 * scale, 5);
 }
 
 pub fn dots(page: Page, cx: f32, cy: f32) void {
+    assert(inside(cx, page.width));
+    assert(inside(cy, page.height));
     const x: i32 = @intFromFloat(cx);
     const y: i32 = @intFromFloat(cy);
     page.disc(x, y - 16, 4, 0, 0x00);
@@ -193,29 +261,51 @@ pub fn dots(page: Page, cx: f32, cy: f32) void {
 
 /// Chapter skip: a bar and a triangle, pointing right when `forward`.
 pub fn skip(page: Page, cx: f32, cy: f32, forward: bool) void {
-    const dir: f32 = if (forward) 1 else -1;
-    const pts = [_][2]f32{ .{ cx - 14 * dir, cy - 18 }, .{ cx + 12 * dir, cy }, .{ cx - 14 * dir, cy + 18 } };
-    page.fill_poly(&pts);
-    page.stroke(cx + 15 * dir, cy - 18, cx + 15 * dir, cy + 18, 5);
+    assert(inside(cx, page.width));
+    assert(inside(cy, page.height));
+    const direction: f32 = if (forward) 1 else -1;
+    const points = [_][2]f32{
+        .{ cx - 14 * direction, cy - 18 },
+        .{ cx + 12 * direction, cy },
+        .{ cx - 14 * direction, cy + 18 },
+    };
+    page.fill_poly(&points);
+    page.stroke(cx + 15 * direction, cy - 18, cx + 15 * direction, cy + 18, 5);
 }
 
 pub fn menu(page: Page, x: f32, y: f32) void {
+    assert(inside(x, page.width));
+    assert(inside(y, page.height));
     page.stroke(x, y, x + 44, y, 4);
     page.stroke(x, y + 14, x + 44, y + 14, 4);
     page.stroke(x, y + 28, x + 44, y + 28, 4);
 }
 
 /// Wi-Fi, percent and battery on one centre line, right-aligned to `right`.
-pub fn status_cluster(page: Page, font: *Font, right: f32, cy: f32, baseline: i32, quick: anytype, large: bool) !void {
+pub fn status_cluster(
+    page: Page,
+    font: *Font,
+    right: f32,
+    cy: f32,
+    baseline: i32,
+    quick: anytype,
+    large: bool,
+) !void {
+    assert(inside(right, page.width));
+    assert(inside(cy, page.height));
     const battery_w: f32 = if (large) battery_width else battery_small_width;
     const gap: f32 = if (large) 20 else 16;
     const battery_x = right - battery_w;
-    if (large) battery(page, battery_x, cy, quick.battery) else battery_small(page, battery_x, cy, quick.battery);
+    if (large) {
+        battery(page, battery_x, cy, quick.battery);
+    } else {
+        battery_small(page, battery_x, cy, quick.battery);
+    }
     var label: [8]u8 = undefined;
-    const pct = std.fmt.bufPrint(&label, "{d}%", .{quick.battery}) catch "";
-    const pct_x = battery_x - gap - try font.measure(pct);
-    try font.draw(page, pct_x, baseline, pct);
-    var left = pct_x;
+    const percent = std.fmt.bufPrint(&label, "{d}%", .{quick.battery}) catch "";
+    const percent_x = battery_x - gap - try font.measure(percent);
+    try font.draw(page, percent_x, baseline, percent);
+    var left = percent_x;
     if (quick.plugged) {
         const size: f32 = if (large) 30 else 24;
         left -= size * 0.5 + 6;
@@ -227,8 +317,13 @@ pub fn status_cluster(page: Page, font: *Font, right: f32, cy: f32, baseline: i3
 
 /// A lightning bolt `size` tall, centred on (`cx`, `cy`): plugged in.
 pub fn bolt(page: Page, cx: f32, cy: f32, size: f32) void {
+    assert(inside(cx, page.width));
+    assert(inside(cy, page.height));
+    assert(size > 0);
     const s = size / 26;
-    const shape = [_][2]f32{ .{ 3, -13 }, .{ -7, 2 }, .{ -1, 2 }, .{ -3, 13 }, .{ 7, -2 }, .{ 1, -2 } };
+    const shape = [_][2]f32{
+        .{ 3, -13 }, .{ -7, 2 }, .{ -1, 2 }, .{ -3, 13 }, .{ 7, -2 }, .{ 1, -2 },
+    };
     var points: [shape.len][2]f32 = undefined;
     for (shape, &points) |p, *q| q.* = .{ cx + p[0] * s, cy + p[1] * s };
     page.fill_poly(&points);
@@ -236,6 +331,8 @@ pub fn bolt(page: Page, cx: f32, cy: f32, size: f32) void {
 
 /// Badge for a book that isn't on the device.
 pub fn cloud(page: Page, cx: f32, cy: f32) void {
+    assert(inside(cx, page.width));
+    assert(inside(cy, page.height));
     const x: i32 = @intFromFloat(cx);
     const y: i32 = @intFromFloat(cy);
     page.disc(x, y, 30, 0, 0xff);
@@ -248,6 +345,8 @@ pub fn cloud(page: Page, cx: f32, cy: f32) void {
 
 /// Highlight: a marker pen at a slant over the gray stroke it leaves.
 pub fn highlighter(page: Page, cx: f32, cy: f32) void {
+    assert(inside(cx, page.width));
+    assert(inside(cy, page.height));
     page.pill(cx - 16, cx + 16, cy + 16, 6, style.rule); // The stroke
     // The pen: a slanted body with a chisel tip touching the stroke
     const body = [_][2]f32{
@@ -263,9 +362,19 @@ pub fn highlighter(page: Page, cx: f32, cy: f32) void {
 /// in white, so its smooth edges stay smooth. Flipping pixels in place can't do that
 /// once the flipped area cuts through another shape's soft edge, as a disc's does.
 /// `glyph` has `draw(self, tile: Page, cx: f32, cy: f32) !void`.
-pub fn draw_white(page: Page, comptime w: u32, comptime h: u32, cx: i32, cy: i32, glyph: anytype) !void {
-    var buf: [w * h]u8 = @splat(0xff);
-    const tile = Page{ .buf = &buf, .width = w, .height = h, .stride = w };
+pub fn draw_white(
+    page: Page,
+    comptime w: u32,
+    comptime h: u32,
+    cx: i32,
+    cy: i32,
+    glyph: anytype,
+) !void {
+    comptime assert(w > 0);
+    comptime assert(h > 0);
+    comptime assert(w * h <= 64 * 1024); // The tile is on the stack: a glyph's size
+    var buffer: [w * h]u8 = @splat(0xff);
+    const tile = Page{ .buf = &buffer, .width = w, .height = h, .stride = w };
     try glyph.draw(tile, @as(f32, w) / 2, @as(f32, h) / 2);
     page.stamp_white(tile, cx, cy);
 }
@@ -274,6 +383,8 @@ pub fn draw_white(page: Page, comptime w: u32, comptime h: u32, cx: i32, cy: i32
 pub const Magnifier = struct {
     scale: f32,
     pub fn draw(m: Magnifier, page: Page, cx: f32, cy: f32) !void {
+        assert(m.scale > 0);
+        assert(inside(cx, page.width));
         search_scaled(page, cx, cy, m.scale);
     }
 };
@@ -294,26 +405,33 @@ test "a white glyph lands centred, and only where it was drawn" {
 
 /// Stats: three rounded bars of different heights on a baseline.
 pub fn bar_chart(page: Page, cx: f32, cy: f32) void {
+    assert(inside(cx, page.width));
+    assert(inside(cy, page.height));
     const heights = [_]f32{ 14, 30, 22 };
     for (heights, 0..) |h, i| {
         const x = cx - 14 + @as(f32, @floatFromInt(i)) * 14;
-        page.pill(x, x, cy + 14 - h + 3, 3, 0x00);
-        page.fill_rect(@intFromFloat(x - 3), @intFromFloat(cy + 14 - h + 3), 6, @intFromFloat(h - 3), 0x00);
+        const top = cy + 14 - h + 3;
+        page.pill(x, x, top, 3, 0x00);
+        page.fill_rect(@intFromFloat(x - 3), @intFromFloat(top), 6, @intFromFloat(h - 3), 0x00);
     }
     page.fill_rect(@intFromFloat(cx - 21), @intFromFloat(cy + 14), 42, 3, 0x00);
 }
 
 /// Filter: a funnel.
 pub fn funnel(page: Page, cx: f32, cy: f32) void {
-    const pts = [_][2]f32{
+    assert(inside(cx, page.width));
+    assert(inside(cy, page.height));
+    const points = [_][2]f32{
         .{ cx - 15, cy - 12 }, .{ cx + 15, cy - 12 }, .{ cx + 4, cy + 1 },
         .{ cx + 4, cy + 13 },  .{ cx - 4, cy + 9 },   .{ cx - 4, cy + 1 },
     };
-    page.fill_poly(&pts);
+    page.fill_poly(&points);
 }
 
 /// Sort: an arrow up beside an arrow down.
 pub fn sort_arrows(page: Page, cx: f32, cy: f32) void {
+    assert(inside(cx, page.width));
+    assert(inside(cy, page.height));
     const l = cx - 7;
     const r = cx + 7;
     page.stroke(l, cy + 13, l, cy - 12, 3);
@@ -325,6 +443,8 @@ pub fn sort_arrows(page: Page, cx: f32, cy: f32) void {
 }
 
 pub fn check(page: Page, cx: f32, cy: f32) void {
+    assert(inside(cx, page.width));
+    assert(inside(cy, page.height));
     page.disc(@intFromFloat(cx), @intFromFloat(cy), 25, 0, 0xff);
     page.disc(@intFromFloat(cx), @intFromFloat(cy), 22, 0, 0x00);
     page.fill_poly_white_check(cx, cy);
@@ -334,6 +454,8 @@ pub const battery_small_width = 59; // Including the terminal
 
 /// `cy` is the vertical centre.
 pub fn battery_small(page: Page, x: f32, cy: f32, percent: u32) void {
+    assert(inside(x, page.width));
+    assert(inside(cy, page.height));
     const w = 54;
     const h = 26;
     const y = cy - h / 2;
@@ -347,6 +469,8 @@ pub fn battery_small(page: Page, x: f32, cy: f32, percent: u32) void {
 }
 
 pub fn chevron(page: Page, cx: f32, cy: f32) void {
+    assert(inside(cx, page.width));
+    assert(inside(cy, page.height));
     page.stroke(cx - 42, cy + 13, cx, cy - 7, 4);
     page.stroke(cx, cy - 7, cx + 42, cy + 13, 4);
 }

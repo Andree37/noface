@@ -78,6 +78,42 @@ pub const Settings = struct {
 
 /// The settings file: one "name value" per line, for example "font Bookerly" or
 /// "bold off". Lines it doesn't know are skipped, and every value is checked.
+/// How each setting is written in the settings file, in the file's order. `inverted`
+/// keeps a name from before the setting's meaning flipped ("justify" is !left_align).
+const Saved = struct { name: []const u8, field: []const u8, inverted: bool = false };
+const saved = [_]Saved{
+    .{ .name = "size", .field = "size" },
+    .{ .name = "spacing", .field = "spacing" },
+    .{ .name = "margins", .field = "margin" },
+    .{ .name = "font", .field = "font" },
+    .{ .name = "bold", .field = "bold" },
+    .{ .name = "justify", .field = "left_align", .inverted = true },
+    .{ .name = "clock", .field = "clock" },
+    .{ .name = "refresh", .field = "refresh" },
+    .{ .name = "time-left", .field = "time_left" },
+    .{ .name = "autostart", .field = "autostart" },
+    .{ .name = "lock-picture", .field = "lock_picture" },
+    .{ .name = "bold-starts", .field = "bold_starts" },
+    .{ .name = "offer-dictionary", .field = "offer_dictionary" },
+};
+
+comptime {
+    // Every setting is saved, so a new one can't be forgotten here
+    for (@typeInfo(Settings).@"struct".field_names) |field| {
+        for (saved) |f| {
+            if (std.mem.eql(u8, f.field, field)) break;
+        } else @compileError("settings: say how \"" ++ field ++ "\" is saved, in `saved`");
+    }
+}
+
+/// How many steps a setting chosen from a list has.
+fn stepsOf(comptime field: []const u8) usize {
+    if (comptime std.mem.eql(u8, field, "size")) return sizes.len;
+    if (comptime std.mem.eql(u8, field, "spacing")) return spacings.len;
+    if (comptime std.mem.eql(u8, field, "margin")) return margins.len;
+    @compileError("settings: how many steps has " ++ field);
+}
+
 pub fn parse(content: []const u8) Settings {
     if (looksOld(content)) return fromOldFile(content);
     var s = Settings{};
@@ -86,41 +122,36 @@ pub fn parse(content: []const u8) Settings {
         var words = std.mem.tokenizeScalar(u8, line, ' ');
         const name = words.next() orelse continue;
         const value = words.next() orelse continue;
-        if (std.mem.eql(u8, name, "size")) s.size = step(value, sizes.len, s.size);
-        if (std.mem.eql(u8, name, "spacing")) s.spacing = step(value, spacings.len, s.spacing);
-        if (std.mem.eql(u8, name, "margins")) s.margin = step(value, margins.len, s.margin);
-        // A name can have spaces ("Open Sans"): the rest of the line
-        if (std.mem.eql(u8, name, "font")) s.font = familyNamed(std.mem.trim(u8, line[value.ptr - line.ptr ..], " ")) orelse s.font;
-        if (std.mem.eql(u8, name, "bold")) s.bold = isOn(value, s.bold);
-        if (std.mem.eql(u8, name, "justify")) s.left_align = !isOn(value, !s.left_align);
-        if (std.mem.eql(u8, name, "clock")) s.clock = isOn(value, s.clock);
-        if (std.mem.eql(u8, name, "refresh")) s.refresh = isOn(value, s.refresh);
-        if (std.mem.eql(u8, name, "time-left")) s.time_left = isOn(value, s.time_left);
-        if (std.mem.eql(u8, name, "autostart")) s.autostart = isOn(value, s.autostart);
-        if (std.mem.eql(u8, name, "bold-starts")) s.bold_starts = isOn(value, s.bold_starts);
-        if (std.mem.eql(u8, name, "offer-dictionary")) s.offer_dictionary = isOn(value, s.offer_dictionary);
-        if (std.mem.eql(u8, name, "lock-picture")) s.lock_picture = isOn(value, s.lock_picture);
+        inline for (saved) |f| {
+            if (std.mem.eql(u8, name, f.name)) {
+                const now = &@field(s, f.field);
+                if (comptime std.mem.eql(u8, f.field, "font")) {
+                    // A name can have spaces ("Open Sans"): the rest of the line
+                    now.* = familyNamed(std.mem.trim(u8, line[value.ptr - line.ptr ..], " ")) orelse now.*;
+                } else switch (@TypeOf(now.*)) {
+                    bool => now.* = isOn(value, now.* != f.inverted) != f.inverted,
+                    usize => now.* = step(value, stepsOf(f.field), now.*),
+                    else => @compileError("settings: how is " ++ f.field ++ " read"),
+                }
+            }
+        }
     }
     return s;
 }
 
 pub fn format(buf: []u8, s: Settings) []const u8 {
-    return std.fmt.bufPrint(buf,
-        \\size {d}
-        \\spacing {d}
-        \\margins {d}
-        \\font {s}
-        \\bold {s}
-        \\justify {s}
-        \\clock {s}
-        \\refresh {s}
-        \\time-left {s}
-        \\autostart {s}
-        \\lock-picture {s}
-        \\bold-starts {s}
-        \\offer-dictionary {s}
-        \\
-    , .{ s.size, s.spacing, s.margin, families[s.font], onOff(s.bold), onOff(!s.left_align), onOff(s.clock), onOff(s.refresh), onOff(s.time_left), onOff(s.autostart), onOff(s.lock_picture), onOff(s.bold_starts), onOff(s.offer_dictionary) }) catch "";
+    var w: std.Io.Writer = .fixed(buf);
+    inline for (saved) |f| {
+        const value = @field(s, f.field);
+        if (comptime std.mem.eql(u8, f.field, "font")) {
+            w.print(f.name ++ " {s}\n", .{families[value]}) catch return "";
+        } else switch (@TypeOf(value)) {
+            bool => w.print(f.name ++ " {s}\n", .{onOff(value != f.inverted)}) catch return "",
+            usize => w.print(f.name ++ " {d}\n", .{value}) catch return "",
+            else => @compileError("settings: how is " ++ f.field ++ " written"),
+        }
+    }
+    return w.buffered();
 }
 
 fn step(value: []const u8, count: usize, fallback: usize) usize {

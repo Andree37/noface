@@ -29,18 +29,89 @@ pub const Hit = union(enum) {
     tab: Tab,
     theme: usize,
     family: usize,
-    bold,
     text_size,
     spacing,
     margins,
-    alignment,
-    clock,
-    refresh,
-    time_left,
-    autostart,
-    lock_picture,
-    bold_starts,
+    toggle: usize, // Which of `switches`
 };
+
+/// What else a switch changes when flipped: the pages, laid out again; the footer
+/// drawn into each page; or nothing on the page.
+pub const Effect = enum { relayout, footer, nothing };
+
+/// What must be agreed, or ready, before a switch can turn on.
+pub const Guard = enum { none, autostart, lock_picture };
+
+/// An on/off setting: its tab, the field of Settings it flips, and what it says.
+pub const Switch = struct {
+    tab: Tab,
+    field: []const u8,
+    label: []const u8,
+    inverted: bool = false, // On means the field is false ("Justify text" is !left_align)
+    effect: Effect,
+    guard: Guard = .none,
+};
+
+/// Every switch, in the order shown on each tab. Adding one is a line here: the
+/// sheet places it under the ones before, and taps and drawing follow.
+pub const switches = [_]Switch{
+    .{ .tab = .font, .field = "bold", .label = "Bold", .effect = .relayout },
+    .{ .tab = .font, .field = "bold_starts", .label = "Bold word starts", .effect = .relayout },
+    .{ .tab = .layout, .field = "left_align", .label = "Justify text", .inverted = true, .effect = .relayout },
+    .{ .tab = .more, .field = "clock", .label = "Show clock while reading", .effect = .nothing },
+    .{ .tab = .more, .field = "refresh", .label = "Page refresh every 20 pages", .effect = .nothing },
+    .{ .tab = .more, .field = "time_left", .label = "Show time left", .effect = .footer },
+    .{ .tab = .more, .field = "autostart", .label = "Open noface when the Kindle starts", .effect = .nothing, .guard = .autostart },
+    .{ .tab = .more, .field = "lock_picture", .label = "Your picture when locked", .effect = .nothing, .guard = .lock_picture },
+};
+
+comptime {
+    for (switches) |sw| {
+        if (!@hasField(settings_model.Settings, sw.field)) @compileError("aa: no setting named " ++ sw.field);
+    }
+}
+
+/// Whether switch `i` shows as on for these settings.
+pub fn isOn(i: usize, s: settings_model.Settings) bool {
+    inline for (switches, 0..) |sw, j| {
+        if (i == j) return @field(s, sw.field) != sw.inverted;
+    }
+    unreachable;
+}
+
+/// Flips switch `i`'s setting.
+pub fn flip(i: usize, s: *settings_model.Settings) void {
+    inline for (switches, 0..) |sw, j| {
+        if (i == j) @field(s, sw.field) = !@field(s, sw.field);
+    }
+}
+
+/// The index of the switch for a setting, for tests and callers that name one.
+pub fn switchFor(comptime field: []const u8) usize {
+    inline for (switches, 0..) |sw, i| {
+        if (comptime std.mem.eql(u8, sw.field, field)) return i;
+    }
+    @compileError("aa: no switch for " ++ field);
+}
+
+/// Where a tab's switches start: under its other controls.
+fn switchesTop(tab: Tab) u32 {
+    return switch (tab) {
+        .themes => content_top, // It has none
+        .font => content_top + 186, // Under the typefaces
+        .layout => content_top + 292, // Under the two sliders
+        .more => content_top + 8,
+    };
+}
+
+const switch_step = 100;
+
+/// Where switch `i` sits: a step under the switches before it on its tab.
+pub fn switchTop(i: usize) u32 {
+    var before: u32 = 0;
+    for (switches[0..i]) |sw| before += @intFromBool(sw.tab == switches[i].tab);
+    return switchesTop(switches[i].tab) + before * switch_step;
+}
 
 pub const Row = struct { hit: Hit, label: []const u8, top: u32, steps: usize };
 pub const size_row = Row{ .hit = .text_size, .label = "Text size", .top = content_top + 356, .steps = settings_model.sizes.len };
@@ -59,15 +130,7 @@ fn familyColumns() u32 {
 fn familyWidth() u32 {
     return (screen_width - 2 * margin) / familyColumns();
 }
-const bold_top = content_top + 186;
-const bold_starts_top = content_top + 286;
 const toggle_height = 76;
-const align_top = content_top + 292;
-const clock_top = content_top + 8;
-const refresh_top = content_top + 108;
-const time_left_top = content_top + 208;
-const autostart_top = content_top + 308;
-const lock_picture_top = content_top + 408;
 
 const theme_width = 340;
 const theme_gap = 34;
@@ -123,22 +186,16 @@ pub fn hit(tab: Tab, x: i32, y: i32) Hit {
                 const i = row * cols + col;
                 return if (i < settings_model.families.len) .{ .family = i } else .none;
             }
-            if (onToggle(y, bold_top)) return .bold;
-            if (onToggle(y, bold_starts_top)) return .bold_starts;
             if (within(y, size_row.top, row_height)) return .text_size;
         },
         .layout => {
             if (within(y, spacing_row.top, row_height)) return .spacing;
             if (within(y, margin_row.top, row_height)) return .margins;
-            if (onToggle(y, align_top)) return .alignment;
         },
-        .more => {
-            if (onToggle(y, clock_top)) return .clock;
-            if (onToggle(y, refresh_top)) return .refresh;
-            if (onToggle(y, time_left_top)) return .time_left;
-            if (onToggle(y, autostart_top)) return .autostart;
-            if (onToggle(y, lock_picture_top)) return .lock_picture;
-        },
+        .more => {},
+    }
+    for (switches, 0..) |sw, i| {
+        if (sw.tab == tab and onToggle(y, @intCast(switchTop(i)))) return .{ .toggle = i };
     }
     return .none;
 }
@@ -239,8 +296,6 @@ fn drawFont(fonts: Fonts, page: Page, chosen: settings_model.Settings) !void {
             if (i == chosen.font) page.fillRect(left, y + 70, @intFromFloat(@min(try font.measure(family), @as(f32, @floatFromInt(familyWidth() - 24)))), style.underline, style.black);
         } else try draw.choice(fonts, page, @floatFromInt(left), .left, @intCast(y + 56), family, i == chosen.font, y + 70);
     }
-    try drawToggle(fonts, page, bold_top, "Bold", chosen.bold);
-    try drawToggle(fonts, page, bold_starts_top, "Bold word starts", chosen.bold_starts);
     try drawRow(fonts, page, size_row, chosen.size, false);
 }
 
@@ -255,15 +310,11 @@ pub fn render(fonts: Fonts, page: Page, tab: Tab, chosen: settings_model.Setting
         .layout => {
             try drawRow(fonts, page, spacing_row, chosen.spacing, false);
             try drawRow(fonts, page, margin_row, chosen.margin, false);
-            try drawToggle(fonts, page, align_top, "Justify text", !chosen.left_align);
         },
-        .more => {
-            try drawToggle(fonts, page, clock_top, "Show clock while reading", chosen.clock);
-            try drawToggle(fonts, page, refresh_top, "Page refresh every 20 pages", chosen.refresh);
-            try drawToggle(fonts, page, time_left_top, "Show time left", chosen.time_left);
-            try drawToggle(fonts, page, autostart_top, "Open noface when the Kindle starts", chosen.autostart);
-            try drawToggle(fonts, page, lock_picture_top, "Your picture when locked", chosen.lock_picture);
-        },
+        .more => {},
+    }
+    for (switches, 0..) |sw, i| {
+        if (sw.tab == tab) try drawToggle(fonts, page, switchTop(i), sw.label, isOn(i, chosen));
     }
 }
 
@@ -284,28 +335,26 @@ test "each tab maps its own controls" {
     try std.testing.expectEqual(Hit{ .theme = 1 }, hit(.themes, 620, 500));
     try std.testing.expectEqual(Hit{ .family = 0 }, hit(.font, 200, family_top + 20));
     try std.testing.expectEqual(Hit{ .family = 3 }, hit(.font, 900, family_top + family_height + 20));
-    try std.testing.expectEqual(Hit.bold, hit(.font, 600, bold_top + 20));
     try std.testing.expectEqual(Hit.text_size, hit(.font, 600, size_row.top + 90));
-    try std.testing.expectEqual(Hit.bold_starts, hit(.font, 600, bold_starts_top + 20));
     try std.testing.expectEqual(Hit.spacing, hit(.layout, 600, spacing_row.top + 90));
     try std.testing.expectEqual(Hit.margins, hit(.layout, 600, margin_row.top + 90));
-    try std.testing.expectEqual(Hit.alignment, hit(.layout, 600, align_top + 20));
-    try std.testing.expectEqual(Hit.clock, hit(.more, 600, clock_top + 20));
-    try std.testing.expectEqual(Hit.refresh, hit(.more, 600, refresh_top + 20));
-    try std.testing.expectEqual(Hit.time_left, hit(.more, 600, time_left_top + 20));
-    try std.testing.expectEqual(Hit.autostart, hit(.more, 600, autostart_top + 20));
+    // Every switch answers on its own tab, where it's drawn
+    for (switches, 0..) |sw, i| try std.testing.expectEqual(Hit{ .toggle = i }, hit(sw.tab, 600, @intCast(switchTop(i) + 20)));
 }
 
 test "the sheet stays inside itself" {
     try std.testing.expect(size_row.top + row_height <= heightFor(.font));
-    try std.testing.expect(align_top + toggle_height <= heightFor(.layout));
+    // A switch added to a full tab shows here before it's drawn past the sheet
+    for (switches, 0..) |sw, i| try std.testing.expect(switchTop(i) + toggle_height + 12 <= heightFor(sw.tab));
     try std.testing.expect(theme_top + theme_height <= heightFor(.themes));
 }
 
 test "switches and fonts take a fingertip of height" {
-    try std.testing.expectEqual(Hit.bold, hit(.font, 600, bold_top - 10));
-    try std.testing.expectEqual(Hit.bold, hit(.font, 600, bold_top + toggle_height + 10));
-    try std.testing.expectEqual(Hit.clock, hit(.more, 600, clock_top - 10));
+    const bold = switchFor("bold");
+    try std.testing.expectEqual(Hit{ .toggle = bold }, hit(.font, 600, @intCast(switchTop(bold) - 10)));
+    try std.testing.expectEqual(Hit{ .toggle = bold }, hit(.font, 600, @intCast(switchTop(bold) + toggle_height + 10)));
+    const clock = switchFor("clock");
+    try std.testing.expectEqual(Hit{ .toggle = clock }, hit(.more, 600, @intCast(switchTop(clock) - 10)));
     try std.testing.expectEqual(Hit{ .family = 0 }, hit(.font, 200, family_top - 10));
 }
 
@@ -316,7 +365,9 @@ test "sliders say what they're set to" {
     try std.testing.expectEqualStrings("3 of 6", valueLabel(&buf, size_row, 2));
 }
 
-test "controls of other tabs don't answer" {
-    try std.testing.expectEqual(Hit.lock_picture, hit(.more, 600, lock_picture_top + 20));
-    try std.testing.expect(lock_picture_top + toggle_height + 12 <= heightFor(.more));
+test "switches sit where they always have" {
+    try std.testing.expectEqual(@as(u32, content_top + 186), switchTop(switchFor("bold")));
+    try std.testing.expectEqual(@as(u32, content_top + 286), switchTop(switchFor("bold_starts")));
+    try std.testing.expectEqual(@as(u32, content_top + 292), switchTop(switchFor("left_align")));
+    try std.testing.expectEqual(@as(u32, content_top + 408), switchTop(switchFor("lock_picture")));
 }

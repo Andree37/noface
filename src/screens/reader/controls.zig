@@ -97,6 +97,38 @@ pub fn dragSetting(a: *app.App, alloc: std.mem.Allocator, s: *sess.Session, titl
     try app.cleanBand(a, row.top, aa.row_height);
 }
 
+/// Whether a switch with this guard may turn on: asks, or says what's missing, first.
+/// False when it may not; the sheet is drawn again either way.
+fn ready(a: *app.App, s: *sess.Session, title: []const u8, guard: aa.Guard) !bool {
+    switch (guard) {
+        .none => return true,
+        .autostart => {
+            // Turning it on needs the startup file in the system folder: ask first
+            if (autostart.installed()) return true;
+            const page = try s.ensure(s.current, s.current);
+            const rows = [_]card.Row{.{ .label = "Turn on" }};
+            const agreed = try app.chooseFromCard(a, page, "Open noface when the Kindle starts", "This adds one small startup file to the Kindle's system.", &rows) != null;
+            if (!agreed) {
+                try drawToolbar(a, s, title, true, false);
+                return false;
+            }
+            if (autostart.install()) return true;
+            try drawToolbar(a, s, title, true, false);
+            try app.showNotice(a, "Couldn't set up starting with the Kindle.");
+            return false;
+        },
+        .lock_picture => {
+            // Turning it on needs a picture to show
+            if (lock.hasPicture(a)) return true;
+            const page = try s.ensure(s.current, s.current);
+            const rows = [_]card.Row{.{ .label = "OK" }};
+            _ = try app.chooseFromCard(a, page, "Add your picture first", "Name it lockscreen.jpg or lockscreen.png, and put it in the noface-data folder.", &rows);
+            try drawToolbar(a, s, title, true, false);
+            return false;
+        },
+    }
+}
+
 /// Handles a tap inside the Aa sheet.
 pub fn tapSheet(a: *app.App, alloc: std.mem.Allocator, s: *sess.Session, title: []const u8, x: i32, y: i32) !void {
     switch (aa.hit(a.tab, x, y)) {
@@ -115,52 +147,19 @@ pub fn tapSheet(a: *app.App, alloc: std.mem.Allocator, s: *sess.Session, title: 
             a.settings.margin = t.margin;
         },
         .family => |i| a.settings.font = i,
-        .bold => a.settings.bold = !a.settings.bold,
-        .bold_starts => a.settings.bold_starts = !a.settings.bold_starts,
-        .alignment => a.settings.left_align = !a.settings.left_align,
-        .clock => {
-            a.settings.clock = !a.settings.clock;
-            app.saveSettings(a.settings_path, a.settings);
-            return drawToolbar(a, s, title, true, false);
-        },
-        .refresh => {
-            a.settings.refresh = !a.settings.refresh;
-            app.saveSettings(a.settings_path, a.settings);
-            return drawToolbar(a, s, title, true, false);
-        },
-        .autostart => {
-            // Turning it on needs the startup file in the system folder: ask first
-            if (!a.settings.autostart and !autostart.installed()) {
-                const page = try s.ensure(s.current, s.current);
-                const rows = [_]card.Row{.{ .label = "Turn on" }};
-                const agreed = try app.chooseFromCard(a, page, "Open noface when the Kindle starts", "This adds one small startup file to the Kindle's system.", &rows) != null;
-                if (!agreed) return drawToolbar(a, s, title, true, false);
-                if (!autostart.install()) {
-                    try drawToolbar(a, s, title, true, false);
-                    return app.showNotice(a, "Couldn't set up starting with the Kindle.");
-                }
+        .toggle => |i| {
+            const sw = aa.switches[i];
+            const turning_on = !aa.isOn(i, a.settings);
+            if (turning_on and !try ready(a, s, title, sw.guard)) return;
+            aa.flip(i, &a.settings);
+            switch (sw.effect) {
+                .relayout => {}, // Below
+                .footer, .nothing => {
+                    app.saveSettings(a.settings_path, a.settings);
+                    if (sw.effect == .footer) a.forgetPages(); // The footer is drawn into each page
+                    return drawToolbar(a, s, title, true, false);
+                },
             }
-            a.settings.autostart = !a.settings.autostart;
-            app.saveSettings(a.settings_path, a.settings);
-            return drawToolbar(a, s, title, true, false);
-        },
-        .lock_picture => {
-            // Turning it on needs a picture to show
-            if (!a.settings.lock_picture and !lock.hasPicture(a)) {
-                const page = try s.ensure(s.current, s.current);
-                const rows = [_]card.Row{.{ .label = "OK" }};
-                _ = try app.chooseFromCard(a, page, "Add your picture first", "Name it lockscreen.jpg or lockscreen.png, and put it in the noface-data folder.", &rows);
-                return drawToolbar(a, s, title, true, false);
-            }
-            a.settings.lock_picture = !a.settings.lock_picture;
-            app.saveSettings(a.settings_path, a.settings);
-            return drawToolbar(a, s, title, true, false);
-        },
-        .time_left => {
-            a.settings.time_left = !a.settings.time_left;
-            app.saveSettings(a.settings_path, a.settings);
-            a.forgetPages(); // The footer is drawn into each page
-            return drawToolbar(a, s, title, true, false);
         },
     }
     try sess.relayout(a, alloc, s);

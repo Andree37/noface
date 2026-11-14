@@ -144,6 +144,7 @@ pub fn decode(d: []const u8, pos: *usize) anyerror!Value {
             14 => {
                 var inner: usize = 0;
                 const ann_len = try read_var_uint(body, &inner);
+                if (ann_len > body.len - inner) return error.Truncated;
                 inner += @intCast(ann_len);
                 return decode(body, &inner);
             },
@@ -193,6 +194,12 @@ test "padding in lists is skipped, even at the end" {
     var it = (try parse(&d)).items();
     try std.testing.expectEqual(@as(u64, 1), it.next().?.int);
     try std.testing.expect(it.next() == null);
+}
+
+test "an annotation longer than its wrapper is refused, not a crash" {
+    // An annotation wrapper whose annotation list claims 2^64 - 1 bytes.
+    const d = [_]u8{ 0xeb, 0x01, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0xff, 0x20 };
+    try std.testing.expectError(error.Truncated, parse(&d));
 }
 
 /// Reads every value inside `v`, the way the KFX parser does, to reach all the code

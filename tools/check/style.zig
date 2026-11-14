@@ -107,21 +107,26 @@ fn split_line(text: []const u8, buffer: []u8) Line {
         }
     }
     const end = comment_start orelse @as(u32, @intCast(text.len));
-    return .{
+    const line: Line = .{
         .text = text,
         .code = buffer[0..end],
         .comment = if (comment_start) |start| text[start..] else "",
     };
+    assert(line.code.len <= line.text.len);
+    if (line.comment.len > 0) assert(std.mem.startsWith(u8, line.comment, "//"));
+    return line;
 }
 
 fn columns(text: []const u8) u32 {
     const count = std.unicode.utf8CountCodepoints(text) catch text.len;
+    assert(count <= text.len);
     return @intCast(count);
 }
 
 /// Whether a function name is snake_case, or all capitals: a C macro's name kept as C
 /// has it (`IFEXITED`), so code written against the system's API reads the same.
 fn is_snake_case(name: []const u8) bool {
+    assert(name.len > 0);
     var lower = false;
     var upper = false;
     for (name) |c| {
@@ -150,27 +155,36 @@ fn function_name(code: []const u8) ?[]const u8 {
     const end = std.mem.indexOfScalar(u8, rest, '(') orelse return null;
     const name = std.mem.trim(u8, rest[0..end], " ");
     if (name.len == 0) return null;
+    assert(std.mem.indexOfScalar(u8, name, '(') == null);
     return name;
 }
 
-fn count_braces(code: []const u8) i32 {
+/// How much deeper `text` leaves the nesting of `open` and `close`: negative when it
+/// closes more than it opens.
+fn count_depth(text: []const u8, open: u8, close: u8) i32 {
+    assert(open != close);
     var depth: i32 = 0;
-    for (code) |c| {
-        if (c == '{') depth += 1;
-        if (c == '}') depth -= 1;
+    for (text) |c| {
+        if (c == open) depth += 1;
+        if (c == close) depth -= 1;
     }
+    assert(@abs(depth) <= text.len);
     return depth;
 }
 
 fn count_token(code: []const u8, token: []const u8) u32 {
+    assert(token.len > 0);
     var count: u32 = 0;
-    var at: usize = 0;
+    var at: u32 = 0;
     while (std.mem.indexOfPos(u8, code, at, token)) |index| {
-        at = index + token.len;
+        at = @intCast(index + token.len);
+        assert(at <= code.len);
         const before_ok = index == 0 or !is_word(code[index - 1]);
         const after_ok = at >= code.len or !is_word(code[at]) or !is_word(token[token.len - 1]);
         if (before_ok and after_ok) count += 1;
     }
+    // Matches don't overlap.
+    assert(count * token.len <= code.len);
     return count;
 }
 
@@ -185,13 +199,31 @@ fn count_assertions(code: []const u8) u32 {
         count_token(code, "thatf(") + count_token(code, "@compileError(");
 }
 
+/// How many times a line calls the function `name` itself: not a method or field of
+/// the same name.
+fn count_calls(code: []const u8, name: []const u8, gpa: std.mem.Allocator) !u32 {
+    assert(name.len > 0);
+    const call = try std.fmt.allocPrint(gpa, "{s}(", .{name});
+    defer gpa.free(call);
+    var count: u32 = 0;
+    var at: u32 = 0;
+    while (std.mem.indexOfPos(u8, code, at, call)) |index| {
+        at = @intCast(index + call.len);
+        const before = if (index == 0) ' ' else code[index - 1];
+        if (!is_word(before) and before != '.') count += 1;
+    }
+    assert(count * call.len <= code.len);
+    return count;
+}
+
 /// Whether an assertion on this line joins conditions with `and` at its top level.
 fn has_compound_assertion(code: []const u8) bool {
     const openers = [_][]const u8{ "assert(", "that(", "thatf(" };
     for (openers) |opener| {
-        var at: usize = 0;
+        var at: u32 = 0;
         while (std.mem.indexOfPos(u8, code, at, opener)) |index| {
-            at = index + opener.len;
+            at = @intCast(index + opener.len);
+            assert(at <= code.len);
             if (index > 0 and is_word(code[index - 1])) continue;
             if (top_level_and(code[at..])) return true;
         }
@@ -202,14 +234,13 @@ fn has_compound_assertion(code: []const u8) bool {
 /// Whether the first argument of a call, from just after its `(`, has a top-level `and`.
 fn top_level_and(arguments: []const u8) bool {
     var depth: i32 = 0;
-    var index: usize = 0;
-    while (index < arguments.len) : (index += 1) {
-        const c = arguments[index];
+    for (arguments, 0..) |c, index| {
         if (c == '(' or c == '[' or c == '{') depth += 1;
         if (c == ')' or c == ']' or c == '}') {
             if (depth == 0) return false;
             depth -= 1;
         }
+        assert(depth >= 0);
         if (depth == 0 and c == ',') return false;
         if (depth == 0 and std.mem.startsWith(u8, arguments[index..], " and ")) return true;
     }
@@ -222,31 +253,30 @@ fn opens_unbraced(code: []const u8) bool {
     const line = std.mem.trim(u8, code, " ");
     if (line.len == 0) return false;
     if (std.mem.eql(u8, line, "else")) return true;
-    const starts_if = std.mem.startsWith(u8, line, "if (") or std.mem.startsWith(u8, line, "} else if (") or
+    const starts_if = std.mem.startsWith(u8, line, "if (") or
+        std.mem.startsWith(u8, line, "} else if (") or
         std.mem.startsWith(u8, line, "else if (");
     if (!starts_if) return false;
     // Ends right after its condition (and capture): the body is on the next line
-    if (line[line.len - 1] == ')') return balanced(line);
+    if (line[line.len - 1] == ')') return count_depth(line, '(', ')') == 0;
     if (line[line.len - 1] == '|') {
         const capture = std.mem.lastIndexOf(u8, line[0 .. line.len - 1], "|") orelse return false;
-        return line[capture - 1] == ' ' and line[capture - 2] == ')' and balanced(line[0 .. capture - 1]);
+        // Past the `if (` the line starts with, which has no `|`.
+        assert(capture >= "if (".len);
+        const condition = line[0 .. capture - 1];
+        return line[capture - 1] == ' ' and line[capture - 2] == ')' and
+            count_depth(condition, '(', ')') == 0;
     }
     return false;
 }
 
-fn balanced(text: []const u8) bool {
-    var depth: i32 = 0;
-    for (text) |c| {
-        if (c == '(') depth += 1;
-        if (c == ')') depth -= 1;
-    }
-    return depth == 0;
-}
-
 fn bad_comment(comment: []const u8, previous_was_comment: bool) bool {
     if (comment.len == 0) return false;
+    assert(std.mem.startsWith(u8, comment, "//"));
     // `///` and `//!` are doc comments; their text follows the third character
-    const marker: usize = if (comment.len > 2 and (comment[2] == '/' or comment[2] == '!')) 3 else 2;
+    const doc = comment.len > 2 and (comment[2] == '/' or comment[2] == '!');
+    const marker: u32 = if (doc) 3 else 2;
+    assert(marker <= comment.len);
     const body = comment[marker..];
     if (body.len == 0) return false; // An empty comment line, between paragraphs
     if (body[0] != ' ') return true;
@@ -256,96 +286,133 @@ fn bad_comment(comment: []const u8, previous_was_comment: bool) bool {
     return std.ascii.isLower(first[0]);
 }
 
+/// What `check_zig` carries from one line to the next.
+const Scan = struct {
+    counts: Counts = @splat(0),
+    functions: u32 = 0,
+    assertions: u32 = 0,
+    depth: i32 = 0,
+    test_depth: ?i32 = null, // Inside a test block: its depth
+    open: ?Function = null,
+    previous_comment: bool = false,
+    unbounded_next: bool = false,
+
+    /// The function being read: its name, first line, and depth outside it.
+    const Function = struct { name: []const u8, start_line: u32, depth: i32 };
+};
+
 /// Counts the rules broken in one Zig file.
 pub fn check_zig(source: []const u8, gpa: std.mem.Allocator) !Counts {
-    var counts: Counts = @splat(0);
     const buffer = try gpa.alloc(u8, source.len);
     defer gpa.free(buffer);
-
-    var functions: u32 = 0;
-    var assertions: u32 = 0;
-    var depth: i32 = 0;
-    var test_depth: ?i32 = null; // Inside a test block: its depth
-    var open: ?struct { name: []const u8, start_line: u32, depth: i32 } = null;
-    var previous_comment = false;
-    var unbounded_next = false;
+    var scan: Scan = .{};
     var line_number: u32 = 0;
     var lines = std.mem.splitScalar(u8, source, '\n');
     while (lines.next()) |text| : (line_number += 1) {
         const line = split_line(text, buffer[@intFromPtr(text.ptr) - @intFromPtr(source.ptr) ..]);
+        const unbounded_said = check_zig_text(&scan, &line);
         const trimmed = std.mem.trimStart(u8, line.code, " ");
-        if (columns(text) > line_columns_max) counts[@backingInt(Rule.line_length)] += 1;
-        const own_line_comment = line.comment.len > 0 and trimmed.len == 0;
-        if (bad_comment(line.comment, previous_comment and own_line_comment)) {
-            counts[@backingInt(Rule.comment_style)] += 1;
+        const test_start = std.mem.startsWith(u8, trimmed, "test \"") or
+            std.mem.startsWith(u8, trimmed, "test {");
+        if (scan.test_depth == null and test_start) scan.test_depth = scan.depth;
+        if (scan.test_depth == null) {
+            try check_zig_code(&scan, &line, line_number, unbounded_said, gpa);
         }
-        previous_comment = own_line_comment;
-        // Set by a `// Unbounded:` comment, for the loop on the next line of code
-        const unbounded_said = unbounded_next;
-        if (own_line_comment) {
-            const said = std.mem.trimStart(u8, line.comment, "/ ");
-            if (std.mem.startsWith(u8, said, "Unbounded: ")) unbounded_next = true;
-        } else if (trimmed.len > 0) {
-            unbounded_next = false;
-        }
-
-        const in_test = test_depth != null;
-        if (!in_test and (std.mem.startsWith(u8, trimmed, "test \"") or std.mem.startsWith(u8, trimmed, "test {"))) {
-            test_depth = depth;
-        }
-        if (test_depth == null) {
-            if (function_name(line.code)) |name| {
-                functions += 1;
-                const returns_type = std.mem.indexOf(u8, line.code, ") type") != null;
-                if (!returns_type and !is_snake_case(name)) counts[@backingInt(Rule.function_name)] += 1;
-                if (open == null and std.mem.indexOfScalar(u8, line.code, '{') != null) {
-                    open = .{ .name = name, .start_line = line_number, .depth = depth };
+        scan.depth += count_depth(line.code, '{', '}');
+        if (scan.open) |open| {
+            if (scan.depth <= open.depth) {
+                assert(open.start_line <= line_number);
+                const length = line_number - open.start_line + 1;
+                if (length > function_lines_max) {
+                    scan.counts[@backingInt(Rule.function_length)] += 1;
                 }
-            } else if (open) |f| {
-                const call = try std.fmt.allocPrint(gpa, "{s}(", .{f.name});
-                defer gpa.free(call);
-                var at: usize = 0;
-                while (std.mem.indexOfPos(u8, line.code, at, call)) |index| {
-                    at = index + call.len;
-                    const before = if (index == 0) ' ' else line.code[index - 1];
-                    if (!is_word(before) and before != '.') {
-                        counts[@backingInt(Rule.recursion)] += 1;
-                    }
-                }
-            }
-            assertions += count_assertions(line.code);
-            if (has_compound_assertion(line.code)) counts[@backingInt(Rule.compound_assertion)] += 1;
-            if (opens_unbraced(line.code)) counts[@backingInt(Rule.if_without_braces)] += 1;
-            // Ignoring an error is handling it only when the line says why: `// Ignored: …`
-            if (!std.mem.startsWith(u8, line.comment, "// Ignored: ")) {
-                counts[@backingInt(Rule.error_ignored)] += count_token(line.code, "catch {}") +
-                    count_token(line.code, "catch unreachable");
-            }
-            // A loop that never ends by design says so just above it: `// Unbounded: …`
-            if (!unbounded_said) {
-                counts[@backingInt(Rule.loop_unbounded)] += count_token(line.code, "while (true)");
-            }
-            counts[@backingInt(Rule.usize_used)] += count_token(line.code, "usize");
-        }
-        depth += count_braces(line.code);
-        if (open) |f| {
-            if (depth <= f.depth) {
-                const length = line_number - f.start_line + 1;
-                if (length > function_lines_max) counts[@backingInt(Rule.function_length)] += 1;
-                open = null;
+                scan.open = null;
             }
         }
-        if (test_depth) |d| {
-            if (depth <= d) test_depth = null; // Its closing brace
+        if (scan.test_depth) |test_depth| {
+            if (scan.depth <= test_depth) scan.test_depth = null; // Its closing brace
         }
     }
-    const wanted = functions * assertions_per_function_min;
-    counts[@backingInt(Rule.assertion_density)] = wanted -| assertions;
-    return counts;
+    // Even an empty file is one line.
+    assert(line_number > 0);
+    const wanted = scan.functions * assertions_per_function_min;
+    scan.counts[@backingInt(Rule.assertion_density)] = wanted -| scan.assertions;
+    assert(scan.counts[@backingInt(Rule.assertion_density)] <= wanted);
+    return scan.counts;
+}
+
+/// Counts what a line breaks as text: its length and its comment. Returns whether a
+/// `// Unbounded:` comment just above it vouches for a loop on it.
+fn check_zig_text(scan: *Scan, line: *const Line) bool {
+    assert(line.code.len <= line.text.len);
+    const counts = &scan.counts;
+    const trimmed = std.mem.trimStart(u8, line.code, " ");
+    if (columns(line.text) > line_columns_max) counts[@backingInt(Rule.line_length)] += 1;
+    const own_line_comment = line.comment.len > 0 and trimmed.len == 0;
+    if (bad_comment(line.comment, scan.previous_comment and own_line_comment)) {
+        counts[@backingInt(Rule.comment_style)] += 1;
+    }
+    scan.previous_comment = own_line_comment;
+    // Set by a `// Unbounded:` comment, for the loop on the next line of code
+    const unbounded_said = scan.unbounded_next;
+    if (own_line_comment) {
+        const said = std.mem.trimStart(u8, line.comment, "/ ");
+        if (std.mem.startsWith(u8, said, "Unbounded: ")) scan.unbounded_next = true;
+    } else if (trimmed.len > 0) {
+        scan.unbounded_next = false;
+    }
+    return unbounded_said;
+}
+
+/// Counts what a line of code outside the tests breaks, and the functions and
+/// assertions it adds.
+fn check_zig_code(
+    scan: *Scan,
+    line: *const Line,
+    line_number: u32,
+    unbounded_said: bool,
+    gpa: std.mem.Allocator,
+) !void {
+    assert(scan.test_depth == null);
+    const counts = &scan.counts;
+    const code = line.code;
+    if (function_name(code)) |name| {
+        scan.functions += 1;
+        const returns_type = std.mem.indexOf(u8, code, ") type") != null;
+        if (!returns_type and !is_snake_case(name)) counts[@backingInt(Rule.function_name)] += 1;
+        if (scan.open == null and std.mem.indexOfScalar(u8, code, '{') != null) {
+            scan.open = .{ .name = name, .start_line = line_number, .depth = scan.depth };
+        }
+    } else if (scan.open) |open| {
+        // Opened by a declaration on an earlier line, as this one declares nothing.
+        assert(open.start_line < line_number);
+        counts[@backingInt(Rule.recursion)] += try count_calls(code, open.name, gpa);
+    }
+    scan.assertions += count_assertions(code);
+    if (has_compound_assertion(code)) counts[@backingInt(Rule.compound_assertion)] += 1;
+    if (opens_unbraced(code)) counts[@backingInt(Rule.if_without_braces)] += 1;
+    // Ignoring an error is handling it only when the line says why: `// Ignored: …`
+    if (!std.mem.startsWith(u8, line.comment, "// Ignored: ")) {
+        counts[@backingInt(Rule.error_ignored)] += count_token(code, "catch {}") +
+            count_token(code, "catch unreachable");
+    }
+    // A loop that never ends by design says so just above it: `// Unbounded: …`
+    if (!unbounded_said) {
+        counts[@backingInt(Rule.loop_unbounded)] += count_token(code, "while (true)");
+    }
+    counts[@backingInt(Rule.usize_used)] += count_token(code, "usize");
 }
 
 /// One line of the baseline: a rule, a file, and how many times it may break it.
 pub const Entry = struct { rule: Rule, path: []const u8, count: u32 };
+
+const baseline_header =
+    "# Tiger Style debt: rule, times broken, file. It may only shrink; see docs/TIGER_STYLE.md.\n";
+
+comptime {
+    // The header is a comment, which reading the baseline skips.
+    assert(baseline_header[0] == '#');
+}
 
 pub fn parse_baseline(text: []const u8, gpa: std.mem.Allocator) ![]Entry {
     var entries: std.ArrayList(Entry) = .empty;
@@ -358,12 +425,14 @@ pub fn parse_baseline(text: []const u8, gpa: std.mem.Allocator) ![]Entry {
         const path = words.next() orelse return error.BadBaseline;
         const rule = std.meta.stringToEnum(Rule, rule_name) orelse return error.BadBaseline;
         const count = std.fmt.parseInt(u32, count_text, 10) catch return error.BadBaseline;
+        assert(path.len > 0);
         try entries.append(gpa, .{ .rule = rule, .path = path, .count = count });
     }
     return entries.items;
 }
 
 fn allowed(entries: []const Entry, rule: Rule, path: []const u8) u32 {
+    assert(path.len > 0);
     for (entries) |e| {
         if (e.rule == rule and std.mem.eql(u8, e.path, path)) return e.count;
     }
@@ -383,6 +452,59 @@ pub fn main(init: std.process.Init) !void {
     defer root.close(io);
     const write_baseline = std.mem.eql(u8, args[2], "baseline");
 
+    const found = try find_counts(io, root, gpa);
+    const baseline_text = root.readFileAlloc(io, baseline_path, gpa, .limited(4 << 20)) catch "";
+    const entries = try parse_baseline(baseline_text, gpa);
+
+    var out: std.ArrayList(u8) = .empty;
+    var worse: u32 = 0;
+    var better: u32 = 0;
+    var totals: Counts = @splat(0);
+    for (found) |f| {
+        for (f.counts, 0..) |count, i| {
+            const rule: Rule = @fromBackingInt(@intCast(i));
+            const limit = allowed(entries, rule, f.path);
+            totals[i] += count;
+            if (count > limit) {
+                worse += 1;
+                const format = "{s}: {s} {d}, allowed {d}\n";
+                try out.print(gpa, format, .{ f.path, @tagName(rule), count, limit });
+            } else if (count < limit) {
+                better += 1;
+            }
+        }
+    }
+    assert(worse + better <= found.len * rule_count);
+    if (write_baseline) {
+        // The very first baseline records the debt as found; after that, it only shrinks
+        if (worse > 0 and baseline_text.len > 0) {
+            const message = "baseline not written: the code above breaks rules more than before";
+            std.debug.print("{s}{s}\n", .{ out.items, message });
+            std.process.exit(1);
+        }
+        try main_write_baseline(io, root, found, gpa);
+        return;
+    }
+    if (worse > 0) {
+        const message = "breaks a Tiger Style rule more than allowed (docs/TIGER_STYLE.md)";
+        std.debug.print("{s}{d} {s}\n", .{ out.items, worse, message });
+        std.process.exit(1);
+    }
+    if (better > 0) {
+        const message = "counts went down: run `zig build style-baseline` to lock that in";
+        std.debug.print("{d} {s}\n", .{ better, message });
+        std.process.exit(1);
+    }
+    std.debug.print("style ok, debt left:", .{});
+    for (totals, 0..) |total, i| {
+        const rule: Rule = @fromBackingInt(@intCast(i));
+        if (total > 0) std.debug.print(" {s} {d}", .{ @tagName(rule), total });
+    }
+    std.debug.print("\n", .{});
+}
+
+/// Every Zig file's counts, and every script's, sorted by path.
+fn find_counts(io: std.Io, root: std.Io.Dir, gpa: std.mem.Allocator) ![]const Found {
     var found: std.ArrayList(Found) = .empty;
     for ([_][]const u8{ "src", "tools", "device" }) |folder| {
         var dir = try root.openDir(io, folder, .{ .iterate = true });
@@ -408,69 +530,44 @@ pub fn main(init: std.process.Init) !void {
             return std.mem.lessThan(u8, a.path, b.path);
         }
     }.before);
+    assert(found.items.len > 0);
+    // Each file is found once, so the order is strict.
+    for (found.items[1..], found.items[0 .. found.items.len - 1]) |f, previous| {
+        assert(std.mem.lessThan(u8, previous.path, f.path));
+    }
+    return found.items;
+}
 
-    const baseline_text = root.readFileAlloc(io, baseline_path, gpa, .limited(4 << 20)) catch "";
-    const entries = try parse_baseline(baseline_text, gpa);
-
-    var out: std.ArrayList(u8) = .empty;
-    var worse: u32 = 0;
-    var better: u32 = 0;
-    var totals: Counts = @splat(0);
-    for (found.items) |f| {
+/// Writes the baseline from the counts found: every rule a file breaks, and how often.
+fn main_write_baseline(
+    io: std.Io,
+    root: std.Io.Dir,
+    found: []const Found,
+    gpa: std.mem.Allocator,
+) !void {
+    assert(found.len > 0);
+    var text: std.ArrayList(u8) = .empty;
+    try text.appendSlice(gpa, baseline_header);
+    for (found) |f| {
         for (f.counts, 0..) |count, i| {
+            if (count == 0) continue;
             const rule: Rule = @fromBackingInt(@intCast(i));
-            const limit = allowed(entries, rule, f.path);
-            totals[i] += count;
-            if (count > limit) {
-                worse += 1;
-                try out.print(gpa, "{s}: {s} {d}, allowed {d}\n", .{ f.path, @tagName(rule), count, limit });
-            } else if (count < limit) {
-                better += 1;
-            }
+            try text.print(gpa, "{s} {d} {s}\n", .{ @tagName(rule), count, f.path });
         }
     }
-    if (write_baseline) {
-        // The very first baseline records the debt as found; after that, it only shrinks
-        if (worse > 0 and baseline_text.len > 0) {
-            std.debug.print("{s}baseline not written: the code above breaks rules more than before\n", .{out.items});
-            std.process.exit(1);
-        }
-        var text: std.ArrayList(u8) = .empty;
-        try text.appendSlice(gpa, "# Tiger Style debt: rule, times broken, file. It may only shrink; see docs/TIGER_STYLE.md.\n");
-        for (found.items) |f| {
-            for (f.counts, 0..) |count, i| {
-                if (count == 0) continue;
-                try text.print(gpa, "{s} {d} {s}\n", .{ @tagName(@as(Rule, @fromBackingInt(@intCast(i)))), count, f.path });
-            }
-        }
-        try root.writeFile(io, .{ .sub_path = baseline_path, .data = text.items });
-        std.debug.print("baseline written\n", .{});
-        return;
-    }
-    if (worse > 0) {
-        std.debug.print("{s}{d} breaks a Tiger Style rule more than allowed (docs/TIGER_STYLE.md)\n", .{ out.items, worse });
-        std.process.exit(1);
-    }
-    if (better > 0) {
-        std.debug.print("{d} counts went down: run `zig build style-baseline` to lock that in\n", .{better});
-        std.process.exit(1);
-    }
-    std.debug.print("style ok, debt left:", .{});
-    for (totals, 0..) |t, i| {
-        if (t > 0) std.debug.print(" {s} {d}", .{ @tagName(@as(Rule, @fromBackingInt(@intCast(i)))), t });
-    }
-    std.debug.print("\n", .{});
+    assert(std.mem.startsWith(u8, text.items, baseline_header));
+    try root.writeFile(io, .{ .sub_path = baseline_path, .data = text.items });
+    std.debug.print("baseline written\n", .{});
 }
 
-fn check_text(source: []const u8) !Counts {
-    return check_zig(source, std.testing.allocator);
-}
-
-fn count_of(counts: Counts, rule: Rule) u32 {
+/// How many times `source` breaks `rule`.
+fn count_in(source: []const u8, rule: Rule) !u32 {
+    const counts = try check_zig(source, std.testing.allocator);
     return counts[@backingInt(rule)];
 }
 
 test "long lines and camelCase functions count; type functions keep their case" {
+    const long_string: [100]u8 = @splat('a');
     const source =
         \\fn goodName() void {}
         \\fn good_name() void {}
@@ -478,11 +575,10 @@ test "long lines and camelCase functions count; type functions keep their case" 
         \\fn Step(comptime T: type) type {
         \\    return T;
         \\}
-        \\const x = "a very long string literal that goes on and on and on past one hundred columns, surely, it does";
-    ;
-    const counts = try check_text(source);
-    try std.testing.expectEqual(@as(u32, 1), count_of(counts, .function_name));
-    try std.testing.expectEqual(@as(u32, 1), count_of(counts, .line_length));
+        \\
+    ++ "const x = \"" ++ long_string ++ "\";";
+    try std.testing.expectEqual(@as(u32, 1), try count_in(source, .function_name));
+    try std.testing.expectEqual(@as(u32, 1), try count_in(source, .line_length));
 }
 
 test "assertions are counted against functions" {
@@ -493,9 +589,9 @@ test "assertions are counted against functions" {
         \\    return a;
         \\}
     ;
-    try std.testing.expectEqual(@as(u32, 0), count_of(try check_text(two), .assertion_density));
+    try std.testing.expectEqual(@as(u32, 0), try count_in(two, .assertion_density));
     const none = "fn f() void {}\nfn g() void {}\n";
-    try std.testing.expectEqual(@as(u32, 4), count_of(try check_text(none), .assertion_density));
+    try std.testing.expectEqual(@as(u32, 4), try count_in(none, .assertion_density));
 }
 
 test "tests don't count as functions or toward any rule" {
@@ -505,9 +601,8 @@ test "tests don't count as functions or toward any rule" {
         \\    while (true) {}
         \\}
     ;
-    const counts = try check_text(source);
-    try std.testing.expectEqual(@as(u32, 0), count_of(counts, .assertion_density));
-    try std.testing.expectEqual(@as(u32, 0), count_of(counts, .loop_unbounded));
+    try std.testing.expectEqual(@as(u32, 0), try count_in(source, .assertion_density));
+    try std.testing.expectEqual(@as(u32, 0), try count_in(source, .loop_unbounded));
 }
 
 test "compound assertions, unbraced ifs, ignored errors and recursion count" {
@@ -521,11 +616,10 @@ test "compound assertions, unbraced ifs, ignored errors and recursion count" {
         \\    return walk(n - 1);
         \\}
     ;
-    const counts = try check_text(source);
-    try std.testing.expectEqual(@as(u32, 1), count_of(counts, .compound_assertion));
-    try std.testing.expectEqual(@as(u32, 1), count_of(counts, .if_without_braces));
-    try std.testing.expectEqual(@as(u32, 1), count_of(counts, .error_ignored));
-    try std.testing.expectEqual(@as(u32, 1), count_of(counts, .recursion));
+    try std.testing.expectEqual(@as(u32, 1), try count_in(source, .compound_assertion));
+    try std.testing.expectEqual(@as(u32, 1), try count_in(source, .if_without_braces));
+    try std.testing.expectEqual(@as(u32, 1), try count_in(source, .error_ignored));
+    try std.testing.expectEqual(@as(u32, 1), try count_in(source, .recursion));
 }
 
 test "comments start with a capital after a space; a continued sentence needn't" {
@@ -536,7 +630,7 @@ test "comments start with a capital after a space; a continued sentence needn't"
         \\// lowercase start
         \\const a = 1; // a phrase after code is fine
     ;
-    try std.testing.expectEqual(@as(u32, 2), count_of(try check_text(source), .comment_style));
+    try std.testing.expectEqual(@as(u32, 2), try count_in(source, .comment_style));
 }
 
 test "long functions count" {
@@ -545,7 +639,7 @@ test "long functions count" {
     try source.appendSlice(std.testing.allocator, "fn long() void {\n");
     for (0..70) |_| try source.appendSlice(std.testing.allocator, "    _ = 1;\n");
     try source.appendSlice(std.testing.allocator, "}\n");
-    try std.testing.expectEqual(@as(u32, 1), count_of(try check_text(source.items), .function_length));
+    try std.testing.expectEqual(@as(u32, 1), try count_in(source.items, .function_length));
 }
 
 test "braces and keywords inside strings and comments don't count" {
@@ -555,15 +649,14 @@ test "braces and keywords inside strings and comments don't count" {
         \\    // while (true) {
         \\}
     ;
-    const counts = try check_text(source);
-    try std.testing.expectEqual(@as(u32, 0), count_of(counts, .loop_unbounded));
+    try std.testing.expectEqual(@as(u32, 0), try count_in(source, .loop_unbounded));
 }
 
 test "the baseline reads back" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const entries = try parse_baseline("# note\nline_length 3 src/a.zig\n", arena.allocator());
-    try std.testing.expectEqual(@as(usize, 1), entries.len);
+    try std.testing.expect(entries.len == 1);
     try std.testing.expectEqual(Rule.line_length, entries[0].rule);
     try std.testing.expectEqual(@as(u32, 3), allowed(entries, .line_length, "src/a.zig"));
     try std.testing.expectEqual(@as(u32, 0), allowed(entries, .line_length, "src/b.zig"));
@@ -579,7 +672,6 @@ test "a loop or an ignored error with its reason given doesn't count" {
         \\    g() catch {};
         \\}
     ;
-    const counts = try check_text(source);
-    try std.testing.expectEqual(@as(u32, 1), count_of(counts, .loop_unbounded));
-    try std.testing.expectEqual(@as(u32, 1), count_of(counts, .error_ignored));
+    try std.testing.expectEqual(@as(u32, 1), try count_in(source, .loop_unbounded));
+    try std.testing.expectEqual(@as(u32, 1), try count_in(source, .error_ignored));
 }

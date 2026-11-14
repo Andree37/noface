@@ -56,7 +56,9 @@ fn arg(v: [*:0]const u8) i32 {
 pub fn main(init: std.process.Init.Minimal) !void {
     const argv = init.args.vector;
     if (argv.len < 4) return error.Usage;
-    fd = @intCast(linux.open("/dev/input/event1", .{ .ACCMODE = .WRONLY }, 0));
+    const rc = linux.open("/dev/input/event1", .{ .ACCMODE = .WRONLY }, 0);
+    if (core.os.failed(rc)) return error.NoTouchPanel;
+    fd = @intCast(rc);
     if (std.mem.eql(u8, std.mem.sliceTo(argv[1], 0), "tap")) {
         const t_down = core.os.now_us();
         down(arg(argv[2]), arg(argv[3]));
@@ -66,6 +68,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         std.debug.print("touch {d} {d}\n", .{ t_down, core.os.now_us() });
         return;
     }
+    if (argv.len < 8) return error.Usage;
     const x0 = arg(argv[2]);
     const y0 = arg(argv[3]);
     const x1 = arg(argv[4]);

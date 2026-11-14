@@ -22,7 +22,9 @@ pub fn main(init: std.process.Init.Minimal) !void {
     const scale = try std.fmt.parseInt(u32, std.mem.sliceTo(argv[3], 0), 10);
     if (fps == 0 or scale == 0) return error.Usage;
 
-    const fb: i32 = @intCast(linux.open("/dev/fb0", .{ .ACCMODE = .RDONLY }, 0));
+    const fb_rc = linux.open("/dev/fb0", .{ .ACCMODE = .RDONLY }, 0);
+    if (core.os.failed(fb_rc)) return error.NoFramebuffer;
+    const fb: i32 = @intCast(fb_rc);
     var v: [160]u8 align(4) = undefined;
     _ = linux.ioctl(fb, 0x4600, @intFromPtr(&v)); // FBIOGET_VSCREENINFO
     const width: u32 = std.mem.readInt(u32, v[0..4], .little);
@@ -58,6 +60,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
     const frame = try std.heap.page_allocator.alloc(u8, 8 + out_w * out_h);
     var row: [4096]u8 = undefined;
+    if (width > row.len) return error.ScreenTooWide;
     const step_us: u64 = 1_000_000 / fps;
     const end = now_us() + @as(u64, seconds) * 1_000_000;
     var next = now_us();

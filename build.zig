@@ -78,7 +78,6 @@ fn build_app(b: *std.Build, target: std.Build.ResolvedTarget) App {
             .link_libc = true,
         }),
     });
-    add_font_and_image_code(b, noface.root_module);
     b.installArtifact(noface);
 
     // The launcher: starts the app and always puts the Kindle's own screens back.
@@ -267,7 +266,6 @@ fn build_tools(b: *std.Build, target: std.Build.ResolvedTarget) void {
         .optimize = .ReleaseFast,
         .link_libc = true,
     });
-    add_font_and_image_code(b, core);
 
     const tools_step = b.step("tools", "Build the development tools in tools/");
     for (tool_names) |name| {
@@ -332,7 +330,6 @@ fn build_sim(b: *std.Build) void {
             .link_libc = true,
         }),
     });
-    add_font_and_image_code(b, sim.root_module);
     b.step("sim-build", "Build the simulator without running it")
         .dependOn(&b.addInstallArtifact(sim, .{}).step);
     const run_sim = b.addRunArtifact(sim);
@@ -351,8 +348,6 @@ fn build_tests(b: *std.Build) void {
             .link_libc = true,
         }),
     });
-    // So text measuring can be tested with a real font
-    add_font_and_image_code(b, tests.root_module);
     // So src/kindle/paths.zig can check that what starts the launcher names it
     tests.root_module.addAnonymousImport("launch_sh", .{
         .root_source_file = b.path("device/kpm/launch.sh"),
@@ -366,7 +361,7 @@ fn build_tests(b: *std.Build) void {
         const tool_tests = b.addTest(.{ .root_module = host_tool_module(b, name) });
         test_step.dependOn(&b.addRunArtifact(tool_tests).step);
     }
-    assert(tests.root_module.link_libc == true); // The font and picture code is C
+    assert(tests.root_module.link_libc == true); // Tests run on this computer, through its C library
     assert(tests.root_module.resolved_target != null);
 }
 
@@ -387,14 +382,5 @@ fn scenario_exe(
             .link_libc = true,
         }),
     });
-    add_font_and_image_code(b, exe.root_module);
     return exe;
-}
-
-/// The stb font and picture decoders, in C: every module that draws needs them.
-fn add_font_and_image_code(b: *std.Build, module: *std.Build.Module) void {
-    assert(module.link_libc == true); // The C code calls the C library
-    module.addIncludePath(b.path("third_party"));
-    module.addCSourceFile(.{ .file = b.path("src/gfx/stb_shim.c"), .flags = &.{"-O2"} });
-    assert(module.link_objects.items.len > 0); // The shim, just added
 }

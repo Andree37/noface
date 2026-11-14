@@ -1,5 +1,6 @@
 //! The one slider used everywhere.
 const std = @import("std");
+const assert = std.debug.assert;
 const Page = @import("../gfx/page.zig").Page;
 
 pub const Slider = struct { left: u32, right: u32, y: u32 };
@@ -9,29 +10,45 @@ const outline = 2;
 const knob_outer = 27;
 const knob_inner = 21;
 
+comptime {
+    // The outline leaves the bar a white middle, and the knob a white hole.
+    assert(outline < half_height);
+    assert(knob_inner < knob_outer);
+}
+
 /// Knob position for `value` out of `max`.
 pub fn knob_at(s: Slider, value: u32, max: u32) u32 {
+    assert(s.left < s.right);
     if (max == 0) return s.left;
     const span = s.right - s.left;
-    return s.left + @min(value, max) * span / max;
+    const knob = s.left + @min(value, max) * span / max;
+    assert(knob <= s.right);
+    return knob;
 }
 
 /// Nearest value out of `max` for a finger at `x`.
 pub fn value_at(s: Slider, x: i32, max: u32) u32 {
+    assert(s.left < s.right);
     const left: i32 = @intCast(s.left);
     const span: i32 = @intCast(s.right - s.left);
     const at: u32 = @intCast(std.math.clamp(x - left, 0, span));
-    return (at * max + @as(u32, @intCast(span)) / 2) / @as(u32, @intCast(span));
+    const span_px: u32 = @intCast(span);
+    const value = (at * max + span_px / 2) / span_px;
+    assert(value <= max);
+    return value;
 }
 
 /// Marks each step with a dot inside the bar, for sliders with only a few positions:
 /// white on the filled part, before `knob`, and black after it. Call after `draw`.
 pub fn draw_ticks(page: Page, s: Slider, max: u32, knob: u32) void {
+    assert(knob >= s.left);
+    assert(knob <= s.right);
     const y: f32 = @floatFromInt(s.y);
     var i: u32 = 1;
     while (i < max) : (i += 1) {
         const x = knob_at(s, i, max);
-        if (@abs(@as(i32, @intCast(x)) - @as(i32, @intCast(knob))) < knob_outer + 6) continue; // Under the knob
+        const from_knob = @abs(@as(i32, @intCast(x)) - @as(i32, @intCast(knob)));
+        if (from_knob < knob_outer + 6) continue; // Under the knob
         page.pill(@floatFromInt(x), @floatFromInt(x), y, 3, if (x < knob) 0xff else 0x00);
     }
 }
@@ -39,6 +56,8 @@ pub fn draw_ticks(page: Page, s: Slider, max: u32, knob: u32) void {
 /// A rounded bar, filled up to the knob, with a ring for a knob. Smooth edges at rest;
 /// the drag frames threshold them back to black and white.
 pub fn draw(page: Page, s: Slider, knob: u32) void {
+    assert(knob >= s.left);
+    assert(knob <= s.right);
     const left: f32 = @floatFromInt(s.left);
     const right: f32 = @floatFromInt(s.right);
     const y: f32 = @floatFromInt(s.y);

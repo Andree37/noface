@@ -8,7 +8,6 @@ script_not_zig 1 device/start.sh
 usize_used 4 src/app.zig
 usize_used 7 src/base/memory.zig
 usize_used 1 src/gfx/c_memory.zig
-assertion_density 13 src/gfx/font.zig
 usize_used 1 src/gfx/font.zig
 usize_used 14 src/gfx/image.zig
 assertion_density 2 src/kindle/devices.zig
@@ -36,7 +35,6 @@ usize_used 1 src/scenarios.zig
 usize_used 2 src/screens/books.zig
 usize_used 2 src/screens/library.zig
 function_length 1 src/screens/reader.zig
-comment_style 1 src/screens/reader.zig
 usize_used 1 src/screens/reader/goto.zig
 usize_used 6 src/screens/reader/highlight.zig
 usize_used 1 src/screens/reader/more.zig

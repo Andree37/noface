@@ -139,7 +139,9 @@ fn is_snake_case(name: []const u8) bool {
 /// The name of the function a line declares, if it declares one.
 fn function_name(code: []const u8) ?[]const u8 {
     var rest = std.mem.trimStart(u8, code, " ");
-    const prefixes = [_][]const u8{ "pub ", "export ", "extern ", "inline ", "noinline " };
+    // A C function declared with `extern` has no body here: nothing to count
+    if (std.mem.indexOf(u8, code, "extern ") != null) return null;
+    const prefixes = [_][]const u8{ "pub ", "export ", "inline ", "noinline " };
     var stripped = true;
     while (stripped) {
         stripped = false;
@@ -248,11 +250,13 @@ fn top_level_and(arguments: []const u8) bool {
 }
 
 /// Whether a line is an `if (…)`, `else` or `else if (…)` whose body follows on the
-/// next line without braces.
-fn opens_unbraced(code: []const u8) bool {
+/// next line without braces. `after_statement` says the line of code before ended a
+/// statement (with `;`): only then is a lone `else` a statement's. After a value, it's
+/// part of an `if` expression, which takes no braces.
+fn opens_unbraced(code: []const u8, after_statement: bool) bool {
     const line = std.mem.trim(u8, code, " ");
     if (line.len == 0) return false;
-    if (std.mem.eql(u8, line, "else")) return true;
+    if (std.mem.eql(u8, line, "else")) return after_statement;
     const starts_if = std.mem.startsWith(u8, line, "if (") or
         std.mem.startsWith(u8, line, "} else if (") or
         std.mem.startsWith(u8, line, "else if (");
@@ -270,7 +274,10 @@ fn opens_unbraced(code: []const u8) bool {
     return false;
 }
 
-fn bad_comment(comment: []const u8, previous_was_comment: bool) bool {
+/// Whether a comment breaks the style. One on a line of its own is a sentence (a space
+/// after `//`, a capital, unless it carries on the sentence above); one after code may
+/// be a phrase, so only the space is asked of it.
+fn bad_comment(comment: []const u8, own_line: bool, previous_was_comment: bool) bool {
     if (comment.len == 0) return false;
     assert(std.mem.startsWith(u8, comment, "//"));
     // `///` and `//!` are doc comments; their text follows the third character
@@ -280,6 +287,7 @@ fn bad_comment(comment: []const u8, previous_was_comment: bool) bool {
     const body = comment[marker..];
     if (body.len == 0) return false; // An empty comment line, between paragraphs
     if (body[0] != ' ') return true;
+    if (!own_line) return false; // A phrase after code
     if (previous_was_comment) return false; // A sentence carried on from the line above
     const first = std.mem.trimStart(u8, body, " ");
     if (first.len == 0) return false;
@@ -293,12 +301,16 @@ const Scan = struct {
     assertions: u32 = 0,
     depth: i32 = 0,
     test_depth: ?i32 = null, // Inside a test block: its depth
-    open: ?Function = null,
+    // The functions being read, innermost last: a struct inside a function has its own
+    open: [open_max]Function = undefined,
+    open_count: u32 = 0,
     previous_comment: bool = false,
     unbounded_next: bool = false,
+    after_statement: bool = false, // The last line of code ended with `;`
 
-    /// The function being read: its name, first line, and depth outside it.
+    /// A function being read: its name, first line, and depth outside it.
     const Function = struct { name: []const u8, start_line: u32, depth: i32 };
+    const open_max = 16;
 };
 
 /// Counts the rules broken in one Zig file.
@@ -319,16 +331,7 @@ pub fn check_zig(source: []const u8, gpa: std.mem.Allocator) !Counts {
             try check_zig_code(&scan, &line, line_number, unbounded_said, gpa);
         }
         scan.depth += count_depth(line.code, '{', '}');
-        if (scan.open) |open| {
-            if (scan.depth <= open.depth) {
-                assert(open.start_line <= line_number);
-                const length = line_number - open.start_line + 1;
-                if (length > function_lines_max) {
-                    scan.counts[@backingInt(Rule.function_length)] += 1;
-                }
-                scan.open = null;
-            }
-        }
+        close_functions(&scan, line_number);
         if (scan.test_depth) |test_depth| {
             if (scan.depth <= test_depth) scan.test_depth = null; // Its closing brace
         }
@@ -341,6 +344,22 @@ pub fn check_zig(source: []const u8, gpa: std.mem.Allocator) !Counts {
     return scan.counts;
 }
 
+/// Ends every open function whose closing brace this line holds, counting its length.
+fn close_functions(scan: *Scan, line_number: u32) void {
+    assert(scan.open_count <= Scan.open_max);
+    for (0..Scan.open_max) |_| {
+        if (scan.open_count == 0) return;
+        const open = scan.open[scan.open_count - 1];
+        // A function opens at a depth of zero or more: a file's braces never go below it.
+        assert(open.depth >= 0);
+        if (scan.depth > open.depth) return;
+        assert(open.start_line <= line_number);
+        const length = line_number - open.start_line + 1;
+        if (length > function_lines_max) scan.counts[@backingInt(Rule.function_length)] += 1;
+        scan.open_count -= 1;
+    }
+}
+
 /// Counts what a line breaks as text: its length and its comment. Returns whether a
 /// `// Unbounded:` comment just above it vouches for a loop on it.
 fn check_zig_text(scan: *Scan, line: *const Line) bool {
@@ -349,7 +368,8 @@ fn check_zig_text(scan: *Scan, line: *const Line) bool {
     const trimmed = std.mem.trimStart(u8, line.code, " ");
     if (columns(line.text) > line_columns_max) counts[@backingInt(Rule.line_length)] += 1;
     const own_line_comment = line.comment.len > 0 and trimmed.len == 0;
-    if (bad_comment(line.comment, scan.previous_comment and own_line_comment)) {
+    const continued = scan.previous_comment and own_line_comment;
+    if (bad_comment(line.comment, own_line_comment, continued)) {
         counts[@backingInt(Rule.comment_style)] += 1;
     }
     scan.previous_comment = own_line_comment;
@@ -380,17 +400,28 @@ fn check_zig_code(
         scan.functions += 1;
         const returns_type = std.mem.indexOf(u8, code, ") type") != null;
         if (!returns_type and !is_snake_case(name)) counts[@backingInt(Rule.function_name)] += 1;
-        if (scan.open == null and std.mem.indexOfScalar(u8, code, '{') != null) {
-            scan.open = .{ .name = name, .start_line = line_number, .depth = scan.depth };
+        const has_body = std.mem.indexOfScalar(u8, code, '{') != null;
+        if (has_body and scan.open_count < Scan.open_max) {
+            scan.open[scan.open_count] = .{
+                .name = name,
+                .start_line = line_number,
+                .depth = scan.depth,
+            };
+            scan.open_count += 1;
         }
-    } else if (scan.open) |open| {
-        // Opened by a declaration on an earlier line, as this one declares nothing.
+    } else if (scan.open_count > 0) {
+        // A call to the function being read, from inside it: the innermost one
+        const open = scan.open[scan.open_count - 1];
         assert(open.start_line < line_number);
         counts[@backingInt(Rule.recursion)] += try count_calls(code, open.name, gpa);
     }
     scan.assertions += count_assertions(code);
     if (has_compound_assertion(code)) counts[@backingInt(Rule.compound_assertion)] += 1;
-    if (opens_unbraced(code)) counts[@backingInt(Rule.if_without_braces)] += 1;
+    if (opens_unbraced(code, scan.after_statement)) {
+        counts[@backingInt(Rule.if_without_braces)] += 1;
+    }
+    const ending = std.mem.trimEnd(u8, code, " ");
+    if (ending.len > 0) scan.after_statement = ending[ending.len - 1] == ';';
     // Ignoring an error is handling it only when the line says why: `// Ignored: …`
     if (!std.mem.startsWith(u8, line.comment, "// Ignored: ")) {
         counts[@backingInt(Rule.error_ignored)] += count_token(code, "catch {}") +
@@ -627,6 +658,7 @@ test "comments start with a capital after a space; a continued sentence needn't"
         \\// A sentence that goes
         \\// on to the next line.
         \\//no space
+        \\const b = 2;
         \\// lowercase start
         \\const a = 1; // a phrase after code is fine
     ;
@@ -674,4 +706,36 @@ test "a loop or an ignored error with its reason given doesn't count" {
     ;
     try std.testing.expectEqual(@as(u32, 1), try count_in(source, .loop_unbounded));
     try std.testing.expectEqual(@as(u32, 1), try count_in(source, .error_ignored));
+}
+
+test "an if expression's else, a phrase after code, and C declarations don't count" {
+    const source =
+        \\extern fn ft_open(data: [*]const u8) ?*anyopaque;
+        \\fn pick(c: bool) u32 {
+        \\    assert(@TypeOf(c) == bool);
+        \\    assert(@sizeOf(u32) == 4);
+        \\    const x = if (c)
+        \\        1
+        \\    else
+        \\        2;
+        \\    return x; // a phrase is fine here
+        \\}
+    ;
+    try std.testing.expectEqual(@as(u32, 0), try count_in(source, .if_without_braces));
+    try std.testing.expectEqual(@as(u32, 0), try count_in(source, .comment_style));
+    try std.testing.expectEqual(@as(u32, 0), try count_in(source, .assertion_density));
+}
+
+test "a function inside a struct inside a function is checked for calling itself" {
+    const source =
+        \\fn outer() void {
+        \\    const S = struct {
+        \\        fn inner(n: u32) u32 {
+        \\            return inner(n - 1);
+        \\        }
+        \\    };
+        \\    _ = S;
+        \\}
+    ;
+    try std.testing.expectEqual(@as(u32, 1), try count_in(source, .recursion));
 }

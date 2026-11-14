@@ -189,6 +189,9 @@ const Builder = struct {
     link_target: []const u8 = "",
     section: u32 = 0,
     file: []const u8 = "",
+    dir: []const u8 = "", // The chapter file's folder, for the paths it refers to
+    in_body: bool = false,
+    skipping: ?[]const u8 = null, // Inside <head>, <style> or <script>: no text
     waiting_ids: std.ArrayList([]const u8) = .empty, // Anchors for the next paragraph
 
     fn styled(b: *const Builder) bool {
@@ -256,92 +259,100 @@ const Builder = struct {
         try b.placeAnchors(index);
     }
 
+    /// Adds one chapter's text: its paragraphs, with their styles, pictures, links and
+    /// the anchors links can point to.
     fn chapter(b: *Builder, path: []const u8, xhtml: []const u8) !void {
         b.file = path;
-        const dir = std.fs.path.dirnamePosix(path) orelse "";
+        b.dir = std.fs.path.dirnamePosix(path) orelse "";
+        b.in_body = false;
+        b.skipping = null;
         var t = xml.Tokenizer{ .data = xhtml };
-        var in_body = false;
-        var skipping: ?[]const u8 = null; // Inside <head>, <style> or <script>
         while (t.next()) |tok| switch (tok) {
-            .text => |s| if (in_body and skipping == null) try b.addText(s),
-            .open => |o| {
-                if (skipping != null) continue;
-                if (std.mem.eql(u8, o.name, "body")) in_body = true;
-                if (!in_body) continue;
-                if (eqlAny(o.name, &.{ "style", "script", "head" }) and !o.self_closing) {
-                    skipping = o.name;
-                    continue;
-                }
-                if (xml.attr(o.attrs, "id")) |id| {
-                    // Text already started: the anchor is partway in, not where it begins
-                    if (b.text.items.len > 0) try b.inner_anchors.put(b.alloc, try std.fmt.allocPrint(b.alloc, "{s}#{s}", .{ b.file, id }), {});
-                    try b.waiting_ids.append(b.alloc, id);
-                }
-                if (isBlock(o.name)) {
-                    try b.flush();
-                    // A line break stays in its block's style: "<h2><img/><br/>Chapter I.</h2>"
-                    // is still a heading after the picture
-                    if (!std.mem.eql(u8, o.name, "br")) b.look = headingLook(o.name) orelse .{};
-                }
-                if (eqlAny(o.name, &.{ "b", "strong" })) {
-                    try b.endRun();
-                    b.bold += 1;
-                    b.startRun();
-                }
-                if (eqlAny(o.name, &.{ "i", "em", "cite" })) {
-                    try b.endRun();
-                    b.italic += 1;
-                    b.startRun();
-                }
-                if (std.mem.eql(u8, o.name, "a")) {
-                    if (xml.attr(o.attrs, "href")) |href| {
-                        if (std.mem.indexOf(u8, href, "://") == null) {
-                            b.link_start = b.text.items.len;
-                            b.link_target = href;
-                        }
-                    }
-                }
-                if (eqlAny(o.name, &.{ "img", "image" })) {
-                    const src = xml.attr(o.attrs, "src") orelse xml.attr(o.attrs, "href") orelse continue;
-                    try b.addPicture(dir, src);
-                }
-            },
-            .close => |name| {
-                if (skipping) |s| {
-                    if (std.mem.eql(u8, s, name)) skipping = null;
-                    continue;
-                }
-                if (eqlAny(name, &.{ "b", "strong" }) and b.bold > 0) {
-                    try b.endRun();
-                    b.bold -= 1;
-                    b.startRun();
-                }
-                if (eqlAny(name, &.{ "i", "em", "cite" }) and b.italic > 0) {
-                    try b.endRun();
-                    b.italic -= 1;
-                    b.startRun();
-                }
-                if (std.mem.eql(u8, name, "a")) {
-                    if (b.link_start) |start| {
-                        if (b.text.items.len > start) {
-                            const target = if (b.link_target[0] == '#')
-                                try std.fmt.allocPrint(b.alloc, "{s}{s}", .{ path, b.link_target })
-                            else
-                                try std.fmt.allocPrint(b.alloc, "{s}{s}", .{ try resolve(b.alloc, dir, b.link_target), b.link_target[std.mem.indexOfScalar(u8, b.link_target, '#') orelse b.link_target.len ..] });
-                            try b.links.append(b.alloc, .{ .para = @intCast(b.paragraphs.items.len), .start = start, .end = b.text.items.len, .target = target });
-                        }
-                    }
-                    b.link_start = null;
-                }
-                if (isBlock(name)) {
-                    try b.flush();
-                    b.look = .{};
-                }
-            },
+            .text => |text| if (b.in_body and b.skipping == null) try b.addText(text),
+            .open => |tag| try b.openTag(tag),
+            .close => |name| try b.closeTag(name),
         };
         try b.flush();
         b.bold = 0;
         b.italic = 0;
+    }
+
+    fn openTag(b: *Builder, tag: xml.Tag) !void {
+        if (b.skipping != null) return;
+        if (std.mem.eql(u8, tag.name, "body")) b.in_body = true;
+        if (!b.in_body) return;
+        if (eqlAny(tag.name, &.{ "style", "script", "head" }) and !tag.self_closing) {
+            b.skipping = tag.name;
+            return;
+        }
+        if (xml.attr(tag.attrs, "id")) |id| try b.noteAnchor(id);
+        if (isBlock(tag.name)) try b.startBlock(tag.name);
+        if (eqlAny(tag.name, &.{ "b", "strong" })) try b.nestStyle(&b.bold, .in);
+        if (eqlAny(tag.name, &.{ "i", "em", "cite" })) try b.nestStyle(&b.italic, .in);
+        if (std.mem.eql(u8, tag.name, "a")) b.startLink(tag);
+        if (eqlAny(tag.name, &.{ "img", "image" })) {
+            const src = xml.attr(tag.attrs, "src") orelse xml.attr(tag.attrs, "href") orelse return;
+            try b.addPicture(b.dir, src);
+        }
+    }
+
+    fn closeTag(b: *Builder, name: []const u8) !void {
+        if (b.skipping) |skipped| {
+            if (std.mem.eql(u8, skipped, name)) b.skipping = null;
+            return;
+        }
+        if (eqlAny(name, &.{ "b", "strong" })) try b.nestStyle(&b.bold, .out);
+        if (eqlAny(name, &.{ "i", "em", "cite" })) try b.nestStyle(&b.italic, .out);
+        if (std.mem.eql(u8, name, "a")) try b.endLink();
+        if (isBlock(name)) {
+            try b.flush();
+            b.look = .{};
+        }
+    }
+
+    /// An element with an id, which links can point to: kept for the paragraph about to
+    /// start, and noted as partway in when text has already started.
+    fn noteAnchor(b: *Builder, id: []const u8) !void {
+        if (b.text.items.len > 0) try b.inner_anchors.put(b.alloc, try std.fmt.allocPrint(b.alloc, "{s}#{s}", .{ b.file, id }), {});
+        try b.waiting_ids.append(b.alloc, id);
+    }
+
+    /// A block begins a paragraph, in its heading's look if it is one. A line break
+    /// stays in its block's look: "<h2><img/><br/>Chapter I.</h2>" is still a heading
+    /// after the picture.
+    fn startBlock(b: *Builder, name: []const u8) !void {
+        try b.flush();
+        if (!std.mem.eql(u8, name, "br")) b.look = headingLook(name) orelse .{};
+    }
+
+    /// Bold or italic going in or out: the text so far ends its run, a new one starts.
+    fn nestStyle(b: *Builder, depth: *u32, way: enum { in, out }) !void {
+        if (way == .out and depth.* == 0) return; // A stray closing tag
+        try b.endRun();
+        if (way == .in) depth.* += 1 else depth.* -= 1;
+        b.startRun();
+    }
+
+    /// A link within the book (not to the web) starts here.
+    fn startLink(b: *Builder, tag: xml.Tag) void {
+        const href = xml.attr(tag.attrs, "href") orelse return;
+        if (std.mem.indexOf(u8, href, "://") != null) return;
+        b.link_start = b.text.items.len;
+        b.link_target = href;
+    }
+
+    /// The link that started ends here, over the text since, its target resolved
+    /// against this chapter: "#note1" or "notes.xhtml#note1".
+    fn endLink(b: *Builder) !void {
+        const start = b.link_start orelse return;
+        b.link_start = null;
+        if (b.text.items.len <= start) return;
+        const href = b.link_target;
+        const target = if (href[0] == '#')
+            try std.fmt.allocPrint(b.alloc, "{s}{s}", .{ b.file, href })
+        else
+            try std.fmt.allocPrint(b.alloc, "{s}{s}", .{ try resolve(b.alloc, b.dir, href), href[std.mem.indexOfScalar(u8, href, '#') orelse href.len ..] });
+        try b.links.append(b.alloc, .{ .para = @intCast(b.paragraphs.items.len), .start = start, .end = b.text.items.len, .target = target });
     }
 
     /// Ties each link to the paragraph its target landed in.

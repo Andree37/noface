@@ -180,6 +180,7 @@ pub const Usage = struct {
 /// The level at `t`, from the samples either side of it, if both are off the charger
 /// and it didn't rise between them.
 fn level_at(log: []const Sample, t: u64) ?f64 {
+    if (log.len < 2) return null; // An empty log would make `log[1..]` out of bounds
     for (log[0..log.len -| 1], log[1..]) |a, b| {
         if (a.time > t or b.time < t) continue;
         if (a.plugged or b.plugged or b.level > a.level or b.time <= a.time) return null;
@@ -281,4 +282,8 @@ test "days with a charge in them don't count" {
         .{ .time = t0 + 86400, .level = 95, .plugged = false },
     };
     try std.testing.expect(usage(&log, 20000, &.{3600}, 0) == null);
+}
+
+test "an empty log has no usage" {
+    try std.testing.expect(usage(&.{}, 20000, &.{3600}, 0) == null);
 }

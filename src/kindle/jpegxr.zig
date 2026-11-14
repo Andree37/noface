@@ -52,8 +52,9 @@ pub fn parse_pgm(data: []u8) ?Gray {
     if (!std.mem.eql(u8, fields[0], "P5")) return null;
     const w = std.fmt.parseInt(usize, fields[1], 10) catch return null;
     const h = std.fmt.parseInt(usize, fields[2], 10) catch return null;
-    if (at > data.len or data.len - at < w * h) return null;
-    return .{ .pixels = data[at..][0 .. w * h], .width = w, .height = h };
+    const size = std.math.mul(@TypeOf(w), w, h) catch return null;
+    if (at > data.len or data.len - at < size) return null;
+    return .{ .pixels = data[at..][0..size], .width = w, .height = h };
 }
 
 test "helper output is read as a grayscale image" {
@@ -63,6 +64,8 @@ test "helper output is read as a grayscale image" {
     try std.testing.expectEqual(@as(u8, 0x80), g.pixels[2]);
     var short = "P5\n4 4\n255\nab".*;
     try std.testing.expect(parse_pgm(&short) == null);
+    var huge = "P5\n4294967296 4294967296\n255\nab".*;
+    try std.testing.expect(parse_pgm(&huge) == null);
     try std.testing.expect(is_jpeg_xr("II\xbc\x01\x20"));
     try std.testing.expect(!is_jpeg_xr("\xff\xd8\xff"));
 }

@@ -36,7 +36,7 @@ const Package = struct {
 
 fn read_file(alloc: std.mem.Allocator, files: []const zip.Entry, name: []const u8) ![]u8 {
     const e = zip.find(files, name) orelse return error.MissingFile;
-    return zip.read(alloc, e);
+    return zip.read(alloc, &e);
 }
 
 /// Joins a relative href onto a folder, resolving "..", and drops any "#fragment".
@@ -251,7 +251,7 @@ const Builder = struct {
     fn add_picture(b: *Builder, dir: []const u8, src: []const u8) !void {
         const path = try resolve(b.alloc, dir, src);
         const entry = zip.find(b.files, path) orelse return;
-        const data = zip.read(b.alloc, entry) catch return;
+        const data = zip.read(b.alloc, &entry) catch return;
         const size = picture.size(data) orelse return; // Only JPEG and PNG can be drawn
         try b.flush();
         const index: u32 = @intCast(b.paragraphs.items.len);

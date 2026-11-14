@@ -31,8 +31,9 @@ less debt than you found it.
 
 - **A limit on everything.** Every loop and every queue has a fixed upper bound.
   `while (true)` is counted **[checked]**: write the bound in the loop
-  (`for (0..attempts_max)`), or, for a loop that by design never ends (the reader's
-  event loop), assert so and say why.
+  (`for (0..attempts_max)`, asserting what running out means). A loop that by design
+  never ends (the reader's event loop) says so in a comment just above it, starting
+  `// Unbounded: ` and saying why; the check accepts that and nothing else.
 
 - **Explicitly sized types** (`u32`, `u64`, `i32`). `usize` is counted **[checked]**: use
   it only where the language needs it (indexing a slice, a slice's length), and convert
@@ -81,8 +82,9 @@ less debt than you found it.
   (`if (index < count)`); give an `if` its `else` when the other case matters too.
 
 - **Every error is handled [checked: `catch {}` and `catch unreachable`].** An error
-  that can't happen is asserted with the reason; one that doesn't matter says why in a
-  comment on that line, and is counted until it does.
+  that can't happen is asserted with the reason. One that may be ignored (a cover that
+  won't decode means no picture, nothing worse) says so on that line, in a comment
+  starting `// Ignored: ` with the reason; the check accepts that and nothing else.
 
 - **Always say why.** In comments, in commit messages, in this file.
 

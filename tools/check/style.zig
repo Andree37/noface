@@ -31,13 +31,14 @@ pub const Rule = enum {
     compound_assertion,
     /// An `if` or `else` whose body is on the next line without braces.
     if_without_braces,
-    /// `catch {}` or `catch unreachable`: every error is handled, or its being
-    /// impossible is asserted with a reason.
+    /// `catch {}` or `catch unreachable`: every error is handled. Ignoring one counts as
+    /// handling it only with the reason on that line: `catch {}; // Ignored: …`.
     error_ignored,
     /// A comment without a space after `//`, or whose first sentence doesn't start
     /// with a capital letter.
     comment_style,
-    /// `while (true)`: every loop has a bound, or asserts why it has none.
+    /// `while (true)`: every loop has a bound. One that by design never ends (an event
+    /// loop) says so in a comment just above it starting `// Unbounded: `, with why.
     loop_unbounded,
     /// `usize`: sizes are explicit (u32, u64), except where the language needs usize
     /// (slice indexes and lengths).
@@ -267,6 +268,7 @@ pub fn check_zig(source: []const u8, gpa: std.mem.Allocator) !Counts {
     var test_depth: ?i32 = null; // Inside a test block: its depth
     var open: ?struct { name: []const u8, start_line: u32, depth: i32 } = null;
     var previous_comment = false;
+    var unbounded_next = false;
     var line_number: u32 = 0;
     var lines = std.mem.splitScalar(u8, source, '\n');
     while (lines.next()) |text| : (line_number += 1) {
@@ -278,6 +280,14 @@ pub fn check_zig(source: []const u8, gpa: std.mem.Allocator) !Counts {
             counts[@backingInt(Rule.comment_style)] += 1;
         }
         previous_comment = own_line_comment;
+        // Set by a `// Unbounded:` comment, for the loop on the next line of code
+        const unbounded_said = unbounded_next;
+        if (own_line_comment) {
+            const said = std.mem.trimStart(u8, line.comment, "/ ");
+            if (std.mem.startsWith(u8, said, "Unbounded: ")) unbounded_next = true;
+        } else if (trimmed.len > 0) {
+            unbounded_next = false;
+        }
 
         const in_test = test_depth != null;
         if (!in_test and (std.mem.startsWith(u8, trimmed, "test \"") or std.mem.startsWith(u8, trimmed, "test {"))) {
@@ -306,9 +316,15 @@ pub fn check_zig(source: []const u8, gpa: std.mem.Allocator) !Counts {
             assertions += count_assertions(line.code);
             if (has_compound_assertion(line.code)) counts[@backingInt(Rule.compound_assertion)] += 1;
             if (opens_unbraced(line.code)) counts[@backingInt(Rule.if_without_braces)] += 1;
-            counts[@backingInt(Rule.error_ignored)] += count_token(line.code, "catch {}") +
-                count_token(line.code, "catch unreachable");
-            counts[@backingInt(Rule.loop_unbounded)] += count_token(line.code, "while (true)");
+            // Ignoring an error is handling it only when the line says why: `// Ignored: …`
+            if (!std.mem.startsWith(u8, line.comment, "// Ignored: ")) {
+                counts[@backingInt(Rule.error_ignored)] += count_token(line.code, "catch {}") +
+                    count_token(line.code, "catch unreachable");
+            }
+            // A loop that never ends by design says so just above it: `// Unbounded: …`
+            if (!unbounded_said) {
+                counts[@backingInt(Rule.loop_unbounded)] += count_token(line.code, "while (true)");
+            }
             counts[@backingInt(Rule.usize_used)] += count_token(line.code, "usize");
         }
         depth += count_braces(line.code);
@@ -551,4 +567,19 @@ test "the baseline reads back" {
     try std.testing.expectEqual(Rule.line_length, entries[0].rule);
     try std.testing.expectEqual(@as(u32, 3), allowed(entries, .line_length, "src/a.zig"));
     try std.testing.expectEqual(@as(u32, 0), allowed(entries, .line_length, "src/b.zig"));
+}
+
+test "a loop or an ignored error with its reason given doesn't count" {
+    const source =
+        \\fn f() void {
+        \\    // Unbounded: the reader's loop runs until noface quits.
+        \\    while (true) {}
+        \\    while (true) {}
+        \\    g() catch {}; // Ignored: a missing cover only means no picture.
+        \\    g() catch {};
+        \\}
+    ;
+    const counts = try check_text(source);
+    try std.testing.expectEqual(@as(u32, 1), count_of(counts, .loop_unbounded));
+    try std.testing.expectEqual(@as(u32, 1), count_of(counts, .error_ignored));
 }

@@ -1,5 +1,6 @@
 //! What every screen shares: the screen, input, fonts, settings and page buffers.
 const std = @import("std");
+const assert = std.debug.assert;
 const paths = @import("kindle/paths.zig");
 const card = @import("ui/card.zig");
 const memory = @import("base/memory.zig");
@@ -29,14 +30,45 @@ const dictionary = @import("model/dictionary.zig");
 const os = @import("sys/os.zig");
 const battery_model = @import("model/battery.zig");
 const battery_log = @import("kindle/battery_log.zig");
+const dict_download = @import("kindle/dict_download.zig");
 const Input = input_mod.Input;
 const unix_time = os.unix_time;
 
-pub const clock_top = 16;
+pub const clock_top_px = 16;
 
-pub const clock_height = 56;
+pub const clock_height_px = 56;
 
-pub const clock_width = 160;
+pub const clock_width_px = 160;
+
+/// Where the clock's text sits, down from the top of its band.
+const clock_baseline_px = 38;
+
+pub const notice_ms = 1800;
+
+/// The faces of a family: regular, bold, italic and bold italic, indexed by
+/// bold | italic << 1.
+const faces_per_family = 4;
+
+/// How many languages noface hyphenates and has dictionaries for.
+const languages_count = @typeInfo(hyphen.Lang).@"enum".field_names.len;
+
+/// A family's body fonts in one face, by reader size and book size.
+const FaceFontsBySize = [settings_model.sizes.len][book_model.size_scales.len]?Font;
+
+comptime {
+    // The clock's text is drawn inside the band its partial refresh covers.
+    assert(clock_baseline_px < clock_height_px);
+    assert(clock_height_px < clock_width_px);
+    // Bold and italic, one bit each, pick one of the faces.
+    assert(faces_per_family == 1 << 2);
+    // Every language has a dictionary file, named in `dictionary_for`.
+    assert(languages_count == 2);
+    // The interface's own family is the first, and always offered.
+    assert(settings_model.builtin_families.len >= 1);
+    assert(settings_model.builtin_families.len <= settings_model.max_families);
+    // A face's book size starts at its normal step.
+    assert(book_model.normal_size < book_model.size_scales.len);
+}
 
 pub const Slot = struct { page: i64 = -1, buf: []u8, hits: text.Hits = .{} };
 
@@ -48,8 +80,9 @@ pub const App = struct {
     input: *Input,
     body: *Font,
     // Body fonts by family, face (bold, italic), reader size and book size, made on first use.
-    face_fonts: [settings_model.max_families][4][settings_model.sizes.len][book_model.size_scales.len]?Font = @splat(@splat(@splat(@splat(null)))),
-    face_files: [settings_model.max_families][4]?[]const u8 = @splat(@splat(null)),
+    face_fonts: [settings_model.max_families][faces_per_family]FaceFontsBySize =
+        @splat(@splat(@splat(@splat(null)))),
+    face_files: [settings_model.max_families][faces_per_family]?[]const u8 = @splat(@splat(null)),
     // Each family's regular at interface size, for its name in Aa; made on first use
     family_samples: [settings_model.max_families]?Font = @splat(null),
     family_sample_ptrs: [settings_model.max_families]?*Font = @splat(null),
@@ -62,8 +95,9 @@ pub const App = struct {
     overlay: []u8,
     lock_saved: []u8,
     lock_cover: []u8,
+    // Which book's lock screen lock_cover holds, so it isn't decoded again; 0 for none
     lock_cover_key: u64 = 0,
-    lock_picture_bad: u64 = 0, // A lock screen picture that didn't decode, not to try again // Which book's lock screen lock_cover holds, so it isn't decoded again; 0 for none
+    lock_picture_bad: u64 = 0, // A lock screen picture that didn't decode, not to try again
     state_dir: []const u8,
     library_path: [*:0]const u8,
     settings_path: [*:0]const u8,
@@ -73,7 +107,7 @@ pub const App = struct {
     documents: []const u8 = paths.documents, // Where EPUBs copied over USB are found
     battery_last: ?battery_model.Sample = null, // Last level noted, so only changes are logged
     downloads_until: u64 = 0, // A download may still be running until then (now_us)
-    dictionary_base: []const u8 = @import("kindle/dict_download.zig").default_base, // Where dictionaries download from
+    dictionary_base: []const u8 = dict_download.default_base, // Where dictionaries download from
     wifi_hands_off: bool = false, // The reader took charge of airplane mode in this book
     journal: journal_model.Journal = .{}, // What was read each day, for the stats screen
     speed: stats.Speed = .{}, // How fast this reader reads, across every book
@@ -84,15 +118,19 @@ pub const App = struct {
     clock_minute: u64 = 0,
     layout: text.Layout,
     // Made the first time a book in that language opens, then kept
-    hyphenators: [@typeInfo(hyphen.Lang).@"enum".field_names.len]?hyphen.Hyphenator = @splat(null),
+    hyphenators: [languages_count]?hyphen.Hyphenator = @splat(null),
     // Mapped the first time a word in that language is looked up, then kept
-    dictionaries: [@typeInfo(hyphen.Lang).@"enum".field_names.len]?dictionary.Dictionary = @splat(null),
+    dictionaries: [languages_count]?dictionary.Dictionary = @splat(null),
 
     /// Forgets a language's dictionary, so the next lookup maps the file again: after
     /// one has just been downloaded.
     pub fn forget_dictionary(a: *App, lang: hyphen.Lang) void {
-        if (a.dictionaries[@backingInt(lang)]) |d| file.unmap(d.data);
-        a.dictionaries[@backingInt(lang)] = null;
+        const slot = &a.dictionaries[@backingInt(lang)];
+        if (slot.*) |d| {
+            assert(d.data.len > 0); // An empty file is an error from file.map
+            file.unmap(d.data);
+        }
+        slot.* = null;
     }
 
     /// The dictionary for a book's language, from dict-en or dict-pt beside the
@@ -106,14 +144,22 @@ pub const App = struct {
                 .english => "dict-en",
                 .portuguese => "dict-pt",
             };
-            const path = std.fmt.bufPrintSentinel(&buf, "{s}/{s}", .{ a.state_dir, name }, 0) catch return null;
+            const path = std.fmt.bufPrintSentinel(
+                &buf,
+                "{s}/{s}",
+                .{ a.state_dir, name },
+                0,
+            ) catch return null;
             const data = file.map(path) catch return null;
+            assert(data.len > 0); // An empty file is an error from file.map
             slot.* = dictionary.Dictionary.open(data) orelse {
                 file.unmap(data);
                 std.debug.print("dictionary {s} unreadable\n", .{name});
                 return null;
             };
+            assert(slot.*.?.data.ptr == data.ptr);
         }
+        assert(slot.* != null);
         return slot.*;
     }
 
@@ -126,62 +172,102 @@ pub const App = struct {
     pub fn hyphenator_for(a: *App, lang: ?hyphen.Lang) ?*const hyphen.Hyphenator {
         const l = lang orelse return null;
         const slot = &a.hyphenators[@backingInt(l)];
-        if (slot.* == null) slot.* = hyphen.Hyphenator.init(a.alloc, l) catch |err| {
-            std.debug.print("hyphenation not loaded: {s}\n", .{@errorName(err)});
-            return null;
-        };
+        if (slot.* == null) {
+            slot.* = hyphen.Hyphenator.init(a.alloc, l) catch |err| {
+                std.debug.print("hyphenation not loaded: {s}\n", .{@errorName(err)});
+                return null;
+            };
+        }
+        assert(slot.* != null);
         return &slot.*.?;
     }
 
     /// Fonts are kept per size, so stepping through sizes doesn't reload them.
     pub fn apply_settings(a: *App) !void {
+        // Parsing clamps every setting to its steps: one past them is a bug of ours
+        assert(a.settings.margin < settings_model.margins.len);
+        assert(a.settings.font < settings_model.max_families);
         a.body = try a.face(false, false, book_model.normal_size);
         a.layout.faces = .{ .ctx = a, .pick = pick_face };
         a.layout.images = .{ .ctx = a, .draw = draw_image };
         a.layout.margin_x = settings_model.margins[a.settings.margin];
         a.layout.justify = !a.settings.left_align;
         a.layout.bold_starts = a.settings.bold_starts;
+        assert(a.layout.margin_x > 0);
+        assert(a.body.line_height > 0);
     }
 
     /// Each typeface offered, at interface size, to show its name in itself. One that
     /// can't be loaded is null, and its name shows in the interface font.
     pub fn load_family_samples(a: *App) []const ?*Font {
-        for (settings_model.families, 0..) |_, i| {
-            if (a.family_sample_ptrs[i] != null) continue;
+        const families_count = settings_model.families.len;
+        assert(families_count >= settings_model.builtin_families.len);
+        assert(families_count <= settings_model.max_families);
+        for (0..families_count) |i| {
+            if (a.family_sample_ptrs[i] != null) {
+                assert(a.family_samples[i] != null); // The pointer points at it
+                continue;
+            }
             const file_slot = &a.face_files[i][0];
-            if (file_slot.* == null) file_slot.* = file.map(fonts_db.path(i, false, false)) catch continue;
+            if (file_slot.* == null) {
+                file_slot.* = file.map(fonts_db.path(i, false, false)) catch continue;
+            }
             a.family_samples[i] = Font.init(a.alloc, file_slot.*.?, 36, 1.2) catch continue;
             a.family_sample_ptrs[i] = &a.family_samples[i].?;
         }
-        return a.family_sample_ptrs[0..settings_model.families.len];
+        return a.family_sample_ptrs[0..families_count];
     }
 
     /// The body font for a weight, slant and book size, in the reader's family and size.
     /// The reader's Bold setting makes everything bold.
     pub fn face(a: *App, bold_text: bool, italic: bool, size: u8) !*Font {
+        assert(size < book_model.size_scales.len);
+        // Parsing clamps every setting to its steps: one past them is a bug of ours
+        assert(a.settings.font < settings_model.max_families);
+        assert(a.settings.size < settings_model.sizes.len);
         const bold = bold_text or a.settings.bold;
-        const which: usize = @as(usize, @intFromBool(bold)) | @as(usize, @intFromBool(italic)) << 1;
+        const which: u2 = @as(u2, @intFromBool(bold)) | @as(u2, @intFromBool(italic)) << 1;
         const file_slot = &a.face_files[a.settings.font][which];
-        if (file_slot.* == null) file_slot.* = try file.map(fonts_db.path(a.settings.font, bold, italic));
+        if (file_slot.* == null) {
+            file_slot.* = try file.map(fonts_db.path(a.settings.font, bold, italic));
+        }
         const scale = book_model.size_scales[size];
         const slot = &a.face_fonts[a.settings.font][which][a.settings.size][size];
-        if (slot.* == null) slot.* = try Font.init(a.alloc, file_slot.*.?, a.settings.px() * scale, 1);
+        if (slot.* == null) {
+            slot.* = try Font.init(a.alloc, file_slot.*.?, a.settings.px() * scale, 1);
+        }
         // Spacing can change without the font changing, so set it every time.
-        slot.*.?.line_height = @intFromFloat(@as(f32, @floatFromInt(a.settings.line_height())) * scale);
+        const line_height_px: f32 = @floatFromInt(a.settings.line_height());
+        slot.*.?.line_height = @intFromFloat(line_height_px * scale);
+        assert(slot.*.?.line_height > 0);
         return &slot.*.?;
     }
 
-    fn draw_image(ctx: *anyopaque, page_buf: Page, image: book_model.Image, x: u32, y: u32, w: u32, h: u32) void {
+    fn draw_image(
+        ctx: *anyopaque,
+        page_buf: Page,
+        image: book_model.Image,
+        x: u32,
+        y: u32,
+        w: u32,
+        h: u32,
+    ) void {
         const a: *App = @ptrCast(@alignCast(ctx));
+        // Only apply_settings installs this, with the App as its context
+        assert(a.layout.images != null);
+        assert(a.layout.images.?.ctx == ctx);
         const ready = a.pictures.get(image.data.ptr, w, h) orelse blk: {
-            const made = if (jpegxr.is_jpeg_xr(image.data))
-                prepared_jpeg_xr(a.alloc, image.data, w, h)
-            else
-                cover.decode_and_prepare(a.alloc, image.data, w, h);
+            var made: ?[]u8 = null;
+            if (jpegxr.is_jpeg_xr(image.data)) {
+                made = prepared_jpeg_xr(a.alloc, image.data, w, h);
+            } else {
+                made = cover.decode_and_prepare(a.alloc, image.data, w, h);
+            }
             const pixels = made orelse {
                 std.debug.print("picture not drawn\n", .{});
                 return;
             };
+            assert(pixels.len == @as(u64, w) * h); // Prepared at the size asked for
             a.pictures.put(a.alloc, image.data.ptr, w, h, pixels);
             break :blk pixels;
         };
@@ -189,19 +275,33 @@ pub const App = struct {
     }
 
     fn prepared_jpeg_xr(alloc: std.mem.Allocator, data: []const u8, w: u32, h: u32) ?[]u8 {
+        assert(jpegxr.is_jpeg_xr(data)); // Only called for JPEG XR, by draw_image
         var arena = std.heap.ArenaAllocator.init(alloc);
         defer arena.deinit();
         const gray = jpegxr.decode_jpeg_xr(arena.allocator(), data, w, h) orelse return null;
-        return cover.prepare(alloc, gray.pixels, gray.width, gray.height, w, h);
+        const pixels = cover.prepare(alloc, gray.pixels, gray.width, gray.height, w, h);
+        if (pixels) |p| assert(p.len == @as(u64, w) * h);
+        return pixels;
     }
 
     fn pick_face(ctx: *anyopaque, bold: bool, italic: bool, size: u8) anyerror!*Font {
         const a: *App = @ptrCast(@alignCast(ctx));
+        // Only apply_settings installs this, with the App as its context
+        assert(a.layout.faces != null);
+        assert(a.layout.faces.?.ctx == ctx);
         return a.face(bold, italic, size) catch a.face(false, false, size);
     }
 
     pub fn page(a: *App, buf: []u8) Page {
-        return .{ .buf = buf, .width = a.screen.width, .height = a.screen.height, .stride = a.screen.stride };
+        // A row of the screen's memory holds at least a row of pixels
+        assert(a.screen.width > 0);
+        assert(a.screen.stride >= a.screen.width);
+        return .{
+            .buf = buf,
+            .width = a.screen.width,
+            .height = a.screen.height,
+            .stride = a.screen.stride,
+        };
     }
 
     /// Outlines a book at once, using the fastest waveform, and waits so it can't
@@ -209,23 +309,33 @@ pub const App = struct {
     pub fn flash(a: *App, r: library.Rect) void {
         const target = a.page(a.screen.pixels);
         const t = 6;
+        // The outline's four bars lie inside the book, and the book on the screen
+        assert(r.w >= t);
+        assert(r.h >= t);
+        assert(r.x + r.w <= a.screen.width);
+        assert(r.y + r.h <= a.screen.height);
         target.fill_rect(r.x, r.y, r.w, t, 0x00);
         target.fill_rect(r.x, r.y + r.h - t, r.w, t, 0x00);
         target.fill_rect(r.x, r.y, t, r.h, 0x00);
         target.fill_rect(r.x + r.w - t, r.y, t, r.h, 0x00);
         const marker = a.screen.show_region(r.x, r.y, r.w, r.h, .quick) catch return;
-        a.screen.wait_complete(marker) catch {};
+        a.screen.wait_complete(marker) catch {}; // Ignored: the outline is shown either way.
     }
 
     /// Writes the time into the page on screen, without refreshing the panel.
     pub fn stamp_clock(a: *App) void {
         if (!a.settings.clock) return;
+        assert(a.screen.width >= clock_width_px);
+        assert(a.screen.height >= clock_top_px + clock_height_px);
         const target = a.page(a.screen.pixels);
-        const left = (a.screen.width - clock_width) / 2;
-        target.fill_rect(left, clock_top, clock_width, clock_height, 0xff);
+        const left = (a.screen.width - clock_width_px) / 2;
+        target.fill_rect(left, clock_top_px, clock_width_px, clock_height_px, 0xff);
         var buf: [8]u8 = undefined;
         const time = clock.format_clock(&buf, @intCast(unix_time()), a.utc_offset);
-        draw.centered(a.ui.caption, target, @floatFromInt(a.screen.width / 2), clock_top + 38, time) catch {};
+        const center_x: f32 = @floatFromInt(a.screen.width / 2);
+        const baseline_y = clock_top_px + clock_baseline_px;
+        const font = a.ui.caption;
+        draw.centered(font, target, center_x, baseline_y, time) catch {}; // Ignored: a blank clock.
         a.clock_minute = unix_time() / 60;
     }
 
@@ -238,39 +348,66 @@ pub const App = struct {
     pub fn update_clock(a: *App) !void {
         if (!a.settings.clock) return;
         a.stamp_clock();
-        const left = (a.screen.width - clock_width) / 2;
-        try a.screen.wait_complete(try a.screen.show_region(left, clock_top, clock_width, clock_height, .clock));
+        const left = (a.screen.width - clock_width_px) / 2;
+        assert(left + clock_width_px <= a.screen.width);
+        const marker = try a.screen.show_region(
+            left,
+            clock_top_px,
+            clock_width_px,
+            clock_height_px,
+            .clock,
+        );
+        try a.screen.wait_complete(marker);
     }
 
     /// Refreshes part of the screen with the page waveform, and waits for it.
     pub fn show_rect(a: *App, left: u32, top: u32, width: u32, height: u32) !void {
+        // The same as the screen checks for every update, said where it's asked for
+        assert(width > 0);
+        assert(height > 0);
+        assert(left + width <= a.screen.width);
+        assert(top + height <= a.screen.height);
         try a.screen.wait_complete(try a.screen.show_region(left, top, width, height, .page));
     }
 
     /// Refreshes a full-width band of the screen, and waits for it.
     pub fn show_band(a: *App, top: u32, height: u32) !void {
+        assert(height > 0);
+        assert(top + height <= a.screen.height);
         try a.show_rect(0, top, a.screen.width, height);
     }
 
     /// The cached page buffer holding `page`, if any.
     pub fn slot_for(a: *App, page_index: usize) ?*Slot {
+        const wanted: i64 = @intCast(page_index);
+        assert(wanted >= 0); // -1 marks an empty slot, never a page asked for
         for (&a.slots) |*slot| {
-            if (slot.page == @as(i64, @intCast(page_index))) return slot;
+            assert(slot.buf.len == a.screen.pixels.len); // Each holds a whole screen
+            if (slot.page == wanted) return slot;
         }
         return null;
     }
 
     /// Drops every cached page, after anything that changes how pages look.
     pub fn forget_pages(a: *App) void {
-        for (&a.slots) |*slot| slot.page = -1;
+        for (&a.slots) |*slot| {
+            assert(slot.buf.len == a.screen.pixels.len); // Each holds a whole screen
+            assert(slot.page >= -1); // A page, or -1 for none
+            slot.page = -1;
+        }
     }
 
     /// Where a book's reading position is kept.
     pub fn state_path(a: *const App, buf: []u8, book_path: []const u8) ![:0]u8 {
-        return state.path_for(buf, a.state_dir, book_path);
+        const path = try state.path_for(buf, a.state_dir, book_path);
+        assert(std.mem.startsWith(u8, path, a.state_dir)); // Inside the data folder
+        assert(path.len > a.state_dir.len);
+        return path;
     }
 
     pub fn present(a: *App, buf: []const u8, refresh: hwtcon.Refresh) !void {
+        assert(buf.len == a.screen.pixels.len); // A whole screen, drawn elsewhere
+        assert(buf.ptr != a.screen.pixels.ptr); // Not the screen itself
         @memcpy(a.screen.pixels, buf);
         try a.screen.wait_complete(try a.screen.show(refresh));
     }
@@ -279,14 +416,38 @@ pub const App = struct {
 /// Shows a sheet over `background` and waits for a row to be tapped. Null when the
 /// tap lands above the sheet, or the Kindle locks or quits (which is passed on to
 /// the caller's loop). What was under the sheet is put back either way.
-pub fn choose_from_card(a: *App, background: []const u8, title: []const u8, subtitle: []const u8, rows: []const card.Row) !?usize {
+pub fn choose_from_card(
+    a: *App,
+    background: []const u8,
+    title: []const u8,
+    subtitle: []const u8,
+    rows: []const card.Row,
+) !?usize {
+    assert(background.len == a.screen.pixels.len); // Put back over the whole screen
+    assert(a.overlay.len == a.screen.pixels.len); // The card is drawn there first
     return choose_from_card_with(a, background, title, subtitle, rows, null);
 }
 
 /// The same, with a small cover beside the title.
-pub fn choose_from_card_with(a: *App, background: []const u8, title: []const u8, subtitle: []const u8, rows: []const card.Row, book_cover: ?card.Cover) !?usize {
-    var c = Card{ .a = a, .background = background, .title = title, .subtitle = subtitle, .rows = rows, .cover = book_cover };
+pub fn choose_from_card_with(
+    a: *App,
+    background: []const u8,
+    title: []const u8,
+    subtitle: []const u8,
+    rows: []const card.Row,
+    book_cover: ?card.Cover,
+) !?usize {
+    assert(background.len == a.screen.pixels.len); // Put back over the whole screen
+    var c = Card{
+        .a = a,
+        .background = background,
+        .title = title,
+        .subtitle = subtitle,
+        .rows = rows,
+        .cover = book_cover,
+    };
     const chosen = try screen.run(a, &c);
+    if (chosen) |index| assert(index < rows.len);
     @memcpy(a.screen.pixels, background);
     try a.show_band(0, a.screen.height);
     return chosen;
@@ -294,8 +455,6 @@ pub fn choose_from_card_with(a: *App, background: []const u8, title: []const u8,
 
 /// A card of rows over a dimmed screen: the row tapped, or closed by a tap above it.
 const Card = struct {
-    pub const Result = usize;
-    pub const touches = input_mod.Input.Modes.sheet;
     a: *App,
     background: []const u8,
     title: []const u8,
@@ -303,31 +462,39 @@ const Card = struct {
     rows: []const card.Row,
     cover: ?card.Cover,
 
+    pub const Result = usize;
+    pub const touches = input_mod.Input.Modes.sheet;
+
     pub fn draw(c: *Card, _: screen.Part) !void {
         const a = c.a;
+        assert(a.overlay.len == a.screen.pixels.len);
+        assert(c.background.len == a.overlay.len); // Both a whole screen
         @memcpy(a.overlay, c.background);
         try card.render_with(a.ui, a.page(a.overlay), c.title, c.subtitle, c.rows, c.cover);
         @memcpy(a.screen.pixels, a.overlay);
         try a.show_band(0, a.screen.height); // The whole screen dims behind it
     }
 
-    pub fn on_tap(c: *Card, t: screen.Tap) !screen.Step(usize) {
+    pub fn on_tap(c: *Card, t: screen.Tap) !screen.Step(Result) {
         const index = card.hit_with(t.x, t.y, c.rows.len, c.cover) orelse return .close; // Above it
         return if (index < c.rows.len) .{ .done = index } else .stay; // Its title: nothing
     }
 };
-
-pub const notice_ms = 1800;
 
 /// Says something went wrong, over the page, for a moment.
 pub fn show_notice(a: *App, message: []const u8) !void {
     const screen_page = a.page(a.screen.pixels);
     const width: u32 = 760;
     const height: u32 = 100;
+    const bottom_gap: u32 = 260; // From the box's top to the screen's bottom
+    assert(message.len > 0);
+    assert(a.screen.width >= width);
+    assert(a.screen.height >= bottom_gap);
     const left = (a.screen.width - width) / 2;
-    const top = a.screen.height - 260;
+    const top = a.screen.height - bottom_gap;
     draw.box(screen_page, left, top, width, height);
-    try draw.centered(a.ui.small, screen_page, @floatFromInt(left + width / 2), @intCast(top + 62), message);
+    const center_x: f32 = @floatFromInt(left + width / 2);
+    try draw.centered(a.ui.small, screen_page, center_x, @intCast(top + 62), message);
     try a.show_rect(left, top, width, height);
     os.sleep_ms(notice_ms);
 }
@@ -335,10 +502,17 @@ pub fn show_notice(a: *App, message: []const u8) !void {
 /// Settles a band after a drag: its smooth edges come back, without a flash. Full mode
 /// would drive every pixel, but on this panel full mode always flashes.
 pub fn clean_band(a: *App, top: u32, height: u32) !void {
+    assert(height > 0);
+    assert(top + height <= a.screen.height);
     try clean_rect(a, 0, top, a.screen.width, height);
 }
 
 pub fn clean_rect(a: *App, left: u32, top: u32, width: u32, height: u32) !void {
+    // The same as the screen checks for every update, said where it's asked for
+    assert(width > 0);
+    assert(height > 0);
+    assert(left + width <= a.screen.width);
+    assert(top + height <= a.screen.height);
     try a.screen.wait_complete(try a.screen.show_region(left, top, width, height, .clean));
 }
 
@@ -347,6 +521,8 @@ pub fn clean_rect(a: *App, left: u32, top: u32, width: u32, height: u32) !void {
 /// Only one update runs at a time: overlapping ones smear on the panel. False when
 /// the drag was cut short (the Kindle locking, say) rather than the finger lifting.
 pub fn follow_drag(a: *App, first: ?u32, follow: anytype) !bool {
+    // An update already sent to this screen
+    if (first) |m| assert(m < a.screen.next_marker);
     var marker = first;
     var lifted = true;
     while (a.input.next_for()) |action| switch (action) {
@@ -357,64 +533,101 @@ pub fn follow_drag(a: *App, first: ?u32, follow: anytype) !bool {
         .drag_end => break,
         else => {},
     } else lifted = false; // Locked, or leaving, before the finger lifted
-    if (marker) |m| try a.screen.wait_complete(m);
+    if (marker) |m| {
+        assert(m < a.screen.next_marker);
+        try a.screen.wait_complete(m);
+    }
     return lifted;
 }
 
 pub fn load_journal(path: [*:0]const u8) journal_model.Journal {
     var buf: [journal_model.max_format_bytes]u8 = undefined;
-    return journal_model.parse(state.read_small(path, &buf));
+    const journal = journal_model.parse(state.read_small(path, &buf));
+    assert(journal.len <= journal.days.len); // Parsing keeps what fits, dropping the rest
+    return journal;
 }
 
 pub fn save_journal(a: *const App) void {
     var buf: [journal_model.max_format_bytes]u8 = undefined;
-    state.write_small(a.journal_path, journal_model.format(&buf, &a.journal));
+    assert(a.journal.len <= a.journal.days.len);
+    const content = journal_model.format(&buf, &a.journal);
+    assert(content.len > 0); // The buffer is sized for the longest journal
+    state.write_small(a.journal_path, content);
 }
 
 pub fn load_speed(path: [*:0]const u8) stats.Speed {
     var buf: [64]u8 = undefined;
-    return stats.parse(state.read_small(path, &buf));
+    const speed = stats.parse(state.read_small(path, &buf));
+    assert(speed.seconds >= 0); // Parsing starts over on anything else
+    assert(speed.words >= 0);
+    return speed;
 }
 
 pub fn save_speed(a: *const App) void {
     var buf: [64]u8 = undefined;
+    assert(a.speed.seconds >= 0);
+    assert(a.speed.words >= 0);
     state.write_small(a.speed_path, stats.format(&buf, a.speed));
 }
 
 pub fn load_settings(path: [*:0]const u8) settings_model.Settings {
     var buf: [512]u8 = undefined;
-    return settings_model.parse(state.read_small(path, &buf));
+    const settings = settings_model.parse(state.read_small(path, &buf));
+    // Parsing clamps every value to its steps
+    assert(settings.size < settings_model.sizes.len);
+    assert(settings.font < settings_model.max_families);
+    return settings;
 }
 
 pub fn save_settings(path: [*:0]const u8, s: settings_model.Settings) void {
     var buf: [512]u8 = undefined;
-    state.write_small(path, settings_model.format(&buf, s));
+    const content = settings_model.format(&buf, s);
+    assert(content.len > 0); // The buffer is sized for every setting
+    state.write_small(path, content);
 }
 
 /// The last few pictures drawn, decoded, scaled and dithered, so drawing a page
 /// again doesn't decode them again. Keyed by where the picture's bytes sit in the
 /// open book, so it must be cleared when the book closes.
 pub const Pictures = struct {
-    const slots = 8;
-    const Entry = struct { key: usize = 0, w: u32 = 0, h: u32 = 0, pixels: []u8 = &.{} };
     entries: [slots]Entry = @splat(.{}),
-    next: usize = 0, // Which entry to replace next
+    next: u32 = 0, // Which entry to replace next
+
+    const slots = 8;
+    const Entry = struct { key: u64 = 0, w: u32 = 0, h: u32 = 0, pixels: []u8 = &.{} };
 
     pub fn get(p: *const Pictures, data: [*]const u8, w: u32, h: u32) ?[]const u8 {
+        const key: u64 = @intFromPtr(data);
+        assert(key != 0); // 0 marks an empty entry
         for (p.entries) |e| {
-            if (e.key == @intFromPtr(data) and e.w == w and e.h == h) return e.pixels;
+            if (e.key == key and e.w == w and e.h == h) {
+                assert(e.pixels.len == @as(u64, w) * h); // As put
+                return e.pixels;
+            }
         }
         return null;
     }
 
-    pub fn put(p: *Pictures, alloc: std.mem.Allocator, data: [*]const u8, w: u32, h: u32, pixels: []u8) void {
+    pub fn put(
+        p: *Pictures,
+        alloc: std.mem.Allocator,
+        data: [*]const u8,
+        w: u32,
+        h: u32,
+        pixels: []u8,
+    ) void {
+        const key: u64 = @intFromPtr(data);
+        assert(key != 0); // 0 marks an empty entry
+        assert(pixels.len == @as(u64, w) * h); // A whole picture at its size
+        assert(p.next < slots);
         const e = &p.entries[p.next];
         if (e.key != 0) alloc.free(e.pixels);
-        e.* = .{ .key = @intFromPtr(data), .w = w, .h = h, .pixels = pixels };
+        e.* = .{ .key = key, .w = w, .h = h, .pixels = pixels };
         p.next = (p.next + 1) % slots;
     }
 
     pub fn clear(p: *Pictures, alloc: std.mem.Allocator) void {
+        assert(p.next < slots);
         for (&p.entries) |*e| {
             if (e.key != 0) alloc.free(e.pixels);
             e.* = .{};
@@ -431,6 +644,8 @@ test "pictures are kept until replaced or cleared" {
     p.put(alloc, key.ptr, 2, 1, try alloc.dupe(u8, "xy"));
     try std.testing.expectEqualStrings("xy", p.get(key.ptr, 2, 1).?);
     try std.testing.expect(p.get(key.ptr, 4, 2) == null); // Another size
-    for (0..Pictures.slots) |i| p.put(alloc, @ptrFromInt(0x1000 + i), 1, 1, try alloc.dupe(u8, "z"));
+    for (0..Pictures.slots) |i| {
+        p.put(alloc, @ptrFromInt(0x1000 + i), 1, 1, try alloc.dupe(u8, "z"));
+    }
     try std.testing.expect(p.get(key.ptr, 2, 1) == null); // Pushed out
 }

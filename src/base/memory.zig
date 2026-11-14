@@ -125,6 +125,7 @@ pub const Budget = struct {
     fn free(context: *anyopaque, memory: []u8, alignment: Alignment, return_address: usize) void {
         const budget: *Budget = @ptrCast(@alignCast(context));
         assert(memory.len <= budget.live); // Memory this budget handed out
+        assert(budget.allocations > 0);
         budget.child.rawFree(memory, alignment, return_address);
         budget.shrank(memory.len);
     }

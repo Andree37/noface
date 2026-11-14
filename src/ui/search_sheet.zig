@@ -12,7 +12,7 @@ const catalog = @import("../model/catalog.zig");
 const Fonts = @import("fonts.zig").Fonts;
 
 /// Everything under the status strip is the sheet's.
-pub const top = 96;
+pub const top = style.status_height;
 
 const bar_top = top + 16;
 const bar_height = 100;
@@ -79,7 +79,7 @@ fn drawRow(fonts: Fonts, page: Page, y: u32, e: *const catalog.Entry) !void {
     try draw.clipped(fonts.small, page, style.margin, @intCast(y + 50), e.title, avail);
     if (e.author.len > 0) {
         try draw.clipped(fonts.caption, page, style.margin, @intCast(y + 88), e.author, avail);
-        page.tint(style.margin, y + 64, @intFromFloat(avail), 34, 0x60);
+        page.tint(style.margin, y + 64, @intFromFloat(avail), 34, style.quiet);
     }
     page.fillRect(style.margin, y + row_height - 1, page.width - 2 * style.margin, 1, style.rule);
 }
@@ -91,14 +91,14 @@ pub fn render(fonts: Fonts, page: Page, query: []const u8, entries: []const cata
     try renderBar(fonts, page, top, query, "Title or author", .search);
     if (query.len == 0) {
         try fonts.small.draw(page, style.margin, rows_top + 56, "Find a book by its title or its author.");
-        page.tint(style.margin, rows_top + 20, page.width - 2 * style.margin, 50, 0x60);
+        page.tint(style.margin, rows_top + 20, page.width - 2 * style.margin, 50, style.quiet);
     } else if (matches.len == 0) {
         try fonts.small.draw(page, style.margin, rows_top + 56, "No books match.");
     }
     for (matches, 0..) |m, i| try drawRow(fonts, page, rows_top + @as(u32, @intCast(i)) * row_height, &entries[m]);
     if (more) {
         try fonts.caption.draw(page, style.margin, @intCast(rows_bottom - 12), "Press Search to see them all.");
-        page.tint(style.margin, rows_bottom - 40, page.width - 2 * style.margin, 36, 0x60);
+        page.tint(style.margin, rows_bottom - 40, page.width - 2 * style.margin, 36, style.quiet);
     }
     try keyboard.render(fonts, page);
 }

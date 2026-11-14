@@ -51,7 +51,7 @@ pub fn hit(x: i32, y: i32) ?Key {
 const tray = 0xe2;
 const shadow = 0xa8;
 const special = 0xc4; // Delete and space: a step darker than letters
-const corner = 14;
+const corner = style.key_corner;
 // Drawn a little inside their tap area, so neighbours have a clear gap
 const inset = 3;
 

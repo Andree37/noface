@@ -1,5 +1,6 @@
 //! Reading stats, opened from the library. Any tap goes back.
 const std = @import("std");
+const style = @import("../ui/style.zig");
 const screen = @import("screen.zig");
 const stats_ui = @import("../ui/stats.zig");
 const catalog = @import("../model/catalog.zig");
@@ -60,4 +61,4 @@ const Stats = struct {
     }
 };
 
-const stats_ui_top = 96; // Under the status strip, which stays
+const stats_ui_top = style.status_height; // Under the status strip, which stays

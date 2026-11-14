@@ -19,7 +19,6 @@ fn headerFor(cover: ?Cover) u32 {
 }
 const row_height = 112; // A fingertip and some
 const bottom_pad = 40;
-const corner = 36;
 
 /// One row. Info rows are facts rather than actions, set lighter; a danger row
 /// (removing something) is set bold, so it isn't mistaken for the others.
@@ -75,10 +74,7 @@ pub fn renderWith(fonts: Fonts, page: Page, title: []const u8, subtitle: []const
     page.dim(0, 0, page.width, page.height);
     const h = heightWith(rows.len, cover);
     const sheet_top = style.screen_height - h;
-    // Rounded at the top; the bottom corners run off the screen
-    page.roundRect(0, sheet_top, page.width, h + corner, corner, style.black);
-    page.roundRect(0, sheet_top + 2, page.width, h + corner, corner - 1, style.white);
-    page.roundRect(page.width / 2 - 36, sheet_top + 18, 72, 8, 4, 0xb0); // Grab bar
+    draw.sheet(page, sheet_top);
     var x: f32 = style.margin;
     var title_y: u32 = sheet_top + 92;
     if (cover) |c| {

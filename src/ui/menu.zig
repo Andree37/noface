@@ -1,5 +1,6 @@
 //! Quick panel: drag down from the top of any screen to open it.
 const std = @import("std");
+const style = @import("style.zig");
 const Page = @import("../gfx/page.zig").Page;
 const Font = @import("../gfx/font.zig").Font;
 const Fonts = @import("fonts.zig").Fonts;
@@ -197,7 +198,7 @@ pub fn render(fonts: Fonts, page: Page, quick: *const quick_model.Quick) !void {
         try draw.centered(fonts.small, page, @floatFromInt(s.x), s.y + 92, label(s, quick));
     }
 
-    page.fillRect(40, 560, page.width - 80, 2, 0x80);
+    page.fillRect(40, 560, page.width - 80, 2, style.panel_rule);
     try fonts.small.draw(page, 60, 606, brightness_row.label);
     try drawSlider(fonts, page, brightness_row, quick.brightness, false);
     try fonts.small.draw(page, 60, 776, warmth_row.label);

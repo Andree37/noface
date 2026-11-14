@@ -57,9 +57,22 @@ pub fn wrapped(font: *Font, page: Page, x: f32, y: i32, step: i32, s: []const u8
 
 /// An outlined box with rounded corners, the shape every button and bubble shares.
 pub fn box(page: Page, x: u32, y: u32, w: u32, h: u32) void {
-    const corner: f32 = @floatFromInt(@min(24, h / 2));
+    boxWith(page, x, y, w, h, style.border, @floatFromInt(@min(style.button_corner, h / 2)));
+}
+
+/// A box with an outline `edge` thick and corners of radius `corner`.
+pub fn boxWith(page: Page, x: u32, y: u32, w: u32, h: u32, edge: u32, corner: f32) void {
     page.roundRect(x, y, w, h, corner, style.black);
-    page.roundRect(x + style.border, y + style.border, w - 2 * style.border, h - 2 * style.border, corner - style.border, style.white);
+    page.roundRect(x + edge, y + edge, w - 2 * edge, h - 2 * edge, corner - @as(f32, @floatFromInt(edge)), style.white);
+}
+
+/// A sheet rising from the bottom of the screen from `top`: outlined, rounded at the
+/// top (its bottom corners run off the screen), with a grab bar.
+pub fn sheet(page: Page, top: u32) void {
+    const h = page.height - top;
+    page.roundRect(0, top, page.width, h + style.sheet_corner, style.sheet_corner, style.black);
+    page.roundRect(0, top + 2, page.width, h + style.sheet_corner, style.sheet_corner - 1, style.white);
+    page.roundRect(page.width / 2 - 36, top + 18, 72, 8, 4, style.rule); // Grab bar
 }
 
 pub const Align = enum { left, center };
@@ -107,8 +120,8 @@ pub const Pager = struct {
         page.stroke(next_x - 9, mid - 18, next_x + 9, mid, 4);
         page.stroke(next_x + 9, mid, next_x - 9, mid + 18, 4);
         // Faded when there's nowhere to go.
-        if (index == 0) page.tint(prev_left, p.top, button, p.bottom - p.top, 0xc8);
-        if (index + 1 >= pages) page.tint(next_left, p.top, button, p.bottom - p.top, 0xc8);
+        if (index == 0) page.tint(prev_left, p.top, button, p.bottom - p.top, style.disabled);
+        if (index + 1 >= pages) page.tint(next_left, p.top, button, p.bottom - p.top, style.disabled);
     }
 };
 

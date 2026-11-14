@@ -18,7 +18,7 @@ const gutter = 40;
 const columns = 4;
 const cell_step = cover.width + gutter;
 const row_height = 410;
-pub const status_height = 96; // The clock, battery and Wi-Fi strip along the top
+pub const status_height = style.status_height;
 
 // Page one always leads with the current book, on every tab and sort.
 const hero_top = 112;
@@ -255,7 +255,7 @@ fn drawHero(alloc: std.mem.Allocator, fonts: Fonts, page: Page, e: *catalog.Entr
     const avail: f32 = @floatFromInt(page.width - left_px - margin);
     try fonts.caption.draw(page, left, hero_top + 34, "Continue reading");
     icons.dots(page, @floatFromInt(page.width - margin - 8), hero_top + 24);
-    page.tint(left_px, hero_top + 8, @intFromFloat(avail - 40), 36, 0x60);
+    page.tint(left_px, hero_top + 8, @intFromFloat(avail - 40), 36, style.quiet);
 
     const used = try draw.wrapped(fonts.hero, page, left, hero_top + 104, 66, e.title, avail, 3);
     const author_y: i32 = hero_top + 104 + @as(i32, @intCast(used)) * 66 - 12;
@@ -265,7 +265,7 @@ fn drawHero(alloc: std.mem.Allocator, fonts: Fonts, page: Page, e: *catalog.Entr
     const series = catalog.seriesLabel(&series_buf, e.*);
     const byline = if (series.len == 0) e.author else if (e.author.len == 0) series else std.fmt.bufPrint(&byline_buf, "{s}  \u{b7}  {s}", .{ e.author, series }) catch e.author;
     try draw.clipped(fonts.small, page, left, author_y, byline, avail);
-    page.tint(left_px, @intCast(author_y - 30), @intFromFloat(avail), 44, 0x50);
+    page.tint(left_px, @intCast(author_y - 30), @intFromFloat(avail), 44, style.faded);
     const bar_y = hero_top + cover.hero_height - 40;
     // Under the author (or the title, when there's no author): when it was last read,
     // and how long in noface, so the card says more than the cover does. Only for a
@@ -281,7 +281,7 @@ fn drawHero(alloc: std.mem.Allocator, fonts: Fonts, page: Page, e: *catalog.Entr
             else
                 std.fmt.bufPrint(&line_buf, "Last read {s}", .{when}) catch "";
             try draw.clipped(fonts.caption, page, left, line_y, line, avail);
-            page.tint(left_px, @intCast(line_y - 26), @intFromFloat(avail), 34, 0x50); // Gray, like the author
+            page.tint(left_px, @intCast(line_y - 26), @intFromFloat(avail), 34, style.faded); // Gray, like the author
         }
     }
 
@@ -289,7 +289,7 @@ fn drawHero(alloc: std.mem.Allocator, fonts: Fonts, page: Page, e: *catalog.Entr
     var label: [24]u8 = undefined;
     const pct = std.fmt.bufPrint(&label, "{d}% read", .{e.percent}) catch "";
     try fonts.caption.draw(page, left, bar_y + 42, pct);
-    page.tint(left_px, bar_y + 16, @intFromFloat(avail), 34, 0x50);
+    page.tint(left_px, bar_y + 16, @intFromFloat(avail), 34, style.faded);
 }
 
 fn drawCell(alloc: std.mem.Allocator, fonts: Fonts, page: Page, e: *catalog.Entry, x: u32, y: u32) !void {
@@ -297,7 +297,7 @@ fn drawCell(alloc: std.mem.Allocator, fonts: Fonts, page: Page, e: *catalog.Entr
     const bar_y = y + cover.height + 8;
     const title_width: f32 = cover.width;
     if (!e.isLocal()) {
-        page.tint(x, y, cover.width, cover.height, 0xa0);
+        page.tint(x, y, cover.width, cover.height, style.finished_cover);
         icons.cloud(page, @floatFromInt(x + cover.width - 38), @floatFromInt(y + cover.height - 38));
         const label = if (e.availability == .downloading) "Downloading" else e.title;
         _ = try draw.wrapped(fonts.caption, page, @floatFromInt(x), @intCast(bar_y + 34), 30, label, title_width, 1);
@@ -330,7 +330,7 @@ fn drawSearchHeader(fonts: Fonts, page: Page, query: []const u8, found: usize) !
     const left: f32 = margin;
     const avail: f32 = @floatFromInt(page.width - 2 * margin);
     try fonts.caption.draw(page, left, hero_top + 34, "Search results");
-    page.tint(margin, hero_top + 8, @intFromFloat(avail), 36, 0x60);
+    page.tint(margin, hero_top + 8, @intFromFloat(avail), 36, style.quiet);
     var quoted: [80]u8 = undefined;
     const shown = std.fmt.bufPrint(&quoted, "\u{201c}{s}\u{201d}", .{query}) catch query;
     try draw.clipped(fonts.hero, page, left, hero_top + 120, shown, avail);

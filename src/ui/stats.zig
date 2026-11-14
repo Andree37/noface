@@ -24,7 +24,7 @@ pub const Summary = struct {
     in_progress: usize = 0,
 };
 
-const header_top = 96;
+const header_top = style.status_height;
 const back_height = 110; // The whole strip under the status bar takes you back
 const title_y = header_top + back_height + 70;
 const tiles_top = title_y + 60;
@@ -37,7 +37,7 @@ const rows_top = day_label_y + 50;
 const row_height = 112;
 
 const bar_width = 56; // Thin bars with air between, rounded at the top only
-const bar_corner = 10;
+const bar_corner = style.bar_corner;
 
 pub fn isBack(y: i32) bool {
     return y >= header_top and y < header_top + back_height;

@@ -1,5 +1,6 @@
 //! Note popup, anchored to the bottom of the page.
 const std = @import("std");
+const style = @import("style.zig");
 const Page = @import("../gfx/page.zig").Page;
 const Font = @import("../gfx/font.zig").Font;
 const book_model = @import("../model/book.zig");
@@ -44,5 +45,5 @@ pub fn render(font: *Font, fonts: Fonts, panel: Page, parts: []const book_model.
     try fonts.title.draw(panel, margin, 62, "Note");
     const right: f32 = @floatFromInt(panel.width - margin);
     try fonts.small.draw(panel, right - 110, 62, if (more) "More >" else "Close");
-    panel.fillRect(margin, header, panel.width - 2 * margin, 2, 0xa0);
+    panel.fillRect(margin, header, panel.width - 2 * margin, 2, style.note_rule);
 }

@@ -207,9 +207,7 @@ fn drawThemes(fonts: Fonts, page: Page, chosen: settings_model.Settings) !void {
         any = any or active;
         // Rounded tiles; the one in use has a thick edge and a tick in its corner
         const edge: u32 = if (active) 6 else 2;
-        const corner = 24;
-        page.roundRect(left, theme_top, theme_width, theme_height, corner, 0x00);
-        page.roundRect(left + edge, theme_top + edge, theme_width - 2 * edge, theme_height - 2 * edge, corner - @as(f32, @floatFromInt(edge)), 0xff);
+        draw.boxWith(page, left, theme_top, theme_width, theme_height, edge, style.button_corner);
         if (active) icons.check(page, @floatFromInt(left + theme_width - 38), theme_top + 38);
         // Text lines drawn to scale, so the choice shows rather than tells.
         const gap: u32 = 16 + @as(u32, @intCast(t.spacing)) * 8;
@@ -217,7 +215,7 @@ fn drawThemes(fonts: Fonts, page: Page, chosen: settings_model.Settings) !void {
         const thick: u32 = 5 + @as(u32, @intCast(t.size));
         var y: u32 = theme_top + 44;
         while (y < theme_top + 204) : (y += gap + thick) {
-            page.fillRect(left + inset, y, theme_width - 2 * inset, thick, 0x60);
+            page.fillRect(left + inset, y, theme_width - 2 * inset, thick, style.quiet);
         }
         try draw.centered(fonts.small, page, @floatFromInt(left + theme_width / 2), theme_top + 264, t.label);
     }

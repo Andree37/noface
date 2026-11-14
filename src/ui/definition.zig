@@ -10,7 +10,6 @@ const Fonts = @import("fonts.zig").Fonts;
 
 pub const height = 860;
 pub const top = style.screen_height - height;
-const corner = 36;
 const number_width = 44; // Room for "1" before a sense, so its lines hang together
 const line_step = 46;
 const actions_top = style.screen_height - 150;
@@ -99,9 +98,7 @@ const Writer = struct {
 /// Draws the sheet over `page`, which holds the book page; that gets dimmed.
 pub fn render(fonts: Fonts, page: Page, found: Found) !void {
     page.dim(0, 0, page.width, top);
-    page.roundRect(0, top, page.width, height + corner, corner, style.black);
-    page.roundRect(0, top + 2, page.width, height + corner, corner - 1, style.white);
-    page.roundRect(page.width / 2 - 36, top + 18, 72, 8, 4, 0xb0); // Grab bar
+    draw.sheet(page, top);
     const avail: f32 = @floatFromInt(page.width - 2 * style.margin);
 
     const shown = if (found.entry) |e| e.word else found.word;

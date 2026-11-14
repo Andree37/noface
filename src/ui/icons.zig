@@ -1,5 +1,6 @@
 //! Panel icons, drawn as smooth vector shapes.
 const std = @import("std");
+const style = @import("style.zig");
 const Page = @import("../gfx/page.zig").Page;
 const Font = @import("../gfx/font.zig").Font;
 const text = @import("../layout/text.zig");
@@ -247,7 +248,7 @@ pub fn cloud(page: Page, cx: f32, cy: f32) void {
 
 /// Highlight: a marker pen at a slant over the gray stroke it leaves.
 pub fn highlighter(page: Page, cx: f32, cy: f32) void {
-    page.pill(cx - 16, cx + 16, cy + 16, 6, 0xb0); // The stroke
+    page.pill(cx - 16, cx + 16, cy + 16, 6, style.rule); // The stroke
     // The pen: a slanted body with a chisel tip touching the stroke
     const body = [_][2]f32{
         .{ cx - 8, cy + 6 }, .{ cx + 10, cy - 14 }, .{ cx + 18, cy - 7 }, .{ cx, cy + 13 },

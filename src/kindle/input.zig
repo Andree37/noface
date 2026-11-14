@@ -259,6 +259,18 @@ pub const Input = struct {
         in.grip_exempt = was.grip_exempt;
     }
 
+    /// Keeps `action` back, for the next call to `next`: for a screen that ends because
+    /// of it, so the one underneath acts on it in turn.
+    pub fn holdBack(in: *Input, action: Action) void {
+        in.stashed = action;
+    }
+
+    /// An action kept back for the next call to `next`, if any: a lock or a stop that
+    /// closed a screen, or something that turned up while a drag was being followed.
+    pub fn heldBack(in: *const Input) ?Action {
+        return in.stashed;
+    }
+
     /// For a screen of its own (a sheet, a list, a card): the next action, or null when
     /// the Kindle locks or noface is told to leave. That action is kept for the loop
     /// underneath, and the screen should close.

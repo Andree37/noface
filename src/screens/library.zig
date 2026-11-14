@@ -326,7 +326,7 @@ pub fn runLibrary(a: *app.App) !void {
     // Started while the Kindle is locked: the "going to lock" event has passed, so
     // show the lock screen now, as if it had just arrived. Otherwise the library
     // would sit under a locked Kindle with touch switched off.
-    if (lipc.inScreenSaver() == true) a.input.stashed = .lock;
+    if (lipc.inScreenSaver() == true) a.input.holdBack(.lock);
     a.quick = lipc.read(a.quick); // Once up front, so the first screen never shows blanks
     try b.run();
 }

@@ -146,11 +146,12 @@ pub fn panelControl(a: *app.App, background: []const u8, choice: menu.Hit, x: i3
 /// The quick panel over the library. Returns true to quit to the stock UI.
 pub fn libraryMenu(a: *app.App, background: []const u8) !bool {
     var panel = LibraryPanel{ .a = a, .background = background };
-    if (try screen.run(a, &panel)) |_| return true;
-    // Closed, or the Kindle locking: the library comes back from under it. Leaving
-    // noface, it doesn't need to.
-    const leaving = if (a.input.stashed) |act| act != .lock else false;
-    if (!leaving) try closeMenu(a, background);
+    switch (try screen.runToEnd(a, &panel)) {
+        .done => return true,
+        // Closed, or the Kindle locking: the library comes back from under it
+        .closed => try closeMenu(a, background),
+        .interrupted => |action| if (action == .lock) try closeMenu(a, background), // Leaving noface: it needn't
+    }
     return false;
 }
 

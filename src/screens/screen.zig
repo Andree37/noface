@@ -26,6 +26,7 @@
 //! step asks for. When the Kindle locks or noface is told to leave, the screen closes
 //! (`run` returns null) and the action is kept for the screen underneath, so it locks
 //! or leaves in turn. Touch modes and the tick are put back as they were either way.
+//! A caller that must tell "closed" from "locked or leaving" uses `runToEnd`.
 const std = @import("std");
 const app = @import("../app.zig");
 const input_mod = @import("../kindle/input.zig");
@@ -66,8 +67,25 @@ fn check(comptime S: type) void {
     if (@hasDecl(S, "touches") and @TypeOf(S.touches) != input_mod.Input.Modes) @compileError(name ++ ": `touches` is an Input.Modes");
 }
 
+/// How a screen ended.
+pub fn Ending(comptime Result: type) type {
+    return union(enum) {
+        done: Result, // Finished, with this result
+        closed, // Cancelled, or tapped outside it
+        interrupted: Action, // The Kindle locked, or noface was told to leave: kept for the screen underneath
+    };
+}
+
 /// Runs screen `s` until it's done (its result), or closes or the Kindle locks (null).
 pub fn run(a: *app.App, s: anytype) !?@TypeOf(s.*).Result {
+    return switch (try runToEnd(a, s)) {
+        .done => |result| result,
+        .closed, .interrupted => null,
+    };
+}
+
+/// Runs screen `s`, saying how it ended.
+pub fn runToEnd(a: *app.App, s: anytype) !Ending(@TypeOf(s.*).Result) {
     const S = @TypeOf(s.*);
     comptime check(S);
     const was = a.input.enter(if (@hasDecl(S, "touches")) S.touches else a.input.modes(), if (@hasDecl(S, "tick_us")) S.tick_us else 0);
@@ -77,7 +95,7 @@ pub fn run(a: *app.App, s: anytype) !?@TypeOf(s.*).Result {
     while (true) {
         if (part) |p| try s.draw(p);
         part = null;
-        const action = a.input.nextFor() orelse return null; // Locked, or leaving
+        const action = a.input.nextFor() orelse return .{ .interrupted = a.input.heldBack().? }; // Locked, or leaving
         const step: Step(S.Result) = switch (action) {
             .tap => |t| try s.onTap(t),
             .tick => if (@hasDecl(S, "onTick")) try s.onTick() else .stay,
@@ -86,8 +104,8 @@ pub fn run(a: *app.App, s: anytype) !?@TypeOf(s.*).Result {
         switch (step) {
             .stay => {},
             .redraw => |p| part = p,
-            .done => |result| return result,
-            .close => return null,
+            .done => |result| return .{ .done = result },
+            .close => return .closed,
         }
     }
 }
@@ -135,5 +153,5 @@ test "a screen draws whole, takes taps until done, and gives back its result" {
     script = .{ .steps = &none };
     e = .{};
     try std.testing.expect(try run(&a, &e) == null);
-    try std.testing.expect(input.stashed.? == .stop);
+    try std.testing.expect(input.heldBack().? == .stop);
 }

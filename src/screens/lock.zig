@@ -74,7 +74,7 @@ pub fn lockScreen(a: *app.App, entry: ?*const catalog.Entry, options: Options) W
             .unlock => break,
             .computer, .stop => {
                 // Leaving: no point lighting up the old screen first
-                a.input.stashed = action;
+                a.input.holdBack(action);
                 return .leaving;
             },
             else => {},

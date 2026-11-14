@@ -149,7 +149,7 @@ fn afterTap(a: *app.App, x: i32, y: i32) After {
         .tick => return .nothing, // No second tap in time
         .tap => |t| {
             if (@abs(t.x - x) <= double_tap_reach and @abs(t.y - y) <= double_tap_reach) return followSecondTap(a, t);
-            a.input.stashed = action;
+            a.input.holdBack(action);
             return .other_tap;
         },
         else => {},
@@ -202,7 +202,7 @@ const Viewer = struct {
         a.input.beginDrag();
         var follow = Follow{ .a = a, .v = v, .x0 = t.x, .y0 = t.y, .start_cx = v.cx, .start_cy = v.cy };
         _ = try app.followDrag(a, null, &follow);
-        if (a.input.stashed != null) return .close; // Locked, or leaving
+        if (a.input.heldBack() != null) return .close; // Locked, leaving, or another touch came in
         if (follow.panned) return if (v.step > 0) .{ .redraw = .all } else .stay; // Its grays back
         // Closing on the lift, so a drag that starts by the button still pans
         if (onClose(t.x, t.y)) return .close;

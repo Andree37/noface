@@ -62,11 +62,17 @@ const Key = struct { id: u32, kind: u32 };
 const MapRow = struct { delta: u32, element: ?u32 };
 
 fn read_map_row(row: ion.Value) ?MapRow {
-    if (row.unsigned()) |delta| return .{ .delta = @intCast(delta), .element = null };
+    // Numbers past 32 bits can only come from a broken book: skip the row.
+    if (row.unsigned()) |delta| {
+        return .{ .delta = std.math.cast(u32, delta) orelse return null, .element = null };
+    }
     var fields = row.items();
     const delta = (fields.next() orelse return null).unsigned() orelse return null;
     const element = (fields.next() orelse return null).unsigned() orelse return null;
-    return .{ .delta = @intCast(delta), .element = @intCast(element) };
+    return .{
+        .delta = std.math.cast(u32, delta) orelse return null,
+        .element = std.math.cast(u32, element) orelse return null,
+    };
 }
 
 /// A section's position map is delta encoded. Each row moves the position on, and
@@ -78,8 +84,9 @@ const MapWalker = struct {
     const At = struct { position: u32, element: u32 };
 
     fn next(w: *MapWalker, row: MapRow) At {
-        w.position += row.delta;
-        w.element = row.element orelse w.element + 1;
+        // A broken book's deltas could run past 32 bits: stop at the end, don't crash.
+        w.position +|= row.delta;
+        w.element = row.element orelse w.element +| 1;
         return .{ .position = w.position, .element = w.element };
     }
 };
@@ -116,7 +123,9 @@ const Parser = struct {
             if (raw.len < 10 or !std.mem.eql(u8, raw[0..4], "ENTY")) continue;
             const hdr = std.mem.readInt(u32, raw[6..10], .little);
             if (hdr >= raw.len or width == 0 or height == 0) continue;
-            try p.images.put(p.alloc, r, .{ .data = raw[hdr..], .width = @intCast(width), .height = @intCast(height) });
+            const width_px = std.math.cast(u32, width) orelse continue;
+            const height_px = std.math.cast(u32, height) orelse continue;
+            try p.images.put(p.alloc, r, .{ .data = raw[hdr..], .width = width_px, .height = height_px });
         }
     }
 
@@ -146,7 +155,8 @@ const Parser = struct {
                 const section = (row.get(f_section_name) orelse continue).symbol() orelse continue;
                 const start = (row.get(f_section_start) orelse continue).unsigned() orelse continue;
                 const map = p.entity(section, t_section_map) orelse continue;
-                var walker = MapWalker{ .position = @intCast(start) };
+                const start_position = std.math.cast(u32, start) orelse continue;
+                var walker = MapWalker{ .position = start_position };
                 var rows_in_map = (map.get(f_position_rows) orelse continue).items();
                 while (rows_in_map.next()) |row_in_map| {
                     const step = read_map_row(row_in_map) orelse continue;
@@ -175,7 +185,7 @@ const Parser = struct {
                 const length = (event.get(f_event_length) orelse continue).unsigned() orelse continue;
                 if (look.bold or look.italic) try runs.append(p.alloc, .{
                     .start = @intCast(book.byte_offset(text, offset)),
-                    .end = @intCast(book.byte_offset(text, offset + length)),
+                    .end = @intCast(book.byte_offset(text, offset +| length)),
                     .bold = look.bold,
                     .italic = look.italic,
                 });
@@ -186,7 +196,7 @@ const Parser = struct {
             try p.raw_links.append(p.alloc, .{
                 .para = para,
                 .start = book.byte_offset(text, offset),
-                .end = book.byte_offset(text, offset + length),
+                .end = book.byte_offset(text, offset +| length),
                 .anchor = anchor,
             });
         }
@@ -302,7 +312,9 @@ const Parser = struct {
             if (try p.add_content(ref, style)) {
                 const para: u32 = @intCast(p.paragraphs.items.len - 1);
                 p.paragraphs.items[para].section = p.section;
-                if (item.get(f_id)) |id| p.paragraphs.items[para].element = @intCast(id.int);
+                if (item.get(f_id)) |id| {
+                    p.paragraphs.items[para].element = std.math.cast(u32, id.int) orelse 0;
+                }
                 try p.collect_links(item, para, p.paragraphs.items[para].text);
             } else p.missing += 1;
         }
@@ -605,6 +617,14 @@ test "position map finds element 80 where the Kindle stored it" {
     for (rows) |r| last = walker.next(r);
     try std.testing.expectEqual(@as(u32, 80), last.element);
     try std.testing.expectEqual(@as(u32, 377338), last.position);
+}
+
+test "numbers too large for a position are skipped, not a crash" {
+    try std.testing.expect(read_map_row(.{ .kind = .uint, .int = 1 << 40 }) == null);
+    var walker = MapWalker{ .position = std.math.maxInt(u32) - 1, .element = std.math.maxInt(u32) };
+    const at = walker.next(.{ .delta = 5, .element = null });
+    try std.testing.expectEqual(@as(u32, std.math.maxInt(u32)), at.position);
+    try std.testing.expectEqual(@as(u32, std.math.maxInt(u32)), at.element);
 }
 
 test "a book cut short is not complete" {

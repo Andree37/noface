@@ -3,6 +3,7 @@
 //! the simulator (sim.zig) and the scenario tests (scenarios.zig) all start here, so
 //! a size or margin changed here changes in all three.
 const std = @import("std");
+const assert = std.debug.assert;
 const app = @import("app.zig");
 const paths = @import("kindle/paths.zig");
 const memory = @import("base/memory.zig");
@@ -32,35 +33,50 @@ pub const Kit = struct {
     hero: Font,
     cover_type: Font,
 
-    pub fn init(alloc: std.mem.Allocator, f: FontFiles) !Kit {
-        return .{
-            .body = try Font.init(alloc, f.book, 46, 1.35),
-            .note_font = try Font.init(alloc, f.book, 36, 1.3),
-            .footer = try Font.init(alloc, f.ui, 28, 1.2),
-            .reference = try Font.init(alloc, f.book, 28, 1.2),
-            .title = try Font.init(alloc, f.ui_bold, 34, 1.2),
-            .small = try Font.init(alloc, f.ui, 34, 1.2),
-            .caption = try Font.init(alloc, f.ui, 26, 1.2),
-            .hero = try Font.init(alloc, f.book_bold, 56, 1.2),
-            .cover_type = try Font.init(alloc, f.book_bold, 36, 1.2),
+    pub fn init(alloc: std.mem.Allocator, files: FontFiles) !Kit {
+        const kit: Kit = .{
+            .body = try Font.init(alloc, files.book, 46, 1.35),
+            .note_font = try Font.init(alloc, files.book, 36, 1.3),
+            .footer = try Font.init(alloc, files.ui, 28, 1.2),
+            .reference = try Font.init(alloc, files.book, 28, 1.2),
+            .title = try Font.init(alloc, files.ui_bold, 34, 1.2),
+            .small = try Font.init(alloc, files.ui, 34, 1.2),
+            .caption = try Font.init(alloc, files.ui, 26, 1.2),
+            .hero = try Font.init(alloc, files.book_bold, 56, 1.2),
+            .cover_type = try Font.init(alloc, files.book_bold, 36, 1.2),
         };
+        // Line heights come from the sizes above: a note sets smaller than the page,
+        // and the footer smaller still
+        assert(kit.note_font.line_height < kit.body.line_height);
+        assert(kit.footer.line_height < kit.note_font.line_height);
+        return kit;
     }
 };
 
 /// The files an App keeps in its data folder, by full path.
 pub const DataFiles = struct {
-    bufs: [4][320]u8 = undefined,
+    buffers: [4][320]u8 = undefined,
     settings: [:0]const u8 = "",
     speed: [:0]const u8 = "",
     journal: [:0]const u8 = "",
     battery: [:0]const u8 = "",
 
-    /// Fills in the paths for data folder `dir`. `d` must stay where it is after.
-    pub fn init(d: *DataFiles, dir: []const u8) !void {
-        d.settings = try std.fmt.bufPrintSentinel(&d.bufs[0], "{s}/" ++ paths.data.settings, .{dir}, 0);
-        d.speed = try std.fmt.bufPrintSentinel(&d.bufs[1], "{s}/" ++ paths.data.speed, .{dir}, 0);
-        d.journal = try std.fmt.bufPrintSentinel(&d.bufs[2], "{s}/" ++ paths.data.journal, .{dir}, 0);
-        d.battery = try std.fmt.bufPrintSentinel(&d.bufs[3], "{s}/" ++ paths.data.battery, .{dir}, 0);
+    /// Fills in the paths for data folder `dir`. `files` must stay where it is after.
+    pub fn init(files: *DataFiles, dir: []const u8) !void {
+        assert(files.settings.len == 0); // Filled in once
+        files.settings = try init_path(&files.buffers[0], dir, paths.data.settings);
+        files.speed = try init_path(&files.buffers[1], dir, paths.data.speed);
+        files.journal = try init_path(&files.buffers[2], dir, paths.data.journal);
+        files.battery = try init_path(&files.buffers[3], dir, paths.data.battery);
+        // Each in its own buffer, so none overwrites another
+        assert(files.settings.ptr != files.battery.ptr);
+    }
+
+    fn init_path(buffer: []u8, dir: []const u8, comptime name: []const u8) ![:0]const u8 {
+        const path = try std.fmt.bufPrintSentinel(buffer, "{s}/" ++ name, .{dir}, 0);
+        assert(std.mem.endsWith(u8, path, name));
+        assert(path.len > name.len); // The folder, then the name
+        return path;
     }
 };
 
@@ -83,8 +99,24 @@ pub const Parts = struct {
 pub fn assemble(p: Parts) !app.App {
     const k = p.kit;
     const pixels = p.screen.pixels.len;
+    assert(pixels > 0);
+    assert(p.files.settings.len > 0); // DataFiles.init ran
     var slots: [3]app.Slot = undefined;
     for (&slots) |*s| s.* = .{ .buf = try p.alloc.alloc(u8, pixels) };
+    const ui = Fonts{
+        .title = &k.title,
+        .small = &k.small,
+        .caption = &k.caption,
+        .hero = &k.hero,
+        .cover = &k.cover_type,
+    };
+    const layout: text.Layout = .{
+        .margin_x = 100,
+        .margin_top = 90,
+        .margin_bottom = 150,
+        .indent = 60,
+        .reference = &k.reference,
+    };
     return .{
         .alloc = p.alloc,
         .app_budget = p.app_budget,
@@ -94,7 +126,7 @@ pub fn assemble(p: Parts) !app.App {
         .body = &k.body,
         .note_font = &k.note_font,
         .footer = &k.footer,
-        .ui = Fonts{ .title = &k.title, .small = &k.small, .caption = &k.caption, .hero = &k.hero, .cover = &k.cover_type },
+        .ui = ui,
         .slots = slots,
         .overlay = try p.alloc.alloc(u8, pixels),
         .lock_saved = try p.alloc.alloc(u8, pixels),
@@ -109,6 +141,6 @@ pub fn assemble(p: Parts) !app.App {
         .speed = app.load_speed(p.files.speed),
         .journal = app.load_journal(p.files.journal),
         .utc_offset = 0,
-        .layout = .{ .margin_x = 100, .margin_top = 90, .margin_bottom = 150, .indent = 60, .reference = &k.reference },
+        .layout = layout,
     };
 }

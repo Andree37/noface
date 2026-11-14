@@ -90,7 +90,7 @@ fn read_package(alloc: std.mem.Allocator, files: []const zip.Entry) !Package {
     var t = xml.Tokenizer{ .data = container };
     while (t.next()) |tok| {
         if (tok == .open and std.mem.eql(u8, tok.open.name, "rootfile")) {
-            path = xml.attr(tok.open.attrs, "full-path");
+            path = xml.attribute(tok.open.attributes, "full-path");
             break;
         }
     }
@@ -106,20 +106,23 @@ fn read_package(alloc: std.mem.Allocator, files: []const zip.Entry) !Package {
         if (std.mem.eql(u8, o.name, "title") and p.title.len == 0) p.title = try text_of(alloc, &t, "title");
         if (std.mem.eql(u8, o.name, "creator") and p.author.len == 0) p.author = try text_of(alloc, &t, "creator");
         if (std.mem.eql(u8, o.name, "item")) try items.append(alloc, .{
-            .id = xml.attr(o.attrs, "id") orelse "",
-            .href = xml.attr(o.attrs, "href") orelse "",
-            .media = xml.attr(o.attrs, "media-type") orelse "",
-            .properties = xml.attr(o.attrs, "properties") orelse "",
+            .id = xml.attribute(o.attributes, "id") orelse "",
+            .href = xml.attribute(o.attributes, "href") orelse "",
+            .media = xml.attribute(o.attributes, "media-type") orelse "",
+            .properties = xml.attribute(o.attributes, "properties") orelse "",
         });
         if (std.mem.eql(u8, o.name, "itemref")) {
-            if (xml.attr(o.attrs, "idref")) |id| try spine.append(alloc, id);
+            if (xml.attribute(o.attributes, "idref")) |id| try spine.append(alloc, id);
         }
-        if (std.mem.eql(u8, o.name, "spine")) p.toc_ncx = xml.attr(o.attrs, "toc");
+        if (std.mem.eql(u8, o.name, "spine")) p.toc_ncx = xml.attribute(o.attributes, "toc");
         if (std.mem.eql(u8, o.name, "meta")) {
-            const name = xml.attr(o.attrs, "name") orelse "";
-            if (std.mem.eql(u8, name, "cover")) p.cover_id = xml.attr(o.attrs, "content");
-            if (std.mem.eql(u8, name, "calibre:series")) p.series = xml.attr(o.attrs, "content") orelse "";
-            if (std.mem.eql(u8, name, "calibre:series_index")) p.series_index = std.fmt.parseFloat(f32, xml.attr(o.attrs, "content") orelse "") catch 0;
+            const name = xml.attribute(o.attributes, "name") orelse "";
+            const content = xml.attribute(o.attributes, "content");
+            if (std.mem.eql(u8, name, "cover")) p.cover_id = content;
+            if (std.mem.eql(u8, name, "calibre:series")) p.series = content orelse "";
+            if (std.mem.eql(u8, name, "calibre:series_index")) {
+                p.series_index = std.fmt.parseFloat(f32, content orelse "") catch 0;
+            }
         }
     }
     p.items = items.items;
@@ -285,13 +288,13 @@ const Builder = struct {
             b.skipping = tag.name;
             return;
         }
-        if (xml.attr(tag.attrs, "id")) |id| try b.note_anchor(id);
+        if (xml.attribute(tag.attributes, "id")) |id| try b.note_anchor(id);
         if (is_block(tag.name)) try b.start_block(tag.name);
         if (eql_any(tag.name, &.{ "b", "strong" })) try b.nest_style(&b.bold, .in);
         if (eql_any(tag.name, &.{ "i", "em", "cite" })) try b.nest_style(&b.italic, .in);
         if (std.mem.eql(u8, tag.name, "a")) b.start_link(tag);
         if (eql_any(tag.name, &.{ "img", "image" })) {
-            const src = xml.attr(tag.attrs, "src") orelse xml.attr(tag.attrs, "href") orelse return;
+            const src = xml.attribute(tag.attributes, "src") orelse xml.attribute(tag.attributes, "href") orelse return;
             try b.add_picture(b.dir, src);
         }
     }
@@ -335,7 +338,7 @@ const Builder = struct {
 
     /// A link within the book (not to the web) starts here.
     fn start_link(b: *Builder, tag: xml.Tag) void {
-        const href = xml.attr(tag.attrs, "href") orelse return;
+        const href = xml.attribute(tag.attributes, "href") orelse return;
         if (href.len == 0) return; // Nowhere to go, and `end_link` reads its first byte
         if (std.mem.indexOf(u8, href, "://") != null) return;
         b.link_start = b.text.items.len;
@@ -384,11 +387,11 @@ fn read_contents(alloc: std.mem.Allocator, files: []const zip.Entry, p: Package,
         var depth: u8 = 0;
         while (t.next()) |tok| switch (tok) {
             .open => |o| {
-                if (std.mem.eql(u8, o.name, "nav")) in_toc = std.mem.indexOf(u8, xml.attr(o.attrs, "type") orelse "", "toc") != null;
+                if (std.mem.eql(u8, o.name, "nav")) in_toc = std.mem.indexOf(u8, xml.attribute(o.attributes, "type") orelse "", "toc") != null;
                 if (!in_toc) continue;
                 if (std.mem.eql(u8, o.name, "ol")) depth +|= 1;
                 if (std.mem.eql(u8, o.name, "a")) {
-                    const href = xml.attr(o.attrs, "href") orelse continue;
+                    const href = xml.attribute(o.attributes, "href") orelse continue;
                     const title = try text_of(alloc, &t, "a");
                     if (try anchor_for(alloc, dir, href, anchors)) |para| try out.append(alloc, .{ .title = title, .para = para, .depth = depth -| 1 });
                 }
@@ -414,7 +417,7 @@ fn read_contents(alloc: std.mem.Allocator, files: []const zip.Entry, p: Package,
             if (std.mem.eql(u8, o.name, "navPoint")) depth +|= 1;
             if (std.mem.eql(u8, o.name, "text")) title = try text_of(alloc, &t, "text");
             if (std.mem.eql(u8, o.name, "content")) {
-                const src = xml.attr(o.attrs, "src") orelse continue;
+                const src = xml.attribute(o.attributes, "src") orelse continue;
                 if (try anchor_for(alloc, dir, src, anchors)) |para| try out.append(alloc, .{ .title = title, .para = para, .depth = depth -| 1 });
             }
         },

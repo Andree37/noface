@@ -35,11 +35,10 @@ fn decodable(width: u64, height: u64) bool {
 
 fn decode(alloc: std.mem.Allocator, img: book_model.Image) ?image.Gray {
     if (!decodable(img.width, img.height)) return null;
-    if (jpegxr.is_jpeg_xr(img.data)) {
-        const g = jpegxr.decode_jpeg_xr(alloc, img.data, img.width, img.height) orelse return null;
-        return .{ .pixels = g.pixels, .width = g.width, .height = g.height };
-    }
-    const g = image.decode_gray(alloc, img.data) orelse return null;
+    const g: image.Gray = if (jpegxr.is_jpeg_xr(img.data)) blk: {
+        const x = jpegxr.decode_jpeg_xr(alloc, img.data, img.width, img.height) orelse return null;
+        break :blk .{ .pixels = x.pixels, .width = x.width, .height = x.height };
+    } else image.decode_gray(alloc, img.data) orelse return null;
     if (!decodable(g.width, g.height)) return null;
     return g;
 }

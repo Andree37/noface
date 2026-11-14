@@ -182,8 +182,10 @@ fn run_all_read(
         fds_count += 1;
     }
     if (fds_count == 0) return false;
-    const wait_ms: i32 = @intCast((deadline - os.now_us()) / 1000 + 1);
-    const waited = linux.poll(&fds, fds_count, wait_ms);
+    // The deadline may have passed since the caller looked: then the wait is over
+    const now = os.now_us();
+    if (now >= deadline) return false;
+    const waited = linux.poll(&fds, fds_count, @intCast((deadline - now) / 1000 + 1));
     if (failed(waited)) return true; // Interrupted by a signal
     if (waited == 0) return false;
     for (fds[0..fds_count], which[0..fds_count]) |f, index| {

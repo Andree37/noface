@@ -1,5 +1,10 @@
 # Developing noface
 
+## Style
+
+noface follows Tiger Style, checked by `zig build check`: see
+[TIGER_STYLE.md](TIGER_STYLE.md).
+
 ## Building
 
 Needs [Zig](https://ziglang.org) 0.17.

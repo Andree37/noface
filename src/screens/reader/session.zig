@@ -375,7 +375,15 @@ pub fn saveProgress(entry: *catalog.Entry, path: [*:0]const u8, s: *Session) voi
     // While a first open is laid out, the page count isn't known: keep the last percent
     const percent: u32 = if (s.progress != null) entry.percent else @intCast((s.current + 1) * 100 / s.pages.len);
     const now = unixTime();
-    state.save(path, .{ .para = book_model.textIndex(s.paragraphs, pos.para), .byte = pos.byte, .percent = percent, .opened = now, .seconds = seconds, .finished = entry.finished });
+    // Changed in place, so anything else kept with the place is kept too
+    var saved = state.load(path);
+    saved.para = book_model.textIndex(s.paragraphs, pos.para);
+    saved.byte = pos.byte;
+    saved.percent = percent;
+    saved.opened = now;
+    saved.seconds = seconds;
+    saved.finished = entry.finished;
+    state.save(path, saved);
     app.saveSpeed(s.app);
     app.saveJournal(s.app);
     entry.percent = percent;

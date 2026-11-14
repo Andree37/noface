@@ -43,20 +43,51 @@ pub fn sibling(buf: []u8, state_path: []const u8, kind: []const u8) ![:0]u8 {
     return std.fmt.bufPrintSentinel(buf, "{s}/{s}-{s}", .{ dir, kind, name["state-".len..] }, 0);
 }
 
+/// Reads a state file. Each value is on a line of its own, by name ("percent 37"), so a
+/// value added later is simply missing from older files and reads as its default.
+/// Files from before that are numbers in a row, in the order of `old_order`.
 pub fn parse(content: []const u8) State {
+    const first = std.mem.trimStart(u8, content, " \n");
+    if (first.len > 0 and std.ascii.isDigit(first[0])) return parseOld(content);
+    var s = State{};
+    var lines = std.mem.tokenizeScalar(u8, content, '\n');
+    while (lines.next()) |line| {
+        var words = std.mem.tokenizeScalar(u8, line, ' ');
+        const name = words.next() orelse continue;
+        const value = words.next() orelse continue;
+        inline for (@typeInfo(State).@"struct".field_names) |field| {
+            if (std.mem.eql(u8, name, field)) @field(s, field) = readValue(@TypeOf(@field(s, field)), value) orelse @field(s, field);
+        }
+    }
+    return s;
+}
+
+fn readValue(comptime T: type, text: []const u8) ?T {
+    return switch (T) {
+        bool => std.mem.eql(u8, text, "1"),
+        ?u32 => std.fmt.parseInt(u32, text, 10) catch null,
+        else => std.fmt.parseInt(T, text, 10) catch null,
+    };
+}
+
+/// The order of the values in files from before they were named.
+const old_order = [_][]const u8{ "para", "byte", "percent", "opened", "seconds", "finished" };
+
+fn parseOld(content: []const u8) State {
     var it = std.mem.tokenizeAny(u8, content, " \n");
     var s = State{};
-    s.para = std.fmt.parseInt(usize, it.next() orelse return .{}, 10) catch return .{};
-    s.byte = std.fmt.parseInt(usize, it.next() orelse return .{}, 10) catch return .{};
-    s.percent = if (it.next()) |p| std.fmt.parseInt(u32, p, 10) catch null else null;
-    s.opened = if (it.next()) |o| std.fmt.parseInt(u64, o, 10) catch 0 else 0;
-    s.seconds = if (it.next()) |o| std.fmt.parseInt(u64, o, 10) catch 0 else 0;
-    s.finished = if (it.next()) |f| std.mem.eql(u8, f, "1") else false;
+    inline for (old_order, 0..) |field, i| {
+        const word = it.next() orelse return if (i < 2) .{} else s;
+        const value = readValue(@TypeOf(@field(s, field)), word);
+        // Place and byte are the least a file holds: without them it's not one
+        if (value == null and i < 2) return .{};
+        if (value) |v| @field(s, field) = v;
+    }
     return s;
 }
 
 pub fn load(path: [*:0]const u8) State {
-    var buf: [128]u8 = undefined;
+    var buf: [256]u8 = undefined;
     return parse(readSmall(path, &buf));
 }
 
@@ -84,10 +115,19 @@ pub fn writeSmall(path: [*:0]const u8, data: []const u8) void {
     _ = linux.rename(tmp_path, path);
 }
 
+/// Writes every value of `s`, by name, one a line.
 pub fn save(path: [*:0]const u8, s: State) void {
-    var buf: [128]u8 = undefined;
-    const line = std.fmt.bufPrint(&buf, "{d} {d} {d} {d} {d} {d}\n", .{ s.para, s.byte, s.percent orelse 0, s.opened, s.seconds, @intFromBool(s.finished) }) catch return;
-    writeSmall(path, line);
+    var buf: [256]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    inline for (@typeInfo(State).@"struct".field_names) |field| {
+        const value = @field(s, field);
+        switch (@TypeOf(value)) {
+            bool => w.print(field ++ " {d}\n", .{@intFromBool(value)}) catch return,
+            ?u32 => if (value) |v| w.print(field ++ " {d}\n", .{v}) catch return,
+            else => w.print(field ++ " {d}\n", .{value}) catch return,
+        }
+    }
+    writeSmall(path, w.buffered());
 }
 
 test "state file name matches basename piped to md5sum" {
@@ -132,4 +172,14 @@ test "a book marked read stays read, and older files read as not" {
     const s = parse("10 20 55 1793990000 600 1\n");
     try std.testing.expect(s.finished);
     try std.testing.expect(!parse("10 20 55 1793990000 600\n").finished);
+}
+
+test "files are written by name and read back" {
+    const want = State{ .para = 12, .byte = 5, .percent = 37, .opened = 1793990000, .seconds = 4200, .finished = true };
+    const text = "para 12\nbyte 5\npercent 37\nopened 1793990000\nseconds 4200\nfinished 1\n";
+    try std.testing.expectEqual(want, parse(text));
+    // A value an older version didn't write reads as its default
+    try std.testing.expectEqual(@as(u64, 0), parse("para 1\nbyte 2\n").seconds);
+    // One it doesn't know is passed over
+    try std.testing.expectEqual(@as(usize, 1), parse("para 1\nshiny 9\n").para);
 }

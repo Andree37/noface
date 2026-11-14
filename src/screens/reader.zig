@@ -141,16 +141,23 @@ pub fn read_book(a: *app.App, entry: *catalog.Entry) !Outcome {
         a.app_budget.report();
         a.stb_budget.report();
     }
-    const alloc = arena.allocator();
+    return read_book_open(a, entry, arena.allocator(), &scratch_arena);
+}
 
+/// Opens the book in its memory: parses it, finds its pages and the place to open at,
+/// shows that page, and reads until the reader leaves.
+fn read_book_open(
+    a: *app.App,
+    entry: *catalog.Entry,
+    alloc: std.mem.Allocator,
+    scratch_arena: *std.heap.ArenaAllocator,
+) !Outcome {
     const t0 = now_us();
     const data = try file.map(entry.path);
     defer file.unmap(data);
-    const book = if (entry.is_epub()) try epub.parse(alloc, data) else try kfx.parse(alloc, data);
-    book_model.plain_body(book.paragraphs);
-    const lang = hyphen.detect(book.paragraphs);
-    a.layout.hyphenator = a.hyphenator_for(lang);
-    std.debug.print("language {s}\n", .{if (lang) |l| @tagName(l) else "unknown"});
+    const parsed = try read_book_parse(a, alloc, entry, data);
+    const book = parsed.book;
+    const lang = parsed.lang;
     const t1 = now_us();
 
     var path_buffer: [320]u8 = undefined;
@@ -207,7 +214,27 @@ pub fn read_book(a: *app.App, entry: *catalog.Entry) !Outcome {
         .last_place = opened.start,
         .wifi_try_at = now_us() + wifi_saver.after_us,
     };
-    return reader.run(&scratch_arena);
+    return reader.run(scratch_arena);
+}
+
+/// The book's text and contents, from its file, and its language, whose hyphenation
+/// layout is set to.
+fn read_book_parse(
+    a: *app.App,
+    alloc: std.mem.Allocator,
+    entry: *const catalog.Entry,
+    data: []const u8,
+) !struct { book: book_model.Book, lang: ?hyphen.Lang } {
+    const book = if (entry.is_epub()) try epub.parse(alloc, data) else try kfx.parse(alloc, data);
+    // Positions are u32: a book's paragraphs fit its memory budget, far below that
+    assert(book.paragraphs.len <= std.math.maxInt(u32));
+    // Both parsers point the contents inside the book, as Go To relies on
+    for (book.chapters) |chapter| assert(chapter.para < book.paragraphs.len);
+    book_model.plain_body(book.paragraphs);
+    const lang = hyphen.detect(book.paragraphs);
+    a.layout.hyphenator = a.hyphenator_for(lang);
+    std.debug.print("language {s}\n", .{if (lang) |l| @tagName(l) else "unknown"});
+    return .{ .book = book, .lang = lang };
 }
 
 /// Where a book's pages came from as it opened.

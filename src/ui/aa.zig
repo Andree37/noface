@@ -203,7 +203,7 @@ const theme_top = content_top + 20;
 const theme_height = 300;
 const theme_note_baseline = theme_top + theme_height + 52; // Under them, when none is in use
 
-pub const Theme = struct { label: []const u8, size: usize, spacing: usize, margin: usize };
+pub const Theme = struct { label: []const u8, size: u32, spacing: u32, margin: u32 };
 pub const themes = [_]Theme{
     .{ .label = "Compact", .size = 1, .spacing = 0, .margin = 0 },
     .{ .label = "Standard", .size = 2, .spacing = 1, .margin = 1 },
@@ -413,9 +413,9 @@ fn draw_themes_tile(fonts: Fonts, page: Page, t: Theme, left: u32, active: bool)
     draw.box_with(page, left, theme_top, theme_width, theme_height, edge, style.button_corner);
     if (active) icons.check(page, @floatFromInt(left + theme_width - 38), theme_top + 38);
     // Text lines drawn to scale, so the choice shows rather than tells.
-    const gap: u32 = 16 + @as(u32, @intCast(t.spacing)) * 8;
-    const inset: u32 = 28 + @as(u32, @intCast(t.margin)) * 16;
-    const thick: u32 = 5 + @as(u32, @intCast(t.size));
+    const gap: u32 = 16 + t.spacing * 8;
+    const inset: u32 = 28 + t.margin * 16;
+    const thick: u32 = 5 + t.size;
     var y: u32 = theme_top + 44;
     while (y < theme_top + 204) : (y += gap + thick) {
         page.fill_rect(left + inset, y, theme_width - 2 * inset, thick, style.quiet);

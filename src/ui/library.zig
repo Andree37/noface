@@ -530,7 +530,7 @@ fn draw_status(fonts: Fonts, page: Page, quick: *const quick_model.Quick) !void 
 
 /// In the hero's place while searching: what was searched for, how many books have
 /// it, and a button to clear it.
-fn draw_search_header(fonts: Fonts, page: Page, query: []const u8, found: usize) !void {
+fn draw_search_header(fonts: Fonts, page: Page, query: []const u8, found: u32) !void {
     assert(query.len > 0);
     const left: f32 = margin;
     const avail: f32 = @floatFromInt(page.width - 2 * margin);
@@ -634,7 +634,7 @@ pub fn render(
     const with_hero = index == 0;
     if (with_hero) {
         if (query.len > 0) {
-            try draw_search_header(fonts, page, query, visible.len);
+            try draw_search_header(fonts, page, query, @intCast(visible.len));
         } else if (hero) |h| {
             try draw_hero(alloc, fonts, page, &entries[h], now);
         }

@@ -95,7 +95,7 @@ pub fn hit_with(x: i32, y: i32, rows: usize, cover: ?Cover) ?usize {
     const first = sheet_top + @as(i32, @intCast(header_for(cover)));
     assert(first > sheet_top);
     if (y < first) return rows;
-    const row: usize = @intCast(@divTrunc(y - first, row_height));
+    const row: u32 = @intCast(@divTrunc(y - first, row_height));
     return if (row < rows) row else rows;
 }
 

@@ -714,7 +714,7 @@ const Reader = struct {
             },
             .goto => {
                 const chosen = try goto.run(a, s, r.scratch, r.chapters);
-                if (chosen) |target| try r.to_page(@intCast(target)) else try r.draw_toolbar(true);
+                if (chosen) |target| try r.to_page(target) else try r.draw_toolbar(true);
             },
             .bookmark => {
                 try bookmark.toggle(a, s, r.alloc, r.entry);
@@ -724,7 +724,7 @@ const Reader = struct {
                 const sections = try r.scratch.alloc(u32, s.pages.len);
                 for (s.pages, sections) |p, *out| out.* = s.paragraphs[p.para].section;
                 const forward = direction == .chapter_next;
-                s.set_page(@intCast(toolbar.chapter_target(sections, s.current, forward)));
+                s.set_page(toolbar.chapter_target(sections, s.current, forward));
                 try r.draw_toolbar(true);
             },
             .scrub => try controls.drag_scrub(a, s, r.entry.title, r.sheet_open, t.x),

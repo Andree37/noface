@@ -707,7 +707,7 @@ fn parse_positions(paragraphs: []book.Paragraph) void {
     var position: u32 = 1;
     for (paragraphs) |*paragraph| {
         paragraph.position = position;
-        position += book.char_offset(paragraph.text, paragraph.text.len) + 1;
+        position += book.char_offset(paragraph.text, @intCast(paragraph.text.len)) + 1;
     }
     assert(paragraphs[0].position == 1);
     assert(paragraphs[paragraphs.len - 1].position < position);

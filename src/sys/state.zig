@@ -4,8 +4,8 @@ const assert = std.debug.assert;
 const linux = @import("calls.zig");
 
 pub const State = struct {
-    para: usize = 0,
-    byte: usize = 0,
+    para: u32 = 0,
+    byte: u32 = 0,
     percent: ?u32 = null,
     opened: u64 = 0,
     seconds: u64 = 0, // Time spent reading this book
@@ -176,8 +176,8 @@ test "state file name matches basename piped to md5sum" {
 
 test "old two-field files still load" {
     const s = parse("8 7957\n");
-    try std.testing.expectEqual(@as(usize, 8), s.para);
-    try std.testing.expectEqual(@as(usize, 7957), s.byte);
+    try std.testing.expectEqual(@as(u32, 8), s.para);
+    try std.testing.expectEqual(@as(u32, 7957), s.byte);
     try std.testing.expect(s.percent == null);
 }
 
@@ -226,5 +226,5 @@ test "files are written by name and read back" {
     // A value an older version didn't write reads as its default
     try std.testing.expectEqual(@as(u64, 0), parse("para 1\nbyte 2\n").seconds);
     // One it doesn't know is passed over
-    try std.testing.expectEqual(@as(usize, 1), parse("para 1\nshiny 9\n").para);
+    try std.testing.expectEqual(@as(u32, 1), parse("para 1\nshiny 9\n").para);
 }

@@ -103,7 +103,7 @@ const LibrarySearch = struct {
     lib: *const Library,
     q: *search.Query,
     /// One more than the rows, to tell whether there are more matches than shown.
-    matches: [search_sheet.max_rows + 1]usize = undefined,
+    matches: [search_sheet.max_rows + 1]u32 = undefined,
     shown: u32 = 0, // How many of `matches` are listed
 
     pub fn draw(ls: *LibrarySearch, part: screen.Part) !void {
@@ -111,7 +111,7 @@ const LibrarySearch = struct {
         const words = ls.q.words();
         const found = catalog.select(ls.lib.entries, .all, null, words, &ls.matches);
         assert(found <= ls.matches.len);
-        ls.shown = if (words.len > 0) @intCast(@min(found, search_sheet.max_rows)) else 0;
+        ls.shown = if (words.len > 0) @min(found, search_sheet.max_rows) else 0;
         assert(ls.shown <= search_sheet.max_rows);
         const listed = ls.matches[0..ls.shown];
         const more = found > search_sheet.max_rows;
@@ -136,7 +136,7 @@ const LibrarySearch = struct {
                 assert(i < ls.shown);
                 const entry_index = ls.matches[i];
                 if (!ls.lib.entries[entry_index].is_local()) return .{ .done = .search };
-                return .{ .done = .{ .open = @intCast(entry_index) } };
+                return .{ .done = .{ .open = entry_index } };
             },
             .field, .none => .stay,
         };
@@ -266,12 +266,12 @@ const Browser = struct {
         assert(b.lib.visible.len == b.lib.entries.len);
         catalog.sort(b.lib.entries, b.order);
         const hero = catalog.pick_hero(b.lib.entries);
-        b.hero = if (hero) |h| @intCast(h) else null;
+        b.hero = hero;
         // While searching, every match is listed, the hero too
         const left_out = if (b.query.words().len > 0) null else hero;
         const words = b.query.words();
-        b.count = @intCast(catalog.select(b.lib.entries, b.filter, left_out, words, b.lib.visible));
-        b.index = @intCast(@min(b.index, library.page_count(b.count) - 1));
+        b.count = catalog.select(b.lib.entries, b.filter, left_out, words, b.lib.visible);
+        b.index = @min(b.index, library.page_count(b.count) - 1);
         assert(b.count <= b.lib.visible.len);
         assert(b.index < library.page_count(b.count));
         if (b.hero) |h| assert(b.lib.entries[h].is_local());
@@ -281,13 +281,12 @@ const Browser = struct {
         const a = b.a;
         assert(b.count <= b.lib.visible.len);
         assert(b.buf.len == a.screen.pixels.len);
-        const hero: ?usize = if (b.hero) |h| h else null;
         try library.render(
             b.lib.arena.allocator(),
             a.ui,
             a.page(b.buf),
             b.lib.entries,
-            hero,
+            b.hero,
             b.lib.visible[0..b.count],
             b.index,
             b.filter,

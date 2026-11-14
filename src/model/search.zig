@@ -82,7 +82,7 @@ pub fn find(
     alloc: std.mem.Allocator,
     paragraphs: []const book_model.Paragraph,
     query: []const u8,
-    limit: usize,
+    limit: u32,
 ) ![]Match {
     assert(limit > 0);
     var wanted: std.ArrayList(u32) = .empty;
@@ -159,10 +159,10 @@ fn matches_at(s: []const u8, start: u32, wanted: []const u32) bool {
 }
 
 /// A line of text around a match, starting at a word a little before it.
-pub fn snippet(s: []const u8, byte: usize, max: usize) []const u8 {
+pub fn snippet(s: []const u8, byte: u32, max: u32) []const u8 {
     assert(byte <= s.len); // A match `find` made in this text
     const lead = 48;
-    var start: u32 = if (byte > lead) @intCast(byte - lead) else 0;
+    var start: u32 = if (byte > lead) byte - lead else 0;
     if (start > 0) {
         if (std.mem.indexOfScalarPos(u8, s, start, ' ')) |space| {
             if (space < byte) start = @intCast(space + 1);
@@ -189,13 +189,13 @@ test "matching ignores case and accents" {
         sample("acao e ACAO"),
     };
     const found = try find(arena.allocator(), &paras, "acao", 10);
-    try std.testing.expectEqual(@as(usize, 3), found.len);
+    try std.testing.expectEqual(@as(u32, 3), found.len);
     try std.testing.expectEqual(@as(u32, 0), found[0].para);
     try std.testing.expectEqual(@as(u32, 2), found[0].byte);
     try std.testing.expectEqual(@as(u32, 2), found[1].para);
     const capitals = try find(arena.allocator(), &paras, "COMEÇA", 10);
-    try std.testing.expectEqual(@as(usize, 1), capitals.len);
-    try std.testing.expectEqual(@as(usize, 0), (try find(arena.allocator(), &paras, "", 10)).len);
+    try std.testing.expectEqual(@as(u32, 1), capitals.len);
+    try std.testing.expectEqual(@as(u32, 0), (try find(arena.allocator(), &paras, "", 10)).len);
 }
 
 test "notes are skipped and the limit holds" {
@@ -205,15 +205,15 @@ test "notes are skipped and the limit holds" {
     note.note = true;
     const paras = [_]book_model.Paragraph{ sample("word word word"), note };
     const limited = try find(arena.allocator(), &paras, "word", 2);
-    try std.testing.expectEqual(@as(usize, 2), limited.len);
+    try std.testing.expectEqual(@as(u32, 2), limited.len);
     const all = try find(arena.allocator(), &paras, "word", 99);
-    try std.testing.expectEqual(@as(usize, 3), all.len);
+    try std.testing.expectEqual(@as(u32, 3), all.len);
 }
 
 test "snippets start at a word before the match" {
     const s = "The first part of a long sentence leads up to the word we wanted to find here.";
     const at = std.mem.indexOf(u8, s, "wanted").?;
-    const line = snippet(s, at, 60);
+    const line = snippet(s, @intCast(at), 60);
     try std.testing.expect(std.mem.indexOf(u8, line, "wanted") != null);
     try std.testing.expect(line[0] != ' ');
 }

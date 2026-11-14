@@ -26,7 +26,7 @@ comptime {
 
 /// Searching the book: typing on the keyboard, then the results, a page of them at a
 /// time. The page of the result tapped, or null when cancelled.
-pub fn run(a: *app.App, s: *sess.Session, alloc: std.mem.Allocator) !?usize {
+pub fn run(a: *app.App, s: *sess.Session, alloc: std.mem.Allocator) !?u32 {
     assert(s.pages.len > 0);
     var search_screen = Search{ .a = a, .s = s, .alloc = alloc };
     const page = try screen.run(a, &search_screen) orelse return null;
@@ -117,10 +117,10 @@ const Search = struct {
 
     fn on_results(se: *Search, t: screen.Tap) screen.Step(u32) {
         assert(!se.typing);
-        return switch (se.pages.tap(t.x, t.y, se.results.len)) {
+        return switch (se.pages.tap(t.x, t.y, @intCast(se.results.len))) {
             .row => |i| row: {
                 assert(i < se.results.len);
-                break :row .{ .done = @intCast(se.results[i].page) };
+                break :row .{ .done = se.results[i].page };
             },
             .turned => .{ .redraw = .all },
             .close, .none, .tab => .stay, // The sheet's bar is above the list, not a close

@@ -17,7 +17,7 @@ pub const Library = struct {
     data: []const u8,
     entries: []catalog.Entry,
     /// Indexes into `entries`, one place for each, for `catalog.select` to fill.
-    visible: []usize,
+    visible: []u32,
 
     pub fn deinit(l: *Library) void {
         assert(l.visible.len == l.entries.len);
@@ -123,7 +123,7 @@ pub fn load_library(a: *app.App) !Library {
     series_screen.apply(alloc, a.state_dir, all); // Series set by hand win
     // Allocated before the arena is copied into the result: a block it adds after
     // would be known only to this copy, and never freed
-    const visible = try alloc.alloc(usize, all.len);
+    const visible = try alloc.alloc(u32, all.len);
     assert(visible.len == all.len);
     return .{ .arena = arena, .data = data, .entries = all, .visible = visible };
 }

@@ -43,7 +43,7 @@ pub const Mark = enum { none, bookmark, highlight };
 /// `note`, when given, shows on the right instead of the page number ("" for nothing).
 pub const Row = struct {
     label: []const u8,
-    page: usize,
+    page: u32,
     depth: u8 = 0,
     mark: Mark = .none,
     note: ?[]const u8 = null,
@@ -57,7 +57,7 @@ fn page_count(count: u32) u32 {
 }
 
 /// The list page holding a row, so the sheet opens where the reader is.
-pub fn list_page_of(row: usize) usize {
+pub fn list_page_of(row: u32) u32 {
     const list_page = row / rows;
     assert(list_page * rows <= row);
     assert(row < (list_page + 1) * rows);
@@ -65,12 +65,13 @@ pub fn list_page_of(row: usize) usize {
 }
 
 /// The chapter being read: the last one starting at or before `para`.
-pub fn current(chapters: []const book_model.Chapter, para: usize) ?usize {
-    var found: ?usize = null;
+pub fn current(chapters: []const book_model.Chapter, para: u32) ?u32 {
+    assert(chapters.len <= std.math.maxInt(u32));
+    var found: ?u32 = null;
     var best: u32 = 0;
     for (chapters, 0..) |c, i| {
         if (c.para <= para and (found == null or c.para >= best)) {
-            found = i;
+            found = @intCast(i);
             best = c.para;
         }
     }
@@ -99,27 +100,28 @@ pub fn hit(x: i32, y: i32, list_page: u32, count: u32) Hit {
 /// means. Turning the page happens here, so a screen with a list only says what a
 /// tapped row does.
 pub const Pages = struct {
-    page: usize = 0,
+    page: u32 = 0,
 
     pub const Tap = union(enum) {
         none, // Nothing: an empty row, or the page already first or last
         close, // Above the list
         tab: Tab,
-        row: usize, // The index of the row tapped, in the whole list
+        row: u32, // The index of the row tapped, in the whole list
         turned, // The page turned: draw it again
     };
 
-    pub fn tap(p: *Pages, x: i32, y: i32, count: usize) Tap {
-        const result: Tap = switch (hit(x, y, @intCast(p.page), @intCast(count))) {
-            .prev => if (p.turn(-1, @intCast(count))) .turned else .none,
-            .next => if (p.turn(1, @intCast(count))) .turned else .none,
+    pub fn tap(p: *Pages, x: i32, y: i32, count: u32) Tap {
+        assert(p.page < page_count(count));
+        const result: Tap = switch (hit(x, y, p.page, count)) {
+            .prev => if (p.turn(-1, count)) .turned else .none,
+            .next => if (p.turn(1, count)) .turned else .none,
             .none => .none,
             .close => .close,
             .tab => |t| .{ .tab = t },
             .row => |i| .{ .row = i },
         };
         if (result == .row) assert(result.row < count);
-        if (result == .turned) assert(p.page < page_count(@intCast(count)));
+        if (result == .turned) assert(p.page < page_count(count));
         return result;
     }
 
@@ -151,8 +153,8 @@ pub fn render(
     page: Page,
     tab: Tab,
     list: []const Row,
-    reading: ?usize,
-    list_page: usize,
+    reading: ?u32,
+    list_page: u32,
 ) !void {
     // The chapter being read is one of the contents
     if (reading) |r| assert(r < list.len);
@@ -176,8 +178,8 @@ pub fn render_list(
     fonts: Fonts,
     page: Page,
     list: []const Row,
-    reading: ?usize,
-    list_page: usize,
+    reading: ?u32,
+    list_page: u32,
     empty: []const u8,
 ) !void {
     page.fill_rect(0, list_top - 12, page.width, page.height - (list_top - 12), style.white);
@@ -195,7 +197,7 @@ pub fn render_list(
     for (list[first..end], first..) |r, i| {
         const y: u32 = list_top + @as(u32, @intCast(i - first)) * row_height;
         const baseline: i32 = @intCast(y + row_baseline);
-        const here = reading == i;
+        const here = if (reading) |reading_index| reading_index == i else false;
         const depth: u32 = @min(r.depth, depth_shown_max);
         var left: f32 = @floatFromInt(style.margin + depth * indent);
         if (r.mark != .none) {
@@ -219,9 +221,9 @@ test "the current chapter is the last one started" {
         .{ .title = "b.1", .para = 12, .depth = 1 },
         .{ .title = "c", .para = 30, .depth = 0 },
     };
-    try std.testing.expectEqual(@as(usize, 0), current(&chapters, 5).?);
-    try std.testing.expectEqual(@as(usize, 2), current(&chapters, 20).?);
-    try std.testing.expectEqual(@as(usize, 3), current(&chapters, 99).?);
+    try std.testing.expectEqual(@as(u32, 0), current(&chapters, 5).?);
+    try std.testing.expectEqual(@as(u32, 2), current(&chapters, 20).?);
+    try std.testing.expectEqual(@as(u32, 3), current(&chapters, 99).?);
     const late = [_]book_model.Chapter{.{ .title = "x", .para = 50, .depth = 0 }};
     try std.testing.expect(current(&late, 5) == null);
 }
@@ -248,7 +250,7 @@ test "a list turns a page at a time, and not past either end" {
     try std.testing.expect(p.tap(next_x, y, 3 * rows) == .turned);
     try std.testing.expect(p.tap(next_x, y, 3 * rows) == .turned);
     try std.testing.expect(p.tap(next_x, y, 3 * rows) == .none); // Already last
-    try std.testing.expectEqual(@as(usize, 2), p.page);
+    try std.testing.expectEqual(@as(u32, 2), p.page);
     try std.testing.expectEqual(Pages.Tap{ .row = 2 * rows }, p.tap(100, list_top + 10, 3 * rows));
 }
 

@@ -25,7 +25,7 @@ pub const Drawn = struct { sheet_open: bool, whole_page: bool };
 pub fn draw_toolbar(a: *app.App, s: *sess.Session, title: []const u8, drawn: Drawn) !void {
     assert(s.current < s.pages.len);
     @memcpy(a.overlay, try s.ensure(s.current, s.current));
-    const total = if (s.layout_pending()) 0 else s.pages.len; // No page count until it's known
+    const total = if (s.layout_pending()) 0 else s.page_count(); // No page count until it's known
     assert(total == 0 or total > s.current);
     var fonts = a.ui;
     if (drawn.sheet_open and a.tab == .font) fonts.families = a.load_family_samples();
@@ -79,7 +79,7 @@ pub fn drag_scrub(
     assert(s.pages.len > 0);
     a.input.begin_drag();
     const band = a.screen.height - toolbar.scrub_top;
-    const page_count: u32 = @intCast(s.pages.len);
+    const page_count = s.page_count();
     const Follow = struct {
         a: *app.App,
         page_count: u32,
@@ -87,7 +87,7 @@ pub fn drag_scrub(
         target: *u32,
         pub fn moved(f: @This(), x: i32, _: i32) !?u32 {
             assert(f.target.* < f.page_count);
-            const next: u32 = @intCast(toolbar.page_at(x, f.page_count));
+            const next = toolbar.page_at(x, f.page_count);
             assert(next < f.page_count);
             if (next == f.target.*) return null;
             f.target.* = next;
@@ -97,7 +97,7 @@ pub fn drag_scrub(
             return try f.a.screen.show_region(0, toolbar.scrub_top, width, f.band, .quick);
         }
     };
-    var target: u32 = @intCast(toolbar.page_at(first_x, page_count));
+    var target = toolbar.page_at(first_x, page_count);
     assert(target < page_count);
     try toolbar.draw_scrub(a.ui, a.page(a.screen.pixels), target, page_count, true);
     const first = try a.screen.show_region(0, toolbar.scrub_top, a.screen.width, band, .quick);
@@ -119,7 +119,7 @@ fn row_value(a: *const app.App, row: aa.Row) u32 {
     };
     // Settings are brought inside their steps as they're read
     assert(value < row.steps);
-    return @intCast(value);
+    return value;
 }
 
 fn row_value_set(a: *app.App, row: aa.Row, value: u32) void {
@@ -142,7 +142,7 @@ fn drag_setting(
     row: aa.Row,
     first_x: i32,
 ) !void {
-    var value: u32 = @intCast(aa.step_at(row, first_x));
+    var value = aa.step_at(row, first_x);
     assert(value < row.steps);
     const started = row_value(a, row);
     a.input.begin_drag();
@@ -154,7 +154,7 @@ fn drag_setting(
         value: *u32,
         pub fn moved(f: @This(), x: i32, _: i32) !?u32 {
             assert(f.value.* < f.row.steps);
-            const next: u32 = @intCast(aa.step_at(f.row, x));
+            const next = aa.step_at(f.row, x);
             assert(next < f.row.steps);
             if (next == f.value.*) return null;
             f.value.* = next;

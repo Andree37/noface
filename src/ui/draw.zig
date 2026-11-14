@@ -160,9 +160,10 @@ pub const Pager = struct {
         return null;
     }
 
-    pub fn render(p: Pager, fonts: Fonts, page: Page, index: usize, pages: usize) !void {
+    pub fn render(p: Pager, fonts: Fonts, page: Page, index: u32, pages: u32) !void {
         assert(p.top < p.bottom);
         assert(pages > 0);
+        assert(index < pages);
         const y: i32 = @intCast((p.top + p.bottom) / 2 + 12);
         var label: [32]u8 = undefined;
         const count = std.fmt.bufPrint(&label, "{d} of {d}", .{ index + 1, pages }) catch "";

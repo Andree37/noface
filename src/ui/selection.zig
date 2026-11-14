@@ -15,7 +15,7 @@ pub fn word_under(words: []const book_model.Word, x: i32, y: i32) ?book_model.Wo
 }
 
 /// The word under or nearest to a point. Lines match by height first.
-pub fn word_at(words: []const book_model.Word, x: i32, y: i32) ?usize {
+pub fn word_at(words: []const book_model.Word, x: i32, y: i32) ?u32 {
     var best: ?u32 = null;
     var best_row: i32 = std.math.maxInt(i32);
     var best_column: i32 = std.math.maxInt(i32);
@@ -123,8 +123,8 @@ test "finds the word under a finger" {
         word(100, 100), word(200, 100),
         word(100, 160), word(200, 160),
     };
-    try std.testing.expectEqual(@as(usize, 1), word_at(&words, 220, 120).?);
-    try std.testing.expectEqual(@as(usize, 2), word_at(&words, 110, 170).?);
+    try std.testing.expectEqual(@as(u32, 1), word_at(&words, 220, 120).?);
+    try std.testing.expectEqual(@as(u32, 2), word_at(&words, 110, 170).?);
 }
 
 test "a finger between lines or past the edge snaps to the nearest word" {
@@ -132,8 +132,8 @@ test "a finger between lines or past the edge snaps to the nearest word" {
         word(100, 100), word(200, 100),
         word(100, 160), word(200, 160),
     };
-    try std.testing.expectEqual(@as(usize, 1), word_at(&words, 900, 110).?);
-    try std.testing.expectEqual(@as(usize, 0), word_at(&words, 10, 10).?);
+    try std.testing.expectEqual(@as(u32, 1), word_at(&words, 900, 110).?);
+    try std.testing.expectEqual(@as(u32, 0), word_at(&words, 10, 10).?);
 }
 
 test "no words means no selection" {

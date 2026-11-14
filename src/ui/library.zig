@@ -65,7 +65,7 @@ pub const Hit = union(enum) {
     none,
     hero,
     hero_dots,
-    book: usize,
+    book: u32,
     prev,
     next,
     sort,
@@ -129,21 +129,21 @@ fn first_book(page: u32) u32 {
 }
 
 /// Range of grid books on a page, for logging what's shown.
-pub fn page_range(page: usize, books: usize) struct { first: usize, end: usize } {
-    const first = @min(first_book(@intCast(page)), books);
+pub fn page_range(page: u32, books: u32) struct { first: u32, end: u32 } {
+    const first = @min(first_book(page), books);
     const end = @min(first + grid_size(page == 0), books);
     assert(first <= end);
     assert(end <= books);
     return .{ .first = first, .end = end };
 }
 
-pub fn page_count(books: usize) usize {
+pub fn page_count(books: u32) u32 {
     if (books <= grid_size(true)) return 1;
     const later = books - grid_size(true); // On the pages after the first
     const result = 1 + (later + grid_size(false) - 1) / grid_size(false);
     // The last page holds the last book, and the page after it would hold none
-    assert(first_book(@intCast(result - 1)) < books);
-    assert(first_book(@intCast(result)) >= books);
+    assert(first_book(result - 1) < books);
+    assert(first_book(result) >= books);
     return result;
 }
 
@@ -161,7 +161,7 @@ fn grid_top(hero: bool) i32 {
 
 /// What a tap on this library page lands on. While `searching`, the hero's place
 /// holds the search, and tapping it clears the search.
-pub fn hit(x: i32, y: i32, page: usize, books: usize, searching: bool) Hit {
+pub fn hit(x: i32, y: i32, page: u32, books: u32, searching: bool) Hit {
     const hero = page == 0;
     if (y < status_height) {
         if (x < menu_right) return .menu;
@@ -187,7 +187,7 @@ pub fn hit(x: i32, y: i32, page: usize, books: usize, searching: bool) Hit {
     const column: u32 = @intCast(@divTrunc(x - margin, cell_step));
     const row: u32 = @intCast(@divTrunc(y - top, row_height));
     if (column >= columns or row >= grid_size(hero) / columns) return .none;
-    const first = first_book(@intCast(page));
+    const first = first_book(page);
     const index = first + row * columns + column;
     if (index >= books) return .none;
     assert(index - first < grid_size(hero));
@@ -225,10 +225,10 @@ fn cell_origin(slot: u32, with_hero: bool) struct { x: u32, y: u32 } {
 }
 
 /// Screen area of a grid book, for tap feedback.
-pub fn book_rect(index: usize, page: usize) Rect {
-    const first = first_book(@intCast(page));
+pub fn book_rect(index: u32, page: u32) Rect {
+    const first = first_book(page);
     assert(index >= first);
-    const at = cell_origin(@intCast(index - first), page == 0);
+    const at = cell_origin(index - first, page == 0);
     return .{ .x = at.x, .y = at.y, .w = cover.width, .h = cover.height };
 }
 
@@ -335,12 +335,13 @@ fn load_cover(alloc: std.mem.Allocator, e: *catalog.Entry) void {
 pub fn prepare_covers(
     alloc: std.mem.Allocator,
     entries: []catalog.Entry,
-    visible: []const usize,
-    index: usize,
+    visible: []const u32,
+    index: u32,
 ) void {
     assert(visible.len <= entries.len);
-    if (index >= page_count(visible.len)) return;
-    const range = page_range(index, visible.len);
+    const count: u32 = @intCast(visible.len);
+    if (index >= page_count(count)) return;
+    const range = page_range(index, count);
     for (visible[range.first..range.end]) |i| {
         assert(i < entries.len);
         load_cover(alloc, &entries[i]);
@@ -616,9 +617,9 @@ pub fn render(
     fonts: Fonts,
     page: Page,
     entries: []catalog.Entry,
-    hero: ?usize,
-    visible: []const usize,
-    index: usize,
+    hero: ?u32,
+    visible: []const u32,
+    index: u32,
     filter: catalog.Filter,
     order: catalog.Order,
     query: []const u8,
@@ -641,7 +642,7 @@ pub fn render(
     }
     try draw_tabs(fonts, page, tabs_top(with_hero), filter, order, query.len > 0);
 
-    const first = first_book(@intCast(index));
+    const first = first_book(index);
     const end = @min(first + grid_size(with_hero), visible.len);
     const shown = visible[@min(first, visible.len)..end];
     const top: u32 = @intCast(grid_top(with_hero));
@@ -654,7 +655,7 @@ pub fn render(
         const empty = if (query.len > 0) "No books match." else "No books here yet.";
         try fonts.small.draw(page, margin, @intCast(top + 60), empty);
     }
-    try footer.render(fonts, page, index, page_count(visible.len));
+    try footer.render(fonts, page, index, page_count(@intCast(visible.len)));
     if (message.len > 0) try fonts.caption.draw(page, margin, message_baseline, message);
 }
 
@@ -686,10 +687,10 @@ test "tapping past the last book does nothing" {
 }
 
 test "page count follows the layout" {
-    try std.testing.expectEqual(@as(usize, 1), page_count(0));
-    try std.testing.expectEqual(@as(usize, 1), page_count(8));
-    try std.testing.expectEqual(@as(usize, 2), page_count(9));
-    try std.testing.expectEqual(@as(usize, 7), page_count(78));
+    try std.testing.expectEqual(@as(u32, 1), page_count(0));
+    try std.testing.expectEqual(@as(u32, 1), page_count(8));
+    try std.testing.expectEqual(@as(u32, 2), page_count(9));
+    try std.testing.expectEqual(@as(u32, 7), page_count(78));
 }
 
 test "search button sits beside the filter, and the search takes the hero's place" {

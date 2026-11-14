@@ -62,10 +62,10 @@ pub fn moves_breaks(comptime field: []const u8) bool {
 }
 
 pub const Settings = struct {
-    size: usize = 2,
-    spacing: usize = 1,
-    font: usize = 0,
-    margin: usize = 1,
+    size: u32 = 2,
+    spacing: u32 = 1,
+    font: u32 = 0,
+    margin: u32 = 1,
     bold: bool = false,
     left_align: bool = false,
     clock: bool = true,
@@ -170,7 +170,7 @@ pub fn parse(content: []const u8) Settings {
                     now.* = family_named(rest) orelse now.*;
                 } else switch (@TypeOf(now.*)) {
                     bool => now.* = is_on(value, now.* != f.inverted) != f.inverted,
-                    usize => now.* = step(value, steps_of(f.field), now.*),
+                    u32 => now.* = step(value, steps_of(f.field), now.*),
                     else => @compileError("settings: how is " ++ f.field ++ " read"),
                 }
             }
@@ -193,14 +193,14 @@ pub fn format(buf: []u8, s: Settings) []const u8 {
             w.print(f.name ++ " {s}\n", .{families[value]}) catch return "";
         } else switch (@TypeOf(value)) {
             bool => w.print(f.name ++ " {s}\n", .{on_off(value != f.inverted)}) catch return "",
-            usize => w.print(f.name ++ " {d}\n", .{value}) catch return "",
+            u32 => w.print(f.name ++ " {d}\n", .{value}) catch return "",
             else => @compileError("settings: how is " ++ f.field ++ " written"),
         }
     }
     return w.buffered();
 }
 
-fn step(value: []const u8, count: u32, fallback: usize) usize {
+fn step(value: []const u8, count: u32, fallback: u32) u32 {
     assert(count > 0);
     const n = std.fmt.parseInt(u32, value, 10) catch return fallback;
     const chosen = if (n < count) n else fallback;
@@ -293,15 +293,15 @@ test "bad or unknown lines change nothing" {
 
 test "settings saved by older versions still load" {
     const first = parse("3 2 1 1\n");
-    try std.testing.expectEqual(@as(usize, 3), first.size);
-    try std.testing.expectEqual(@as(usize, 2), first.spacing);
-    try std.testing.expectEqual(@as(usize, 1), first.font);
+    try std.testing.expectEqual(@as(u32, 3), first.size);
+    try std.testing.expectEqual(@as(u32, 2), first.spacing);
+    try std.testing.expectEqual(@as(u32, 1), first.font);
     try std.testing.expect(first.clock);
     // The second version, as on the device today: size 3, spacing 1, no flags.
     const second = parse("19 0 0 2\n");
-    try std.testing.expectEqual(@as(usize, 3), second.size);
-    try std.testing.expectEqual(@as(usize, 1), second.spacing);
-    try std.testing.expectEqual(@as(usize, 0), second.margin);
+    try std.testing.expectEqual(@as(u32, 3), second.size);
+    try std.testing.expectEqual(@as(u32, 1), second.spacing);
+    try std.testing.expectEqual(@as(u32, 0), second.margin);
     try std.testing.expect(second.clock and second.time_left);
 }
 
@@ -321,7 +321,7 @@ test "the reader's own typefaces are offered after the Kindle's, by name" {
     try std.testing.expectEqual(s.font, parse(format(&buf, s)).font);
     reset_families();
     // Removed since: the default
-    try std.testing.expectEqual(@as(usize, 0), parse("font Open Sans\n").font);
+    try std.testing.expectEqual(@as(u32, 0), parse("font Open Sans\n").font);
 }
 
 test "every name kept out of the page-break key is a setting" {

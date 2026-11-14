@@ -51,11 +51,11 @@ pub const Session = struct {
     app: *app.App,
     paragraphs: []const book_model.Paragraph,
     pages: []const book_model.Pos,
-    current: usize,
+    current: u32,
     /// What the reader is at. Settings changes keep to this, not the page edge.
     anchor: book_model.Pos,
     note_parts: [note_rules.max_note_parts]book_model.Paragraph = undefined,
-    note_len: usize = 0,
+    note_len: u32 = 0,
     note_top: u32 = 0,
     note_next: ?book_model.Pos = null,
     highlights: std.ArrayList(highlights.Highlight) = .empty,
@@ -80,6 +80,13 @@ pub const Session = struct {
     turning: bool = false, // Set by a normal page turn, so `show` can tell it from a jump
     page_us: u64 = 0, // Time on the current page before that
     seconds_read: u64 = 0, // Time spent in this book, saved with the position
+
+    /// How many pages there are so far: a page per break, which a book's paragraphs bound.
+    pub fn page_count(s: *const Session) u32 {
+        assert(s.pages.len > 0);
+        assert(s.pages.len <= std.math.maxInt(u32));
+        return @intCast(s.pages.len);
+    }
 
     pub fn layout_pending(s: *const Session) bool {
         // A book has a page from the moment it opens, and the reader is on one
@@ -164,7 +171,7 @@ pub const Session = struct {
     }
 
     /// Minutes left in the chapter and in the book from a page, once speed is known.
-    pub fn time_left(s: *const Session, index: usize) struct { chapter: ?u64, book: ?u64 } {
+    pub fn time_left(s: *const Session, index: u32) struct { chapter: ?u64, book: ?u64 } {
         assert(index < s.pages.len);
         assert(s.words_before.len == s.paragraphs.len + 1);
         const here = s.words_at(s.pages[index]);
@@ -214,7 +221,7 @@ pub const Session = struct {
         const journal_seconds: u32 = @intCast(@min(counted, std.math.maxInt(u32)));
         s.app.journal.add(s.app.today(), journal_seconds, if (read_on) 1 else 0);
         if (to != s.current + 1 or us == 0) return;
-        const left: u32 = @intCast(s.current);
+        const left = s.current;
         // Time on a picture isn't reading speed
         if (s.page_has_picture(left)) return;
         const speed = &s.app.speed;
@@ -258,7 +265,7 @@ pub const Session = struct {
     }
 
     /// Where a page ends: the next page's start, or null on the last page.
-    pub fn page_end(s: *const Session, index: usize) ?book_model.Pos {
+    pub fn page_end(s: *const Session, index: u32) ?book_model.Pos {
         assert(index < s.pages.len);
         if (index + 1 >= s.pages.len) return null;
         const end = s.pages[index + 1];
@@ -266,7 +273,7 @@ pub const Session = struct {
         return end;
     }
 
-    pub fn is_bookmarked(s: *const Session, index: usize) bool {
+    pub fn is_bookmarked(s: *const Session, index: u32) bool {
         assert(index < s.pages.len);
         assert(s.pages.len > 0);
         return bookmarks.any_on_page(s.bookmarks.items, s.pages[index], s.page_end(index));
@@ -378,7 +385,7 @@ pub const Session = struct {
         const b = s.back orelse return null;
         const index = page_containing(s.pages, b.para, b.byte);
         assert(index < s.pages.len);
-        return @intCast(index);
+        return index;
     }
 
     fn draw_back(s: *const Session, page: Page) !void {
@@ -429,14 +436,14 @@ pub const Session = struct {
     }
 
     /// Get a rendered page, reusing a cached one when possible.
-    pub fn ensure(s: *Session, index: usize, center: usize) ![]const u8 {
+    pub fn ensure(s: *Session, index: u32, center: u32) ![]const u8 {
         check.thatf(index < s.pages.len, "page {d} of {d}", .{ index, s.pages.len });
         check.thatf(center < s.pages.len, "page {d} of {d}", .{ center, s.pages.len });
         const a = s.app;
         if (a.slot_for(index)) |slot| return slot.buf;
         var cached: [3]i64 = undefined;
         for (&a.slots, &cached) |*slot, *c| c.* = slot.page;
-        const victim = cache.victim(cached, @intCast(center));
+        const victim = cache.victim(cached, center);
         assert(victim < a.slots.len);
         const buf = a.slots[victim].buf;
         const page = a.page(buf);
@@ -454,10 +461,10 @@ pub const Session = struct {
         const y: i32 = @intCast(a.screen.height - footer_baseline_above_bottom_px);
         try a.footer.draw(page, x, y, counter);
         if (s.is_bookmarked(index)) icons.ribbon(page, a.screen.width);
-        if (a.settings.time_left) try s.draw_time_left(page, @intCast(index));
+        if (a.settings.time_left) try s.draw_time_left(page, index);
         if (s.back != null) try s.draw_back(page);
 
-        a.slots[victim].page = @intCast(index);
+        a.slots[victim].page = index;
         assert(a.slot_for(index).? == &a.slots[victim]);
         return buf;
     }
@@ -536,8 +543,9 @@ pub fn save_progress(entry: *catalog.Entry, path: [*:0]const u8, s: *Session) vo
     entry.seconds_read = seconds;
 }
 
-pub fn page_containing(pages: []const book_model.Pos, para: usize, byte: usize) usize {
+pub fn page_containing(pages: []const book_model.Pos, para: u32, byte: u32) u32 {
     assert(pages.len > 0);
+    assert(pages.len <= std.math.maxInt(u32));
     var found: u32 = 0;
     for (pages, 0..) |p, i| {
         if (p.para < para or (p.para == para and p.byte <= byte)) found = @intCast(i);

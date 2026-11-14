@@ -102,19 +102,19 @@ pub fn hit(x: i32, y: i32, sheet: ?aa.Tab) Hit {
 }
 
 /// Page index for a finger at `x` on the scrubber.
-pub fn page_at(x: i32, total: usize) usize {
+pub fn page_at(x: i32, total: u32) u32 {
     if (total <= 1) return 0;
-    const page = slider.value_at(scrub, x, @intCast(total - 1));
+    const page = slider.value_at(scrub, x, total - 1);
     assert(page < total);
     return page;
 }
 
 /// Page where the chapter before or after the current one starts.
 /// `sections` holds each page's section. Back goes to this chapter's start first.
-pub fn chapter_target(sections: []const u32, current: usize, forward: bool) usize {
+pub fn chapter_target(sections: []const u32, current: u32, forward: bool) u32 {
     assert(current < sections.len);
     assert(sections.len <= std.math.maxInt(u32));
-    const page: u32 = @intCast(current);
+    const page = current;
     var target: u32 = undefined;
     if (forward) {
         target = chapter_target_next(sections, page);
@@ -150,7 +150,7 @@ fn chapter_target_previous(sections: []const u32, current: u32) u32 {
 /// Band that changes while dragging, redrawn alone in pure black and white when `mono`.
 /// The page slider. A `total` of 0 means the pages are still being laid out: it says
 /// so, and has no knob until there's a place to put it.
-pub fn draw_scrub(fonts: Fonts, page: Page, index: usize, total: usize, mono: bool) !void {
+pub fn draw_scrub(fonts: Fonts, page: Page, index: u32, total: u32, mono: bool) !void {
     if (total > 0) assert(index < total);
     page.fill_rect(0, scrub_top, page.width, screen_height - scrub_top, 0xff);
     var label: [32]u8 = undefined;
@@ -165,7 +165,7 @@ pub fn draw_scrub(fonts: Fonts, page: Page, index: usize, total: usize, mono: bo
         if (mono) page.threshold(scrub_top, screen_height - scrub_top);
         return;
     }
-    const knob = slider.knob_at(scrub, @intCast(index), @intCast(@max(total, 1) - 1));
+    const knob = slider.knob_at(scrub, index, @max(total, 1) - 1);
     slider.draw(page, scrub, knob);
     if (mono) page.threshold(scrub_top, screen_height - scrub_top);
 }
@@ -174,8 +174,8 @@ pub fn render(
     fonts: Fonts,
     page: Page,
     title: []const u8,
-    index: usize,
-    total: usize,
+    index: u32,
+    total: u32,
     quick: *const quick_model.Quick,
     sheet: ?aa.Tab,
     chosen: settings_model.Settings,
@@ -239,19 +239,19 @@ test "text sheet takes taps only while open" {
 }
 
 test "scrubber maps position to page" {
-    try std.testing.expectEqual(@as(usize, 0), page_at(0, 280));
-    try std.testing.expectEqual(@as(usize, 279), page_at(1272, 280));
-    try std.testing.expectEqual(@as(usize, 140), page_at(636, 280));
-    try std.testing.expectEqual(@as(usize, 0), page_at(600, 1));
+    try std.testing.expectEqual(@as(u32, 0), page_at(0, 280));
+    try std.testing.expectEqual(@as(u32, 279), page_at(1272, 280));
+    try std.testing.expectEqual(@as(u32, 140), page_at(636, 280));
+    try std.testing.expectEqual(@as(u32, 0), page_at(600, 1));
 }
 
 test "chapter skipping" {
     const sections = [_]u32{ 1, 1, 2, 2, 2, 3, 3 };
-    try std.testing.expectEqual(@as(usize, 2), chapter_target(&sections, 0, true));
-    try std.testing.expectEqual(@as(usize, 5), chapter_target(&sections, 3, true));
-    try std.testing.expectEqual(@as(usize, 6), chapter_target(&sections, 6, true));
+    try std.testing.expectEqual(@as(u32, 2), chapter_target(&sections, 0, true));
+    try std.testing.expectEqual(@as(u32, 5), chapter_target(&sections, 3, true));
+    try std.testing.expectEqual(@as(u32, 6), chapter_target(&sections, 6, true));
     // Back to the start of this one, then to the one before
-    try std.testing.expectEqual(@as(usize, 2), chapter_target(&sections, 4, false));
-    try std.testing.expectEqual(@as(usize, 0), chapter_target(&sections, 2, false));
-    try std.testing.expectEqual(@as(usize, 0), chapter_target(&sections, 0, false));
+    try std.testing.expectEqual(@as(u32, 2), chapter_target(&sections, 4, false));
+    try std.testing.expectEqual(@as(u32, 0), chapter_target(&sections, 2, false));
+    try std.testing.expectEqual(@as(u32, 0), chapter_target(&sections, 0, false));
 }

@@ -60,11 +60,12 @@ fn height_with(rows: u32, cover: ?Cover) u32 {
 }
 
 /// The middle of row `i` of a card of `rows` (one without a cover), for tests to tap.
-pub fn row_centre(rows: usize, i: usize) u32 {
+pub fn row_centre(rows: u32, i: u32) u32 {
     assert(i < rows);
-    const below: u32 = @intCast(rows - i); // Rows from this one to the bottom
+    assert(rows * row_height < style.screen_height); // A sheet fits the screen
+    const below = rows - i; // Rows from this one to the bottom
     const centre = style.screen_height - bottom_pad - below * row_height + row_height / 2;
-    assert(centre > top(@intCast(rows)));
+    assert(centre > top(rows));
     assert(centre < style.screen_height - bottom_pad);
     return centre;
 }
@@ -77,19 +78,22 @@ pub fn top(rows: u32) u32 {
 
 test "a row's middle is a tap on that row" {
     for (1..4) |rows| for (0..rows) |i| {
-        const c = row_centre(rows, i);
-        try std.testing.expectEqual(@as(?usize, i), hit(600, @intCast(c), @intCast(rows)));
+        const c = row_centre(@intCast(rows), @intCast(i));
+        try std.testing.expectEqual(@as(?u32, @intCast(i)), hit(600, @intCast(c), @intCast(rows)));
     };
 }
 
 /// Which row a tap lands on: `rows` itself for the sheet's header, null above it.
-pub fn hit(x: i32, y: i32, rows: u32) ?usize {
-    return hit_with(x, y, rows, null);
+pub fn hit(x: i32, y: i32, rows: u32) ?u32 {
+    const result = hit_with(x, y, rows, null);
+    if (result) |row| assert(row <= rows);
+    return result;
 }
 
-pub fn hit_with(x: i32, y: i32, rows: usize, cover: ?Cover) ?usize {
+pub fn hit_with(x: i32, y: i32, rows: u32, cover: ?Cover) ?u32 {
     _ = x;
-    const sheet_top: i32 = @intCast(style.screen_height - height_with(@intCast(rows), cover));
+    assert(rows * row_height < style.screen_height); // A sheet fits the screen
+    const sheet_top: i32 = @intCast(style.screen_height - height_with(rows, cover));
     assert(sheet_top >= 0);
     if (y < sheet_top) return null;
     const first = sheet_top + @as(i32, @intCast(header_for(cover)));
@@ -153,11 +157,11 @@ pub fn render_with(
 
 test "taps map to rows, the header, or nothing above the sheet" {
     const y0: i32 = @intCast(top(3) + header);
-    try std.testing.expectEqual(@as(usize, 0), hit(600, y0 + 10, 3).?);
-    try std.testing.expectEqual(@as(usize, 2), hit(600, y0 + 2 * row_height + 10, 3).?);
-    try std.testing.expectEqual(@as(usize, 3), hit(600, y0 - 20, 3).?);
+    try std.testing.expectEqual(@as(u32, 0), hit(600, y0 + 10, 3).?);
+    try std.testing.expectEqual(@as(u32, 2), hit(600, y0 + 2 * row_height + 10, 3).?);
+    try std.testing.expectEqual(@as(u32, 3), hit(600, y0 - 20, 3).?);
     // The bottom padding
-    try std.testing.expectEqual(@as(usize, 3), hit(600, style.screen_height - 5, 3).?);
+    try std.testing.expectEqual(@as(u32, 3), hit(600, style.screen_height - 5, 3).?);
     try std.testing.expect(hit(600, 40, 3) == null);
 }
 

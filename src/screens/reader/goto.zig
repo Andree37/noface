@@ -16,11 +16,10 @@ pub fn run(
     s: *sess.Session,
     alloc: std.mem.Allocator,
     chapters: []const book_model.Chapter,
-) !?usize {
+) !?u32 {
     assert(s.current < s.pages.len);
     assert(chapters.len <= std.math.maxInt(u32));
-    const current = goto.current(chapters, s.pages[s.current].para);
-    const reading: ?u32 = if (current) |r| @intCast(r) else null;
+    const reading = goto.current(chapters, s.pages[s.current].para);
     if (reading) |r| assert(r < chapters.len);
     var go = GoTo{
         .a = a,
@@ -78,8 +77,9 @@ const GoTo = struct {
     pub fn on_tap(go: *GoTo, t: screen.Tap) !screen.Step(u32) {
         const rows = go.list();
         // Pages turn only within the list, and open on one of its rows
-        assert(go.pages.page <= goto.list_page_of(rows.len));
-        switch (go.pages.tap(t.x, t.y, rows.len)) {
+        const count: u32 = @intCast(rows.len);
+        assert(go.pages.page <= goto.list_page_of(count));
+        switch (go.pages.tap(t.x, t.y, count)) {
             .none => return .stay,
             .close => return .close,
             .turned => return .{ .redraw = .all },
@@ -90,7 +90,7 @@ const GoTo = struct {
                     "goto {s} row {d} of {d}: page {d}\n",
                     .{ @tagName(go.tab), i + 1, rows.len, page + 1 },
                 );
-                return .{ .done = @intCast(page) };
+                return .{ .done = page };
             },
             .tab => |tab| {
                 if (tab == go.tab) return .stay;
@@ -140,7 +140,7 @@ fn notes_rows(alloc: std.mem.Allocator, s: *const sess.Session) ![]goto.Row {
     }
     // A highlight has a mark per paragraph it covers; list it once, from its start.
     for (s.highlights.items, 0..) |h, i| {
-        if (!highlights.first_of_id(s.highlights.items, i)) continue;
+        if (!highlights.first_of_id(s.highlights.items, @intCast(i))) continue;
         const span = highlights.extent(s.highlights.items, h.id) orelse continue;
         const para = s.paragraphs[span.first_para].text;
         const last = if (span.last_para == span.first_para) span.last_byte else para.len;

@@ -378,8 +378,8 @@ pub const App = struct {
     }
 
     /// The cached page buffer holding `page`, if any.
-    pub fn slot_for(a: *App, page_index: usize) ?*Slot {
-        const wanted: i64 = @intCast(page_index);
+    pub fn slot_for(a: *App, page_index: u32) ?*Slot {
+        const wanted: i64 = page_index;
         assert(wanted >= 0); // -1 marks an empty slot, never a page asked for
         for (&a.slots) |*slot| {
             assert(slot.buf.len == a.screen.pixels.len); // Each holds a whole screen
@@ -422,7 +422,7 @@ pub fn choose_from_card(
     title: []const u8,
     subtitle: []const u8,
     rows: []const card.Row,
-) !?usize {
+) !?u32 {
     assert(background.len == a.screen.pixels.len); // Put back over the whole screen
     assert(a.overlay.len == a.screen.pixels.len); // The card is drawn there first
     return choose_from_card_with(a, background, title, subtitle, rows, null);
@@ -436,7 +436,7 @@ pub fn choose_from_card_with(
     subtitle: []const u8,
     rows: []const card.Row,
     book_cover: ?card.Cover,
-) !?usize {
+) !?u32 {
     assert(background.len == a.screen.pixels.len); // Put back over the whole screen
     var c = Card{
         .a = a,
@@ -462,7 +462,7 @@ const Card = struct {
     rows: []const card.Row,
     cover: ?card.Cover,
 
-    pub const Result = usize;
+    pub const Result = u32;
     pub const touches = input_mod.Input.Modes.sheet;
 
     pub fn draw(c: *Card, _: screen.Part) !void {
@@ -476,7 +476,8 @@ const Card = struct {
     }
 
     pub fn on_tap(c: *Card, t: screen.Tap) !screen.Step(Result) {
-        const index = card.hit_with(t.x, t.y, c.rows.len, c.cover) orelse return .close; // Above it
+        const rows: u32 = @intCast(c.rows.len);
+        const index = card.hit_with(t.x, t.y, rows, c.cover) orelse return .close; // Above it
         return if (index < c.rows.len) .{ .done = index } else .stay; // Its title: nothing
     }
 };

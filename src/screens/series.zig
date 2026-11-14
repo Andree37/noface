@@ -88,13 +88,13 @@ const Choices = struct {
 
     pub fn on_tap(c: *Choices, t: screen.Tap) !screen.Step(u32) {
         assert(c.rows.len > 0);
-        return switch (c.pages.tap(t.x, t.y, c.rows.len)) {
+        return switch (c.pages.tap(t.x, t.y, @intCast(c.rows.len))) {
             .none, .tab => .stay,
             .close => .close, // "Library" along the top
             .turned => .{ .redraw = .all },
             .row => |i| {
                 assert(i < c.rows.len);
-                return .{ .done = @intCast(i) };
+                return .{ .done = i };
             },
         };
     }

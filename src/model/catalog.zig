@@ -149,7 +149,8 @@ fn by_series(a: Entry, b: Entry) bool {
 }
 
 /// The next book of `e`'s series not yet read, by its place in the series.
-pub fn next_in_series(entries: []const Entry, e: *const Entry) ?usize {
+pub fn next_in_series(entries: []const Entry, e: *const Entry) ?u32 {
+    assert(entries.len <= std.math.maxInt(u32));
     if (e.series.len == 0) return null;
     var best: ?u32 = null;
     for (entries, 0..) |o, i| {
@@ -378,7 +379,8 @@ pub fn sort(entries: []Entry, order: Order) void {
 }
 
 /// The book for the hero: the latest one in progress, or else the latest opened.
-pub fn pick_hero(entries: []const Entry) ?usize {
+pub fn pick_hero(entries: []const Entry) ?u32 {
+    assert(entries.len <= std.math.maxInt(u32));
     var best: ?u32 = null;
     for (entries, 0..) |e, i| {
         if (!e.in_progress() or !e.is_local()) continue;
@@ -401,14 +403,17 @@ pub fn pick_hero(entries: []const Entry) ?usize {
 pub fn select(
     entries: []const Entry,
     filter: Filter,
-    hero: ?usize,
+    hero: ?u32,
     query: []const u8,
-    out: []usize,
-) usize {
+    out: []u32,
+) u32 {
     if (hero) |h| assert(h < entries.len);
+    assert(entries.len <= std.math.maxInt(u32));
     var n: u32 = 0;
     for (entries, 0..) |e, i| {
-        if (i == hero) continue;
+        if (hero) |h| {
+            if (i == h) continue;
+        }
         if (query.len > 0 and !matches_query(e, query)) continue;
         const matches = switch (filter) {
             .all => true,
@@ -417,7 +422,7 @@ pub fn select(
         };
         if (matches) {
             if (n == out.len) break;
-            out[n] = i;
+            out[n] = @intCast(i);
             n += 1;
         }
     }
@@ -605,13 +610,13 @@ test "hero is the latest book in progress, and leaves the grid" {
         .{ .path = "/c", .title = "Now", .author = "", .percent = 34, .last = 1 },
     };
     const hero = pick_hero(&rows);
-    try std.testing.expectEqual(@as(usize, 2), hero.?);
-    var out: [3]usize = undefined;
-    try std.testing.expectEqual(@as(usize, 2), select(&rows, .all, hero, "", &out));
-    try std.testing.expectEqual(@as(usize, 1), select(&rows, .unread, hero, "", &out));
-    try std.testing.expectEqual(@as(usize, 1), out[0]);
-    try std.testing.expectEqual(@as(usize, 1), select(&rows, .read, hero, "", &out));
-    try std.testing.expectEqual(@as(usize, 0), out[0]);
+    try std.testing.expectEqual(@as(u32, 2), hero.?);
+    var out: [3]u32 = undefined;
+    try std.testing.expectEqual(@as(u32, 2), select(&rows, .all, hero, "", &out));
+    try std.testing.expectEqual(@as(u32, 1), select(&rows, .unread, hero, "", &out));
+    try std.testing.expectEqual(@as(u32, 1), out[0]);
+    try std.testing.expectEqual(@as(u32, 1), select(&rows, .read, hero, "", &out));
+    try std.testing.expectEqual(@as(u32, 0), out[0]);
 }
 
 test "search keeps books whose title or author match" {
@@ -632,14 +637,14 @@ test "search keeps books whose title or author match" {
             .last = 1,
         },
     };
-    var out: [3]usize = undefined;
-    try std.testing.expectEqual(@as(usize, 2), select(&rows, .all, null, "weir", &out));
-    try std.testing.expectEqual(@as(usize, 1), select(&rows, .all, null, "SKELETON", &out));
-    try std.testing.expectEqual(@as(usize, 1), out[0]);
-    try std.testing.expectEqual(@as(usize, 1), select(&rows, .read, null, "weir", &out));
-    try std.testing.expectEqual(@as(usize, 0), select(&rows, .all, null, "tolkien", &out));
-    var one: [1]usize = undefined;
-    try std.testing.expectEqual(@as(usize, 1), select(&rows, .all, null, "weir", &one));
+    var out: [3]u32 = undefined;
+    try std.testing.expectEqual(@as(u32, 2), select(&rows, .all, null, "weir", &out));
+    try std.testing.expectEqual(@as(u32, 1), select(&rows, .all, null, "SKELETON", &out));
+    try std.testing.expectEqual(@as(u32, 1), out[0]);
+    try std.testing.expectEqual(@as(u32, 1), select(&rows, .read, null, "weir", &out));
+    try std.testing.expectEqual(@as(u32, 0), select(&rows, .all, null, "tolkien", &out));
+    var one: [1]u32 = undefined;
+    try std.testing.expectEqual(@as(u32, 1), select(&rows, .all, null, "weir", &one));
 }
 
 test "with nothing in progress the hero is the latest opened" {
@@ -647,7 +652,7 @@ test "with nothing in progress the hero is the latest opened" {
         .{ .path = "/a", .title = "Old", .author = "", .percent = 0, .last = 1 },
         .{ .path = "/b", .title = "New", .author = "", .percent = 0, .last = 5 },
     };
-    try std.testing.expectEqual(@as(usize, 1), pick_hero(&rows).?);
+    try std.testing.expectEqual(@as(u32, 1), pick_hero(&rows).?);
 }
 
 test "cloud books sort after local ones" {
@@ -694,7 +699,7 @@ test "a new book at one percent is not in progress" {
     try std.testing.expect(!fresh.in_progress());
     try std.testing.expect(going.in_progress());
     const rows = [_]Entry{ fresh, going };
-    try std.testing.expectEqual(@as(usize, 1), pick_hero(&rows).?);
+    try std.testing.expectEqual(@as(u32, 1), pick_hero(&rows).?);
 }
 
 test "by series: the latest series first, each in order, then the rest" {
@@ -782,7 +787,7 @@ test "next in a series skips what's read" {
             .series_index = 2,
         },
     };
-    try std.testing.expectEqual(@as(usize, 1), next_in_series(&entries, &entries[0]).?);
+    try std.testing.expectEqual(@as(u32, 1), next_in_series(&entries, &entries[0]).?);
     try std.testing.expect(next_in_series(&entries, &entries[1]) == null);
 }
 

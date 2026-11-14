@@ -65,7 +65,7 @@ pub fn refresh_marks(a: *app.App, s: *sess.Session, alloc: std.mem.Allocator) !v
 }
 
 /// Shows the page, with handles on a highlight when one is active.
-pub fn show_page(a: *app.App, s: *sess.Session, active: ?[]const u8) !?usize {
+pub fn show_page(a: *app.App, s: *sess.Session, active: ?[]const u8) !?u32 {
     assert(s.current < s.pages.len);
     @memcpy(a.screen.pixels, try s.ensure(s.current, s.current));
     a.stamp_clock();
@@ -83,7 +83,8 @@ pub fn show_page(a: *app.App, s: *sess.Session, active: ?[]const u8) !?usize {
         }
     }
     try a.screen.wait_complete(try a.screen.show(.page));
-    return if (delete_top) |top| top else null;
+    if (delete_top) |top| assert(top < a.screen.height);
+    return delete_top;
 }
 
 /// Takes a failed selection back off the page and says so.
@@ -117,7 +118,7 @@ pub fn draw_delete_bubble(a: *app.App, band: selection.Band) !u32 {
     return top;
 }
 
-pub fn in_delete_bubble(a: *app.App, top: usize, x: i32, y: i32) bool {
+pub fn in_delete_bubble(a: *app.App, top: u32, x: i32, y: i32) bool {
     // Where draw_delete_bubble put it: across the middle, inside the screen
     assert(a.screen.width >= bubble_width);
     assert(top + bubble_height <= a.screen.height);
@@ -151,7 +152,7 @@ pub fn drag_selection(
             const next = selection.word_at(f.words, x, y) orelse return null;
             assert(next < f.words.len);
             if (next == f.head.*) return null;
-            f.head.* = @intCast(next);
+            f.head.* = next;
             f.previous.* = try paint_selection(f.a, f.words, f.fixed, f.head.*, f.previous.*);
             return f.a.screen.next_marker - 1;
         }
@@ -200,11 +201,11 @@ pub fn select_from_hold(
     s: *sess.Session,
     hold_x: i32,
     hold_y: i32,
-) !?struct { fixed: usize, head: usize } {
+) !?struct { fixed: u32, head: u32 } {
     const words = page_words(a, s);
     const fixed = selection.word_at(words, hold_x, hold_y) orelse return null;
     assert(fixed < words.len);
-    const head = try drag_selection(a, words, @intCast(fixed), @intCast(fixed)) orelse {
+    const head = try drag_selection(a, words, fixed, fixed) orelse {
         _ = try show_page(a, s, null); // Takes the unfinished selection off
         return null;
     };
@@ -218,8 +219,8 @@ pub fn new_highlight(
     s: *sess.Session,
     alloc: std.mem.Allocator,
     entry: *const catalog.Entry,
-    fixed: usize,
-    head: usize,
+    fixed: u32,
+    head: u32,
 ) !?[]const u8 {
     const words = page_words(a, s);
     assert(fixed < words.len);
@@ -260,8 +261,8 @@ pub fn extend_highlight(
     assert(range.lo <= range.hi);
     assert(range.hi < words.len);
     a.input.begin_drag();
-    const fixed: u32 = @intCast(if (grab_start) range.hi else range.lo);
-    const moving: u32 = @intCast(if (grab_start) range.lo else range.hi);
+    const fixed = if (grab_start) range.hi else range.lo;
+    const moving = if (grab_start) range.lo else range.hi;
     const head = try drag_selection(a, words, fixed, moving) orelse {
         _ = try show_page(a, s, id); // Back to the highlight as it was
         return;

@@ -31,12 +31,12 @@ const tab_labels = [_][]const u8{ "Themes", "Font", "Layout", "More" };
 pub const Hit = union(enum) {
     none,
     tab: Tab,
-    theme: usize,
-    family: usize,
+    theme: u32,
+    family: u32,
     text_size,
     spacing,
     margins,
-    toggle: usize, // Which of `switches`
+    toggle: u32, // Which of `switches`
 };
 
 /// What else a switch changes when flipped: the pages, laid out again; the footer
@@ -101,7 +101,7 @@ comptime {
 }
 
 /// Whether switch `i` shows as on for these settings.
-pub fn is_on(i: usize, s: settings_model.Settings) bool {
+pub fn is_on(i: u32, s: settings_model.Settings) bool {
     assert(i < switches.len);
     inline for (switches, 0..) |sw, j| {
         if (i == j) return @field(s, sw.field) != sw.inverted;
@@ -110,7 +110,7 @@ pub fn is_on(i: usize, s: settings_model.Settings) bool {
 }
 
 /// Flips switch `i`'s setting.
-pub fn flip(i: usize, s: *settings_model.Settings) void {
+pub fn flip(i: u32, s: *settings_model.Settings) void {
     assert(i < switches.len);
     const was_on = is_on(i, s.*);
     inline for (switches, 0..) |sw, j| {
@@ -252,7 +252,7 @@ fn row_slider(r: Row) slider.Slider {
 }
 
 /// Step for a finger at `x` on a row's slider.
-pub fn step_at(r: Row, x: i32) usize {
+pub fn step_at(r: Row, x: i32) u32 {
     const step = slider.value_at(row_slider(r), x, r.steps - 1);
     assert(step < r.steps);
     return step;
@@ -283,7 +283,7 @@ pub fn hit(tab: Tab, x: i32, y: i32) Hit {
             if (!within(y, theme_top, theme_height)) return .none;
             for (0..themes.len) |i| {
                 const left: i32 = margin + @as(i32, @intCast(i)) * (theme_width + theme_gap);
-                if (x >= left and x < left + theme_width) return .{ .theme = i };
+                if (x >= left and x < left + theme_width) return .{ .theme = @intCast(i) };
             }
         },
         .font => {
@@ -301,7 +301,7 @@ pub fn hit(tab: Tab, x: i32, y: i32) Hit {
     }
     for (switches, 0..) |sw, i| {
         if (sw.tab == tab and on_toggle(y, @intCast(switch_top(@intCast(i))))) {
-            return .{ .toggle = i };
+            return .{ .toggle = @intCast(i) };
         }
     }
     return .none;
@@ -341,7 +341,7 @@ fn draw_toggle(fonts: Fonts, page: Page, y: u32, label: []const u8, on: bool) !v
 }
 
 /// What a slider is set to, in words or numbers a reader knows.
-pub fn value_label(buf: []u8, r: Row, value: usize) []const u8 {
+pub fn value_label(buf: []u8, r: Row, value: u32) []const u8 {
     assert(r.steps >= 2);
     assert(buf.len >= "99 of 99".len);
     return switch (r.hit) {
@@ -352,7 +352,7 @@ pub fn value_label(buf: []u8, r: Row, value: usize) []const u8 {
 }
 
 /// One slider row, redrawn alone while dragging.
-pub fn draw_row(fonts: Fonts, page: Page, r: Row, value: usize, mono: bool) !void {
+pub fn draw_row(fonts: Fonts, page: Page, r: Row, value: u32, mono: bool) !void {
     assert(r.top >= content_top);
     assert(r.top + row_height <= max_height);
     page.fill_rect(0, r.top, page.width, row_height, 0xff);
@@ -364,7 +364,7 @@ pub fn draw_row(fonts: Fonts, page: Page, r: Row, value: usize, mono: bool) !voi
     try fonts.small.draw(page, shown_left, @intCast(r.top + row_baseline), shown);
     const bar = row_slider(r);
     const max: u32 = r.steps - 1;
-    const knob = slider.knob_at(bar, @intCast(value), max);
+    const knob = slider.knob_at(bar, value, max);
     slider.draw(page, bar, knob);
     slider.draw_ticks(page, bar, max, knob);
     if (mono) page.threshold(r.top, row_height);
@@ -468,7 +468,7 @@ pub fn render(fonts: Fonts, page: Page, tab: Tab, chosen: settings_model.Setting
     }
     for (switches, 0..) |sw, i| {
         if (sw.tab != tab) continue;
-        const on = is_on(i, chosen);
+        const on = is_on(@intCast(i), chosen);
         try draw_toggle(fonts, page, switch_top(@intCast(i)), sw.label, on);
     }
 }
@@ -499,7 +499,7 @@ test "each tab maps its own controls" {
     // Every switch answers on its own tab, where it's drawn
     for (switches, 0..) |sw, i| {
         const y: i32 = @intCast(switch_top(@intCast(i)) + 20);
-        try std.testing.expectEqual(Hit{ .toggle = i }, hit(sw.tab, 600, y));
+        try std.testing.expectEqual(Hit{ .toggle = @intCast(i) }, hit(sw.tab, 600, y));
     }
 }
 

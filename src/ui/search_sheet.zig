@@ -42,7 +42,7 @@ comptime {
     assert(cancel_width >= 100);
 }
 
-pub const Hit = union(enum) { none, cancel, field, row: usize };
+pub const Hit = union(enum) { none, cancel, field, row: u32 };
 
 /// The bar's own taps, or null below it.
 pub fn bar_hit(x: i32, y: i32) ?Hit {
@@ -50,7 +50,7 @@ pub fn bar_hit(x: i32, y: i32) ?Hit {
     return if (x >= field_right) .cancel else .field;
 }
 
-pub fn hit(x: i32, y: i32, rows: usize) Hit {
+pub fn hit(x: i32, y: i32, rows: u32) Hit {
     assert(rows <= max_rows);
     if (bar_hit(x, y)) |h| return h;
     if (y >= rows_top and y < rows_bottom) {
@@ -119,7 +119,7 @@ pub fn render(
     page: Page,
     query: []const u8,
     entries: []const catalog.Entry,
-    matches: []const usize,
+    matches: []const u32,
     more: bool,
 ) !void {
     assert(matches.len <= max_rows);

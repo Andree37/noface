@@ -6,7 +6,7 @@ const assert = std.debug.assert;
 /// A byte range of a paragraph that links to another paragraph.
 /// `inside`: the target is an anchor partway into its paragraph (a page marker, say),
 /// not the paragraph's start, so it can't be where a note begins.
-pub const Link = struct { start: usize, end: usize, target: u32, inside: bool = false };
+pub const Link = struct { start: u32, end: u32, target: u32, inside: bool = false };
 
 /// How text is set: weight, slant, size, alignment and spacing around it.
 pub const Look = struct {
@@ -73,7 +73,8 @@ pub const Paragraph = struct {
 
 /// A paragraph's number counting text only. Saved reading positions use this, so
 /// they stay put whether or not pictures are shown.
-pub fn text_index(paragraphs: []const Paragraph, para: usize) usize {
+pub fn text_index(paragraphs: []const Paragraph, para: u32) u32 {
+    assert(paragraphs.len <= std.math.maxInt(u32));
     var count: u32 = 0;
     for (paragraphs[0..@min(para, paragraphs.len)]) |p| {
         if (p.image == null) count += 1;
@@ -84,22 +85,23 @@ pub fn text_index(paragraphs: []const Paragraph, para: usize) usize {
 }
 
 /// The paragraph for a number from `text_index`.
-pub fn from_text_index(paragraphs: []const Paragraph, index: usize) usize {
+pub fn from_text_index(paragraphs: []const Paragraph, index: u32) u32 {
+    assert(paragraphs.len <= std.math.maxInt(u32));
     var count: u32 = 0;
     for (paragraphs, 0..) |p, i| {
         if (p.image != null) continue;
         if (count == index) {
             assert(i >= index); // Pictures before it only push it further on
-            return i;
+            return @intCast(i);
         }
         count += 1;
     }
     assert(count <= paragraphs.len);
-    return paragraphs.len;
+    return @intCast(paragraphs.len);
 }
 
 /// Characters before a byte offset, which is how Amazon counts positions.
-pub fn char_offset(text: []const u8, byte: usize) u32 {
+pub fn char_offset(text: []const u8, byte: u32) u32 {
     var bytes: u32 = 0;
     var chars: u32 = 0;
     while (bytes < byte and bytes < text.len) : (chars += 1) {
@@ -112,7 +114,8 @@ pub fn char_offset(text: []const u8, byte: usize) u32 {
 }
 
 /// Byte offset of the `count`th code point, as KFX offsets count characters.
-pub fn byte_offset(text: []const u8, count: u64) usize {
+pub fn byte_offset(text: []const u8, count: u64) u32 {
+    assert(text.len <= std.math.maxInt(u32));
     var bytes: u32 = 0;
     var seen: u64 = 0;
     while (bytes < text.len and seen < count) : (seen += 1) {
@@ -120,7 +123,7 @@ pub fn byte_offset(text: []const u8, count: u64) usize {
     }
     assert(seen <= count);
     assert(seen <= bytes);
-    return @min(bytes, text.len);
+    return @intCast(@min(bytes, text.len));
 }
 
 /// A table of contents entry: its title, where it starts, and how deep it nests.
@@ -173,8 +176,8 @@ test "a few bold headings stay bold" {
 }
 
 test "offsets count characters, not bytes" {
-    try std.testing.expectEqual(@as(usize, 3), byte_offset("\u{e1}bc", 2));
-    try std.testing.expectEqual(@as(usize, 4), byte_offset("\u{e1}bc", 99));
+    try std.testing.expectEqual(@as(u32, 3), byte_offset("\u{e1}bc", 2));
+    try std.testing.expectEqual(@as(u32, 4), byte_offset("\u{e1}bc", 99));
 }
 
 test "byte and character offsets agree" {
@@ -197,13 +200,13 @@ test "saved positions count text paragraphs only" {
         .{ .text = "", .style = 0, .image = img },
         .{ .text = "b", .style = 0 },
     };
-    try std.testing.expectEqual(@as(usize, 1), text_index(&paras, 2));
-    try std.testing.expectEqual(@as(usize, 2), from_text_index(&paras, 1));
-    try std.testing.expectEqual(@as(usize, 0), from_text_index(&paras, 0));
+    try std.testing.expectEqual(@as(u32, 1), text_index(&paras, 2));
+    try std.testing.expectEqual(@as(u32, 2), from_text_index(&paras, 1));
+    try std.testing.expectEqual(@as(u32, 0), from_text_index(&paras, 0));
 }
 
 /// A place in a book: a paragraph, and a byte within its text.
-pub const Pos = struct { para: usize = 0, byte: usize = 0 };
+pub const Pos = struct { para: u32 = 0, byte: u32 = 0 };
 
 /// A word as laid out on a page: where it is on screen and where it came from.
 pub const Word = struct { x: i32, y: i32, w: i32, h: i32, para: u32, start: u32, end: u32 };

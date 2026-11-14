@@ -17,7 +17,7 @@ comptime {
 }
 
 /// Paragraphs a note spans, starting at its target.
-pub fn note_length(paragraphs: []const book.Paragraph, target: usize) usize {
+pub fn note_length(paragraphs: []const book.Paragraph, target: u32) u32 {
     assert(target < paragraphs.len);
     var n: u32 = 1;
     while (n < max_note_parts and target + n < paragraphs.len) : (n += 1) {
@@ -187,8 +187,8 @@ test "paragraphs between notes stay with their note" {
     };
     mark_notes(&paras);
     try std.testing.expect(paras[2].note);
-    try std.testing.expectEqual(@as(usize, 2), note_length(&paras, 1));
-    try std.testing.expectEqual(@as(usize, 1), note_length(&paras, 3));
+    try std.testing.expectEqual(@as(u32, 2), note_length(&paras, 1));
+    try std.testing.expectEqual(@as(u32, 1), note_length(&paras, 3));
     try std.testing.expect(!paras[4].note);
 }
 

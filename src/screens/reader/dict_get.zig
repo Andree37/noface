@@ -188,7 +188,8 @@ const Progress = struct {
     pub fn on_tap(p: *Progress, t: screen.Tap) !screen.Step(bool) {
         assert(p.rows.len > 0);
         assert(std.mem.eql(u8, p.rows[0].label, "Cancel"));
-        return if (card.hit_with(t.x, t.y, p.rows.len, null) == 0) .{ .done = true } else .stay;
+        const rows: u32 = @intCast(p.rows.len);
+        return if (card.hit_with(t.x, t.y, rows, null) == 0) .{ .done = true } else .stay;
     }
 
     pub fn on_tick(p: *Progress) !screen.Step(bool) {

@@ -39,11 +39,3 @@ pub fn luma16(red: u16, green: u16, blue: u16) u16 {
     comptime assert(77 + 150 + 29 == 256);
     return @intCast(sum >> 8);
 }
-
-/// Whether a picture's sides are ones a decoder takes.
-pub fn size_ok(width: u32, height: u32) bool {
-    comptime assert(side_max < std.math.maxInt(u32));
-    if (width == 0 or height == 0) return false;
-    if (width > side_max or height > side_max) return false;
-    return @as(u64, width) * height <= pixels_max;
-}

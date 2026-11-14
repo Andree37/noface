@@ -238,15 +238,6 @@ pub fn init(data: []const u8, table: u32) ?Font {
     return font;
 }
 
-/// How many glyphs the font draws.
-pub fn glyph_count(font: *const Font) u32 {
-    var charstrings = font.charstrings;
-    const count = index_count(&charstrings);
-    assert(count <= std.math.maxInt(u16));
-    assert(font.cff.data.len >= font.charstrings.data.len);
-    return count;
-}
-
 /// A subroutine by its biased number.
 fn get_subr(index: Buffer, n: i32) Buffer {
     var b = index;

@@ -11,7 +11,8 @@ pub fn map(path: [*:0]const u8) ![]const u8 {
     defer _ = linux.close(@intCast(fd)); // The mapping outlives it
     var end: linux.off_t = 0;
     _ = linux.llseek(@intCast(fd), 0, &end, linux.SEEK.END); // Failed: `end` stays 0, empty
-    const size: usize = @intCast(end);
+    // A file larger than the address space (4 GB on the Kindle) can't be mapped whole
+    const size = std.math.cast(usize, end) orelse return error.MmapFailed;
     if (size == 0) return error.EmptyFile;
     const address = linux.mmap(
         null,

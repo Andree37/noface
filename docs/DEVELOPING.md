@@ -9,52 +9,67 @@ noface follows Tiger Style, checked by `zig build check`: see
 
 Needs [Zig](https://ziglang.org) 0.17.
 
-- `zig build`: the app (`zig-out/bin/noface`) and the picture helper (`jxr2pgm`), for
-  the Kindle (32-bit ARM, static).
+- `zig build`: the app (`zig-out/bin/noface`), its launcher (`noface-launch`) and the
+  picture helper (`jxr2pgm`), for the Kindle (32-bit ARM, static).
 - `zig build test`: unit tests.
 - `zig build check`: the ownership boundaries below, and that every file with tests
   is listed in `src/tests.zig` (a file left out would have its tests never run).
 - `zig build scenarios`: scripted runs of the real app (see Tests).
 - `zig build sim`: the real app in a browser on this computer (see below).
 - `zig build tools`: development tools, also for the Kindle.
+- `zig build host-tools`: the tools that run on this computer, in `zig-out/bin`: the
+  dictionary builder, the snapshot converter and the packer.
+- `zig build package -Dversion=1.2.3`: the release zip (see Packaging).
 
 Before pushing, run them all; CI does the same (`.github/workflows/ci.yml`).
 
 ## Trying a build on your Kindle
 
 With SSH to the Kindle (a jailbroken one, over Wi-Fi or USB networking), replace the
-app and start it again. noface is stopped first, and `noface.sh` puts the Kindle's
+app and start it again. noface is stopped first, and its launcher puts the Kindle's
 own screens back as it goes, so nothing is left half-switched:
 
 ```sh
 zig build
 cat zig-out/bin/noface | ssh root@kindle 'cat > /mnt/us/noface/noface.new && chmod +x /mnt/us/noface/noface.new;
   killall noface; sleep 3; mv /mnt/us/noface/noface.new /mnt/us/noface/noface;
-  setsid sh /mnt/us/noface/start.sh now >> /mnt/us/noface-data/launch.log 2>&1 < /dev/null &'
+  /mnt/us/noface/noface-launch now'
 ```
 
-`/mnt/us/noface-data/noface.log` is what it printed. `zig build tools` makes the
+`noface-launch now` returns at once and opens noface in the background; a changed
+launcher is copied over the same way (`noface-launch`, while noface isn't running).
+`/mnt/us/noface-data/noface.log` is what noface printed, and `launch.log` what the
+launcher did. `zig build tools` makes the
 development tools for the Kindle too: copy one over and run it there (for instance
 `fbcap` to capture the screen, `touchsim` to tap it). Keep their output out of `/tmp`
 when it's large: it's a small RAM disk the Kindle needs for itself.
 
 ## Packaging and releases
 
-`tools/package.sh 1.2.3` builds `zig-out/noface-1.2.3.zip`, the same zip a release
-carries. Pushing a tag like `v1.2.3` has GitHub build and publish it
+`zig build package -Dversion=1.2.3` builds everything and packs
+`zig-out/noface-1.2.3.zip` (`tools/package.zig`), the same zip a release carries. Pushing a tag like `v1.2.3` has GitHub build and publish it
 (`.github/workflows/release.yml`), with `docs/RELEASE_NOTES.md` as its install steps.
 The dictionaries are built and published by hand from the Actions tab
 (`dictionaries.yml`).
 
 On the Kindle, the app lives in `/mnt/us/noface/` and opens with `;kpm launch noface`
-(the launcher entry is `kmc/kpm/packages/noface/launch.sh`). What noface keeps lives
-in `/mnt/us/noface-data/`, so replacing the app folder never loses anything;
-`device/data.sh` moves an older install's data there on its first run.
+(the launcher entry is `kmc/kpm/packages/noface/launch.sh`, a one-line shim that runs
+`noface-launch`). What noface keeps lives in `/mnt/us/noface-data/`, so replacing the
+app folder never loses anything; the launcher moves an older install's data there on
+its first run.
+
+`noface-launch` (`src/launch.zig`) is a program of its own, apart from the app, so
+nothing the app does can take it down. It writes the book list, pauses the Kindle's
+own screens, runs noface with its output in `noface.log`, and puts the screens back
+however noface ends (it leaves, crashes, is killed, or hangs: a watchdog ends noface
+when its heartbeat stops for 2 minutes with the Kindle awake). A crash of the launcher
+itself puts them back too, from its panic handler.
 
 "Open noface when the Kindle starts" (Aa > More) installs
-`/etc/upstart/noface-autostart.conf` itself, after asking. Three failed starts in a row
-turn it off again by themselves, and the Kindle button in the drag-down panel always
-returns to the stock home screen.
+`/etc/upstart/noface-autostart.conf` itself, after asking; at boot it runs
+`noface-launch autostart`. Three failed starts in a row turn it off again by
+themselves, and the Kindle button in the drag-down panel always returns to the stock
+home screen.
 
 ## Dictionaries
 
@@ -62,10 +77,11 @@ The Kindle's own dictionaries are DRM protected, so noface uses Wiktionary inste
 Build the files from the extracts at [kaikki.org](https://kaikki.org):
 
 ```
+zig build host-tools
 curl -LO https://kaikki.org/dictionary/English/kaikki.org-dictionary-English.jsonl.gz
 curl -LO https://kaikki.org/dictionary/Portuguese/kaikki.org-dictionary-Portuguese.jsonl.gz
-python3 tools/build_dictionary.py kaikki.org-dictionary-English.jsonl.gz dict-en
-python3 tools/build_dictionary.py kaikki.org-dictionary-Portuguese.jsonl.gz dict-pt
+zig-out/bin/build_dictionary kaikki.org-dictionary-English.jsonl.gz dict-en
+zig-out/bin/build_dictionary kaikki.org-dictionary-Portuguese.jsonl.gz dict-pt
 ```
 
 Then put `dict-en` (about 95 MB) and `dict-pt` (about 38 MB) in `/mnt/us/noface-data/`.
@@ -102,14 +118,17 @@ Code is split by who owns it. `zig build check` fails if a file imports across t
   the tools share) and `tests.zig` (every unit test). The simulator and the scenarios
   stay at the top because a Zig program's main file can only import files below it.
 - Every place on the Kindle noface reads or writes is named in `src/kindle/paths.zig`,
-  and the shell scripts' copy in `device/data.sh`; a test checks they agree.
+  for the app and its launcher alike; a test checks that KPM's `launch.sh` and the
+  startup file name the launcher it does.
 
 The exact rules are at the top of `tools/check/boundaries.zig`.
-- `device/`: scripts installed on the Kindle, and `jxr2pgm`, the picture helper that
-  decodes JPEG XR with the Kindle's own library.
+- `device/`: what's installed on the Kindle besides the programs: KPM's `launch.sh`
+  shim and the startup file, and `jxr2pgm`, the picture helper that decodes JPEG XR
+  with the Kindle's own library.
 - `tools/`: development tools, not part of the app. `tools/check/` holds the boundary
-  check, `tools/build_dictionary.py` builds the dictionaries, and `fbrec`, `touchsim`
-  and `xtap` record the screen and fake taps, for timing and demos.
+  check, `build_dictionary` builds the dictionaries, `pgm2png` converts snapshots,
+  `package` packs a release, and `fbrec`, `touchsim` and `xtap` record the screen and
+  fake taps, for timing and demos.
 - `third_party/`: stb libraries.
 
 ## How a screen works
@@ -214,10 +233,10 @@ reads only EPUBs. `NOFACE_SIM_PORT` picks another port.
   purpose, write new ones and convert them:
 
 ```sh
-zig build scenarios                                  # builds zig-out/bin/noface-scenarios for the Kindle
+zig build scenarios host-tools                       # builds zig-out/bin/noface-scenarios for the Kindle
 NOFACE_WRITE_SNAPSHOTS=/tmp/snaps <noface-scenarios> # on the Kindle or a computer: writes <name>.pgm
 for f in /tmp/snaps/*.pgm; do
-  tools/pgm2png.py "$f" src/testdata/snapshots/$(basename "$f" .pgm).png
+  zig-out/bin/pgm2png "$f" src/testdata/snapshots/$(basename "$f" .pgm).png
 done
 ```
 
@@ -232,7 +251,7 @@ it. The build or a test fails if a second place is needed and missed.
 | A tile in the quick panel | a `Hit`, a line in `tiles` (`ui/menu.zig`), its action in `panel_control` (`screens/panel.zig`) | its place, icon, on/off look and label; the compiler wants the action |
 | A value from the Kindle in the status bar or panel | a field in `Quick` (`model/quick.zig`), a line in `readings` (`kindle/lipc.zig`) | reading it with the others, the redraw when it changes, the pretend Kindle's answer |
 | A value kept per book | a field in `State` (`sys/state.zig`) | saving and reading it by name; older files read it as its default |
-| A file noface keeps, or a place on the Kindle | `kindle/paths.zig`, and `device/data.sh` if a script needs it | the test that the two agree |
+| A file noface keeps, or a place on the Kindle | `kindle/paths.zig` | the app and the launcher both use it |
 | A tone, corner or the status strip's height | `ui/style.zig` | every screen using it |
 | An item in the reader's ⋮ menu | `screens/reader/more.zig` | |
 | A sheet, card or list | a struct run by `screen.run` (see above) | its loop, touches and redraws |

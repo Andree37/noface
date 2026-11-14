@@ -23,6 +23,10 @@ Copy the new **noface** folder over the old one; replacing it is fine. Everythin
 keeps (settings, reading positions, stats, dictionaries) lives in **noface-data**,
 which updates never touch.
 
+An older version's launcher entry in **kmc/kpm/packages** and its startup file keep
+working with the new folder; copying **noface/kpm/noface** again is only needed for a
+fresh install.
+
 If you built noface yourself before this release, it kept those in the **noface**
 folder itself: copy the new folder in by merging rather than replacing (on a Mac, hold
 Option while dragging and choose Merge), and noface moves them into **noface-data**

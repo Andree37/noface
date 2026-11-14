@@ -1,5 +1,5 @@
 #!/bin/sh
-# Started by ";kpm launch noface". Library tap launching is broken,
-# so this is the working way in. Detached so KPM can return straight away.
-. /mnt/us/noface/data.sh
-setsid sh "$APP/start.sh" >> "$LAUNCH_LOG" 2>&1 < /dev/null &
+# KPM (";kpm launch noface") runs this file, and only a shell file: the one script noface
+# keeps. noface-launch does the rest (src/launch.zig). Older installs also find this file
+# as noface/data.sh and noface/autostart.sh, so "$0" says which way it was started.
+exec /mnt/us/noface/noface-launch "$0"

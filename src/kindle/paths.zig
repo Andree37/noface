@@ -1,21 +1,27 @@
-//! Every place on the Kindle noface reads or writes, in one list. The shell scripts in
-//! device/ keep the same names in device/data.sh; a test below checks they agree.
+//! Every place on the Kindle noface reads or writes, in one list, for the app and its
+//! launcher alike. The two files that start the launcher, KPM's launch.sh and the
+//! startup file, name it too; a test below checks they agree.
 //!
 //! The app sits in `app_dir`, which an update replaces whole. What the reader keeps
 //! (settings, places, stats, notes, dictionaries) sits in `data_dir`, which no update
 //! touches. Scratch files go in /tmp, which is in RAM and empty after a reboot.
 
-/// The app: the program, its scripts and helpers. Replaced whole by an update.
+/// The app: the program, its launcher and helpers. Replaced whole by an update.
 pub const app_dir = "/mnt/us/noface";
-/// What the reader keeps. The app is told this folder when started (noface.sh).
+/// What the reader keeps. The app is told this folder when started (src/launch.zig).
 pub const data_dir = "/mnt/us/noface-data";
 /// The Kindle's books, and EPUBs copied over USB.
 pub const documents = "/mnt/us/documents";
 /// Typefaces the reader adds.
 pub const own_fonts = "/mnt/us/fonts";
 
-/// Writes the book list for the library (device/export.sh).
-pub const export_script = app_dir ++ "/export.sh";
+/// The app itself.
+pub const reader = app_dir ++ "/noface";
+/// Starts the app, puts the Kindle's own screens back after it, starts it at boot and
+/// writes the book list for the library (src/launch.zig).
+pub const launcher = app_dir ++ "/noface-launch";
+/// What writes the book list, by its older name, which the pretend Kindle's test uses.
+pub const export_script = launcher;
 /// Decodes a JPEG XR picture with the Kindle's own library.
 pub const jxr_helper = app_dir ++ "/jxr2pgm";
 /// The startup file shipped with the app, copied into /etc when autostart is on.
@@ -29,9 +35,26 @@ pub const data = struct {
     pub const battery = "battery";
     /// There while noface has Wi-Fi off for reading, so it's put back after a crash.
     pub const wifi_paused = "wifi-paused";
+    /// The book list, from the Kindle's catalog.
+    pub const library = "library.tsv";
+    /// What noface prints, and the copy kept from before it last grew too large.
+    pub const log = "noface.log";
+    pub const log_old = "noface.log.old";
+    /// What the launcher prints.
+    pub const launch_log = "launch.log";
+    /// Boots in a row that started noface without it running a minute.
+    pub const boot_attempts = "boot-attempts";
 };
 
-/// Refreshed every 30 s while noface's loop runs; noface.sh's watchdog reads it.
+/// The Kindle's own typefaces, which noface sets its text in.
+pub const kindle_fonts = "/usr/java/lib/fonts";
+/// Amazon's catalog of books, and the copy read so Amazon's own is never held open.
+pub const catalog = "/var/local/cc.db";
+pub const catalog_copy = "/tmp/kf-cc.db";
+/// There once the launcher has looked at starting noface this boot (/tmp is in RAM).
+pub const autostart_ran = "/tmp/noface-autostart-ran";
+
+/// Refreshed every 30 s while noface's loop runs; the launcher's watchdog reads it.
 pub const heartbeat = "/tmp/noface-alive";
 /// While this exists, noface writes no notes to Amazon's database and asks no sync.
 pub const dry_run = "/tmp/noface-dry-run";
@@ -41,17 +64,11 @@ pub const jxr_input = "/tmp/noface-picture.jxr";
 
 const std = @import("std");
 
-test "device/data.sh names the same places" {
-    const script = @embedFile("data_sh");
-    const expected = [_][]const u8{
-        "APP=" ++ app_dir,
-        "DATA=" ++ data_dir,
-        "HEARTBEAT=" ++ heartbeat,
-        "WIFI_PAUSED=$DATA/" ++ data.wifi_paused,
-    };
-    for (expected) |line| {
-        if (std.mem.indexOf(u8, script, line) == null) {
-            std.debug.print("device/data.sh is missing: {s}\n", .{line});
+test "KPM's launch.sh and the startup file start the launcher named here" {
+    const starters = [_][]const u8{ @embedFile("launch_sh"), @embedFile("autostart_conf") };
+    for (starters) |starter| {
+        if (std.mem.indexOf(u8, starter, launcher) == null) {
+            std.debug.print("a starter doesn't name {s}:\n{s}\n", .{ launcher, starter });
             return error.TestExpectedEqual;
         }
     }

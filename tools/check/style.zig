@@ -472,6 +472,27 @@ fn allowed(entries: []const Entry, rule: Rule, path: []const u8) u32 {
 
 const Found = struct { path: []const u8, counts: Counts };
 
+/// The one script that isn't counted: KPM, the launcher noface is opened from, runs
+/// only a shell file, so device/kpm/launch.sh stays shell (docs/TIGER_STYLE.md). It is
+/// accepted only as a shim: its `#!` line, comments, and one line that runs the Zig.
+const kpm_shim_path = "device/kpm/launch.sh";
+const kpm_shim_code_lines_max = 1;
+
+/// Whether a script is the KPM shim, small enough to stay one.
+fn is_kpm_shim(path: []const u8, source: []const u8) bool {
+    assert(path.len > 0);
+    if (!std.mem.eql(u8, path, kpm_shim_path)) return false;
+    var code_lines: u32 = 0;
+    var lines = std.mem.splitScalar(u8, source, '\n');
+    while (lines.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, " \t\r");
+        if (trimmed.len == 0 or trimmed[0] == '#') continue; // `#!` and comments
+        code_lines += 1;
+    }
+    assert(code_lines <= source.len);
+    return code_lines <= kpm_shim_code_lines_max;
+}
+
 const baseline_path = "tools/check/style_baseline.txt";
 
 pub fn main(init: std.process.Init) !void {
@@ -549,7 +570,8 @@ fn find_counts(io: std.Io, root: std.Io.Dir, gpa: std.mem.Allocator) ![]const Fo
                 const source = try dir.readFileAlloc(io, entry.path, gpa, .limited(8 << 20));
                 counts = try check_zig(source, gpa);
             } else if (std.mem.endsWith(u8, path, ".sh") or std.mem.endsWith(u8, path, ".py")) {
-                counts[@backingInt(Rule.script_not_zig)] = 1;
+                const source = try dir.readFileAlloc(io, entry.path, gpa, .limited(1 << 20));
+                if (!is_kpm_shim(path, source)) counts[@backingInt(Rule.script_not_zig)] = 1;
             } else continue;
             try found.append(gpa, .{ .path = path, .counts = counts });
         }
@@ -738,4 +760,12 @@ test "a function inside a struct inside a function is checked for calling itself
         \\}
     ;
     try std.testing.expectEqual(@as(u32, 1), try count_in(source, .recursion));
+}
+
+test "only KPM's launch.sh may stay shell, and only as a one-line shim" {
+    const shim = "#!/bin/sh\n# Why it's shell.\nexec /mnt/us/noface/noface-launch \"$0\"\n";
+    try std.testing.expect(is_kpm_shim("device/kpm/launch.sh", shim));
+    try std.testing.expect(!is_kpm_shim("device/start.sh", shim));
+    const grown = shim ++ "sleep 2\n";
+    try std.testing.expect(!is_kpm_shim("device/kpm/launch.sh", grown));
 }

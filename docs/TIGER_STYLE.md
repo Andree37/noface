@@ -150,7 +150,17 @@ less debt than you found it.
 - **Zero dependencies but the Zig toolchain**, as Tiger Style asks. *Where noface is
   today:* fonts and pictures are decoded by the stb libraries in `third_party/`; they're
   to be replaced by our own Zig.
-- **Tooling is Zig.** Scripts that aren't Zig are counted **[checked]**: the Python
-  tools and the device's shell scripts are to become Zig. One exception will stay: KPM,
-  the launcher noface is started from, runs `device/kpm/launch.sh` and nothing else, so
-  that one line of shell remains, and its count in the baseline stays at one.
+- **Tooling is Zig.** Scripts that aren't Zig are counted **[checked]**, and there are
+  none: the tools that run on a computer (`tools/build_dictionary.zig`,
+  `tools/pgm2png.zig`, `tools/package.zig`) and everything that runs on the Kindle
+  besides the app (`src/launch.zig`, built as `noface-launch`) are Zig.
+
+  *The one exception:* KPM, the launcher noface is opened from, runs a package's
+  `launch.sh` and nothing else, so `device/kpm/launch.sh` stays shell. It is a shim:
+  comments, then one line that execs `noface-launch`. The check accepts that file by
+  its path, and only while it has one line of code; a second line counts it again. The
+  package also ships it as `noface/data.sh` and `noface/autostart.sh`, the names an
+  older install's KPM entry and startup file run, so updating the app folder alone
+  keeps both working (the shim passes `"$0"`, which tells the launcher which way it
+  was started). The startup file, `device/noface-autostart.conf`, is an upstart job
+  rather than a script: its one line runs `noface-launch autostart`.

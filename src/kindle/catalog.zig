@@ -1,4 +1,4 @@
-//! The Kindle's book catalog: exported by device/export.sh into library.tsv, and read
+//! The Kindle's book catalog: exported by `noface-launch export` into library.tsv, and read
 //! back into the library model.
 //!
 //! The catalog is outside data: a row it can't read is skipped or read as empty, never
@@ -24,12 +24,13 @@ pub fn clean_title(raw: []const u8) []const u8 {
 
 /// Rebuilds library.tsv from the catalog.
 pub fn export_library() void {
-    // Run by the shell, from wherever noface was started.
-    comptime assert(std.mem.endsWith(u8, paths.export_script, ".sh"));
-    comptime assert(paths.export_script[0] == '/');
-    const argv = [_:null]?[*:0]const u8{ "/bin/sh", paths.export_script };
+    // By the launcher, which writes it the same way before noface starts
+    // (src/kindle/catalog_export.zig).
+    comptime assert(std.mem.endsWith(u8, paths.launcher, "/noface-launch"));
+    comptime assert(paths.launcher[0] == '/');
+    const argv = [_:null]?[*:0]const u8{ paths.launcher, "export" };
     var out: [16]u8 = undefined;
-    // The script prints nothing worth reading: library.tsv is what it makes.
+    // It prints nothing worth reading: library.tsv is what it makes.
     _ = process.run(&argv, &out);
 }
 

@@ -1,5 +1,6 @@
 //! Running other programs, with a deadline so a stuck one can't freeze the reader.
 const std = @import("std");
+const assert = std.debug.assert;
 const linux = @import("calls.zig");
 const os = @import("os.zig");
 const failed = os.failed;
@@ -15,19 +16,40 @@ pub const Fake = struct {
 };
 pub var fake: ?Fake = null;
 
+/// The most arguments a fake is shown; a command with more is cut short.
+const fake_arguments_max = 12;
+
+/// The most commands `run_all` runs at once.
+const run_all_commands_max = 16;
+
+/// How often a child that hasn't exited is looked at again.
+const reap_poll_ms = 5;
+
+/// Longest any command may take. A stuck lipc or sqlite call must not freeze the reader.
+const command_timeout_ms = 15_000;
+
+comptime {
+    assert(reap_poll_ms < command_timeout_ms);
+}
+
 fn answer_fake(f: Fake, argv: [*:null]const ?[*:0]const u8, out: []u8) ?usize {
-    var args: [12][]const u8 = undefined;
-    var n: usize = 0;
-    while (argv[n]) |a| : (n += 1) {
-        if (n == args.len) break;
-        args[n] = std.mem.sliceTo(a, 0);
+    assert(argv[0] != null); // A command names its program
+    var arguments: [fake_arguments_max][]const u8 = undefined;
+    var arguments_count: u32 = 0;
+    for (&arguments, 0..) |*argument, index| {
+        const text = argv[index] orelse break;
+        argument.* = std.mem.sliceTo(text, 0);
+        arguments_count += 1;
     }
-    return f.answer(f.ctx, args[0..n], out);
+    const printed = f.answer(f.ctx, arguments[0..arguments_count], out);
+    if (printed) |count| assert(count <= out.len); // A fake prints into `out` too
+    return printed;
 }
 
 /// Starts a program with its output on a pipe, in a process group of its own so
 /// everything it starts can be killed together.
 pub fn spawn(argv: [*:null]const ?[*:0]const u8) ?Child {
+    assert(argv[0] != null); // A command names its program
     if (fake != null) return null; // Watchers and helpers don't start under test
     var fds: [2]i32 = undefined;
     // Close-on-exec, so later children don't inherit this pipe. dup2 below clears it on
@@ -35,38 +57,49 @@ pub fn spawn(argv: [*:null]const ?[*:0]const u8) ?Child {
     if (failed(linux.pipe2(&fds, .{ .CLOEXEC = true }))) return null;
     const pid = linux.fork();
     if (failed(pid)) {
-        _ = linux.close(fds[0]);
-        _ = linux.close(fds[1]);
+        _ = linux.close(fds[0]); // Nothing was started: only the pipe to give back
+        _ = linux.close(fds[1]); // Likewise
         return null;
     }
-    if (pid == 0) {
-        _ = linux.setpgid(0, 0);
-        _ = linux.dup2(fds[1], 1);
-        _ = linux.close(fds[0]);
-        _ = linux.close(fds[1]);
-        const envp = [_:null]?[*:0]const u8{};
-        _ = linux.execve(argv[0].?, argv, &envp);
-        linux.exit(127);
-    }
-    _ = linux.close(fds[1]);
-    return .{ .pid = @intCast(pid), .out = fds[0] };
+    if (pid == 0) spawn_child(argv, fds);
+    _ = linux.close(fds[1]); // The child's end: the child holds its own copy
+    const child = Child{ .pid = @intCast(pid), .out = fds[0] };
+    assert(child.pid > 0);
+    assert(child.out >= 0);
+    return child;
 }
 
-/// Longest any command may take. A stuck lipc or sqlite call must not freeze the reader.
-const command_timeout_ms = 15_000;
+/// In the child: makes the pipe its output and runs the program, never returning.
+fn spawn_child(argv: [*:null]const ?[*:0]const u8, fds: [2]i32) noreturn {
+    assert(fds[0] >= 0);
+    assert(fds[1] >= 0);
+    // Each failure here shows as the program's failure, through the exit status below
+    _ = linux.setpgid(0, 0);
+    _ = linux.dup2(fds[1], 1);
+    _ = linux.close(fds[0]);
+    _ = linux.close(fds[1]);
+    const envp = [_:null]?[*:0]const u8{};
+    _ = linux.execve(argv[0].?, argv, &envp); // Returns only on failure
+    linux.exit(127);
+}
 
 /// Runs a command, collecting what it prints. Null when it can't start or runs too long,
 /// in which case it is killed.
 pub fn run(argv: [*:null]const ?[*:0]const u8, out: []u8) ?usize {
-    return run_until(argv, out, os.now_us() + command_timeout_ms * 1000);
+    assert(argv[0] != null);
+    const printed = run_until(argv, out, os.now_us() + command_timeout_ms * 1000);
+    if (printed) |count| assert(count <= out.len);
+    return printed;
 }
 
 /// Like `run`, but must be done by `deadline` (microseconds on the monotonic clock).
 pub fn run_until(argv: [*:null]const ?[*:0]const u8, out: []u8, deadline: u64) ?usize {
+    assert(argv[0] != null);
     if (fake) |f| return answer_fake(f, argv, out);
     if (os.now_us() >= deadline) return null;
     const child = spawn(argv) orelse return null;
     var total: usize = 0;
+    // Bounded by the deadline, and by `out`, which each read fills further
     while (total < out.len) {
         const now = os.now_us();
         if (now >= deadline) break;
@@ -74,12 +107,13 @@ pub fn run_until(argv: [*:null]const ?[*:0]const u8, out: []u8, deadline: u64) ?
         const waited = linux.poll(&ready, 1, @intCast((deadline - now) / 1000 + 1));
         if (failed(waited)) continue; // Interrupted by a signal
         if (waited == 0) break;
-        const n = linux.read(child.out, out[total..].ptr, out.len - total);
-        if (failed(n) or n == 0) break;
-        total += n;
+        const got = linux.read(child.out, out[total..].ptr, out.len - total);
+        if (failed(got) or got == 0) break;
+        total += got;
+        assert(total <= out.len);
     }
     // Closing first means a child with more to say gets SIGPIPE instead of blocking.
-    _ = linux.close(child.out);
+    _ = linux.close(child.out); // Our end of the pipe: nothing to do if it fails
     if (!reap(child.pid, deadline)) {
         std.debug.print("command timed out: {s}\n", .{std.mem.sliceTo(argv[0].?, 0)});
         return null;
@@ -90,86 +124,118 @@ pub fn run_until(argv: [*:null]const ?[*:0]const u8, out: []u8, deadline: u64) ?
 /// Runs several commands at once, collecting what each prints into its own buffer:
 /// together they take about as long as the slowest, not the sum. `lens[i]` is how much
 /// command i printed, or null when it didn't start or wasn't done by `deadline`.
-pub fn run_all(argvs: []const [*:null]const ?[*:0]const u8, outs: [][]u8, lens: []?usize, deadline: u64) void {
-    const max = 16;
-    std.debug.assert(argvs.len <= max and outs.len == argvs.len and lens.len == argvs.len);
+pub fn run_all(
+    argvs: []const [*:null]const ?[*:0]const u8,
+    outs: [][]u8,
+    lens: []?usize,
+    deadline: u64,
+) void {
+    assert(argvs.len <= run_all_commands_max);
+    assert(outs.len == argvs.len);
+    assert(lens.len == argvs.len);
     if (fake) |f| {
         for (argvs, outs, lens) |argv, out, *len| len.* = answer_fake(f, argv, out);
         return;
     }
-    var children: [max]?Child = @splat(null);
-    var open: [max]bool = @splat(false);
-    for (argvs, 0..) |argv, i| {
-        lens[i] = null;
-        children[i] = spawn(argv);
-        if (children[i] != null) {
-            open[i] = true;
-            lens[i] = 0;
+    var children: [run_all_commands_max]?Child = @splat(null);
+    var open: [run_all_commands_max]bool = @splat(false);
+    for (argvs, 0..) |argv, index| {
+        lens[index] = null;
+        children[index] = spawn(argv);
+        if (children[index] != null) {
+            open[index] = true;
+            lens[index] = 0;
         }
     }
     // Read whichever has output until all have finished printing, or time runs out
     while (os.now_us() < deadline) {
-        var fds: [max]linux.pollfd = undefined;
-        var which: [max]usize = undefined;
-        var n: usize = 0;
-        for (0..argvs.len) |i| {
-            if (!open[i]) continue;
-            fds[n] = .{ .fd = children[i].?.out, .events = linux.POLL.IN, .revents = 0 };
-            which[n] = i;
-            n += 1;
-        }
-        if (n == 0) break;
-        const waited = linux.poll(&fds, n, @intCast((deadline - os.now_us()) / 1000 + 1));
-        if (failed(waited)) continue; // Interrupted by a signal
-        if (waited == 0) break;
-        for (fds[0..n], which[0..n]) |f, i| {
-            if (f.revents == 0) continue;
-            const buf = outs[i][lens[i].?..];
-            const got = if (buf.len == 0) 0 else linux.read(f.fd, buf.ptr, buf.len);
-            if (failed(got) or got == 0) {
-                open[i] = false;
-                continue;
-            }
-            lens[i] = lens[i].? + got;
+        if (!run_all_read(children[0..argvs.len], open[0..argvs.len], outs, lens, deadline)) {
+            break;
         }
     }
-    for (0..argvs.len) |i| {
-        const child = children[i] orelse continue;
-        _ = linux.close(child.out);
-        if (open[i] or !reap(child.pid, deadline)) lens[i] = null; // Not finished in time
+    for (0..argvs.len) |index| {
+        const child = children[index] orelse continue;
+        _ = linux.close(child.out); // Our end of the pipe: nothing to do if it fails
+        if (open[index] or !reap(child.pid, deadline)) lens[index] = null; // Not finished in time
+        if (lens[index]) |count| assert(count <= outs[index].len);
     }
+}
+
+/// Waits for output from the children still open, until `deadline`, and reads what
+/// came. False when there's nothing more to wait for: all are done, or time ran out.
+fn run_all_read(
+    children: []const ?Child,
+    open: []bool,
+    outs: [][]u8,
+    lens: []?usize,
+    deadline: u64,
+) bool {
+    assert(children.len <= run_all_commands_max);
+    assert(open.len == children.len);
+    var fds: [run_all_commands_max]linux.pollfd = undefined;
+    var which: [run_all_commands_max]u32 = undefined;
+    var fds_count: u32 = 0;
+    for (children, open, 0..) |child, is_open, index| {
+        if (!is_open) continue;
+        fds[fds_count] = .{ .fd = child.?.out, .events = linux.POLL.IN, .revents = 0 };
+        which[fds_count] = @intCast(index);
+        fds_count += 1;
+    }
+    if (fds_count == 0) return false;
+    const wait_ms: i32 = @intCast((deadline - os.now_us()) / 1000 + 1);
+    const waited = linux.poll(&fds, fds_count, wait_ms);
+    if (failed(waited)) return true; // Interrupted by a signal
+    if (waited == 0) return false;
+    for (fds[0..fds_count], which[0..fds_count]) |f, index| {
+        if (f.revents == 0) continue;
+        const buffer = outs[index][lens[index].?..];
+        const got = if (buffer.len == 0) 0 else linux.read(f.fd, buffer.ptr, buffer.len);
+        if (failed(got) or got == 0) {
+            open[index] = false;
+            continue;
+        }
+        lens[index] = lens[index].? + got;
+        assert(lens[index].? <= outs[index].len);
+    }
+    return true;
 }
 
 /// Waits for a child to exit until `deadline`, then kills its whole group. For
 /// `sh -c`, the stuck program is the shell's child. True when it exited in time.
 fn reap(pid: i32, deadline: u64) bool {
+    assert(pid > 0); // So -pid is its group, not every process
     var status: i32 = 0;
-    while (true) {
-        if (linux.waitpid(pid, &status, linux.W.NOHANG) != 0) return true;
-        if (os.now_us() >= deadline) break;
-        os.sleep_ms(5);
+    // Bounded by the deadline
+    while (linux.waitpid(pid, &status, linux.W.NOHANG) == 0) {
+        if (os.now_us() >= deadline) {
+            _ = linux.kill(-pid, linux.SIG.KILL); // Already gone: then there's nothing to stop
+            _ = linux.waitpid(pid, &status, 0); // Reaped, whatever its status
+            return false;
+        }
+        os.sleep_ms(reap_poll_ms);
     }
-    _ = linux.kill(-pid, linux.SIG.KILL);
-    _ = linux.waitpid(pid, &status, 0);
-    return false;
+    return true;
 }
 
 /// A spawned child's state, without waiting: null while it runs, then whether it
 /// exited cleanly (status 0). Reaps it once it's done.
 pub fn exited(pid: i32) ?bool {
+    assert(pid > 0);
     var status: i32 = 0;
     const rc = linux.waitpid(pid, &status, linux.W.NOHANG);
     if (rc == 0) return null;
     if (failed(rc)) return false;
-    const st: u32 = @bitCast(status);
-    return linux.W.IFEXITED(st) and linux.W.EXITSTATUS(st) == 0;
+    assert(rc == @as(u32, @intCast(pid))); // The child asked about
+    const status_bits: u32 = @bitCast(status);
+    return linux.W.IFEXITED(status_bits) and linux.W.EXITSTATUS(status_bits) == 0;
 }
 
 /// Stops a spawned child and everything it started, and reaps it.
 pub fn stop(pid: i32) void {
-    _ = linux.kill(-pid, linux.SIG.KILL);
+    assert(pid > 0); // So -pid is its group, not every process
+    _ = linux.kill(-pid, linux.SIG.KILL); // Already gone: then there's nothing to stop
     var status: i32 = 0;
-    _ = linux.waitpid(pid, &status, 0);
+    _ = linux.waitpid(pid, &status, 0); // Reaped, whatever its status
 }
 
 /// Runs `check(ctx)` in a child process and says whether it returned true there. For
@@ -180,10 +246,11 @@ pub fn survives(ctx: anytype, comptime check: fn (@TypeOf(ctx)) bool) bool {
     const pid = linux.fork();
     if (failed(pid)) return false;
     if (pid == 0) linux.exit(if (check(ctx)) 0 else 1);
+    assert(pid <= std.math.maxInt(i32)); // A process id
     const deadline = os.now_us() + 5 * 1_000_000;
     while (os.now_us() < deadline) {
         if (exited(@intCast(pid))) |ok| return ok;
-        os.sleep_ms(5);
+        os.sleep_ms(reap_poll_ms);
     }
     stop(@intCast(pid));
     return false;

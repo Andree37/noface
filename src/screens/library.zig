@@ -316,7 +316,6 @@ const Next = enum { nothing, page, everything, leave };
 pub fn runLibrary(a: *app.App) !void {
     var b = Browser{ .a = a, .lib = try loadLibrary(a), .buf = a.slots[0].buf };
     defer b.lib.deinit();
-    defer a.input.tick_us = 0;
     a.slots[0].page = -1;
     // Started while the Kindle is locked: the "going to lock" event has passed, so
     // show the lock screen now, as if it had just arrived. Otherwise the library
@@ -365,7 +364,7 @@ const Browser = struct {
     /// and the battery.
     fn setInput(b: *Browser) void {
         const in = b.a.input;
-        in.restore(touches);
+        in.take(touches);
         const now = nowUs();
         in.tick_us = if (now < b.watch_until) download_poll_us else if (now < b.status_until) status_poll_us else idle_tick_us;
     }
@@ -556,7 +555,6 @@ const Browser = struct {
     /// straight on with it.
     fn openBook(b: *Browser, first: *catalog.Entry) !Next {
         const a = b.a;
-        a.input.tick_us = 0;
         var entry = first;
         while (true) {
             const was_read = entry.isRead();

@@ -177,12 +177,9 @@ pub fn readBook(a: *app.App, entry: *catalog.Entry) !Outcome {
     a.wifi_hands_off = false;
     defer wifi_saver.restore(); // Leaving the book, Wi-Fi comes back
     defer sess.saveProgress(entry, state_path, &session);
-    const touches = a.input.modes(); // Put back for the library on leaving
-    defer {
-        a.input.restore(touches);
-        a.input.grip_exempt = null;
-        a.input.tick_us = 0;
-    }
+    // The loop sets touches and the tick for each view; put back for the library on leaving
+    const was = a.input.enter(a.input.modes(), 0);
+    defer a.input.leave(was);
     var reader = Reader{
         .a = a,
         .s = &session,
@@ -255,7 +252,7 @@ const Reader = struct {
     /// first open is still laid out in idle moments, else for the clock.
     fn setInput(r: *Reader) void {
         const in = r.a.input;
-        in.restore(touchesFor(r.view));
+        in.take(touchesFor(r.view));
         in.grip_exempt = if (r.reading()) r.s.backZone() else null; // The Back button counts
         in.tick_us = if (r.s.layoutPending()) 1000 else clock_check_us;
     }

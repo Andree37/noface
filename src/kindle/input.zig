@@ -227,17 +227,36 @@ pub const Input = struct {
         return .{ .grips = in.grips, .deferred = in.deferred, .edge_zones = in.edge_zones };
     }
 
-    /// Takes touches as `m` says. Returns how they were, for `restore`.
-    pub fn use(in: *Input, m: Modes) Modes {
-        const was = in.modes();
-        in.restore(m);
-        return was;
-    }
-
-    pub fn restore(in: *Input, m: Modes) void {
+    /// Takes touches as `m` says, from now on.
+    pub fn take(in: *Input, m: Modes) void {
         in.grips = m.grips;
         in.deferred = m.deferred;
         in.edge_zones = m.edge_zones;
+    }
+
+    /// Everything about taking input that a screen sets for itself while it's open.
+    pub const Scope = struct { modes: Modes, tick_us: u64, grip_exempt: ?Zone };
+
+    /// For a screen opening: takes touches as `m` says, ticks every `tick_us` (0:
+    /// never) counting from now, with no control exempt from the grip zones. Returns
+    /// how it all was, for `leave` when the screen closes:
+    ///
+    ///     const was = in.enter(modes, tick_us);
+    ///     defer in.leave(was);
+    pub fn enter(in: *Input, m: Modes, tick_us: u64) Scope {
+        const was = Scope{ .modes = in.modes(), .tick_us = in.tick_us, .grip_exempt = in.grip_exempt };
+        in.take(m);
+        in.tick_us = tick_us;
+        in.last_tick = nowUs();
+        in.grip_exempt = null;
+        return was;
+    }
+
+    /// Puts back what `enter` changed.
+    pub fn leave(in: *Input, was: Scope) void {
+        in.take(was.modes);
+        in.tick_us = was.tick_us;
+        in.grip_exempt = was.grip_exempt;
     }
 
     /// For a screen of its own (a sheet, a list, a card): the next action, or null when

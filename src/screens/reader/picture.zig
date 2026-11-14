@@ -143,10 +143,8 @@ const After = enum { nothing, double_tap, other_tap, quit };
 /// Waits briefly for a second tap near the first. One that lands elsewhere is left
 /// for the main loop as a tap of its own.
 fn afterTap(a: *app.App, x: i32, y: i32) After {
-    const tick = a.input.tick_us;
-    defer a.input.tick_us = tick;
-    a.input.tick_us = double_tap_us;
-    a.input.last_tick = os.nowUs();
+    const was = a.input.enter(a.input.modes(), double_tap_us);
+    defer a.input.leave(was);
     while (a.input.nextFor()) |action| switch (action) {
         .tick => return .nothing, // No second tap in time
         .tap => |t| {

@@ -70,12 +70,8 @@ fn check(comptime S: type) void {
 pub fn run(a: *app.App, s: anytype) !?@TypeOf(s.*).Result {
     const S = @TypeOf(s.*);
     comptime check(S);
-    const was = if (@hasDecl(S, "touches")) a.input.use(S.touches) else a.input.modes();
-    defer a.input.restore(was);
-    const tick = a.input.tick_us;
-    defer a.input.tick_us = tick;
-    a.input.tick_us = if (@hasDecl(S, "tick_us")) S.tick_us else 0;
-    a.input.last_tick = @import("../sys/os.zig").nowUs();
+    const was = a.input.enter(if (@hasDecl(S, "touches")) S.touches else a.input.modes(), if (@hasDecl(S, "tick_us")) S.tick_us else 0);
+    defer a.input.leave(was);
 
     var part: ?Part = .all;
     while (true) {

@@ -54,10 +54,8 @@ pub fn lockScreen(a: *app.App, entry: ?*const catalog.Entry, options: Options) W
     a.present(target, .flash) catch |err| std.debug.print("lock screen not shown: {s}\n", .{@errorName(err)});
 
     // Stock paints its own lock screen just after this, so draw over it again.
-    const tick = a.input.tick_us;
-    defer a.input.tick_us = tick;
-    a.input.tick_us = lock_redraw_us;
-    a.input.last_tick = nowUs();
+    const was = a.input.enter(a.input.modes(), lock_redraw_us);
+    defer a.input.leave(was);
     a.input.locked = true;
     defer a.input.locked = false;
     var redraws: u32 = 0;

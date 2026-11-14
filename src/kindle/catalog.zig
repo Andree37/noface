@@ -1,104 +1,142 @@
 //! The Kindle's book catalog: exported by device/export.sh into library.tsv, and read
 //! back into the library model.
+//!
+//! The catalog is outside data: a row it can't read is skipped or read as empty, never
+//! asserted.
 const std = @import("std");
+const assert = std.debug.assert;
 const paths = @import("paths.zig");
 const library = @import("../model/catalog.zig");
 const process = @import("../sys/process.zig");
 
 const read_state_finished = 2; // Kindle's own "finished" mark
 
+const percent_max = 100;
+
 /// Converted filenames look like "Title -- Author -- Year -- junk".
 pub fn clean_title(raw: []const u8) []const u8 {
     const end = std.mem.indexOf(u8, raw, " -- ") orelse raw.len;
-    return std.mem.trim(u8, raw[0..end], " ");
+    const result = std.mem.trim(u8, raw[0..end], " ");
+    assert(result.len <= raw.len);
+    if (result.len > 0) assert(result[result.len - 1] != ' ');
+    return result;
 }
 
 /// Rebuilds library.tsv from the catalog.
 pub fn export_library() void {
+    // Run by the shell, from wherever noface was started.
+    comptime assert(std.mem.endsWith(u8, paths.export_script, ".sh"));
+    comptime assert(paths.export_script[0] == '/');
     const argv = [_:null]?[*:0]const u8{ "/bin/sh", paths.export_script };
     var out: [16]u8 = undefined;
+    // The script prints nothing worth reading: library.tsv is what it makes.
     _ = process.run(&argv, &out);
 }
 
 /// Filename conversion turned ":" into "_", and some titles carry a series prefix
 /// like "[Bobiverse 01] \u{2022} We Are Legion".
 pub fn fix_title(alloc: std.mem.Allocator, raw: []const u8) ![]const u8 {
-    var t = clean_title(raw);
+    var title = clean_title(raw);
     const bullet = "\u{2022} ";
-    if (t.len > 0 and t[0] == '[') {
-        if (std.mem.indexOf(u8, t, bullet)) |at| t = t[at + bullet.len ..];
+    if (title.len > 0 and title[0] == '[') {
+        if (std.mem.indexOf(u8, title, bullet)) |at| title = title[at + bullet.len ..];
     }
     var out: std.ArrayList(u8) = .empty;
-    var i: usize = 0;
-    while (i < t.len) {
-        if (std.mem.startsWith(u8, t[i..], " _ ")) {
+    var rest = title;
+    // Bounded: every step takes at least a byte off what's left.
+    while (rest.len > 0) {
+        if (std.mem.startsWith(u8, rest, " _ ")) {
             try out.appendSlice(alloc, ": ");
-            i += 3;
-        } else if (std.mem.startsWith(u8, t[i..], "_ ")) {
+            rest = rest[3..];
+        } else if (std.mem.startsWith(u8, rest, "_ ")) {
             try out.appendSlice(alloc, ": ");
-            i += 2;
+            rest = rest[2..];
         } else {
-            try out.append(alloc, t[i]);
-            i += 1;
+            try out.append(alloc, rest[0]);
+            rest = rest[1..];
         }
     }
-    return std.mem.trimEnd(u8, out.items, "_ ");
+    // A colon is never longer than what it replaces.
+    assert(out.items.len <= title.len);
+    const result = std.mem.trimEnd(u8, out.items, "_ ");
+    if (result.len > 0) assert(result[result.len - 1] != '_');
+    return result;
 }
 
 /// Authors can repeat as "Liu, Cixin [Liu, Cixin]".
 pub fn clean_author(raw: []const u8) []const u8 {
     const end = std.mem.indexOf(u8, raw, " [") orelse raw.len;
-    return std.mem.trim(u8, raw[0..end], " ");
+    const result = std.mem.trim(u8, raw[0..end], " ");
+    assert(result.len <= raw.len);
+    if (result.len > 0) assert(result[result.len - 1] != ' ');
+    return result;
 }
 
 pub fn parse(alloc: std.mem.Allocator, data: []const u8) ![]library.Entry {
     var out: std.ArrayList(library.Entry) = .empty;
     var lines = std.mem.tokenizeScalar(u8, data, '\n');
     while (lines.next()) |line| {
-        var fields = std.mem.splitScalar(u8, line, '\t');
-        const path = fields.next() orelse continue;
-        const title = fields.next() orelse continue;
-        const author = fields.next() orelse continue;
-        const percent = std.fmt.parseFloat(f32, fields.next() orelse "0") catch 0;
-        const last = std.fmt.parseInt(u64, fields.next() orelse "0", 10) catch 0;
-        const read_state = std.fmt.parseInt(u32, fields.next() orelse "0", 10) catch 0;
-        const thumbnail = fields.next() orelse "";
-        const added = std.fmt.parseInt(u64, fields.next() orelse "0", 10) catch 0;
-        const availability: library.Availability = switch (std.fmt.parseInt(u32, fields.next() orelse "0", 10) catch 0) {
-            1 => .cloud,
-            2 => .downloading,
-            else => .local,
-        };
-        const key = fields.next() orelse "";
-        const kind = fields.next() orelse "";
-        const guid = fields.next() orelse "";
-        if (path.len == 0 and availability == .local) continue;
-        try out.append(alloc, .{
-            .path = try alloc.dupeSentinel(u8, path, 0),
-            .title = try fix_title(alloc, title),
-            .author = clean_author(author),
-            .percent = @intFromFloat(std.math.clamp(percent, 0, 100)),
-            .last = last,
-            // The Kindle's own mark, which marking as unread clears.
-            .finished = read_state == read_state_finished,
-            .kindle_percent = @intFromFloat(std.math.clamp(percent, 0, 100)),
-            .kindle_last = last,
-            .thumbnail = try alloc.dupeSentinel(u8, thumbnail, 0),
-            .added = added,
-            .availability = availability,
-            .key = key,
-            .kind = kind,
-            .guid = guid,
-            .series = if (library.series_from_file_name(path)) |s| s.name else "",
-            .series_index = if (library.series_from_file_name(path)) |s| s.index else 0,
-        });
+        const entry = try parse_line(alloc, line) orelse continue;
+        try out.append(alloc, entry);
+    }
+    for (out.items) |entry| {
+        if (entry.availability == .local) assert(entry.path.len > 0);
+        assert(entry.percent <= percent_max);
     }
     return out.toOwnedSlice(alloc);
 }
 
+/// One book's row: its fields, tab separated. Null for a row that names no book.
+fn parse_line(alloc: std.mem.Allocator, line: []const u8) !?library.Entry {
+    assert(line.len > 0);
+    assert(std.mem.indexOfScalar(u8, line, '\n') == null);
+    var fields = std.mem.splitScalar(u8, line, '\t');
+    const path = fields.next() orelse return null;
+    const title = fields.next() orelse return null;
+    const author = fields.next() orelse return null;
+    const percent = std.fmt.parseFloat(f32, fields.next() orelse "0") catch 0;
+    const last = std.fmt.parseInt(u64, fields.next() orelse "0", 10) catch 0;
+    const read_state = std.fmt.parseInt(u32, fields.next() orelse "0", 10) catch 0;
+    const thumbnail = fields.next() orelse "";
+    const added = std.fmt.parseInt(u64, fields.next() orelse "0", 10) catch 0;
+    const availability_code = std.fmt.parseInt(u32, fields.next() orelse "0", 10) catch 0;
+    const availability: library.Availability = switch (availability_code) {
+        1 => .cloud,
+        2 => .downloading,
+        else => .local,
+    };
+    const key = fields.next() orelse "";
+    const kind = fields.next() orelse "";
+    const guid = fields.next() orelse "";
+    if (path.len == 0 and availability == .local) return null;
+    const series = library.series_from_file_name(path);
+    const percent_whole: u32 = @intFromFloat(std.math.clamp(percent, 0, percent_max));
+    return .{
+        .path = try alloc.dupeSentinel(u8, path, 0),
+        .title = try fix_title(alloc, title),
+        .author = clean_author(author),
+        .percent = percent_whole,
+        .last = last,
+        // The Kindle's own mark, which marking as unread clears.
+        .finished = read_state == read_state_finished,
+        .kindle_percent = percent_whole,
+        .kindle_last = last,
+        .thumbnail = try alloc.dupeSentinel(u8, thumbnail, 0),
+        .added = added,
+        .availability = availability,
+        .key = key,
+        .kind = kind,
+        .guid = guid,
+        .series = if (series) |s| s.name else "",
+        .series_index = if (series) |s| s.index else 0,
+    };
+}
+
 test "titles lose filename junk" {
-    try std.testing.expectEqualStrings("Snow Crash", clean_title("Snow Crash -- Stephenson, Neal -- 2010"));
-    try std.testing.expectEqualStrings("Prisoners of Geography", clean_title("Prisoners of Geography"));
+    const title = clean_title("Snow Crash -- Stephenson, Neal -- 2010");
+    try std.testing.expectEqualStrings("Snow Crash", title);
+    const plain = "Prisoners of Geography";
+    try std.testing.expectEqualStrings(plain, clean_title(plain));
 }
 
 test "authors lose repeated names" {
@@ -120,7 +158,9 @@ test "rows parse and library.sort newest first" {
 test "finished stays read after our progress replaces the percent" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    const rows = try parse(arena.allocator(), "/a\tA\tx\t99.1\t1\t1\n/b\tB\tx\t40\t1\t2\n/c\tC\tx\t40\t1\t1\n/d\tD\tx\t0\t1\t0\n");
+    const data = "/a\tA\tx\t99.1\t1\t1\n/b\tB\tx\t40\t1\t2\n" ++
+        "/c\tC\tx\t40\t1\t1\n/d\tD\tx\t0\t1\t0\n";
+    const rows = try parse(arena.allocator(), data);
     try std.testing.expect(rows[0].is_read());
     rows[0].percent = 3; // Read again from the start, or marked as unread
     try std.testing.expect(!rows[0].is_read());
@@ -133,9 +173,19 @@ test "finished stays read after our progress replaces the percent" {
 test "cloud books list without a path and never lead" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    const rows = try parse(arena.allocator(), "\tCloud\tx\t50\t9\t0\t\t1\t1\n/b\tHere\tx\t20\t1\t0\t\t1\t0\n/c\tGetting\tx\t0\t2\t0\t\t1\t2\n\tNoPath\tx\t0\t2\t0\t\t1\t0\n");
+    const data = "\tCloud\tx\t50\t9\t0\t\t1\t1\n/b\tHere\tx\t20\t1\t0\t\t1\t0\n" ++
+        "/c\tGetting\tx\t0\t2\t0\t\t1\t2\n\tNoPath\tx\t0\t2\t0\t\t1\t0\n";
+    const rows = try parse(arena.allocator(), data);
     try std.testing.expectEqual(@as(usize, 3), rows.len);
     try std.testing.expectEqual(library.Availability.cloud, rows[0].availability);
     try std.testing.expectEqual(library.Availability.downloading, rows[2].availability);
     try std.testing.expectEqual(@as(usize, 1), library.pick_hero(rows).?);
+}
+
+test "titles get their colons back and lose a series prefix" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const raw = "[Bobiverse 01] \u{2022} We Are Legion _ We Are Bob_ Book_ ";
+    const title = try fix_title(arena.allocator(), raw);
+    try std.testing.expectEqualStrings("We Are Legion: We Are Bob: Book", title);
 }

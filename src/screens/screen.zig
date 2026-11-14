@@ -28,6 +28,7 @@
 //! or leaves in turn. Touch modes and the tick are put back as they were either way.
 //! A caller that must tell "closed" from "locked or leaving" uses `run_to_end`.
 const std = @import("std");
+const assert = std.debug.assert;
 const app = @import("../app.zig");
 const input_mod = @import("../kindle/input.zig");
 
@@ -50,7 +51,15 @@ pub fn Step(comptime Result: type) type {
 }
 
 /// What a screen may declare `pub`.
-const hooks = [_][]const u8{ "Result", "touches", "tick_us", "draw", "on_tap", "on_tick", "on_action" };
+const hooks = [_][]const u8{
+    "Result",
+    "touches",
+    "tick_us",
+    "draw",
+    "on_tap",
+    "on_tick",
+    "on_action",
+};
 
 /// Fails the build when `S` isn't a screen as described above.
 fn check(comptime S: type) void {
@@ -58,13 +67,20 @@ fn check(comptime S: type) void {
     for (std.meta.declarations(S)) |decl| {
         for (hooks) |h| {
             if (std.mem.eql(u8, decl, h)) break;
-        } else @compileError(name ++ ": a screen has no `" ++ decl ++ "` (it may have Result, touches, tick_us, draw, on_tap, on_tick, on_action); make a helper private");
+        } else @compileError(name ++ ": a screen has no `" ++ decl ++ "` (it may have " ++
+            "Result, touches, tick_us, draw, on_tap, on_tick, on_action); make a helper private");
     }
     for ([_][]const u8{ "Result", "draw", "on_tap" }) |needed| {
-        if (!@hasDecl(S, needed)) @compileError(name ++ ": a screen needs a pub `" ++ needed ++ "`");
+        if (!@hasDecl(S, needed)) {
+            @compileError(name ++ ": a screen needs a pub `" ++ needed ++ "`");
+        }
     }
-    if (@hasDecl(S, "tick_us") != @hasDecl(S, "on_tick")) @compileError(name ++ ": `tick_us` and `on_tick` go together");
-    if (@hasDecl(S, "touches") and @TypeOf(S.touches) != input_mod.Input.Modes) @compileError(name ++ ": `touches` is an Input.Modes");
+    if (@hasDecl(S, "tick_us") != @hasDecl(S, "on_tick")) {
+        @compileError(name ++ ": `tick_us` and `on_tick` go together");
+    }
+    if (@hasDecl(S, "touches") and @TypeOf(S.touches) != input_mod.Input.Modes) {
+        @compileError(name ++ ": `touches` is an Input.Modes");
+    }
 }
 
 /// How a screen ended.
@@ -72,13 +88,20 @@ pub fn Ending(comptime Result: type) type {
     return union(enum) {
         done: Result, // Finished, with this result
         closed, // Cancelled, or tapped outside it
-        interrupted: Action, // The Kindle locked, or noface was told to leave: kept for the screen underneath
+        /// The Kindle locked, or noface was told to leave: kept for the screen underneath.
+        interrupted: Action,
     };
 }
 
 /// Runs screen `s` until it's done (its result), or closes or the Kindle locks (null).
 pub fn run(a: *app.App, s: anytype) !?@TypeOf(s.*).Result {
-    return switch (try run_to_end(a, s)) {
+    const modes_before = a.input.modes();
+    const tick_before_us = a.input.tick_us;
+    const ending = try run_to_end(a, s);
+    // However it ended, touches and the tick are as they were before it opened
+    assert(std.meta.eql(a.input.modes(), modes_before));
+    assert(a.input.tick_us == tick_before_us);
+    return switch (ending) {
         .done => |result| result,
         .closed, .interrupted => null,
     };
@@ -88,14 +111,25 @@ pub fn run(a: *app.App, s: anytype) !?@TypeOf(s.*).Result {
 pub fn run_to_end(a: *app.App, s: anytype) !Ending(@TypeOf(s.*).Result) {
     const S = @TypeOf(s.*);
     comptime check(S);
-    const was = a.input.enter(if (@hasDecl(S, "touches")) S.touches else a.input.modes(), if (@hasDecl(S, "tick_us")) S.tick_us else 0);
+    const touches = if (@hasDecl(S, "touches")) S.touches else a.input.modes();
+    const tick_us: u64 = if (@hasDecl(S, "tick_us")) S.tick_us else 0;
+    const was = a.input.enter(touches, tick_us);
     defer a.input.leave(was);
+    assert(std.meta.eql(a.input.modes(), touches));
+    assert(a.input.tick_us == tick_us);
 
     var part: ?Part = .all;
+    // Unbounded: a screen stays open for as long as the reader takes, until it's done
     while (true) {
         if (part) |p| try s.draw(p);
         part = null;
-        const action = a.input.next_for() orelse return .{ .interrupted = a.input.held_back().? }; // Locked, or leaving
+        // Locked, or leaving: the action is kept for the screen underneath
+        const action = a.input.next_for() orelse return .{
+            .interrupted = a.input.held_back().?,
+        };
+        // Those end the screen, and never reach it
+        assert(action != .lock);
+        assert(action != .stop);
         const step: Step(S.Result) = switch (action) {
             .tap => |t| try s.on_tap(t),
             .tick => if (@hasDecl(S, "on_tick")) try s.on_tick() else .stay,
@@ -119,27 +153,45 @@ const Example = struct {
     taps: u32 = 0,
     drawn: [2]u32 = .{ 0, 0 }, // How often each part was drawn, for the test
 
+    const taps_max = 3; // Done on this tap
+
     /// `.all` the first time and when a step asks; `.changing` for what taps change.
     pub fn draw(e: *Example, part: Part) !void {
+        // Done on the third tap, so never drawn after it
+        assert(e.taps < taps_max);
+        // Whole the first time, before any tap
+        if (e.taps == 0) assert(part == .all);
         e.drawn[@backingInt(part)] += 1;
     }
 
     /// Every tap comes here; holds, swipes and ticks go to `on_action` and `on_tick`.
     pub fn on_tap(e: *Example, _: Tap) !Step(u32) {
+        assert(e.taps < taps_max);
         e.taps += 1;
-        if (e.taps == 3) return .{ .done = e.taps };
+        assert(e.taps <= taps_max);
+        if (e.taps == taps_max) return .{ .done = e.taps };
         return .{ .redraw = .changing };
     }
 };
 
 test "a screen draws whole, takes taps until done, and gives back its result" {
-    // Scripted taps move the test clock: the real one comes back after, for the tests that follow
+    // Scripted taps move the test clock: the real one comes back after, for the tests that
+    // follow
     const os = @import("../sys/os.zig");
     defer os.fake_us = null;
-    const middle: input_mod.Step = .{ .act = .{ .tap = .{ .x = 600, .y = 800, .us = 0 } } }; // Clear of the thumb zones
+    // Clear of the thumb zones
+    const middle: input_mod.Step = .{ .act = .{ .tap = .{ .x = 600, .y = 800, .us = 0 } } };
     var steps = [_]input_mod.Step{ middle, middle, middle };
     var script = input_mod.Script{ .steps = &steps };
-    var input = input_mod.Input{ .touch = -1, .power = -1, .width = 1272, .height = 1696, .x_max = 1272, .y_max = 1696, .script = &script };
+    var input = input_mod.Input{
+        .touch = -1,
+        .power = -1,
+        .width = 1272,
+        .height = 1696,
+        .x_max = 1272,
+        .y_max = 1696,
+        .script = &script,
+    };
     var a: app.App = undefined;
     a.input = &input;
     const before = input.modes();

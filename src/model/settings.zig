@@ -32,6 +32,19 @@ pub const spacings = [_]f32{ 1.2, 1.35, 1.5, 1.7 };
 
 pub const margins = [_]i32{ 60, 100, 150, 210 };
 
+/// Settings that don't move where pages break. Every other one does: the saved page
+/// breaks are keyed by all the rest (screens/reader/page_store.zig), so a new setting
+/// counts unless it's added here. `font` is keyed by its name, as positions can shift.
+pub const not_layout = [_][]const u8{ "font", "clock", "refresh", "time_left", "autostart", "offer_dictionary", "lock_picture" };
+
+/// Whether a field of Settings changes where pages break.
+pub fn movesBreaks(comptime field: []const u8) bool {
+    inline for (not_layout) |name| {
+        if (comptime std.mem.eql(u8, name, field)) return false;
+    }
+    return true;
+}
+
 pub const Settings = struct {
     size: usize = 2,
     spacing: usize = 1,
@@ -208,4 +221,9 @@ test "the reader's own typefaces are offered after the Kindle's, by name" {
     try std.testing.expectEqual(s.font, parse(format(&buf, s)).font);
     resetFamilies();
     try std.testing.expectEqual(@as(usize, 0), parse("font Open Sans\n").font); // Removed since: the default
+}
+
+test "every name kept out of the page-break key is a setting" {
+    inline for (not_layout) |name| try std.testing.expect(@hasField(Settings, name));
+    try std.testing.expect(movesBreaks("size") and movesBreaks("bold_starts") and !movesBreaks("clock"));
 }

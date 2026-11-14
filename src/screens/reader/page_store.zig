@@ -44,11 +44,21 @@ pub fn key(a: *const app.App, book_bytes: usize) u64 {
     const s = a.settings;
     const l = a.layout;
     const parts = [_]u64{
-        book_bytes,              a.screen.width,          a.screen.height,      s.size, s.spacing, s.margin,
-        @intFromBool(s.bold),    @intFromBool(l.justify), @intFromBool(l.bold_starts), @bitCast(@as(i64, l.margin_x)),
+        book_bytes,                       a.screen.width,                      a.screen.height,
         @bitCast(@as(i64, l.margin_top)), @bitCast(@as(i64, l.margin_bottom)), @as(u32, @bitCast(l.indent)),
     };
     h.update(std.mem.sliceAsBytes(&parts));
+    // Every setting that moves breaks, so a new one can't be left out by mistake
+    inline for (@typeInfo(settings_model.Settings).@"struct".field_names) |name| {
+        if (comptime settings_model.movesBreaks(name)) {
+            const value: u64 = switch (@TypeOf(@field(s, name))) {
+                bool => @intFromBool(@field(s, name)),
+                usize => @field(s, name),
+                else => @compileError("page_store.key: say how to key the setting " ++ name),
+            };
+            h.update(std.mem.asBytes(&value));
+        }
+    }
     // The typeface by name: the reader's own take their places in the list from the
     // fonts folder at each start, so a place can pass to another font
     h.update(settings_model.families[s.font]);

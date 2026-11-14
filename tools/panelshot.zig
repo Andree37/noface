@@ -1,6 +1,7 @@
 //! Renders the quick panel to a PGM image on stdout, so it can be checked by eye.
 //! Usage: panelshot [panel | notes | toolbar [sheet] | library [page [read]]]
 const std = @import("std");
+const assert = std.debug.assert;
 const catalog_db = core.catalog_db;
 const Page = core.page.Page;
 const Font = core.font.Font;
@@ -20,198 +21,429 @@ const lipc = core.lipc;
 const text = core.text;
 const toolbar = core.toolbar;
 
-/// Writes a grayscale screen to stdout as a PGM image.
-fn write_image(pixels: []const u8, w: usize, h: usize) void {
-    var head: [32]u8 = undefined;
-    write(std.fmt.bufPrint(&head, "P5\n{d} {d}\n255\n", .{ w, h }) catch return);
-    write(pixels);
-}
+/// The panel noface is drawn for.
+const screen_width = 1272;
+const screen_height = 1696;
+const font_folder = "/usr/java/lib/fonts/";
+const library_path = "/mnt/us/noface-data/library.tsv";
+const stdout_fd = 1;
+/// The page dimmed behind the toolbar and its sheets.
+const dimmed_gray = 0xe8;
+/// The toolbar's invented book: its title, the page showing, and how many there are.
+const sample_title = "A sample book title";
+const sample_page_index = 36;
+const sample_page_count = 280;
+/// A body page's layout, as the reader sets one.
+const body_layout = text.Layout{
+    .margin_x = 100,
+    .margin_top = 90,
+    .margin_bottom = 150,
+    .indent = 60,
+};
 
-fn write(data: []const u8) void {
-    var at: usize = 0;
-    while (at < data.len) {
-        const n = linux.write(1, data[at..].ptr, data.len - at);
-        if (n > std.math.maxInt(usize) - 4096 or n == 0) break;
-        at += n;
+const filler = "Sample body words stand in for a real page and fill the lines around the marks. ";
+const sample = filler ++ filler ++
+    "One reference2 sits inside a word and a [3] mark stands apart so both shapes can be " ++
+    "checked. " ++ filler ++ filler;
+const note_line =
+    "This is invented text for checking the note panel, long enough to wrap over several lines. ";
+const sample_note = note_line ++ note_line ++ note_line;
+
+/// The format preview's text, with a run in bold and one in italics.
+const format_body = "This sample paragraph has a few words in bold and some in italics, " ++
+    "then carries on as ordinary body text for a line or two more.";
+const format_runs = [_]core.book.Run{
+    .{ .start = 26, .end = 39, .bold = true, .italic = false },
+    .{ .start = 44, .end = 59, .bold = false, .italic = true },
+};
+
+/// The two references in `sample`: a digit on a word, and a bracketed mark.
+const word_reference = std.mem.indexOf(u8, sample, "reference2").? + "reference".len;
+const word_reference_size = 1;
+const mark_reference = std.mem.indexOf(u8, sample, "[3]").?;
+const mark_reference_size = 3;
+
+comptime {
+    assert(menu.height <= screen_height);
+    assert(std.mem.eql(u8, sample[word_reference..][0..word_reference_size], "2"));
+    assert(std.mem.eql(u8, sample[mark_reference..][0..mark_reference_size], "[3]"));
+    assert(sample_page_index < sample_page_count);
+    for (format_runs) |run| {
+        assert(run.start < run.end);
+        assert(run.end <= format_body.len);
     }
 }
 
-const filler = "Sample body words stand in for a real page and fill the lines around the marks. ";
-const sample = filler ++ filler ++ "One reference2 sits inside a word and a [3] mark stands apart so both shapes can be checked. " ++ filler ++ filler;
-const note_line = "This is invented text for checking the note panel, long enough to wrap over several lines. ";
-const sample_note = note_line ++ note_line ++ note_line;
+/// What every shot draws with, and on.
+const Shot = struct {
+    allocator: std.mem.Allocator,
+    argv: std.process.Args.Vector,
+    fonts: Fonts,
+    page: Page,
+    quick: *core.quick.Quick,
+    now: library.Moment,
+    /// The book's regular typeface, for the shots of a page.
+    book_regular: []const u8,
+};
+
+/// Writes a grayscale screen to stdout as a PGM image.
+fn write_image(pixels: []const u8, width: u32, height: u32) void {
+    assert(width > 0);
+    assert(pixels.len == @as(u64, width) * height);
+    var head: [32]u8 = undefined;
+    const header = std.fmt.bufPrint(&head, "P5\n{d} {d}\n255\n", .{ width, height }) catch return;
+    // Each part as far as stdout takes it: a part cut short doesn't stop the next.
+    for ([_][]const u8{ header, pixels }) |data| {
+        assert(data.len > 0);
+        var at: u32 = 0;
+        while (at < data.len) {
+            const n = linux.write(stdout_fd, data[at..].ptr, data.len - at);
+            if (core.os.failed(n) or n == 0) break;
+            at += @intCast(n);
+        }
+        assert(at <= data.len);
+    }
+}
 
 /// Faces for the format preview: the four Bookerly files at any size, made on first use.
 const PreviewFaces = struct {
     files: [4][]const u8,
-    fonts: [4][5]?Font = @splat(@splat(null)),
-    alloc: std.mem.Allocator,
+    fonts: [4][core.book.size_scales.len]?Font = @splat(@splat(null)),
+    allocator: std.mem.Allocator,
 
-    fn pick(ctx: *anyopaque, bold: bool, italic: bool, size: u8) anyerror!*Font {
-        const f: *PreviewFaces = @ptrCast(@alignCast(ctx));
-        const which: usize = @as(usize, @intFromBool(bold)) | @as(usize, @intFromBool(italic)) << 1;
-        const slot = &f.fonts[which][size];
-        if (slot.* == null) slot.* = try Font.init(f.alloc, f.files[which], 46 * core.book.size_scales[size], 1.35);
+    fn pick(context: *anyopaque, bold: bool, italic: bool, size: u8) anyerror!*Font {
+        const faces: *PreviewFaces = @ptrCast(@alignCast(context));
+        assert(size < core.book.size_scales.len);
+        const which: u2 = @as(u2, @intFromBool(bold)) | @as(u2, @intFromBool(italic)) << 1;
+        const slot = &faces.fonts[which][size];
+        if (slot.* == null) {
+            const size_px = 46 * core.book.size_scales[size];
+            slot.* = try Font.init(faces.allocator, faces.files[which], size_px, 1.35);
+        }
+        assert(slot.* != null);
         return &slot.*.?;
     }
 };
 
 pub fn main(init: std.process.Init.Minimal) !void {
     const argv = init.args.vector;
-    const alloc = std.heap.page_allocator;
-    const dir = "/usr/java/lib/fonts/";
-    const regular = try file.map(dir ++ "Bookerly-Regular.ttf");
-    const book_bold = try file.map(dir ++ "Bookerly-Bold.ttf");
-    const ui_regular = try file.map(dir ++ "Amazon-Ember-Regular.ttf");
-    const ui_bold = try file.map(dir ++ "Amazon-Ember-Bold.ttf");
-    var title = try Font.init(alloc, ui_bold, 34, 1.2);
-    var small = try Font.init(alloc, ui_regular, 34, 1.2);
-    var caption = try Font.init(alloc, ui_regular, 26, 1.2);
-    var hero = try Font.init(alloc, book_bold, 56, 1.2);
-    var cover_type = try Font.init(alloc, book_bold, 36, 1.2);
-    const fonts = Fonts{ .title = &title, .small = &small, .caption = &caption, .hero = &hero, .cover = &cover_type };
-    const w = 1272;
-    const h = 1696;
-    const buf = try alloc.alloc(u8, w * h);
-    @memset(buf, 0xff);
-    const page = Page{ .buf = buf, .width = w, .height = h, .stride = w };
+    const allocator = std.heap.page_allocator;
+    const book_regular = try file.map(font_folder ++ "Bookerly-Regular.ttf");
+    const book_bold = try file.map(font_folder ++ "Bookerly-Bold.ttf");
+    const ui_regular = try file.map(font_folder ++ "Amazon-Ember-Regular.ttf");
+    const ui_bold = try file.map(font_folder ++ "Amazon-Ember-Bold.ttf");
+    var title = try Font.init(allocator, ui_bold, 34, 1.2);
+    var small = try Font.init(allocator, ui_regular, 34, 1.2);
+    var caption = try Font.init(allocator, ui_regular, 26, 1.2);
+    var hero = try Font.init(allocator, book_bold, 56, 1.2);
+    var cover_type = try Font.init(allocator, book_bold, 36, 1.2);
+    const pixels = try allocator.alloc(u8, screen_width * screen_height);
+    @memset(pixels, 0xff);
     const mode = if (argv.len > 1) std.mem.sliceTo(argv[1], 0) else "panel";
     var quick = lipc.read(.{});
+    const shot = Shot{
+        .allocator = allocator,
+        .argv = argv,
+        .fonts = .{
+            .title = &title,
+            .small = &small,
+            .caption = &caption,
+            .hero = &hero,
+            .cover = &cover_type,
+        },
+        .page = .{
+            .buf = pixels,
+            .width = screen_width,
+            .height = screen_height,
+            .stride = screen_width,
+        },
+        .quick = &quick,
+        .now = .{ .unix = core.os.unix_time(), .utc_offset = core.clock.utc_offset() },
+        .book_regular = book_regular,
+    };
 
-    if (std.mem.eql(u8, mode, "library")) {
-        const entries = try catalog_db.parse(alloc, try file.map("/mnt/us/noface-data/library.tsv"));
-        catalog.sort(entries, .recent);
-        const visible = try alloc.alloc(usize, entries.len);
-        const filter: catalog.Filter = if (argv.len > 3) .read else .all;
-        const lead = catalog.pick_hero(entries);
-        const count = catalog.select(entries, filter, lead, "", visible);
-        const index: usize = if (argv.len > 2) try std.fmt.parseInt(usize, std.mem.sliceTo(argv[2], 0), 10) else 0;
-        try library.render(alloc, fonts, page, entries, lead, visible[0..count], index, filter, .recent, "", "", &quick, .{ .unix = core.os.unix_time(), .utc_offset = core.clock.utc_offset() });
-        write_image(buf, w, h);
-        return;
-    }
-
-    // The library with a search showing: the filled search button and the results
-    // header. `panelshot library-search [query]`, "the" by default.
-    if (std.mem.eql(u8, mode, "library-search")) {
-        const entries = try catalog_db.parse(alloc, try file.map("/mnt/us/noface-data/library.tsv"));
-        catalog.sort(entries, .recent);
-        const visible = try alloc.alloc(usize, entries.len);
-        const query = if (argv.len > 2) std.mem.sliceTo(argv[2], 0) else "the";
-        const count = catalog.select(entries, .all, null, query, visible);
-        try library.render(alloc, fonts, page, entries, catalog.pick_hero(entries), visible[0..count], 0, .all, .recent, query, "", &quick, .{ .unix = core.os.unix_time(), .utc_offset = core.clock.utc_offset() });
-        write_image(buf, w, h);
-        return;
-    }
-
-    if (std.mem.eql(u8, mode, "notes")) {
-        var body = try Font.init(alloc, regular, 46, 1.35);
-        var note_font = try Font.init(alloc, regular, 36, 1.3);
-        var mark = try Font.init(alloc, regular, 28, 1.2);
-        const ref1 = std.mem.indexOf(u8, sample, "reference2").? + "reference".len;
-        const ref2 = std.mem.indexOf(u8, sample, "[3]").?;
-        const links = [_]book_model.Link{ .{ .start = ref1, .end = ref1 + 1, .target = 1 }, .{ .start = ref2, .end = ref2 + 3, .target = 2 } };
-        const paras = [_]book_model.Paragraph{
-            .{ .text = sample, .style = 0, .links = &links },
-            .{ .text = sample_note, .style = 0, .note = true, .note_start = true },
-            .{ .text = sample_note, .style = 0, .note = true, .note_start = true },
-        };
-        _ = try text.render_page(&body, page, &paras, .{}, .{ .margin_x = 100, .margin_top = 90, .margin_bottom = 150, .indent = 60, .reference = &mark }, null);
-        const parts = [_]book_model.Paragraph{.{ .text = sample_note, .style = 0 }};
-        const fitted = try notes.fit(&note_font, &parts, .{}, w, w, null);
-        const top = h - fitted.height;
-        try notes.render(&note_font, fonts, .{ .buf = buf[top * w ..], .width = w, .height = fitted.height, .stride = w }, &parts, .{}, false);
-        write_image(buf, w, h);
-        return;
-    }
-
-    if (std.mem.eql(u8, mode, "sheet")) {
-        const entries = try catalog_db.parse(alloc, try file.map("/mnt/us/noface-data/library.tsv"));
-        catalog.sort(entries, .recent);
-        const lead = catalog.pick_hero(entries);
-        const visible = try alloc.alloc(usize, entries.len);
-        const count = catalog.select(entries, .all, lead, "", visible);
-        if (count == 0) return error.EmptyLibrary;
-        try library.render(alloc, fonts, page, entries, lead, visible[0..count], 0, .all, .recent, "", "", &quick, .{ .unix = core.os.unix_time(), .utc_offset = core.clock.utc_offset() });
-        var list: [4]sheet.Option = undefined;
-        const confirming = argv.len > 2;
-        const opts = sheet.options(&entries[visible[0]], confirming, &list);
-        var row_buf: [3]core.card.Row = undefined;
-        var subtitle_buf: [320]u8 = undefined;
-        const e = &entries[visible[0]];
-        try core.card.render(fonts, page, e.title, sheet.subtitle(&subtitle_buf, e, confirming), sheet.rows(opts, &row_buf));
-        write_image(buf, w, h);
-        return;
-    }
-
-    if (std.mem.eql(u8, mode, "lock")) {
-        if (argv.len < 3) return error.Usage;
-        const data = try file.map(argv[2]);
-        const jpeg = kfx.cover_image(data) orelse return error.NoCover;
-        std.debug.print("jpeg {d} bytes\n", .{jpeg.len});
-        if (!cover.fill_screen(alloc, jpeg, buf, w, h, w)) return error.DecodeFailed;
-        write_image(buf, w, h);
-        return;
-    }
-
-    if (std.mem.eql(u8, mode, "format")) {
-        // Invented text, set the way a chapter opening is.
-        var faces = PreviewFaces{ .alloc = alloc, .files = undefined };
-        const font_root = "/usr/java/lib/fonts/";
-        for ([_][*:0]const u8{ font_root ++ "Bookerly-Regular.ttf", font_root ++ "Bookerly-Bold.ttf", font_root ++ "Bookerly-Italic.ttf", font_root ++ "Bookerly-BoldItalic.ttf" }, &faces.files) |path, *f| f.* = try file.map(path);
-        const body_text = "This sample paragraph has a few words in bold and some in italics, then carries on as ordinary body text for a line or two more.";
-        const runs = [_]core.book.Run{
-            .{ .start = 26, .end = 39, .bold = true, .italic = false },
-            .{ .start = 44, .end = 59, .bold = false, .italic = true },
-        };
-        const sample_paras = [_]core.book.Paragraph{
-            .{ .text = "Chapter One", .style = 0, .look = .{ .bold = true, .size = 4, .alignment = .center, .space_after = 10 } },
-            .{ .text = "A subtitle in italics", .style = 0, .look = .{ .italic = true, .alignment = .center, .space_after = 10 } },
-            .{ .text = body_text, .style = 0, .runs = &runs },
-            .{ .text = body_text, .style = 0 },
-            .{ .text = "A Section Heading", .style = 0, .look = .{ .bold = true, .size = 2, .space_before = 10, .space_after = 4 } },
-            .{ .text = body_text, .style = 0 },
-        };
-        const base = try PreviewFaces.pick(&faces, false, false, core.book.normal_size);
-        _ = try text.render_page(base, page, &sample_paras, .{}, .{ .faces = .{ .ctx = &faces, .pick = PreviewFaces.pick }, .margin_x = 100, .margin_top = 90, .margin_bottom = 150, .indent = 60 }, null);
-        write_image(buf, w, h);
-        return;
-    }
-
-    if (std.mem.eql(u8, mode, "search")) {
-        @memset(buf, 0xe8);
-        try toolbar.render(fonts, page, "A sample book title", 36, 280, &quick, null, .{}, false);
-        try core.search_sheet.render_bar(fonts, page, core.toolbar.status_row, "lighthouse", "Search this book", .search);
-        try core.keyboard.render(fonts, page);
-        write_image(buf, w, h);
-        return;
-    }
-
-    if (std.mem.eql(u8, mode, "goto")) {
-        // Invented rows, nested and marked the way books are.
-        const names = [_][]const u8{ "Cover", "Part One", "A first chapter title", "A second chapter", "Interlude", "A much longer chapter title that has to be clipped at the edge of the page", "Part Two", "Short", "Another chapter", "Notes" };
-        const notes_tab = argv.len > 2;
-        var list: [24]core.goto.Row = undefined;
-        for (&list, 0..) |*r, i| {
-            r.* = .{ .label = names[i % names.len], .page = i * 17, .depth = if (!notes_tab and (i % 5 == 2 or i % 5 == 3)) 1 else 0 };
-            if (notes_tab) r.mark = if (i % 3 == 0) .bookmark else .highlight;
-        }
-        @memset(buf, 0xe8);
-        try toolbar.render(fonts, page, "A sample book title", 36, 280, &quick, null, .{}, false);
-        try core.goto.render(fonts, page, if (notes_tab) .notes else .contents, &list, if (notes_tab) null else 3, 0);
-        write_image(buf, w, h);
-        return;
-    }
-
-    if (std.mem.eql(u8, mode, "toolbar")) {
-        const tab: ?core.aa.Tab = if (argv.len > 2) @fromBackingInt(@intCast(argv[2][0] - '0')) else null;
-        @memset(buf, 0xe8);
-        try toolbar.render(fonts, page, "A sample book title", 36, 280, &quick, tab, .{}, tab != null and tab.? == .font);
-        write_image(buf, w, h);
-        return;
-    }
+    if (std.mem.eql(u8, mode, "library")) return render_library(&shot);
+    if (std.mem.eql(u8, mode, "library-search")) return render_library_search(&shot);
+    if (std.mem.eql(u8, mode, "notes")) return render_notes(&shot);
+    if (std.mem.eql(u8, mode, "sheet")) return render_sheet(&shot);
+    if (std.mem.eql(u8, mode, "lock")) return render_lock(&shot);
+    if (std.mem.eql(u8, mode, "format")) return render_format(&shot);
+    if (std.mem.eql(u8, mode, "search")) return render_search(&shot);
+    if (std.mem.eql(u8, mode, "goto")) return render_goto(&shot);
+    if (std.mem.eql(u8, mode, "toolbar")) return render_toolbar(&shot);
 
     quick.brightness = 11;
-    try menu.render(fonts, page, &quick);
-    write_image(buf[0 .. w * menu.height], w, menu.height);
+    try menu.render(shot.fonts, shot.page, &quick);
+    write_image(pixels[0 .. screen_width * menu.height], screen_width, menu.height);
+}
+
+/// The library, at page `index` when given, of the books read when a third argument is.
+fn render_library(shot: *const Shot) !void {
+    const entries = try catalog_db.parse(shot.allocator, try file.map(library_path));
+    catalog.sort(entries, .recent);
+    const visible = try shot.allocator.alloc(usize, entries.len);
+    const filter: catalog.Filter = if (shot.argv.len > 3) .read else .all;
+    const lead = catalog.pick_hero(entries);
+    const count = catalog.select(entries, filter, lead, "", visible);
+    assert(count <= entries.len);
+    for (visible[0..count]) |entry_index| assert(entry_index < entries.len);
+    if (lead) |lead_index| assert(lead_index < entries.len);
+    var index: u32 = 0;
+    if (shot.argv.len > 2) {
+        index = try std.fmt.parseInt(u32, std.mem.sliceTo(shot.argv[2], 0), 10);
+    }
+    try library.render(
+        shot.allocator,
+        shot.fonts,
+        shot.page,
+        entries,
+        lead,
+        visible[0..count],
+        index,
+        filter,
+        .recent,
+        "",
+        "",
+        shot.quick,
+        shot.now,
+    );
+    write_image(shot.page.buf, screen_width, screen_height);
+}
+
+/// The library with a search showing: the filled search button and the results
+/// header. `panelshot library-search [query]`, "the" by default.
+fn render_library_search(shot: *const Shot) !void {
+    const entries = try catalog_db.parse(shot.allocator, try file.map(library_path));
+    catalog.sort(entries, .recent);
+    const visible = try shot.allocator.alloc(usize, entries.len);
+    const query = if (shot.argv.len > 2) std.mem.sliceTo(shot.argv[2], 0) else "the";
+    const count = catalog.select(entries, .all, null, query, visible);
+    assert(count <= entries.len);
+    for (visible[0..count]) |entry_index| assert(entry_index < entries.len);
+    try library.render(
+        shot.allocator,
+        shot.fonts,
+        shot.page,
+        entries,
+        catalog.pick_hero(entries),
+        visible[0..count],
+        0,
+        .all,
+        .recent,
+        query,
+        "",
+        shot.quick,
+        shot.now,
+    );
+    write_image(shot.page.buf, screen_width, screen_height);
+}
+
+/// A page with both shapes of note reference, and a note's panel open over it.
+fn render_notes(shot: *const Shot) !void {
+    var body = try Font.init(shot.allocator, shot.book_regular, 46, 1.35);
+    var note_font = try Font.init(shot.allocator, shot.book_regular, 36, 1.3);
+    var mark = try Font.init(shot.allocator, shot.book_regular, 28, 1.2);
+    const links = [_]book_model.Link{
+        .{ .start = word_reference, .end = word_reference + word_reference_size, .target = 1 },
+        .{ .start = mark_reference, .end = mark_reference + mark_reference_size, .target = 2 },
+    };
+    const paragraphs = [_]book_model.Paragraph{
+        .{ .text = sample, .style = 0, .links = &links },
+        .{ .text = sample_note, .style = 0, .note = true, .note_start = true },
+        .{ .text = sample_note, .style = 0, .note = true, .note_start = true },
+    };
+    var layout = body_layout;
+    layout.reference = &mark;
+    _ = try text.render_page(&body, shot.page, &paragraphs, .{}, layout, null);
+    const parts = [_]book_model.Paragraph{.{ .text = sample_note, .style = 0 }};
+    const fitted = try notes.fit(&note_font, &parts, .{}, screen_width, screen_width, null);
+    assert(fitted.height > 0);
+    assert(fitted.height <= screen_height);
+    const top = screen_height - fitted.height;
+    const panel = Page{
+        .buf = shot.page.buf[top * screen_width ..],
+        .width = screen_width,
+        .height = fitted.height,
+        .stride = screen_width,
+    };
+    try notes.render(&note_font, shot.fonts, panel, &parts, .{}, false);
+    write_image(shot.page.buf, screen_width, screen_height);
+}
+
+/// The library with the first book's sheet open, asking to confirm when a second
+/// argument is given.
+fn render_sheet(shot: *const Shot) !void {
+    const entries = try catalog_db.parse(shot.allocator, try file.map(library_path));
+    catalog.sort(entries, .recent);
+    const lead = catalog.pick_hero(entries);
+    const visible = try shot.allocator.alloc(usize, entries.len);
+    const count = catalog.select(entries, .all, lead, "", visible);
+    if (count == 0) return error.EmptyLibrary;
+    assert(count <= entries.len);
+    assert(visible[0] < entries.len);
+    try library.render(
+        shot.allocator,
+        shot.fonts,
+        shot.page,
+        entries,
+        lead,
+        visible[0..count],
+        0,
+        .all,
+        .recent,
+        "",
+        "",
+        shot.quick,
+        shot.now,
+    );
+    var list: [4]sheet.Option = undefined;
+    const confirming = shot.argv.len > 2;
+    const entry = &entries[visible[0]];
+    const options = sheet.options(entry, confirming, &list);
+    var row_buffer: [3]core.card.Row = undefined;
+    var subtitle_buffer: [320]u8 = undefined;
+    const subtitle = sheet.subtitle(&subtitle_buffer, entry, confirming);
+    const rows = sheet.rows(options, &row_buffer);
+    try core.card.render(shot.fonts, shot.page, entry.title, subtitle, rows);
+    write_image(shot.page.buf, screen_width, screen_height);
+}
+
+/// The lock screen: the cover of the book named on the command line, filling the screen.
+fn render_lock(shot: *const Shot) !void {
+    if (shot.argv.len < 3) return error.Usage;
+    const data = try file.map(shot.argv[2]);
+    const jpeg = kfx.cover_image(data) orelse return error.NoCover;
+    std.debug.print("jpeg {d} bytes\n", .{jpeg.len});
+    const pixels = shot.page.buf;
+    assert(pixels.len == screen_width * screen_height);
+    const filled = cover.fill_screen(
+        shot.allocator,
+        jpeg,
+        pixels,
+        screen_width,
+        screen_height,
+        screen_width,
+    );
+    if (!filled) return error.DecodeFailed;
+    write_image(pixels, screen_width, screen_height);
+}
+
+/// Invented text, set the way a chapter opening is.
+fn render_format(shot: *const Shot) !void {
+    var faces = PreviewFaces{ .allocator = shot.allocator, .files = undefined };
+    const paths = [_][*:0]const u8{
+        font_folder ++ "Bookerly-Regular.ttf",
+        font_folder ++ "Bookerly-Bold.ttf",
+        font_folder ++ "Bookerly-Italic.ttf",
+        font_folder ++ "Bookerly-BoldItalic.ttf",
+    };
+    for (paths, &faces.files) |path, *face_file| face_file.* = try file.map(path);
+    const chapter_look: core.book.Look = .{
+        .bold = true,
+        .size = 4,
+        .alignment = .center,
+        .space_after = 10,
+    };
+    const subtitle_look: core.book.Look = .{
+        .italic = true,
+        .alignment = .center,
+        .space_after = 10,
+    };
+    const heading_look: core.book.Look = .{
+        .bold = true,
+        .size = 2,
+        .space_before = 10,
+        .space_after = 4,
+    };
+    const paragraphs = [_]core.book.Paragraph{
+        .{ .text = "Chapter One", .style = 0, .look = chapter_look },
+        .{ .text = "A subtitle in italics", .style = 0, .look = subtitle_look },
+        .{ .text = format_body, .style = 0, .runs = &format_runs },
+        .{ .text = format_body, .style = 0 },
+        .{ .text = "A Section Heading", .style = 0, .look = heading_look },
+        .{ .text = format_body, .style = 0 },
+    };
+    const base = try PreviewFaces.pick(&faces, false, false, core.book.normal_size);
+    assert(base == &faces.fonts[0][core.book.normal_size].?);
+    var layout = body_layout;
+    layout.faces = .{ .ctx = &faces, .pick = PreviewFaces.pick };
+    _ = try text.render_page(base, shot.page, &paragraphs, .{}, layout, null);
+    write_image(shot.page.buf, screen_width, screen_height);
+}
+
+/// The toolbar with the search bar and keyboard over the dimmed page.
+fn render_search(shot: *const Shot) !void {
+    @memset(shot.page.buf, dimmed_gray);
+    try render_sample_toolbar(shot, null);
+    try core.search_sheet.render_bar(
+        shot.fonts,
+        shot.page,
+        core.toolbar.status_row,
+        "lighthouse",
+        "Search this book",
+        .search,
+    );
+    try core.keyboard.render(shot.fonts, shot.page);
+    write_image(shot.page.buf, screen_width, screen_height);
+}
+
+/// The contents, or the notes when a second argument is given: invented rows, nested
+/// and marked the way books are.
+fn render_goto(shot: *const Shot) !void {
+    const names = [_][]const u8{
+        "Cover",
+        "Part One",
+        "A first chapter title",
+        "A second chapter",
+        "Interlude",
+        "A much longer chapter title that has to be clipped at the edge of the page",
+        "Part Two",
+        "Short",
+        "Another chapter",
+        "Notes",
+    };
+    const notes_tab = shot.argv.len > 2;
+    var list: [24]core.goto.Row = undefined;
+    comptime assert(list.len > names.len);
+    for (&list, 0..) |*row, index| {
+        const nested = !notes_tab and (index % 5 == 2 or index % 5 == 3);
+        row.* = .{
+            .label = names[index % names.len],
+            .page = index * 17,
+            .depth = if (nested) 1 else 0,
+        };
+        if (notes_tab) row.mark = if (index % 3 == 0) .bookmark else .highlight;
+    }
+    @memset(shot.page.buf, dimmed_gray);
+    try render_sample_toolbar(shot, null);
+    const tab: core.goto.Tab = if (notes_tab) .notes else .contents;
+    try core.goto.render(shot.fonts, shot.page, tab, &list, if (notes_tab) null else 3, 0);
+    write_image(shot.page.buf, screen_width, screen_height);
+}
+
+/// The toolbar, with one of its sheets open when a second argument names it by number.
+fn render_toolbar(shot: *const Shot) !void {
+    var tab: ?core.aa.Tab = null;
+    if (shot.argv.len > 2) tab = @fromBackingInt(@intCast(shot.argv[2][0] - '0'));
+    @memset(shot.page.buf, dimmed_gray);
+    try render_sample_toolbar(shot, tab);
+    write_image(shot.page.buf, screen_width, screen_height);
+}
+
+/// The toolbar over the invented book, with `tab`'s sheet open if there is one.
+fn render_sample_toolbar(shot: *const Shot, tab: ?core.aa.Tab) !void {
+    assert(shot.page.width == screen_width);
+    assert(shot.page.height == screen_height);
+    const font_sheet = tab != null and tab.? == .font;
+    try toolbar.render(
+        shot.fonts,
+        shot.page,
+        sample_title,
+        sample_page_index,
+        sample_page_count,
+        shot.quick,
+        tab,
+        .{},
+        font_sheet,
+    );
 }

@@ -179,11 +179,13 @@ pub fn add(
     alloc: std.mem.Allocator,
     paragraphs: []const book_model.Paragraph,
     id: []const u8,
-    span: Span,
+    span_given: Span,
 ) !void {
-    const in_order = span.first_para < span.last_para or
-        (span.first_para == span.last_para and span.first_byte <= span.last_byte);
-    check.thatf(in_order, "highlight {s} starts before it ends", .{id});
+    // A damaged record from the annotation database can end before it starts, and
+    // dragging one end of it keeps the other: that's outside data, so it's put in
+    // order rather than stopping the reader.
+    const span = ordered(span_given);
+    assert(span.first_para <= span.last_para);
     check.that(span.last_para < paragraphs.len, "highlight ends inside the book");
     const count_before = list.items.len;
     var index = span.first_para;
@@ -196,6 +198,22 @@ pub fn add(
     }
     // One mark for each paragraph the highlight covers.
     assert(list.items.len - count_before == span.last_para - span.first_para + 1);
+}
+
+/// `span` with its ends swapped if it ends before it starts.
+fn ordered(span: Span) Span {
+    const in_order = span.first_para < span.last_para or
+        (span.first_para == span.last_para and span.first_byte <= span.last_byte);
+    if (in_order) return span;
+    const swapped: Span = .{
+        .first_para = span.last_para,
+        .first_byte = span.last_byte,
+        .last_para = span.first_para,
+        .last_byte = span.first_byte,
+    };
+    assert(swapped.first_para <= swapped.last_para);
+    if (swapped.first_para == swapped.last_para) assert(swapped.first_byte < swapped.last_byte);
+    return swapped;
 }
 
 /// Removes every mark of a highlight.
@@ -420,4 +438,20 @@ test "a highlight over several paragraphs counts once" {
     try std.testing.expect(first_of_id(&list, 0));
     try std.testing.expect(!first_of_id(&list, 1));
     try std.testing.expect(first_of_id(&list, 2));
+}
+
+test "a highlight that ends before it starts is added in order, not refused" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const paras = [_]book_model.Paragraph{ sample("first para", 100), sample("second", 111) };
+    var list: std.ArrayList(Highlight) = .empty;
+    const backwards = Span{ .first_para = 1, .first_byte = 3, .last_para = 0, .last_byte = 6 };
+    try add(&list, arena.allocator(), &paras, "h", backwards);
+    try std.testing.expectEqual(@as(usize, 2), list.items.len);
+    try std.testing.expectEqual(@as(u32, 6), list.items[0].mark.start);
+    try std.testing.expectEqual(@as(u32, 3), list.items[1].mark.end);
+    const reversed = Span{ .first_para = 0, .first_byte = 5, .last_para = 0, .last_byte = 2 };
+    try add(&list, arena.allocator(), &paras, "g", reversed);
+    try std.testing.expectEqual(@as(u32, 2), list.items[2].mark.start);
+    try std.testing.expectEqual(@as(u32, 5), list.items[2].mark.end);
 }

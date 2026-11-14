@@ -1,5 +1,6 @@
 //! Book thumbnails, decoded once and scaled to library size.
 const std = @import("std");
+const assert = std.debug.assert;
 const check = @import("../base/check.zig");
 const file = @import("../sys/file.zig");
 const Page = @import("page.zig").Page;
@@ -12,20 +13,43 @@ pub const height = 333;
 pub const hero_width = 270;
 pub const hero_height = 357;
 
+/// The panel's grays are 16 steps of this, from black to white.
+const panel_gray_step = 17;
+/// The widest view `zoomed` draws: its column tables are this long.
+const view_width_max = 2048;
+
+comptime {
+    assert(panel_gray_step * 15 == 255);
+    // The hero cover, on top of the library, is the larger one
+    assert(hero_width > width);
+    assert(hero_height > height);
+}
+
+/// A size in pixels.
+pub const Size = struct { width: u32, height: u32 };
+
 /// Box filter: each output pixel averages the source pixels it covers.
-pub fn scale(src: []const u8, sw: usize, sh: usize, dst: []u8, dw: usize, dh: usize) void {
+pub fn scale(source: []const u8, source_size: Size, target: []u8, target_size: Size) void {
+    assert(source_size.width > 0);
+    assert(source_size.height > 0);
+    assert(source.len >= @as(u64, source_size.width) * source_size.height);
+    assert(target.len >= @as(u64, target_size.width) * target_size.height);
+    const sw = source_size.width;
+    const sh = source_size.height;
+    const dw = target_size.width;
+    const dh = target_size.height;
     // In 64 bits: a picture can be millions of pixels along one side
     for (0..dh) |y| {
-        const y0: usize = @intCast(@as(u64, y) * sh / dh);
-        const y1 = @max(@as(usize, @intCast(@as(u64, y + 1) * sh / dh)), y0 + 1);
+        const y0: u32 = @intCast(@as(u64, y) * sh / dh);
+        const y1 = @max(@as(u32, @intCast(@as(u64, y + 1) * sh / dh)), y0 + 1);
         for (0..dw) |x| {
-            const x0: usize = @intCast(@as(u64, x) * sw / dw);
-            const x1 = @max(@as(usize, @intCast(@as(u64, x + 1) * sw / dw)), x0 + 1);
+            const x0: u32 = @intCast(@as(u64, x) * sw / dw);
+            const x1 = @max(@as(u32, @intCast(@as(u64, x + 1) * sw / dw)), x0 + 1);
             var sum: u32 = 0;
             for (y0..y1) |sy| {
-                for (x0..x1) |sx| sum += src[sy * sw + sx];
+                for (x0..x1) |sx| sum += source[sy * sw + sx];
             }
-            dst[y * dw + x] = @intCast(sum / @as(u32, @intCast((y1 - y0) * (x1 - x0))));
+            target[y * dw + x] = @intCast(sum / ((y1 - y0) * (x1 - x0)));
         }
     }
 }
@@ -35,74 +59,128 @@ pub fn scale(src: []const u8, sw: usize, sh: usize, dst: []u8, dw: usize, dh: us
 /// and dark areas flatten into one murky gray.
 pub fn dither(alloc: std.mem.Allocator, pixels: []u8, w: usize) !void {
     if (w == 0) return;
+    // Whole rows only
+    assert(pixels.len % w == 0);
     // The panel gray nearest each value, -255..510 (errors can push past either end)
     const nearest = comptime blk: {
         @setEvalBranchQuota(10000);
         var t: [766]u8 = undefined;
         for (&t, 0..) |*v, i| {
             const want = std.math.clamp(@as(i32, i) - 255, 0, 255);
-            v.* = @intCast(@divTrunc(want + 8, 17) * 17);
+            v.* = @intCast(@divTrunc(want + 8, panel_gray_step) * panel_gray_step);
+            assert(v.* % panel_gray_step == 0);
         }
         break :blk t;
     };
-    const errs = try alloc.alloc(i32, 2 * (w + 2));
-    defer alloc.free(errs);
-    @memset(errs, 0);
-    var cur = errs[0 .. w + 2];
-    var nxt = errs[w + 2 ..];
+    const errors = try alloc.alloc(i32, 2 * (w + 2));
+    defer alloc.free(errors);
+    @memset(errors, 0);
+    var current = errors[0 .. w + 2];
+    var next = errors[w + 2 ..];
+    assert(current.len == next.len);
     const h = pixels.len / w;
     for (0..h) |y| {
         const row = pixels[y * w ..][0..w];
         for (row, 0..) |*p, x| {
             // Wrapping math: values stay well inside i32, so the checks are just cost
-            const want = std.math.clamp(@as(i32, p.*) +% @divTrunc(cur[x + 1], 16), -255, 510);
+            const want = std.math.clamp(@as(i32, p.*) +% @divTrunc(current[x + 1], 16), -255, 510);
             const got = nearest[@intCast(want + 255)];
             p.* = got;
             const e = std.math.clamp(want, 0, 255) -% got;
-            cur[x + 2] +%= e *% 7;
-            nxt[x] +%= e *% 3;
-            nxt[x + 1] +%= e *% 5;
-            nxt[x + 2] +%= e;
+            current[x + 2] +%= e *% 7;
+            next[x] +%= e *% 3;
+            next[x + 1] +%= e *% 5;
+            next[x + 2] +%= e;
         }
-        std.mem.swap([]i32, &cur, &nxt);
-        @memset(nxt, 0);
+        std.mem.swap([]i32, &current, &next);
+        @memset(next, 0);
     }
 }
 
-/// The largest size with a picture's shape that fits inside a `dw` x `dh` box.
-pub fn fitted(sw: usize, sh: usize, dw: usize, dh: usize) struct { w: usize, h: usize } {
-    const w: u64 = sw;
-    const h: u64 = sh;
-    if (w * dh > h * dw) return .{ .w = dw, .h = @intCast(@max(1, h * dw / w)) };
-    return .{ .w = @intCast(@max(1, w * dh / h)), .h = dh };
+/// The largest size with a picture's shape that fits inside a box.
+pub fn fitted(picture: Size, box: Size) Size {
+    assert(picture.width > 0);
+    assert(picture.height > 0);
+    assert(box.width > 0);
+    assert(box.height > 0);
+    const w: u64 = picture.width;
+    const h: u64 = picture.height;
+    var fit: Size = undefined;
+    if (w * box.height > h * box.width) {
+        fit = .{ .width = box.width, .height = @intCast(@max(1, h * box.width / w)) };
+    } else {
+        fit = .{ .width = @intCast(@max(1, w * box.height / h)), .height = box.height };
+    }
+    assert(fit.width <= box.width);
+    assert(fit.height <= box.height);
+    return fit;
 }
 
 /// Decodes a cover and shows all of it, as large as fits, centred on black.
 /// `stride` is bytes per row in `buf`, which can be more than the visible width.
-pub fn fill_screen(alloc: std.mem.Allocator, jpeg: []const u8, buf: []u8, width_px: usize, height_px: usize, stride: usize) bool {
+pub fn fill_screen(
+    alloc: std.mem.Allocator,
+    jpeg: []const u8,
+    buf: []u8,
+    width_px: usize,
+    height_px: usize,
+    stride: usize,
+) bool {
+    // The screen's own sizes, far under 32 bits
+    const screen = Page{
+        .buf = buf,
+        .width = @intCast(width_px),
+        .height = @intCast(height_px),
+        .stride = @intCast(stride),
+    };
+    assert(screen.holds_rows());
     var w: c_int = 0;
     var h: c_int = 0;
     const pixels = img_gray(jpeg.ptr, @intCast(jpeg.len), &w, &h) orelse return false;
     defer img_free(pixels);
     if (w <= 0 or h <= 0) return false;
-    const sw: usize = @intCast(w);
-    const sh: usize = @intCast(h);
-    const fit = fitted(sw, sh, width_px, height_px);
-    const ready = prepare(alloc, pixels[0 .. sw * sh], sw, sh, fit.w, fit.h) orelse return false;
+    const picture = Size{ .width = @intCast(w), .height = @intCast(h) };
+    const fit = fitted(picture, .{ .width = screen.width, .height = screen.height });
+    const pixel_count = @as(u64, picture.width) * picture.height;
+    const ready = prepare(
+        alloc,
+        pixels[0..@intCast(pixel_count)],
+        picture.width,
+        picture.height,
+        fit.width,
+        fit.height,
+    ) orelse return false;
     defer alloc.free(ready);
-    for (0..height_px) |row| @memset(buf[row * stride ..][0..width_px], 0x00);
-    const left = (width_px - fit.w) / 2;
-    const top = (height_px - fit.h) / 2;
-    for (0..fit.h) |row| @memcpy(buf[(top + row) * stride + left ..][0..fit.w], ready[row * fit.w ..][0..fit.w]);
+    for (0..screen.height) |row| @memset(buf[row * stride ..][0..screen.width], 0x00);
+    const left = (screen.width - fit.width) / 2;
+    const top = (screen.height - fit.height) / 2;
+    for (0..fit.height) |row| {
+        const line = ready[row * fit.width ..][0..fit.width];
+        @memcpy(buf[(top + row) * stride + left ..][0..fit.width], line);
+    }
     return true;
 }
 
 /// Scales decoded grayscale pixels to `w` x `h` and dithers them for the panel,
 /// ready to copy onto pages. The caller owns the result.
-pub fn prepare(alloc: std.mem.Allocator, pixels: []const u8, sw: usize, sh: usize, w: usize, h: usize) ?[]u8 {
+pub fn prepare(
+    alloc: std.mem.Allocator,
+    pixels: []const u8,
+    sw: usize,
+    sh: usize,
+    w: usize,
+    h: usize,
+) ?[]u8 {
     if (w == 0 or h == 0 or sw == 0 or sh == 0 or pixels.len < sw * sh) return null;
+    // A picture's sides come from its file: too long to scale is no picture
+    if (sw > std.math.maxInt(u32) or sh > std.math.maxInt(u32)) return null;
+    // The box is noface's own: a cover's or a page's
+    assert(w <= std.math.maxInt(u32));
+    assert(h <= std.math.maxInt(u32));
     const out = alloc.alloc(u8, w * h) catch return null;
-    scale(pixels[0 .. sw * sh], sw, sh, out, w, h);
+    const source_size = Size{ .width = @intCast(sw), .height = @intCast(sh) };
+    const target_size = Size{ .width = @intCast(w), .height = @intCast(h) };
+    scale(pixels[0 .. sw * sh], source_size, out, target_size);
     dither(alloc, out, w) catch {
         alloc.free(out);
         return null;
@@ -117,18 +195,33 @@ pub fn decode_and_prepare(alloc: std.mem.Allocator, encoded: []const u8, w: usiz
     const pixels = img_gray(encoded.ptr, @intCast(encoded.len), &sw, &sh) orelse return null;
     defer img_free(pixels);
     if (sw <= 0 or sh <= 0) return null;
-    return prepare(alloc, pixels[0..@intCast(sw * sh)], @intCast(sw), @intCast(sh), w, h);
+    const pixel_count = @as(u64, @intCast(sw)) * @as(u64, @intCast(sh));
+    const source = pixels[0..@intCast(pixel_count)];
+    const ready = prepare(alloc, source, @intCast(sw), @intCast(sh), w, h) orelse return null;
+    // Paired with `blit`, which copies exactly this many
+    assert(ready.len == @as(u64, w) * h);
+    return ready;
 }
 
 /// Copies a prepared picture into a box on a page.
 pub fn blit(page: Page, ready: []const u8, x: u32, y: u32, w: u32, h: u32) void {
-    check.thatf(ready.len == @as(usize, w) * h, "picture of {d} bytes fills a {d}x{d} box", .{ ready.len, w, h });
+    check.thatf(
+        ready.len == @as(u64, w) * h,
+        "picture of {d} bytes fills a {d}x{d} box",
+        .{ ready.len, w, h },
+    );
+    assert(page.holds_rows());
     if (x + w > page.width or y + h > page.height) return;
-    for (0..h) |row| @memcpy(page.buf[(y + row) * page.stride + x ..][0..w], ready[row * w ..][0..w]);
+    for (0..h) |row| {
+        const line = ready[row * w ..][0..w];
+        @memcpy(page.buf[(y + row) * page.stride + x ..][0..w], line);
+    }
 }
 
 /// Returns a grayscale cover at the given size, or null if it can't be read.
 pub fn load(alloc: std.mem.Allocator, path: [*:0]const u8, dw: usize, dh: usize) ?[]u8 {
+    assert(dw > 0);
+    assert(dh > 0);
     const data = file.map(path) catch return null;
     defer file.unmap(data);
     var w: c_int = 0;
@@ -136,57 +229,13 @@ pub fn load(alloc: std.mem.Allocator, path: [*:0]const u8, dw: usize, dh: usize)
     const pixels = img_gray(data.ptr, @intCast(data.len), &w, &h) orelse return null;
     defer img_free(pixels);
     if (w <= 0 or h <= 0) return null;
-    const sw: usize = @intCast(w);
-    const sh: usize = @intCast(h);
+    const picture = Size{ .width = @intCast(w), .height = @intCast(h) };
+    const pixel_count = @as(u64, picture.width) * picture.height;
     const out = alloc.alloc(u8, dw * dh) catch return null;
-    scale(pixels[0 .. sw * sh], sw, sh, out, dw, dh);
+    // A cover's size is noface's own, far under 32 bits
+    const target_size = Size{ .width = @intCast(dw), .height = @intCast(dh) };
+    scale(pixels[0..@intCast(pixel_count)], picture, out, target_size);
     return out;
-}
-
-test "scaling down averages" {
-    const src = [_]u8{ 0, 100, 200, 100 };
-    var dst: [1]u8 = undefined;
-    scale(&src, 2, 2, &dst, 1, 1);
-    try std.testing.expectEqual(@as(u8, 100), dst[0]);
-}
-
-test "scaling up repeats" {
-    const src = [_]u8{ 10, 20 };
-    var dst: [4]u8 = undefined;
-    scale(&src, 2, 1, &dst, 4, 1);
-    try std.testing.expectEqualSlices(u8, &[_]u8{ 10, 10, 20, 20 }, &dst);
-}
-
-test "dithering keeps only panel grays and the overall tone" {
-    var pixels: [64 * 64]u8 = undefined;
-    for (&pixels, 0..) |*p, i| p.* = @intCast((i % 64) * 4);
-    var before: u32 = 0;
-    for (pixels) |p| before += p;
-    try dither(std.testing.allocator, &pixels, 64);
-    var after: u32 = 0;
-    for (pixels) |p| {
-        try std.testing.expectEqual(@as(u8, 0), p % 17);
-        after += p;
-    }
-    const diff = @as(i64, before) - @as(i64, after);
-    try std.testing.expect(@abs(diff) < 64 * 64 * 2);
-}
-
-test "a sliver of an image still crops to something, and dithering nothing is safe" {
-    try std.testing.expect(fitted(1, 10000, 1272, 1696).w >= 1);
-    try std.testing.expect(fitted(10000, 1, 1272, 1696).h >= 1);
-    var none: [0]u8 = .{};
-    try dither(std.testing.allocator, &none, 0);
-}
-
-test "covers keep their shape on screen" {
-    const screen_w = 1272;
-    const screen_h = 1696;
-    try std.testing.expectEqual(@as(usize, 1272), fitted(600, 800, screen_w, screen_h).w);
-    const narrow = fitted(500, 800, screen_w, screen_h);
-    try std.testing.expectEqual(@as(usize, 1060), narrow.w);
-    try std.testing.expectEqual(@as(usize, 1696), narrow.h);
-    try std.testing.expectEqual(@as(usize, 636), fitted(800, 400, screen_w, screen_h).h);
 }
 
 /// A decoded picture at its own size, one gray byte per pixel.
@@ -199,10 +248,14 @@ pub fn decode_gray(alloc: std.mem.Allocator, encoded: []const u8) ?Gray {
     const pixels = img_gray(encoded.ptr, @intCast(encoded.len), &w, &h) orelse return null;
     defer img_free(pixels);
     if (w <= 0 or h <= 0) return null;
-    const n: usize = @intCast(w * h);
-    const out = alloc.alloc(u8, n) catch return null;
-    @memcpy(out, pixels[0..n]);
-    return .{ .pixels = out, .width = @intCast(w), .height = @intCast(h) };
+    const pixel_count = @as(u64, @intCast(w)) * @as(u64, @intCast(h));
+    const out = alloc.alloc(u8, @intCast(pixel_count)) catch return null;
+    @memcpy(out, pixels[0..out.len]);
+    const gray = Gray{ .pixels = out, .width = @intCast(w), .height = @intCast(h) };
+    // Paired with `zoomed` and its helpers, which index rows by the width
+    assert(gray.pixels.len == gray.width * gray.height);
+    assert(gray.width > 0);
+    return gray;
 }
 
 /// A view into a picture for zooming: `zoom` screen pixels per picture pixel, with
@@ -211,7 +264,21 @@ pub fn decode_gray(alloc: std.mem.Allocator, encoded: []const u8) ?Gray {
 /// picture up, so it isn't blocks, and averages all it covers when shrinking, so
 /// thin lines aren't skipped; without it, each screen pixel takes the nearest one,
 /// quick enough to follow a finger.
-pub fn zoomed(src: Gray, cx: f32, cy: f32, zoom: f32, page: Page, dw: u32, dh: u32, smooth: bool) void {
+pub fn zoomed(
+    src: Gray,
+    cx: f32,
+    cy: f32,
+    zoom: f32,
+    page: Page,
+    dw: u32,
+    dh: u32,
+    smooth: bool,
+) void {
+    assert(zoom > 0);
+    // Checked once, not per pixel: the view's rows lie in the page
+    assert(page.holds_rows());
+    assert(dh <= page.height);
+    assert(src.pixels.len >= src.width * src.height);
     if (smooth and zoom > 1) return blended(src, cx, cy, zoom, page, dw, dh);
     if (smooth and zoom < 1) return averaged(src, cx, cy, zoom, page, dw, dh);
     const half_w: f32 = @as(f32, @floatFromInt(dw)) / 2;
@@ -219,8 +286,9 @@ pub fn zoomed(src: Gray, cx: f32, cy: f32, zoom: f32, page: Page, dw: u32, dh: u
     const sw: f32 = @floatFromInt(src.width);
     const sh: f32 = @floatFromInt(src.height);
     // The picture column for each screen column, worked out once
-    var columns: [2048]i32 = undefined;
+    var columns: [view_width_max]i32 = undefined;
     const cols = @min(dw, columns.len);
+    assert(cols <= page.width);
     for (0..cols) |x| {
         const sx = cx + (@as(f32, @floatFromInt(x)) + 0.5 - half_w) / zoom;
         columns[x] = if (sx < 0 or sx >= sw) -1 else @intFromFloat(sx);
@@ -232,7 +300,7 @@ pub fn zoomed(src: Gray, cx: f32, cy: f32, zoom: f32, page: Page, dw: u32, dh: u
             @memset(row, 0xff);
             continue;
         }
-        const src_row = src.pixels[@as(usize, @intFromFloat(sy)) * src.width ..][0..src.width];
+        const src_row = src.pixels[@as(u32, @intFromFloat(sy)) * src.width ..][0..src.width];
         for (row, columns[0..cols]) |*d, sx| d.* = if (sx < 0) 0xff else src_row[@intCast(sx)];
     }
 }
@@ -240,26 +308,34 @@ pub fn zoomed(src: Gray, cx: f32, cy: f32, zoom: f32, page: Page, dw: u32, dh: u
 /// Shrinking: each screen pixel averages every picture pixel it covers, as `scale`
 /// does for pages, with each column's span worked out once.
 fn averaged(src: Gray, cx: f32, cy: f32, zoom: f32, page: Page, dw: u32, dh: u32) void {
-    const Span = struct { from: u32, to: u32 }; // to == from: past the edge
-    var cols: [2048]Span = undefined;
+    assert(zoom > 0);
+    assert(zoom < 1);
+    // Decoded sides come from C ints, so they fit in 32 bits
+    const picture_width: u32 = @intCast(src.width);
+    const picture_height: u32 = @intCast(src.height);
+    const Span = struct { from: u32, to: u32 }; // Equal ends: past the edge
+    var cols: [view_width_max]Span = undefined;
     const n = @min(dw, cols.len);
     const half_w: f32 = @as(f32, @floatFromInt(dw)) / 2;
     const half_h: f32 = @as(f32, @floatFromInt(dh)) / 2;
     const span = struct {
-        fn of(screen: usize, centre: f32, half: f32, z: f32, size: usize) Span {
+        fn of(screen: u32, centre: f32, half: f32, z: f32, size: u32) Span {
+            assert(z > 0);
             const a = centre + (@as(f32, @floatFromInt(screen)) - half) / z;
             const b = centre + (@as(f32, @floatFromInt(screen + 1)) - half) / z;
             const lo: f32 = @floatFromInt(size);
             if (b <= 0 or a >= lo) return .{ .from = 0, .to = 0 };
             const from: u32 = @intFromFloat(@max(a, 0));
             const to: u32 = @intFromFloat(@min(@ceil(b), lo));
-            return .{ .from = from, .to = @max(to, from + 1) };
+            const result = Span{ .from = from, .to = @max(to, from + 1) };
+            assert(result.to > result.from);
+            return result;
         }
     }.of;
-    for (cols[0..n], 0..) |*c, x| c.* = span(x, cx, half_w, zoom, src.width);
+    for (cols[0..n], 0..) |*c, x| c.* = span(@intCast(x), cx, half_w, zoom, picture_width);
     for (0..dh) |y| {
         const row = page.buf[y * page.stride ..][0..n];
-        const rows = span(y, cy, half_h, zoom, src.height);
+        const rows = span(@intCast(y), cy, half_h, zoom, picture_height);
         if (rows.to == rows.from) {
             @memset(row, 0xff);
             continue;
@@ -281,8 +357,12 @@ fn averaged(src: Gray, cx: f32, cy: f32, zoom: f32, page: Page, dw: u32, dh: u32
 /// The smooth view: each screen pixel mixes the four picture pixels around it, in
 /// whole numbers (weights out of 256), with each column's sums worked out once.
 fn blended(src: Gray, cx: f32, cy: f32, zoom: f32, page: Page, dw: u32, dh: u32) void {
+    assert(zoom > 1);
+    // The last row and column are the edge every mix is clamped to
+    assert(src.width > 0);
+    assert(src.height > 0);
     const Col = struct { x0: u32, x1: u32, fx: u32, inside: bool };
-    var cols: [2048]Col = undefined;
+    var cols: [view_width_max]Col = undefined;
     const n = @min(dw, cols.len);
     const half_w: f32 = @as(f32, @floatFromInt(dw)) / 2;
     const half_h: f32 = @as(f32, @floatFromInt(dh)) / 2;
@@ -307,7 +387,7 @@ fn blended(src: Gray, cx: f32, cy: f32, zoom: f32, page: Page, dw: u32, dh: u32)
             continue;
         }
         const yc = std.math.clamp(sy, 0, max_y);
-        const y0: usize = @intFromFloat(@floor(yc));
+        const y0: u32 = @intFromFloat(@floor(yc));
         const y1 = @min(y0 + 1, src.height - 1);
         const fy: u32 = @intFromFloat((yc - @floor(yc)) * 256);
         const r0 = src.pixels[y0 * src.width ..][0..src.width];
@@ -327,9 +407,59 @@ fn blended(src: Gray, cx: f32, cy: f32, zoom: f32, page: Page, dw: u32, dh: u32)
 /// Where the middle of a view can sit so the picture covers it where it can: centred
 /// on an axis where the picture is smaller than the view.
 pub fn clamp_centre(c: f32, picture: f32, view: f32, zoom: f32) f32 {
+    assert(zoom > 0);
+    assert(view > 0);
     const half = view / zoom / 2;
     if (picture <= 2 * half) return picture / 2;
     return std.math.clamp(c, half, picture - half);
+}
+
+test "scaling down averages" {
+    const src = [_]u8{ 0, 100, 200, 100 };
+    var dst: [1]u8 = undefined;
+    scale(&src, .{ .width = 2, .height = 2 }, &dst, .{ .width = 1, .height = 1 });
+    try std.testing.expectEqual(@as(u8, 100), dst[0]);
+}
+
+test "scaling up repeats" {
+    const src = [_]u8{ 10, 20 };
+    var dst: [4]u8 = undefined;
+    scale(&src, .{ .width = 2, .height = 1 }, &dst, .{ .width = 4, .height = 1 });
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 10, 10, 20, 20 }, &dst);
+}
+
+test "dithering keeps only panel grays and the overall tone" {
+    var pixels: [64 * 64]u8 = undefined;
+    for (&pixels, 0..) |*p, i| p.* = @intCast((i % 64) * 4);
+    var before: u32 = 0;
+    for (pixels) |p| before += p;
+    try dither(std.testing.allocator, &pixels, 64);
+    var after: u32 = 0;
+    for (pixels) |p| {
+        try std.testing.expectEqual(@as(u8, 0), p % 17);
+        after += p;
+    }
+    const diff = @as(i64, before) - @as(i64, after);
+    try std.testing.expect(@abs(diff) < 64 * 64 * 2);
+}
+
+const screen_size = Size{ .width = 1272, .height = 1696 };
+
+test "a sliver of an image still crops to something, and dithering nothing is safe" {
+    try std.testing.expect(fitted(.{ .width = 1, .height = 10000 }, screen_size).width >= 1);
+    try std.testing.expect(fitted(.{ .width = 10000, .height = 1 }, screen_size).height >= 1);
+    var none: [0]u8 = .{};
+    try dither(std.testing.allocator, &none, 0);
+}
+
+test "covers keep their shape on screen" {
+    const full = fitted(.{ .width = 600, .height = 800 }, screen_size);
+    try std.testing.expectEqual(@as(u32, 1272), full.width);
+    const narrow = fitted(.{ .width = 500, .height = 800 }, screen_size);
+    try std.testing.expectEqual(@as(u32, 1060), narrow.width);
+    try std.testing.expectEqual(@as(u32, 1696), narrow.height);
+    const wide = fitted(.{ .width = 800, .height = 400 }, screen_size);
+    try std.testing.expectEqual(@as(u32, 636), wide.height);
 }
 
 test "a view keeps inside the picture" {
@@ -347,7 +477,8 @@ test "zoomed views sample the nearest pixel, white outside" {
     var buf: [16]u8 = undefined;
     const page = Page{ .buf = &buf, .width = 4, .height = 4, .stride = 4 };
     zoomed(src, 1, 1, 2, page, 4, 4, false); // Each picture pixel becomes 2 x 2
-    try std.testing.expectEqualSlices(u8, &.{ 10, 10, 20, 20, 10, 10, 20, 20, 30, 30, 40, 40, 30, 30, 40, 40 }, &buf);
+    const doubled = [_]u8{ 10, 10, 20, 20, 10, 10, 20, 20, 30, 30, 40, 40, 30, 30, 40, 40 };
+    try std.testing.expectEqualSlices(u8, &doubled, &buf);
     zoomed(src, 1, 1, 1, page, 4, 4, false); // Half the view is past the edge
     try std.testing.expectEqual(@as(u8, 0xff), buf[0]);
     try std.testing.expectEqual(@as(u8, 10), buf[5]);
@@ -371,13 +502,13 @@ test "shrunk views keep thin lines" {
 }
 
 test "pictures millions of pixels long fit without overflowing" {
-    const tall = fitted(1, 3_000_000, 1272, 1696);
-    try std.testing.expectEqual(@as(usize, 1696), tall.h);
-    try std.testing.expectEqual(@as(usize, 1), tall.w);
-    const wide = fitted(3_000_000, 1, 1272, 1696);
-    try std.testing.expectEqual(@as(usize, 1272), wide.w);
+    const tall = fitted(.{ .width = 1, .height = 3_000_000 }, screen_size);
+    try std.testing.expectEqual(@as(u32, 1696), tall.height);
+    try std.testing.expectEqual(@as(u32, 1), tall.width);
+    const wide = fitted(.{ .width = 3_000_000, .height = 1 }, screen_size);
+    try std.testing.expectEqual(@as(u32, 1272), wide.width);
     var src: [3000]u8 = @splat(200);
     var dst: [1]u8 = undefined;
-    scale(&src, 1, 3000, &dst, 1, 1);
+    scale(&src, .{ .width = 1, .height = 3000 }, &dst, .{ .width = 1, .height = 1 });
     try std.testing.expectEqual(@as(u8, 200), dst[0]);
 }

@@ -5,8 +5,10 @@
 //! `os.failed` reads both alike. Only what noface uses is here.
 const std = @import("std");
 const builtin = @import("builtin");
+const assert = std.debug.assert;
 const linux = std.os.linux;
 const c = std.c;
+const failed = @import("os.zig").failed;
 
 pub const is_linux = builtin.os.tag == .linux;
 
@@ -23,9 +25,11 @@ pub const SEEK = chosen.SEEK;
 /// 32-bit Linux seeks with llseek; 64-bit Linux has only lseek, which is wide enough.
 pub const llseek = if (!is_linux or @sizeOf(usize) == 4) chosen.llseek else lseek64;
 
+/// The lseek call under llseek's signature, for 64-bit Linux.
 fn lseek64(fd: i32, offset: u64, result: *linux.off_t, whence: usize) usize {
+    assert(whence == SEEK.SET or whence == SEEK.CUR or whence == SEEK.END);
     const rc = linux.lseek(fd, @bitCast(offset), @intCast(whence));
-    if (rc > std.math.maxInt(usize) - 4096) return rc;
+    if (failed(rc)) return rc;
     result.* = @intCast(rc);
     return 0;
 }
@@ -58,37 +62,91 @@ pub const ioctl = chosen.ioctl;
 pub const Sigaction = chosen.Sigaction;
 pub const sigaction = chosen.sigaction;
 
+/// The most names read from one folder. noface's folders hold far fewer: a folder
+/// with more is listed only this far.
+const entries_max = 1 << 20;
+
 /// The names in a folder, each passed to `each` with whether it's a folder (without
 /// "." and ".."). Linux reads them with getdents64; elsewhere the C library's readdir.
-pub fn each_entry(dir: [*:0]const u8, ctx: anytype, comptime each: fn (@TypeOf(ctx), []const u8, bool) void) void {
+pub fn each_entry(
+    dir: [*:0]const u8,
+    context: anytype,
+    comptime each: fn (@TypeOf(context), []const u8, bool) void,
+) void {
+    assert(dir[0] != 0);
+    // `each` keeps what it's given through the context, so it must point somewhere
+    comptime assert(@typeInfo(@TypeOf(context)) == .pointer);
     if (is_linux) {
-        const rc = linux.open(dir, .{ .ACCMODE = .RDONLY, .DIRECTORY = true, .CLOEXEC = true }, 0);
-        if (rc > std.math.maxInt(usize) - 4096) return;
-        const fd: i32 = @intCast(rc);
-        defer _ = linux.close(fd);
-        var buf: [4096]u8 align(8) = undefined;
-        while (true) {
-            const got = linux.getdents64(fd, &buf, buf.len);
-            if (got == 0 or got > std.math.maxInt(usize) - 4096) break;
-            var at: usize = 0;
-            while (at < got) {
-                // struct linux_dirent64: inode u64, offset i64, record length u16, type u8, name
-                const reclen = std.mem.readInt(u16, buf[at + 16 ..][0..2], .little);
-                if (reclen == 0 or at + reclen > got) return;
-                const is_dir = buf[at + 18] == 4;
-                const name = std.mem.sliceTo(buf[at + 19 .. at + reclen], 0);
-                at += reclen;
-                if (name.len == 0 or std.mem.eql(u8, name, ".") or std.mem.eql(u8, name, "..")) continue;
-                each(ctx, name, is_dir);
-            }
-        }
+        each_entry_linux(dir, context, each);
     } else {
-        const d = c.opendir(dir) orelse return;
-        defer _ = c.closedir(d);
-        while (c.readdir(d)) |entry| {
-            const name = std.mem.sliceTo(@as([*:0]const u8, @ptrCast(&entry.name)), 0);
-            if (name.len == 0 or std.mem.eql(u8, name, ".") or std.mem.eql(u8, name, "..")) continue;
-            each(ctx, name, entry.type == 4); // DT_DIR
-        }
+        each_entry_libc(dir, context, each);
     }
+}
+
+fn each_entry_linux(
+    dir: [*:0]const u8,
+    context: anytype,
+    comptime each: fn (@TypeOf(context), []const u8, bool) void,
+) void {
+    comptime assert(is_linux);
+    assert(dir[0] != 0);
+    const rc = linux.open(dir, .{ .ACCMODE = .RDONLY, .DIRECTORY = true, .CLOEXEC = true }, 0);
+    if (failed(rc)) return;
+    const fd: i32 = @intCast(rc);
+    defer _ = linux.close(fd);
+    var buffer: [4096]u8 align(8) = undefined;
+    // Each read gives at least one name, so this many reads list every name allowed
+    for (0..entries_max) |_| {
+        const got = linux.getdents64(fd, &buffer, buffer.len);
+        if (got == 0 or failed(got)) break;
+        assert(got <= buffer.len);
+        if (!each_entry_linux_records(buffer[0..got], context, each)) return;
+    }
+}
+
+/// Passes on each name in what getdents64 read. False when a record is damaged.
+fn each_entry_linux_records(
+    records: []const u8,
+    context: anytype,
+    comptime each: fn (@TypeOf(context), []const u8, bool) void,
+) bool {
+    assert(records.len > 0);
+    assert(records.len <= 4096);
+    var at: u32 = 0;
+    while (at < records.len) {
+        // A struct linux_dirent64: inode u64, offset i64, record length u16, type u8, name
+        if (at + 19 > records.len) return false;
+        const record_len = std.mem.readInt(u16, records[at + 16 ..][0..2], .little);
+        if (record_len < 19 or at + record_len > records.len) return false;
+        const is_dir = records[at + 18] == 4; // DT_DIR
+        const name = std.mem.sliceTo(records[at + 19 .. at + record_len], 0);
+        at += record_len;
+        if (is_listed(name)) each(context, name, is_dir);
+    }
+    assert(at == records.len);
+    return true;
+}
+
+fn each_entry_libc(
+    dir: [*:0]const u8,
+    context: anytype,
+    comptime each: fn (@TypeOf(context), []const u8, bool) void,
+) void {
+    comptime assert(!is_linux);
+    assert(dir[0] != 0);
+    const stream = c.opendir(dir) orelse return;
+    defer _ = c.closedir(stream);
+    for (0..entries_max) |_| {
+        const entry = c.readdir(stream) orelse break;
+        const name = std.mem.sliceTo(@as([*:0]const u8, @ptrCast(&entry.name)), 0);
+        if (is_listed(name)) each(context, name, entry.type == 4); // DT_DIR
+    }
+}
+
+/// Whether a folder's entry is a name to pass on: not "." or "..".
+fn is_listed(name: []const u8) bool {
+    if (name.len == 0) return false;
+    if (std.mem.eql(u8, name, ".")) return false;
+    if (std.mem.eql(u8, name, "..")) return false;
+    return true;
 }

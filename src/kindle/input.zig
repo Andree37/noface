@@ -196,6 +196,9 @@ pub const Input = struct {
     script: ?*Script = null, // Set in scenario tests: actions to play instead of the panel
     /// Set in the simulator: a pipe of whole Actions, written by its web page's taps.
     remote: i32 = -1,
+    /// Set when powerd said a charger came or went: whoever shows the status bar reads it
+    /// again and clears this.
+    charger_changed: bool = false,
     /// A control inside the grip zones (the reader's Back button): touches there count.
     grip_exempt: ?struct { x: i32, y: i32, w: i32, h: i32 } = null,
 
@@ -423,6 +426,11 @@ pub const Input = struct {
                 } else if (!failed(got)) {
                     if (touch_zones.lastPowerEvent(line[0..got])) |event| {
                         return if (event == .lock) .lock else in.unlocked();
+                    }
+                    // A charger plugged in or pulled: a tick, for the status bar to catch up
+                    if (touch_zones.chargerChanged(line[0..got])) {
+                        in.charger_changed = true;
+                        return .tick;
                     }
                 }
             }

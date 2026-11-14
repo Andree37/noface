@@ -447,8 +447,11 @@ pub fn runLibrary(a: *app.App) !void {
                     // Once a minute: the clock, the battery and the charger, from the
                     // Kindle itself. Only the status strip is redrawn, without a flash,
                     // so a notice on the page stays
-                    if (nowUs() >= status_until and nowUs() >= watch_until) {
+                    const charger = a.input.charger_changed;
+                    a.input.charger_changed = false;
+                    if (charger or (nowUs() >= status_until and nowUs() >= watch_until)) {
                         const fresh = lipc.read(a.quick);
+                        if (charger) std.debug.print("charger changed: plugged {}\n", .{fresh.plugged});
                         if (!fresh.same(&a.quick)) {
                             a.quick = fresh;
                             try library.render(alloc, a.ui, a.page(buf), lib.entries, hero, lib.visible[0..count], index, filter, order, query.words(), "", &a.quick, moment(a));

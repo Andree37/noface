@@ -18,6 +18,11 @@ pub fn lastPowerEvent(line: []const u8) ?PowerEvent {
     return if (lock != null) .lock else null;
 }
 
+/// Whether powerd said a charger came or went: "charging" or "notCharging".
+pub fn chargerChanged(line: []const u8) bool {
+    return std.mem.indexOf(u8, line, "charging") != null or std.mem.indexOf(u8, line, "Charging") != null;
+}
+
 pub const top_zone = 200; // Top edge: opens the toolbar, or the panel when dragged
 pub const hold_ms = 450; // Press this long to start selecting text
 const hold_slop = 36; // Movement that still counts as holding still

@@ -5,6 +5,7 @@ const linux = @import("../sys/calls.zig");
 const os = @import("../sys/os.zig");
 const process = @import("../sys/process.zig");
 const quick_model = @import("../model/quick.zig");
+const devices = @import("devices.zig");
 
 const lipc_get: [*:0]const u8 = "/usr/bin/lipc-get-prop";
 
@@ -96,7 +97,11 @@ pub fn read(previous: quick_model.Quick) quick_model.Quick {
     if (out.int(7)) |v| q.battery = v;
     // Plugged in, whether or not it's charging: a computer's port can be too weak to
     // charge, and a full battery stops; the stock Kindle shows the bolt either way
-    if (out.int(9)) |v| q.plugged = v != 0;
+    // powerd's usbState stays 1 after the cable is pulled; the charger's own file says
+    // whether one is there. The scenario tests' pretend Kindle answers usbState instead
+    if (process.fake == null) {
+        if (devices.power()) |p| q.plugged = p.plugged;
+    } else if (out.int(9)) |v| q.plugged = v != 0;
     const clock = out.text(8);
     if (clock.len > 0) {
         @memcpy(q.clock[0..clock.len], clock);
@@ -131,7 +136,9 @@ fn watchEvents(publisher: [*:0]const u8, events: [*:0]const u8) ?process.Child {
 
 /// Locking and waking, from powerd.
 pub fn watchPowerEvents() ?process.Child {
-    return watchEvents("com.lab126.powerd", "goingToScreenSaver,outOfScreenSaver");
+    // The charger's coming and going too, so the status bar's bolt follows at once.
+    // noface.sh finds this watcher by the start of its arguments, which stays the same
+    return watchEvents("com.lab126.powerd", "goingToScreenSaver,outOfScreenSaver,charging,notCharging");
 }
 
 /// A computer setting up the USB connection, from the volume manager.

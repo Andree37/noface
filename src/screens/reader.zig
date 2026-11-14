@@ -418,6 +418,14 @@ pub fn readBook(a: *app.App, entry: *catalog.Entry) !Outcome {
                 try turnBy(&session, entry, state_path, &since_save, direction + a.input.takeTurns(), null);
             },
             .tick => {
+                // A charger came or went: an open toolbar shows the bolt, so it follows
+                if (a.input.charger_changed) {
+                    a.input.charger_changed = false;
+                    if (view == .toolbar or view == .sheet) {
+                        a.quick = lipc.read(a.quick);
+                        try controls.drawToolbar(a, &session, entry.title, view == .sheet, false);
+                    }
+                }
                 if (session.layoutPending()) {
                     // Once done, show the page count that was missing: in the footer,
                     // or in the toolbar when it's open

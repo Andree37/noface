@@ -42,6 +42,14 @@ pub fn use_default() void {
     assert(budget.limit == default_limit);
 }
 
+/// Where the font and picture decoders take their memory from: the budget given to
+/// `use`, or the built-in one.
+pub fn allocator() std.mem.Allocator {
+    assert(budget.limit > header);
+    assert(budget.live <= budget.limit);
+    return budget.allocator();
+}
+
 /// The size a block was asked for, from its header.
 fn size_of(block: [*]u8) c_size {
     assert(@intFromPtr(block) % block_alignment == 0);

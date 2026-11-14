@@ -1,29 +1,10 @@
-//! TrueType fonts through stb_truetype: measuring and drawing text onto a page.
+//! TrueType and OpenType fonts (TrueType or CFF outlines): measuring and drawing text
+//! onto a page.
 const std = @import("std");
 const assert = std.debug.assert;
 const Page = @import("page.zig").Page;
 const truetype = @import("truetype.zig");
-
-comptime {
-    _ = @import("c_memory.zig"); // The malloc and free stb's C shim calls
-}
-
-extern fn ft_open(ttf: [*]const u8) ?*anyopaque;
-extern fn ft_close(f: *anyopaque) void;
-extern fn ft_scale(f: *anyopaque, px: f32) f32;
-extern fn ft_vmetrics(f: *anyopaque, asc: *c_int, desc: *c_int, gap: *c_int) void;
-extern fn ft_index(f: *anyopaque, cp: c_int) c_int;
-extern fn ft_hmetrics(f: *anyopaque, g: c_int, adv: *c_int, lsb: *c_int) void;
-extern fn ft_kern(f: *anyopaque, a: c_int, b: c_int) c_int;
-extern fn ft_bitmap(
-    f: *anyopaque,
-    scale: f32,
-    g: c_int,
-    w: *c_int,
-    h: *c_int,
-    xo: *c_int,
-    yo: *c_int,
-) ?[*]u8;
+const c_memory = @import("c_memory.zig");
 
 /// The font file's first bytes: its version, which says what kind of font it is.
 const sfnt_version_truetype = 0x00010000;
@@ -55,17 +36,17 @@ fn is_combining(code_point: u32) bool {
 }
 
 const Glyph = struct {
-    index: c_int,
+    index: u32,
     advance: f32,
     width: i32,
     height: i32,
     x_offset: i32,
     y_offset: i32,
-    pixels: ?[*]u8,
+    pixels: ?[]u8,
 };
 
 pub const Font = struct {
-    handle: *anyopaque,
+    info: truetype.Info,
     scale: f32,
     ascent: i32,
     line_height: i32,
@@ -73,14 +54,13 @@ pub const Font = struct {
     alloc: std.mem.Allocator,
 
     /// Whether `ttf` is a font that can set text: it opens, and has letters. Any file
-    /// can be named .ttf, and stb_truetype trusts what it's given, so its table
-    /// directory is checked first: every table inside the file.
+    /// can be named .ttf, so its table directory is checked first: every table inside
+    /// the file.
     pub fn usable(ttf: []const u8) bool {
         if (!tables_inside(ttf)) return false;
         assert(ttf.len >= table_directory_size);
-        const handle = ft_open(ttf.ptr) orelse return false;
-        defer ft_close(handle);
-        return ft_index(handle, 'a') != 0 and ft_index(handle, 'A') != 0;
+        const info = truetype.init(ttf) orelse return false;
+        return truetype.glyph_index(&info, 'a') != 0 and truetype.glyph_index(&info, 'A') != 0;
     }
 
     /// A TrueType or OpenType font (or the first of a collection) whose tables all lie
@@ -118,20 +98,14 @@ pub const Font = struct {
         // Sizes and spacings are noface's own, from its tables, never a book's
         assert(px > 0);
         assert(line_spacing >= 1);
-        const handle = ft_open(ttf.ptr) orelse return error.BadFont;
-        const scale = ft_scale(handle, px);
+        const info = truetype.init(ttf) orelse return error.BadFont;
+        const scale = truetype.scale_for_pixel_height(&info, px);
         // A font whose ascent equals its descent has no height to scale by: the
         // division gives infinity, which can't be turned into whole pixels below.
-        if (!std.math.isFinite(scale)) {
-            ft_close(handle);
-            return error.BadFont;
-        }
-        var ascent: c_int = 0;
-        var descent: c_int = 0;
-        var line_gap: c_int = 0;
-        ft_vmetrics(handle, &ascent, &descent, &line_gap);
+        if (!std.math.isFinite(scale)) return error.BadFont;
+        const ascent = truetype.vertical_metrics(&info).ascent;
         return .{
-            .handle = handle,
+            .info = info,
             .scale = scale,
             .ascent = @intFromFloat(@as(f32, @floatFromInt(ascent)) * scale),
             .line_height = @intFromFloat(px * line_spacing),
@@ -143,34 +117,34 @@ pub const Font = struct {
         // Code points come from decoding UTF-8, which yields only these
         assert(code_point <= code_point_max);
         if (f.glyphs.get(code_point)) |g| return g;
-        const index = ft_index(f.handle, @intCast(code_point));
-        // A font keeps glyph indexes as 16-bit unsigned numbers, 0 for a missing glyph
-        assert(index >= 0);
-        var advance: c_int = 0;
-        var left_side_bearing: c_int = 0;
-        ft_hmetrics(f.handle, index, &advance, &left_side_bearing);
-        var width: c_int = 0;
-        var height: c_int = 0;
-        var x_offset: c_int = 0;
-        var y_offset: c_int = 0;
-        const pixels = ft_bitmap(f.handle, f.scale, index, &width, &height, &x_offset, &y_offset);
+        const index = truetype.glyph_index(&f.info, code_point);
+        const advance = truetype.horizontal_metrics(&f.info, index).advance;
+        // Kept as long as the font: glyphs are drawn once, from the decoders' budget.
+        // With no room left there, a glyph is drawn blank, as stb_truetype drew it.
+        const bitmap = truetype.glyph_bitmap(&f.info, c_memory.allocator(), f.scale, index) catch
+            truetype.glyph_bitmap_box(&f.info, f.scale, index);
         const g = Glyph{
             .index = index,
             .advance = @as(f32, @floatFromInt(advance)) * f.scale,
-            .width = width,
-            .height = height,
-            .x_offset = x_offset,
-            .y_offset = y_offset,
-            .pixels = pixels,
+            .width = bitmap.width,
+            .height = bitmap.height,
+            .x_offset = bitmap.x_offset,
+            .y_offset = bitmap.y_offset,
+            .pixels = bitmap.pixels,
         };
+        // Paired with `blit`, which reads `width` times `height` pixels
+        if (g.pixels) |pixels| {
+            assert(pixels.len == @as(u64, @intCast(g.width)) * @as(u64, @intCast(g.height)));
+        }
         try f.glyphs.put(f.alloc, code_point, g);
         return g;
     }
 
     fn kern(f: *Font, a: *const Glyph, b: *const Glyph) f32 {
-        assert(a.index >= 0);
-        assert(b.index >= 0);
-        return @as(f32, @floatFromInt(ft_kern(f.handle, a.index, b.index))) * f.scale;
+        assert(std.math.isFinite(f.scale));
+        assert(f.scale != 0);
+        const units = truetype.kern_advance(&f.info, a.index, b.index);
+        return @as(f32, @floatFromInt(units)) * f.scale;
     }
 
     pub fn measure(f: *Font, word: []const u8) !f32 {
@@ -264,7 +238,7 @@ fn blit(p: Page, g: *const Glyph, x: i32, y: i32) void {
     }
 }
 
-test "files that aren't fonts are turned down before stb sees them" {
+test "files that aren't fonts are turned down before they're read" {
     try std.testing.expect(!Font.tables_inside(""));
     const html = "<!doctype html><html><head><title>font</title></head>";
     try std.testing.expect(!Font.tables_inside(html));

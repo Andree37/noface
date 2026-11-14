@@ -924,20 +924,8 @@ pub fn glyph_bitmap(
     scale: f32,
     glyph: u32,
 ) Error!Bitmap {
-    assert(scale > 0);
-    assert(std.math.isFinite(scale));
-    const box = glyph_box(info, glyph);
-    const x0 = floor_int(@as(f32, @floatFromInt(box.x0)) * scale);
-    const y0 = floor_int(@as(f32, @floatFromInt(-box.y1)) * scale);
-    const x1 = ceil_int(@as(f32, @floatFromInt(box.x1)) * scale);
-    const y1 = ceil_int(@as(f32, @floatFromInt(-box.y0)) * scale);
-    var bitmap: Bitmap = .{
-        .pixels = null,
-        .width = x1 -% x0,
-        .height = y1 -% y0,
-        .x_offset = x0,
-        .y_offset = y0,
-    };
+    var bitmap = glyph_bitmap_box(info, scale, glyph);
+    // A box with no pixels, or one too large for a glyph, is drawn as nothing
     if (bitmap.width <= 0 or bitmap.height <= 0) return bitmap;
     if (bitmap.width > bitmap_side_max or bitmap.height > bitmap_side_max) return bitmap;
     const vertices = try glyph_shape(info, alloc, glyph);
@@ -947,11 +935,36 @@ pub fn glyph_bitmap(
     const pixels = try alloc.alloc(u8, width * height);
     errdefer alloc.free(pixels);
     @memset(pixels, 0);
-    const where: raster.Box = .{ .x = x0, .y = y0, .width = width, .height = height };
+    const where: raster.Box = .{
+        .x = bitmap.x_offset,
+        .y = bitmap.y_offset,
+        .width = width,
+        .height = height,
+    };
     try raster.rasterize(alloc, vertices, scale, where, pixels);
     bitmap.pixels = pixels;
     assert(pixels.len == width * height);
     return bitmap;
+}
+
+/// Where a glyph's bitmap lies, and its size, without drawing it: the pixels its
+/// box touches, as stb_truetype rounded them. A scale below zero, from a font whose
+/// descent is above its ascent, flips the box inside out: no pixels.
+pub fn glyph_bitmap_box(info: *const Info, scale: f32, glyph: u32) Bitmap {
+    assert(scale != 0);
+    assert(std.math.isFinite(scale));
+    const box = glyph_box(info, glyph);
+    const x0 = floor_int(@as(f32, @floatFromInt(box.x0)) * scale);
+    const y0 = floor_int(@as(f32, @floatFromInt(-box.y1)) * scale);
+    const x1 = ceil_int(@as(f32, @floatFromInt(box.x1)) * scale);
+    const y1 = ceil_int(@as(f32, @floatFromInt(-box.y0)) * scale);
+    return .{
+        .pixels = null,
+        .width = x1 -% x0,
+        .height = y1 -% y0,
+        .x_offset = x0,
+        .y_offset = y0,
+    };
 }
 
 fn floor_int(value: f32) i32 {

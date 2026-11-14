@@ -55,7 +55,7 @@ pub fn rasterize(
     box: Box,
     pixels: []u8,
 ) Error!void {
-    assert(scale > 0);
+    assert(scale != 0);
     assert(pixels.len == @as(u64, box.width) * box.height);
     const flatness = flatness_px / scale;
     const flat = try flatten(alloc, vertices, flatness * flatness);
@@ -263,7 +263,7 @@ fn cubic_flatness_squared(q: *const [4]Point) f32 {
 /// The polygons' edges, scaled to pixels, y flipped, each pointing down. Horizontal
 /// ones cover nothing and are left out. Returns how many there are.
 fn make_edges(flat: *const Flat, scale: f32, edges: []Edge) u32 {
-    assert(scale > 0);
+    assert(scale != 0);
     var count: u32 = 0;
     var start: u32 = 0;
     for (flat.contour_lengths) |length| {

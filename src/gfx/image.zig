@@ -1,15 +1,14 @@
-//! Book thumbnails, decoded once and scaled to library size.
+//! Pictures: decoding JPEG and PNG covers and illustrations to gray, scaling,
+//! dithering and zooming them for the panel.
 const std = @import("std");
 const assert = std.debug.assert;
 const check = @import("../base/check.zig");
 const file = @import("../sys/file.zig");
 const Page = @import("page.zig").Page;
+const c_memory = @import("c_memory.zig");
 const decoded = @import("decoded.zig");
 const jpeg_decoder = @import("jpeg.zig");
 const png_decoder = @import("png.zig");
-
-extern fn img_gray(data: [*]const u8, len: c_int, w: *c_int, h: *c_int) ?[*]u8;
-extern fn img_free(p: [*]u8) void;
 
 pub const width = 252;
 pub const height = 333;
@@ -137,17 +136,14 @@ pub fn fill_screen(
         .stride = @intCast(stride),
     };
     assert(screen.holds_rows());
-    var w: c_int = 0;
-    var h: c_int = 0;
-    const pixels = img_gray(jpeg.ptr, @intCast(jpeg.len), &w, &h) orelse return false;
-    defer img_free(pixels);
-    if (w <= 0 or h <= 0) return false;
-    const picture = Size{ .width = @intCast(w), .height = @intCast(h) };
+    const decoder = c_memory.allocator();
+    const gray = decode_picture(decoder, jpeg) orelse return false;
+    defer decoder.free(gray.pixels);
+    const picture = Size{ .width = gray.width, .height = gray.height };
     const fit = fitted(picture, .{ .width = screen.width, .height = screen.height });
-    const pixel_count = @as(u64, picture.width) * picture.height;
     const ready = prepare(
         alloc,
-        pixels[0..@intCast(pixel_count)],
+        gray.pixels,
         picture.width,
         picture.height,
         fit.width,
@@ -193,14 +189,10 @@ pub fn prepare(
 
 /// Decodes a JPEG or PNG, then prepares it at `w` x `h`.
 pub fn decode_and_prepare(alloc: std.mem.Allocator, encoded: []const u8, w: usize, h: usize) ?[]u8 {
-    var sw: c_int = 0;
-    var sh: c_int = 0;
-    const pixels = img_gray(encoded.ptr, @intCast(encoded.len), &sw, &sh) orelse return null;
-    defer img_free(pixels);
-    if (sw <= 0 or sh <= 0) return null;
-    const pixel_count = @as(u64, @intCast(sw)) * @as(u64, @intCast(sh));
-    const source = pixels[0..@intCast(pixel_count)];
-    const ready = prepare(alloc, source, @intCast(sw), @intCast(sh), w, h) orelse return null;
+    const decoder = c_memory.allocator();
+    const gray = decode_picture(decoder, encoded) orelse return null;
+    defer decoder.free(gray.pixels);
+    const ready = prepare(alloc, gray.pixels, gray.width, gray.height, w, h) orelse return null;
     // Paired with `blit`, which copies exactly this many
     assert(ready.len == @as(u64, w) * h);
     return ready;
@@ -227,17 +219,14 @@ pub fn load(alloc: std.mem.Allocator, path: [*:0]const u8, dw: usize, dh: usize)
     assert(dh > 0);
     const data = file.map(path) catch return null;
     defer file.unmap(data);
-    var w: c_int = 0;
-    var h: c_int = 0;
-    const pixels = img_gray(data.ptr, @intCast(data.len), &w, &h) orelse return null;
-    defer img_free(pixels);
-    if (w <= 0 or h <= 0) return null;
-    const picture = Size{ .width = @intCast(w), .height = @intCast(h) };
-    const pixel_count = @as(u64, picture.width) * picture.height;
+    const decoder = c_memory.allocator();
+    const gray = decode_picture(decoder, data) orelse return null;
+    defer decoder.free(gray.pixels);
+    const picture = Size{ .width = gray.width, .height = gray.height };
     const out = alloc.alloc(u8, dw * dh) catch return null;
     // A cover's size is noface's own, far under 32 bits
     const target_size = Size{ .width = @intCast(dw), .height = @intCast(dh) };
-    scale(pixels[0..@intCast(pixel_count)], picture, out, target_size);
+    scale(gray.pixels, picture, out, target_size);
     return out;
 }
 
@@ -263,15 +252,13 @@ fn decode_either(alloc: std.mem.Allocator, encoded: []const u8) !decoded.Gray {
 
 /// Decodes a JPEG or PNG at full size. The caller owns the pixels.
 pub fn decode_gray(alloc: std.mem.Allocator, encoded: []const u8) ?Gray {
-    var w: c_int = 0;
-    var h: c_int = 0;
-    const pixels = img_gray(encoded.ptr, @intCast(encoded.len), &w, &h) orelse return null;
-    defer img_free(pixels);
-    if (w <= 0 or h <= 0) return null;
-    const pixel_count = @as(u64, @intCast(w)) * @as(u64, @intCast(h));
-    const out = alloc.alloc(u8, @intCast(pixel_count)) catch return null;
-    @memcpy(out, pixels[0..out.len]);
-    const gray = Gray{ .pixels = out, .width = @intCast(w), .height = @intCast(h) };
+    const decoder = c_memory.allocator();
+    const picture = decode_picture(decoder, encoded) orelse return null;
+    defer decoder.free(picture.pixels);
+    const out = alloc.alloc(u8, picture.pixels.len) catch return null;
+    @memcpy(out, picture.pixels);
+    const gray = Gray{ .pixels = out, .width = picture.width, .height = picture.height };
+
     // Paired with `zoomed` and its helpers, which index rows by the width
     assert(gray.pixels.len == gray.width * gray.height);
     assert(gray.width > 0);

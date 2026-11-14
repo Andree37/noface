@@ -1,5 +1,6 @@
 //! Highlights in a book: where they sit in the text, and how they map to a page.
 const std = @import("std");
+const assert = std.debug.assert;
 const check = @import("../base/check.zig");
 const book_model = @import("book.zig");
 
@@ -14,7 +15,15 @@ pub const Span = struct {
     last_byte: u32,
 
     pub fn of(lo: book_model.Word, hi: book_model.Word) Span {
-        return .{ .first_para = lo.para, .first_byte = lo.start, .last_para = hi.para, .last_byte = hi.end };
+        // Layout never makes a word that ends before it starts.
+        assert(lo.start <= lo.end);
+        assert(hi.start <= hi.end);
+        return .{
+            .first_para = lo.para,
+            .first_byte = lo.start,
+            .last_para = hi.para,
+            .last_byte = hi.end,
+        };
     }
 };
 
@@ -29,27 +38,47 @@ pub fn extent(list: []const Highlight, id: []const u8) ?Span {
                 s.first_para = m.para;
                 s.first_byte = m.start;
             }
+            assert(s.first_para <= m.para);
             if (m.para > s.last_para or (m.para == s.last_para and m.end > s.last_byte)) {
                 s.last_para = m.para;
                 s.last_byte = m.end;
             }
-        } else out = .{ .first_para = m.para, .first_byte = m.start, .last_para = m.para, .last_byte = m.end };
+            assert(s.last_para >= m.para);
+        } else {
+            out = .{
+                .first_para = m.para,
+                .first_byte = m.start,
+                .last_para = m.para,
+                .last_byte = m.end,
+            };
+        }
     }
+    if (out) |s| assert(s.first_para <= s.last_para);
     return out;
 }
 
 /// The range after dragging one end to `head`. The other end stays where it
 /// was, even off this page, unless the drag crossed `fixed`, the on-page word
 /// that end sits on.
-pub fn dragged(whole: Span, fixed: book_model.Word, head: book_model.Word, grab_start: bool, crossed: bool) Span {
+pub fn dragged(
+    whole: Span,
+    fixed: book_model.Word,
+    head: book_model.Word,
+    grab_start: bool,
+    crossed: bool,
+) Span {
+    assert(fixed.start <= fixed.end);
+    assert(head.start <= head.end);
     if (crossed) return if (grab_start) Span.of(fixed, head) else Span.of(head, fixed);
     var out = whole;
     if (grab_start) {
         out.first_para = head.para;
         out.first_byte = head.start;
+        assert(out.last_byte == whole.last_byte); // The other end stays where it was
     } else {
         out.last_para = head.para;
         out.last_byte = head.end;
+        assert(out.first_byte == whole.first_byte);
     }
     return out;
 }
@@ -64,23 +93,37 @@ pub fn excerpt(s: []const u8, max: usize) []const u8 {
     if (std.mem.lastIndexOfScalar(u8, trimmed[0..end], ' ')) |space| {
         if (space > max / 2) end = space;
     }
+    assert(end <= max);
+    // The excerpt stops before a character, never inside one.
+    assert(end == 0 or trimmed[end] & 0xc0 != 0x80);
     return trimmed[0..end];
 }
 
 /// Finds the paragraph and byte for one of Amazon's short positions.
-pub fn locate(paragraphs: []const book_model.Paragraph, short: u32) ?struct { para: u32, byte: u32 } {
-    var found: ?usize = null;
+pub fn locate(
+    paragraphs: []const book_model.Paragraph,
+    short: u32,
+) ?struct { para: u32, byte: u32 } {
+    var found: ?u32 = null;
     for (paragraphs, 0..) |p, i| {
         if (p.position == 0) continue;
-        if (p.position <= short) found = i else break;
+        if (p.position <= short) found = @intCast(i) else break;
     }
-    const i = found orelse return null;
-    const p = paragraphs[i];
-    return .{ .para = @intCast(i), .byte = @intCast(book_model.byte_offset(p.text, short - p.position)) };
+    const index = found orelse return null;
+    assert(index < paragraphs.len);
+    const p = paragraphs[index];
+    assert(p.position <= short);
+    const byte = book_model.byte_offset(p.text, short - p.position);
+    assert(byte <= p.text.len);
+    return .{ .para = index, .byte = @intCast(byte) };
 }
 
 /// Reads "id|start|end" lines from the annotation database.
-pub fn parse(alloc: std.mem.Allocator, paragraphs: []const book_model.Paragraph, lines: []const u8) ![]Highlight {
+pub fn parse(
+    alloc: std.mem.Allocator,
+    paragraphs: []const book_model.Paragraph,
+    lines: []const u8,
+) ![]Highlight {
     var out: std.ArrayList(Highlight) = .empty;
     var it = std.mem.tokenizeScalar(u8, lines, '\n');
     while (it.next()) |line| {
@@ -90,95 +133,139 @@ pub fn parse(alloc: std.mem.Allocator, paragraphs: []const book_model.Paragraph,
         const end = std.fmt.parseInt(u32, fields.next() orelse continue, 10) catch continue;
         const from = locate(paragraphs, start) orelse continue;
         const to = locate(paragraphs, end) orelse continue;
+        assert(from.para < paragraphs.len);
+        assert(to.para < paragraphs.len);
         if (from.para != to.para) {
             // One mark per paragraph, so every paragraph it crosses is drawn.
             var para = from.para;
             while (para <= to.para) : (para += 1) {
                 const first = if (para == from.para) from.byte else 0;
-                const last: u32 = if (para == to.para) to.byte else @intCast(paragraphs[para].text.len);
-                try out.append(alloc, .{ .mark = .{ .para = para, .start = first, .end = last }, .id = try alloc.dupe(u8, id) });
+                const para_len: u32 = @intCast(paragraphs[para].text.len);
+                const last = if (para == to.para) to.byte else para_len;
+                const mark: book_model.Mark = .{ .para = para, .start = first, .end = last };
+                try out.append(alloc, .{ .mark = mark, .id = try alloc.dupe(u8, id) });
             }
             continue;
         }
-        try out.append(alloc, .{ .mark = .{ .para = from.para, .start = from.byte, .end = to.byte }, .id = try alloc.dupe(u8, id) });
+        const mark: book_model.Mark = .{ .para = from.para, .start = from.byte, .end = to.byte };
+        try out.append(alloc, .{ .mark = mark, .id = try alloc.dupe(u8, id) });
     }
     return out.toOwnedSlice(alloc);
 }
 
 fn overlaps(m: book_model.Mark, w: book_model.Word) bool {
+    assert(w.start <= w.end);
     return w.para == m.para and w.start < m.end and w.end > m.start;
 }
 
 /// An ID for a highlight starting at `short`. Moving a highlight's start keeps
 /// its ID, so that spot can already be taken by a highlight elsewhere.
 pub fn free_id(alloc: std.mem.Allocator, list: []const Highlight, short: u32) ![]const u8 {
-    var n = short;
-    next: while (true) : (n += 1) {
-        const id = try std.fmt.allocPrint(alloc, "kindle.highlight-{d}", .{n});
+    // Of `list.len + 1` IDs in a row, the list can't hold them all: one is free.
+    next: for (0..list.len + 1) |offset| {
+        const candidate = short + @as(u32, @intCast(offset));
+        const id = try std.fmt.allocPrint(alloc, "kindle.highlight-{d}", .{candidate});
         for (list) |h| {
             if (std.mem.eql(u8, h.id, id)) continue :next;
         }
         return id;
     }
+    unreachable;
 }
 
 /// Adds a highlight, one mark per paragraph it crosses.
-pub fn add(list: *std.ArrayList(Highlight), alloc: std.mem.Allocator, paragraphs: []const book_model.Paragraph, id: []const u8, span: Span) !void {
-    check.thatf(span.first_para < span.last_para or (span.first_para == span.last_para and span.first_byte <= span.last_byte), "highlight {s} starts before it ends", .{id});
+pub fn add(
+    list: *std.ArrayList(Highlight),
+    alloc: std.mem.Allocator,
+    paragraphs: []const book_model.Paragraph,
+    id: []const u8,
+    span: Span,
+) !void {
+    const in_order = span.first_para < span.last_para or
+        (span.first_para == span.last_para and span.first_byte <= span.last_byte);
+    check.thatf(in_order, "highlight {s} starts before it ends", .{id});
     check.that(span.last_para < paragraphs.len, "highlight ends inside the book");
+    const count_before = list.items.len;
     var index = span.first_para;
     while (index <= span.last_para) : (index += 1) {
         const first = if (index == span.first_para) span.first_byte else 0;
-        const last: u32 = if (index == span.last_para) span.last_byte else @intCast(paragraphs[index].text.len);
-        try list.append(alloc, .{ .mark = .{ .para = index, .start = first, .end = last }, .id = id });
+        const para_len: u32 = @intCast(paragraphs[index].text.len);
+        const last = if (index == span.last_para) span.last_byte else para_len;
+        const mark: book_model.Mark = .{ .para = index, .start = first, .end = last };
+        try list.append(alloc, .{ .mark = mark, .id = id });
     }
+    // One mark for each paragraph the highlight covers.
+    assert(list.items.len - count_before == span.last_para - span.first_para + 1);
 }
 
 /// Removes every mark of a highlight.
 /// Whether `list[i]` is the first mark of its highlight. A highlight keeps a mark per
 /// paragraph it covers; this lists or counts each one once.
 pub fn first_of_id(list: []const Highlight, i: usize) bool {
+    assert(i < list.len);
     for (list[0..i]) |earlier| {
-        if (std.mem.eql(u8, earlier.id, list[i].id)) return false;
+        if (std.mem.eql(u8, earlier.id, list[i].id)) {
+            assert(i > 0);
+            return false;
+        }
     }
     return true;
 }
 
 /// How many highlights there are, each counted once however many paragraphs it covers.
 pub fn count(list: []const Highlight) usize {
-    var n: usize = 0;
-    for (0..list.len) |i| n += @intFromBool(first_of_id(list, i));
-    return n;
+    var highlights: u32 = 0;
+    for (0..list.len) |i| highlights += @intFromBool(first_of_id(list, i));
+    assert(highlights <= list.len);
+    // The first mark is always the first of its highlight.
+    if (list.len > 0) assert(highlights > 0);
+    return highlights;
 }
 
 pub fn remove(list: *std.ArrayList(Highlight), id: []const u8) void {
-    var i: usize = 0;
+    const count_before = list.items.len;
+    var i: u32 = 0;
     while (i < list.items.len) {
         if (std.mem.eql(u8, list.items[i].id, id)) {
             _ = list.orderedRemove(i);
-        } else i += 1;
+        } else {
+            i += 1;
+        }
     }
+    assert(list.items.len <= count_before);
+    for (list.items) |h| assert(!std.mem.eql(u8, h.id, id));
 }
 
 /// First and last word of a highlight on this page.
-pub fn word_range(words: []const book_model.Word, list: []const Highlight, id: []const u8) ?struct { lo: usize, hi: usize } {
-    var lo: ?usize = null;
-    var hi: usize = 0;
+pub fn word_range(
+    words: []const book_model.Word,
+    list: []const Highlight,
+    id: []const u8,
+) ?struct { lo: usize, hi: usize } {
+    var lo: ?u32 = null;
+    var hi: u32 = 0;
     for (words, 0..) |w, i| {
         for (list) |h| {
             if (!std.mem.eql(u8, h.id, id) or !overlaps(h.mark, w)) continue;
-            if (lo == null) lo = i;
-            hi = i;
+            if (lo == null) lo = @intCast(i);
+            hi = @intCast(i);
             break;
         }
     }
-    return if (lo) |l| .{ .lo = l, .hi = hi } else null;
+    const first = lo orelse return null;
+    assert(first <= hi);
+    assert(hi < words.len);
+    return .{ .lo = first, .hi = hi };
 }
 
 /// The ID of the highlight containing a word, if any.
 pub fn at_word(list: []const Highlight, w: book_model.Word) ?[]const u8 {
+    assert(w.start <= w.end);
     for (list) |h| {
-        if (overlaps(h.mark, w)) return h.id;
+        if (overlaps(h.mark, w)) {
+            assert(h.mark.para == w.para);
+            return h.id;
+        }
     }
     return null;
 }
@@ -202,7 +289,8 @@ test "database lines become marks, split across paragraphs" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const paras = [_]book_model.Paragraph{ sample("abcdef", 100), sample("ghijkl", 106) };
-    const list = try parse(arena.allocator(), &paras, "kindle.highlight-101|101|104\nkindle.highlight-104|104|108\nbad line\n");
+    const lines = "kindle.highlight-101|101|104\nkindle.highlight-104|104|108\nbad line\n";
+    const list = try parse(arena.allocator(), &paras, lines);
     try std.testing.expectEqual(@as(usize, 3), list.len);
     try std.testing.expectEqual(@as(u32, 1), list[0].mark.start);
     try std.testing.expectEqual(@as(u32, 4), list[0].mark.end);
@@ -229,7 +317,10 @@ test "a highlight crossing paragraphs covers both and stays one highlight" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const alloc = arena.allocator();
-    const paras = [_]book_model.Paragraph{ sample("first para text here", 100), sample("second para", 121) };
+    const paras = [_]book_model.Paragraph{
+        sample("first para text here", 100),
+        sample("second para", 121),
+    };
     const words = [_]book_model.Word{
         .{ .x = 0, .y = 0, .w = 10, .h = 10, .para = 0, .start = 11, .end = 15 },
         .{ .x = 0, .y = 20, .w = 10, .h = 10, .para = 0, .start = 16, .end = 20 },
@@ -257,8 +348,24 @@ test "dragging keeps an end that sits on another page" {
     try std.testing.expectEqual(whole, extent(&list, "h").?);
     try std.testing.expect(extent(&list, "none") == null);
 
-    const fixed = book_model.Word{ .x = 0, .y = 0, .w = 1, .h = 1, .para = 7, .start = 0, .end = 4 };
-    const head = book_model.Word{ .x = 0, .y = 0, .w = 1, .h = 1, .para = 8, .start = 50, .end = 55 };
+    const fixed = book_model.Word{
+        .x = 0,
+        .y = 0,
+        .w = 1,
+        .h = 1,
+        .para = 7,
+        .start = 0,
+        .end = 4,
+    };
+    const head = book_model.Word{
+        .x = 0,
+        .y = 0,
+        .w = 1,
+        .h = 1,
+        .para = 8,
+        .start = 50,
+        .end = 55,
+    };
     const longer = dragged(whole, fixed, head, false, false);
     try std.testing.expectEqual(@as(u32, 3), longer.first_para);
     try std.testing.expectEqual(@as(u32, 10), longer.first_byte);
@@ -267,7 +374,15 @@ test "dragging keeps an end that sits on another page" {
 
 test "dragging past the other end swaps the ends" {
     const whole = Span{ .first_para = 2, .first_byte = 10, .last_para = 2, .last_byte = 20 };
-    const fixed = book_model.Word{ .x = 0, .y = 0, .w = 1, .h = 1, .para = 2, .start = 10, .end = 14 };
+    const fixed = book_model.Word{
+        .x = 0,
+        .y = 0,
+        .w = 1,
+        .h = 1,
+        .para = 2,
+        .start = 10,
+        .end = 14,
+    };
     const head = book_model.Word{ .x = 0, .y = 0, .w = 1, .h = 1, .para = 2, .start = 2, .end = 6 };
     const swapped = dragged(whole, fixed, head, false, true);
     try std.testing.expectEqual(@as(u32, 2), swapped.first_byte);
@@ -278,9 +393,14 @@ test "a new highlight never takes an ID in use" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const mark = book_model.Mark{ .para = 0, .start = 0, .end = 1 };
-    const list = [_]Highlight{ .{ .mark = mark, .id = "kindle.highlight-100" }, .{ .mark = mark, .id = "kindle.highlight-101" } };
-    try std.testing.expectEqualStrings("kindle.highlight-99", try free_id(arena.allocator(), &list, 99));
-    try std.testing.expectEqualStrings("kindle.highlight-102", try free_id(arena.allocator(), &list, 100));
+    const list = [_]Highlight{
+        .{ .mark = mark, .id = "kindle.highlight-100" },
+        .{ .mark = mark, .id = "kindle.highlight-101" },
+    };
+    const before = try free_id(arena.allocator(), &list, 99);
+    try std.testing.expectEqualStrings("kindle.highlight-99", before);
+    const after = try free_id(arena.allocator(), &list, 100);
+    try std.testing.expectEqualStrings("kindle.highlight-102", after);
 }
 
 test "excerpts end at a word and never split a character" {

@@ -53,62 +53,105 @@ pub fn signalBars(signal: []const u8) u32 {
 /// so a hung lipc costs one wait, not one per value. A value that can't be read keeps
 /// what `previous` had, so the panel never acts on a made-up zero.
 pub fn read(previous: quick_model.Quick) quick_model.Quick {
-    // Every value at once: nine small programs side by side take about as long as one
-    const argvs = [_][*:null]const ?[*:0]const u8{
-        &.{ lipc_get, "-s", "com.lab126.wifid", "cmState" },
-        &.{ lipc_get, "-s", "com.lab126.wifid", "signalStrength" },
-        &.{ lipc_get, "com.lab126.powerd", "flIntensity" },
-        &.{ lipc_get, "com.lab126.powerd", "currentAmberLevel" },
-        &.{ lipc_get, "com.lab126.powerd", "amberSchedEnable" },
-        &.{ lipc_get, "com.lab126.cmd", "wirelessEnable" },
-        &.{ lipc_get, bt_service, "BTstate" },
-        &.{ lipc_get, "com.lab126.powerd", "battLevel" },
-        &.{ "/bin/date", "+%H:%M - %d %b %Y" },
-        &.{ lipc_get, "com.lab126.powerd", "usbState" },
-    };
-    var bufs: [argvs.len][40]u8 = undefined;
-    var outs: [argvs.len][]u8 = undefined;
+    // Every value at once: ten small programs side by side take about as long as one
+    var argvs: [readings.len][*:null]const ?[*:0]const u8 = undefined;
+    for (readings, &argvs) |r, *a| a.* = r.argv;
+    var bufs: [readings.len][40]u8 = undefined;
+    var outs: [readings.len][]u8 = undefined;
     for (&outs, &bufs) |*o, *b| o.* = b;
-    var lens: [argvs.len]?usize = undefined;
+    var lens: [readings.len]?usize = undefined;
     process.runAll(&argvs, &outs, &lens, lipcDeadline());
-    const Out = struct {
-        bufs: *const [argvs.len][40]u8,
-        lens: *const [argvs.len]?usize,
-        fn text(o: @This(), i: usize) []const u8 {
-            return std.mem.trim(u8, o.bufs[i][0 .. o.lens[i] orelse 0], " \n");
-        }
-        fn int(o: @This(), i: usize) ?u32 {
-            return parseInt(o.text(i));
-        }
-    };
-    const out = Out{ .bufs = &bufs, .lens = &lens };
 
-    // A value that couldn't be read keeps what `previous` had
+    // In the table's order. A value that couldn't be read keeps what `previous` had
     var q = previous;
-    if (out.text(0).len > 0) {
-        q.wifi_on = std.mem.eql(u8, out.text(0), "CONNECTED");
-        q.wifi_bars = if (q.wifi_on) signalBars(out.text(1)) else 0;
+    for (readings, bufs, lens) |r, b, len| {
+        const text = std.mem.trim(u8, b[0 .. len orelse 0], " \n");
+        if (text.len > 0) r.apply(&q, text);
     }
-    if (out.int(2)) |v| q.brightness = v;
-    if (out.int(3)) |v| q.warmth = v;
-    if (out.int(4)) |v| q.schedule = v == 1;
-    if (out.int(5)) |v| q.airplane = v == 0;
-    if (out.int(6)) |v| q.bluetooth = v != 0; // 0 off, 1 on, 2 connected
-    if (out.int(7)) |v| q.battery = v;
     // Plugged in, whether or not it's charging: a computer's port can be too weak to
-    // charge, and a full battery stops; the stock Kindle shows the bolt either way
-    // powerd's usbState stays 1 after the cable is pulled; the charger's own file says
-    // whether one is there. The scenario tests' pretend Kindle answers usbState instead
+    // charge, and a full battery stops; the stock Kindle shows the bolt either way.
+    // powerd's usbState stays 1 after the cable is pulled, so on a Kindle the charger's
+    // own file decides. The scenario tests' pretend Kindle has no such file: there
+    // its usbState stands.
     if (process.fake == null) {
         if (devices.power()) |p| q.plugged = p.plugged;
-    } else if (out.int(9)) |v| q.plugged = v != 0;
-    const clock = out.text(8);
-    if (clock.len > 0) {
-        @memcpy(q.clock[0..clock.len], clock);
-        q.clock_len = clock.len;
     }
     return q;
 }
+
+/// One value the status bar and quick panel show: the command that reads it, what a
+/// healthy Kindle answers (for the scenario tests' pretend one), and where it goes.
+pub const Reading = struct {
+    argv: [*:null]const ?[*:0]const u8,
+    healthy: []const u8,
+    apply: *const fn (q: *quick_model.Quick, text: []const u8) void,
+
+    /// "service prop", as the pretend Kindle names a property. Empty for `date`.
+    pub fn key(r: Reading, buf: []u8) []const u8 {
+        const argv = r.argv;
+        if (argv[0] != lipc_get) return "";
+        const at: usize = if (std.mem.eql(u8, std.mem.span(argv[1].?), "-s")) 2 else 1;
+        return std.fmt.bufPrint(buf, "{s} {s}", .{ argv[at].?, argv[at + 1].? }) catch "";
+    }
+};
+
+fn number(comptime field: []const u8, comptime convert: fn (u32) @FieldType(quick_model.Quick, field)) *const fn (*quick_model.Quick, []const u8) void {
+    return struct {
+        fn apply(q: *quick_model.Quick, text: []const u8) void {
+            if (parseInt(text)) |v| @field(q, field) = convert(v);
+        }
+    }.apply;
+}
+
+fn same(v: u32) u32 {
+    return v;
+}
+
+/// Everything `read` asks, in the order it's applied (Wi-Fi's state before its signal).
+pub const readings = [_]Reading{
+    .{ .argv = &.{ lipc_get, "-s", "com.lab126.wifid", "cmState" }, .healthy = "CONNECTED", .apply = struct {
+        fn apply(q: *quick_model.Quick, text: []const u8) void {
+            q.wifi_on = std.mem.eql(u8, text, "CONNECTED");
+            if (!q.wifi_on) q.wifi_bars = 0;
+        }
+    }.apply },
+    .{ .argv = &.{ lipc_get, "-s", "com.lab126.wifid", "signalStrength" }, .healthy = "5/5", .apply = struct {
+        fn apply(q: *quick_model.Quick, text: []const u8) void {
+            q.wifi_bars = if (q.wifi_on) signalBars(text) else 0;
+        }
+    }.apply },
+    .{ .argv = &.{ lipc_get, "com.lab126.powerd", "flIntensity" }, .healthy = "12", .apply = number("brightness", same) },
+    .{ .argv = &.{ lipc_get, "com.lab126.powerd", "currentAmberLevel" }, .healthy = "0", .apply = number("warmth", same) },
+    .{ .argv = &.{ lipc_get, "com.lab126.powerd", "amberSchedEnable" }, .healthy = "0", .apply = number("schedule", struct {
+        fn on(v: u32) bool {
+            return v == 1;
+        }
+    }.on) },
+    .{ .argv = &.{ lipc_get, "com.lab126.cmd", "wirelessEnable" }, .healthy = "1", .apply = number("airplane", struct {
+        fn off(v: u32) bool {
+            return v == 0;
+        }
+    }.off) },
+    // 0 off, 1 on, 2 connected
+    .{ .argv = &.{ lipc_get, bt_service, "BTstate" }, .healthy = "0", .apply = number("bluetooth", struct {
+        fn on(v: u32) bool {
+            return v != 0;
+        }
+    }.on) },
+    .{ .argv = &.{ lipc_get, "com.lab126.powerd", "battLevel" }, .healthy = "80", .apply = number("battery", same) },
+    .{ .argv = &.{ lipc_get, "com.lab126.powerd", "usbState" }, .healthy = "0", .apply = number("plugged", struct {
+        fn on(v: u32) bool {
+            return v != 0;
+        }
+    }.on) },
+    .{ .argv = &.{ "/bin/date", "+%H:%M - %d %b %Y" }, .healthy = "", .apply = struct {
+        fn apply(q: *quick_model.Quick, text: []const u8) void {
+            const n = @min(text.len, q.clock.len);
+            @memcpy(q.clock[0..n], text[0..n]);
+            q.clock_len = n;
+        }
+    }.apply },
+};
 
 /// Whether the Kindle is showing its lock screen. Null when powerd can't be asked.
 /// Tells powerd the reader is active, so it doesn't lock while they read. noface holds

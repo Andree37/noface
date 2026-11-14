@@ -27,11 +27,13 @@ pub const Quick = struct {
 
     /// Whether two readings would draw the same, so a screen drawn from the first
     /// needs no redraw for the second.
+    /// Every field counts, so a new one can't be left out.
     pub fn same(a: *const Quick, b: *const Quick) bool {
-        return a.brightness == b.brightness and a.warmth == b.warmth and a.schedule == b.schedule and
-            a.airplane == b.airplane and a.bluetooth == b.bluetooth and a.syncing == b.syncing and
-            a.battery == b.battery and a.plugged == b.plugged and a.wifi_on == b.wifi_on and a.wifi_bars == b.wifi_bars and
-            std.mem.eql(u8, a.clockText(), b.clockText());
+        inline for (@typeInfo(Quick).@"struct".field_names) |name| {
+            if (comptime std.mem.eql(u8, name, "clock") or std.mem.eql(u8, name, "clock_len")) continue;
+            if (@field(a, name) != @field(b, name)) return false;
+        }
+        return std.mem.eql(u8, a.clockText(), b.clockText());
     }
 };
 

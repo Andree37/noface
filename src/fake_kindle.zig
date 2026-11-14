@@ -5,6 +5,7 @@
 const std = @import("std");
 const paths = @import("kindle/paths.zig");
 const process = @import("sys/process.zig");
+const lipc = @import("kindle/lipc.zig");
 
 const Prop = struct { key: []const u8, value: []const u8 };
 
@@ -26,20 +27,18 @@ pub const FakeKindle = struct {
     /// A Kindle awake, on Wi-Fi, Bluetooth off, not in airplane mode.
     pub fn init(alloc: std.mem.Allocator) !FakeKindle {
         var k = FakeKindle{ .alloc = alloc };
-        const defaults = [_][2][]const u8{
-            .{ "com.lab126.wifid cmState", "CONNECTED" },
-            .{ "com.lab126.wifid signalStrength", "5/5" },
-            .{ "com.lab126.powerd flIntensity", "12" },
-            .{ "com.lab126.powerd currentAmberLevel", "0" },
-            .{ "com.lab126.powerd amberSchedEnable", "0" },
-            .{ "com.lab126.powerd battLevel", "80" },
-            .{ "com.lab126.powerd usbState", "0" },
+        // What the status bar reads, as lipc.zig's own table says a healthy Kindle answers
+        for (lipc.readings) |r| {
+            var buf: [96]u8 = undefined;
+            const key = r.key(&buf);
+            if (key.len > 0) try k.put(key, r.healthy);
+        }
+        // And what's asked on its own, elsewhere
+        const others = [_][2][]const u8{
             .{ "com.lab126.powerd state", "active" },
-            .{ "com.lab126.cmd wirelessEnable", "1" },
-            .{ "com.lab126.btfd BTstate", "0" },
             .{ "com.lab126.volumd useUsbForNetwork", "0" },
         };
-        for (defaults) |d| try k.put(d[0], d[1]);
+        for (others) |d| try k.put(d[0], d[1]);
         return k;
     }
 

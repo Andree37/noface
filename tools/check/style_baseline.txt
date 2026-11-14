@@ -1,10 +1,4 @@
 # Tiger Style debt: rule, times broken, file. It may only shrink; see docs/TIGER_STYLE.md.
-script_not_zig 1 device/autostart.sh
-script_not_zig 1 device/data.sh
-script_not_zig 1 device/export.sh
-script_not_zig 1 device/kpm/launch.sh
-script_not_zig 1 device/noface.sh
-script_not_zig 1 device/start.sh
 usize_used 7 src/base/memory.zig
 usize_used 1 src/gfx/c_memory.zig
 usize_used 1 src/gfx/font.zig
@@ -27,8 +21,5 @@ usize_used 33 src/sys/calls_portable.zig
 usize_used 1 src/sys/file.zig
 usize_used 2 src/sys/os.zig
 assertion_density 2 src/sys/state.zig
-script_not_zig 1 tools/build_dictionary.py
 assertion_density 11 tools/check/style.zig
-script_not_zig 1 tools/package.sh
 usize_used 3 tools/panelshot.zig
-script_not_zig 1 tools/pgm2png.py

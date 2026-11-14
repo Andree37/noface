@@ -73,6 +73,12 @@ pub const Font = struct {
     pub fn init(alloc: std.mem.Allocator, ttf: []const u8, px: f32, line_spacing: f32) !Font {
         const handle = ft_open(ttf.ptr) orelse return error.BadFont;
         const scale = ft_scale(handle, px);
+        // A font whose ascent equals its descent has no height to scale by: the
+        // division gives infinity, which can't be turned into whole pixels below.
+        if (!std.math.isFinite(scale)) {
+            ft_close(handle);
+            return error.BadFont;
+        }
         var asc: c_int = 0;
         var desc: c_int = 0;
         var gap: c_int = 0;
@@ -199,4 +205,19 @@ test "files that aren't fonts are turned down before stb sees them" {
     const go = @embedFile("../testdata/fonts/Go-Regular.ttf");
     try std.testing.expect(Font.tables_inside(go));
     try std.testing.expect(!Font.tables_inside(go[0 .. go.len / 2]));
+}
+
+test "a font with no height is turned down, not scaled by infinity" {
+    const go = @embedFile("../testdata/fonts/Go-Regular.ttf");
+    var flat: [go.len]u8 = go.*;
+    // Finds the hhea table and gives the font a descent equal to its ascent
+    const tables = std.mem.readInt(u16, flat[4..6], .big);
+    for (0..tables) |i| {
+        const record = flat[12 + i * 16 ..][0..16];
+        if (!std.mem.eql(u8, record[0..4], "hhea")) continue;
+        const offset = std.mem.readInt(u32, record[8..12], .big);
+        const ascent = flat[offset + 4 ..][0..2].*;
+        flat[offset + 6 ..][0..2].* = ascent;
+    }
+    try std.testing.expectError(error.BadFont, Font.init(std.testing.allocator, &flat, 30, 1.2));
 }

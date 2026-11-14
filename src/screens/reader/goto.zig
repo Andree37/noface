@@ -6,46 +6,69 @@ const goto = @import("../../ui/goto.zig");
 const highlights = @import("../../model/highlights.zig");
 const app = @import("../../app.zig");
 const sess = @import("session.zig");
+const screen = @import("../screen.zig");
 
 const excerpt_bytes = 160;
 
 pub fn run(a: *app.App, s: *sess.Session, alloc: std.mem.Allocator, chapters: []const book_model.Chapter) !?usize {
-    const chapter_rows = try contentsRows(alloc, s, chapters);
-    const note_rows = try notesRows(alloc, s);
     const reading = goto.current(chapters, s.pages[s.current].para);
-    var tab: goto.Tab = .contents;
-    var list_page: usize = if (reading) |r| goto.listPageOf(r) else 0;
-    const background = try s.ensure(s.current, s.current);
-    while (true) {
-        const list = if (tab == .contents) chapter_rows else note_rows;
-        @memcpy(a.overlay, background);
-        // The toolbar stays drawn above, from what's on screen now.
+    var go = GoTo{
+        .a = a,
+        .background = try s.ensure(s.current, s.current),
+        .contents = try contentsRows(alloc, s, chapters),
+        .notes = try notesRows(alloc, s),
+        .reading = reading,
+        .list_page = if (reading) |r| goto.listPageOf(r) else 0,
+    };
+    return screen.run(a, &go);
+}
+
+/// Two lists under the toolbar: the contents, with the chapter being read marked, and
+/// the bookmarks and highlights. The page of the row tapped.
+const GoTo = struct {
+    pub const Result = usize;
+    a: *app.App,
+    background: []const u8, // The page under it
+    contents: []const goto.Row,
+    notes: []const goto.Row,
+    reading: ?usize, // The chapter being read, in the contents
+    tab: goto.Tab = .contents,
+    list_page: usize,
+
+    fn list(go: *const GoTo) []const goto.Row {
+        return if (go.tab == .contents) go.contents else go.notes;
+    }
+
+    pub fn draw(go: *GoTo, _: screen.Part) !void {
+        const a = go.a;
+        @memcpy(a.overlay, go.background);
+        // The toolbar stays drawn above, from what's on screen now
         @memcpy(a.overlay[0 .. goto.top * a.screen.stride], a.screen.pixels[0 .. goto.top * a.screen.stride]);
-        try goto.render(a.ui, a.page(a.overlay), tab, list, if (tab == .contents) reading else null, list_page);
+        try goto.render(a.ui, a.page(a.overlay), go.tab, go.list(), if (go.tab == .contents) go.reading else null, go.list_page);
         @memcpy(a.screen.pixels, a.overlay);
         try a.showBand(goto.top, a.screen.height - goto.top);
-        const choice = while (a.input.nextTap()) |t| {
-            switch (goto.hit(t.x, t.y, list_page, list.len)) {
-                .none => {},
-                else => |h| break h,
-            }
-        } else return null; // Locked, or leaving
-        switch (choice) {
-            .close, .none => return null,
-            .tab => |t| {
-                if (t == tab) continue;
-                tab = t;
-                list_page = if (t == .contents) (if (reading) |r| goto.listPageOf(r) else 0) else 0;
-            },
-            .row => |i| {
-                std.debug.print("goto {s} row {d} of {d}: page {d}\n", .{ @tagName(tab), i + 1, list.len, list[i].page + 1 });
-                return list[i].page;
-            },
-            .prev => list_page -|= 1,
-            .next => list_page = @min(list_page + 1, goto.pageCount(list.len) - 1),
-        }
     }
-}
+
+    pub fn onTap(go: *GoTo, t: screen.Tap) !screen.Step(usize) {
+        const rows = go.list();
+        switch (goto.hit(t.x, t.y, go.list_page, rows.len)) {
+            .none => return .stay,
+            .close => return .close,
+            .row => |i| {
+                std.debug.print("goto {s} row {d} of {d}: page {d}\n", .{ @tagName(go.tab), i + 1, rows.len, rows[i].page + 1 });
+                return .{ .done = rows[i].page };
+            },
+            .tab => |tab| {
+                if (tab == go.tab) return .stay;
+                go.tab = tab;
+                go.list_page = if (tab == .contents) (if (go.reading) |r| goto.listPageOf(r) else 0) else 0;
+            },
+            .prev => go.list_page -|= 1,
+            .next => go.list_page = @min(go.list_page + 1, goto.pageCount(rows.len) - 1),
+        }
+        return .{ .redraw = .all };
+    }
+};
 
 fn contentsRows(alloc: std.mem.Allocator, s: *const sess.Session, chapters: []const book_model.Chapter) ![]goto.Row {
     const out = try alloc.alloc(goto.Row, chapters.len);

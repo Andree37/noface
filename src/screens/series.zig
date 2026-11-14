@@ -8,11 +8,13 @@ const search = @import("../model/search.zig");
 const goto_ui = @import("../ui/goto.zig");
 const keyboard = @import("../ui/keyboard.zig");
 const search_sheet = @import("../ui/search_sheet.zig");
-const draw = @import("../ui/draw.zig");
+const draw_ui = @import("../ui/draw.zig");
 const icons = @import("../ui/icons.zig");
 const style = @import("../ui/style.zig");
 const state = @import("../sys/state.zig");
 const app = @import("../app.zig");
+const screen = @import("screen.zig");
+const typing = @import("typing.zig");
 
 const numbers = 30; // Places offered in a series: 1 to 30
 
@@ -34,58 +36,77 @@ pub fn apply(alloc: std.mem.Allocator, state_dir: []const u8, entries: []catalog
     }
 }
 
-/// One page of choices under a heading, until one is tapped: its index, or null when
-/// the header is tapped or the Kindle locks.
+/// One of `rows`, chosen from a page of them under a heading: its index, or null when
+/// "Library" along the top is tapped or the Kindle locks.
 fn pick(a: *app.App, heading: []const u8, about: []const u8, rows: []const goto_ui.Row) !?usize {
-    var list_page: usize = 0;
-    while (true) {
+    var list = Choices{ .a = a, .heading = heading, .about = about, .rows = rows };
+    return screen.run(a, &list);
+}
+
+const Choices = struct {
+    pub const Result = usize;
+    a: *app.App,
+    heading: []const u8,
+    about: []const u8, // The book it's for, under the heading
+    rows: []const goto_ui.Row,
+    list_page: usize = 0,
+
+    pub fn draw(c: *Choices, _: screen.Part) !void {
+        const a = c.a;
         const page = a.page(a.screen.pixels);
         page.fillRect(0, 0, page.width, page.height, style.white);
-        // Back to the library along the top, as the stats screen has it; the heading
-        // large under it, and the book it's for
+        // Back to the library along the top, as the stats screen has it
         icons.back(page, style.margin + 18, 70);
         try a.ui.small.draw(page, style.margin + 56, 82, "Library");
         const avail: f32 = @floatFromInt(page.width - 2 * style.margin);
-        try draw.clipped(a.ui.hero, page, style.margin, 222, heading, avail);
-        try draw.clipped(a.ui.caption, page, style.margin, 278, about, avail);
+        try draw_ui.clipped(a.ui.hero, page, style.margin, 222, c.heading, avail);
+        try draw_ui.clipped(a.ui.caption, page, style.margin, 278, c.about, avail);
         page.tint(style.margin, 250, page.width - 2 * style.margin, 36, style.faded);
-        try goto_ui.renderList(a.ui, page, rows, null, list_page, "");
+        try goto_ui.renderList(a.ui, page, c.rows, null, c.list_page, "");
         try a.showBand(0, a.screen.height);
-        const choice = while (a.input.nextTap()) |t| {
-            switch (goto_ui.hit(t.x, t.y, list_page, rows.len)) {
-                .none, .tab => {},
-                else => |h| break h,
-            }
-        } else return null; // Locked, or leaving
-        switch (choice) {
-            .close, .none, .tab => return null,
-            .row => |i| return i,
-            .prev => list_page -|= 1,
-            .next => list_page = @min(list_page + 1, goto_ui.pageCount(rows.len) - 1),
-        }
     }
-}
+
+    pub fn onTap(c: *Choices, t: screen.Tap) !screen.Step(usize) {
+        switch (goto_ui.hit(t.x, t.y, c.list_page, c.rows.len)) {
+            .none, .tab => return .stay,
+            .close => return .close,
+            .row => |i| return .{ .done = i },
+            .prev => c.list_page -|= 1,
+            .next => c.list_page = @min(c.list_page + 1, goto_ui.pageCount(c.rows.len) - 1),
+        }
+        return .{ .redraw = .all };
+    }
+};
 
 /// A new series' name, typed. Null if cancelled.
 fn typeName(a: *app.App, alloc: std.mem.Allocator) !?[]const u8 {
-    var q = search.Query{};
-    var first = true;
-    while (true) {
-        const page = a.page(a.screen.pixels);
-        if (first) page.fillRect(0, 0, page.width, page.height, style.white); // Not over the list it came from
-        try search_sheet.renderBar(a.ui, page, 0, q.slice(), "Series name", .none);
-        if (first) keyboard.render(a.ui, page) catch {};
-        try a.showBand(0, if (first) a.screen.height else keyboard.top);
-        first = false;
-        const t = a.input.nextTap() orelse return null; // Locked, or leaving
-        if (keyboard.hit(t.x, t.y)) |k| switch (k) {
-            .char => |c| q.push(c),
-            .space => q.push(' '),
-            .backspace => q.pop(),
-            .enter => if (q.words().len > 0) return try overrides.titleCase(alloc, q.slice()),
-        } else if (search_sheet.hit(t.x, t.y, 0) == .cancel) return null;
-    }
+    var entry = NameEntry{ .a = a };
+    const typed = try screen.run(a, &entry) orelse return null;
+    return try overrides.titleCase(alloc, typed);
 }
+
+const NameEntry = struct {
+    pub const Result = []const u8; // As typed, kept in `name`
+    a: *app.App,
+    name: search.Query = .{},
+
+    pub fn draw(e: *NameEntry, part: screen.Part) !void {
+        const a = e.a;
+        const page = a.page(a.screen.pixels);
+        if (part == .all) page.fillRect(0, 0, page.width, page.height, style.white); // Not over the list it came from
+        try search_sheet.renderBar(a.ui, page, 0, e.name.slice(), "Series name", .none);
+        if (part == .all) try keyboard.render(a.ui, page);
+        try a.showBand(0, if (part == .all) a.screen.height else keyboard.top);
+    }
+
+    pub fn onTap(e: *NameEntry, t: screen.Tap) !screen.Step([]const u8) {
+        return switch (typing.key(&e.name, t, typing.anything)) {
+            .changed => .{ .redraw = .changing },
+            .enter => if (e.name.words().len > 0) .{ .done = e.name.slice() } else .stay,
+            .none => if (search_sheet.hit(t.x, t.y, 0) == .cancel) .close else .stay,
+        };
+    }
+};
 
 fn byName(_: void, x: []const u8, y: []const u8) bool {
     return std.ascii.lessThanIgnoreCase(x, y);

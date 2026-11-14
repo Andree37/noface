@@ -13,6 +13,7 @@ const draw = @import("ui/draw.zig");
 const state = @import("sys/state.zig");
 const Fonts = @import("ui/fonts.zig").Fonts;
 const input_mod = @import("kindle/input.zig");
+const screen = @import("screens/screen.zig");
 const aa = @import("ui/aa.zig");
 const file = @import("sys/file.zig");
 const hwtcon = @import("kindle/hwtcon.zig");
@@ -284,22 +285,37 @@ pub fn chooseFromCard(a: *App, background: []const u8, title: []const u8, subtit
 
 /// The same, with a small cover beside the title.
 pub fn chooseFromCardWith(a: *App, background: []const u8, title: []const u8, subtitle: []const u8, rows: []const card.Row, book_cover: ?card.Cover) !?usize {
-    @memcpy(a.overlay, background);
-    try card.renderWith(a.ui, a.page(a.overlay), title, subtitle, rows, book_cover);
-    @memcpy(a.screen.pixels, a.overlay);
-    // The whole screen dims behind the sheet
-    try a.showBand(0, a.screen.height);
-    const was = a.input.use(input_mod.Input.Modes.sheet);
-    defer a.input.restore(was);
-    // A row tapped; a tap above the card, or locking, closes it
-    const chosen: ?usize = while (a.input.nextTap()) |t| {
-        const index = card.hitWith(t.x, t.y, rows.len, book_cover) orelse break null;
-        if (index < rows.len) break index;
-    } else null;
+    var c = Card{ .a = a, .background = background, .title = title, .subtitle = subtitle, .rows = rows, .cover = book_cover };
+    const chosen = try screen.run(a, &c);
     @memcpy(a.screen.pixels, background);
     try a.showBand(0, a.screen.height);
     return chosen;
 }
+
+/// A card of rows over a dimmed screen: the row tapped, or closed by a tap above it.
+const Card = struct {
+    pub const Result = usize;
+    pub const touches = input_mod.Input.Modes.sheet;
+    a: *App,
+    background: []const u8,
+    title: []const u8,
+    subtitle: []const u8,
+    rows: []const card.Row,
+    cover: ?card.Cover,
+
+    pub fn draw(c: *Card, _: screen.Part) !void {
+        const a = c.a;
+        @memcpy(a.overlay, c.background);
+        try card.renderWith(a.ui, a.page(a.overlay), c.title, c.subtitle, c.rows, c.cover);
+        @memcpy(a.screen.pixels, a.overlay);
+        try a.showBand(0, a.screen.height); // The whole screen dims behind it
+    }
+
+    pub fn onTap(c: *Card, t: screen.Tap) !screen.Step(usize) {
+        const index = card.hitWith(t.x, t.y, c.rows.len, c.cover) orelse return .close; // Above it
+        return if (index < c.rows.len) .{ .done = index } else .stay; // Its title: nothing
+    }
+};
 
 pub const notice_ms = 1800;
 

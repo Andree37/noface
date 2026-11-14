@@ -22,6 +22,8 @@ const cover_image = @import("../gfx/image.zig");
 const panel = @import("panel.zig");
 const lock = @import("lock.zig");
 const input_mod = @import("../kindle/input.zig");
+const screen = @import("screen.zig");
+const typing = @import("typing.zig");
 const reader = @import("reader.zig");
 const keyboard = @import("../ui/keyboard.zig");
 const search_sheet = @import("../ui/search_sheet.zig");
@@ -247,41 +249,48 @@ const SearchEnd = union(enum) { cancel, search, open: usize };
 /// The search sheet, with books matching what's typed listed as it changes. Ends by
 /// cancelling (what was searched before stays), searching for what's typed (nothing
 /// clears the search), or opening a book from the list, by its entry index.
-fn typeSearch(a: *app.App, lib: *const Library, q: *search.Query) SearchEnd {
+fn typeSearch(a: *app.App, lib: *const Library, q: *search.Query) !SearchEnd {
     const kept = q.*;
-    var matches: [search_sheet.max_rows + 1]usize = undefined;
-    var first = true;
-    while (true) {
-        const found = catalog.select(lib.entries, .all, null, q.words(), &matches);
-        const shown = matches[0..@min(found, search_sheet.max_rows)];
-        const page = a.page(a.screen.pixels);
-        search_sheet.render(a.ui, page, q.words(), lib.entries, if (q.words().len > 0) shown else &.{}, found > search_sheet.max_rows) catch {};
-        // The keyboard never changes, so after the first frame only the top part does
-        const bottom: u32 = if (first) a.screen.height else keyboard.top;
-        a.showBand(search_sheet.top, bottom - search_sheet.top) catch {};
-        first = false;
-        const t = a.input.nextTap() orelse { // Locked, or leaving: as if cancelled
-            q.* = kept;
-            return .cancel;
-        };
-        if (keyboard.hit(t.x, t.y)) |k| switch (k) {
-            .char => |c| q.push(c),
-            .space => q.push(' '),
-            .backspace => q.pop(),
-            .enter => return .search,
-        } else switch (search_sheet.hit(t.x, t.y, if (q.words().len > 0) shown.len else 0)) {
-            .cancel => {
-                q.* = kept;
-                return .cancel;
-            },
-            .row => |i| {
-                const entry = shown[i];
-                return if (lib.entries[entry].isLocal()) .{ .open = entry } else .search;
-            },
-            .field, .none => {},
-        }
-    }
+    var sheet = LibrarySearch{ .a = a, .lib = lib, .q = q };
+    const end = try screen.run(a, &sheet);
+    // Cancelled, locked or leaving: what was searched before stays
+    if (end == null or end.? == .cancel) q.* = kept;
+    return end orelse .cancel;
 }
+
+/// The search sheet, its matches listed as they're typed.
+const LibrarySearch = struct {
+    pub const Result = SearchEnd;
+    a: *app.App,
+    lib: *const Library,
+    q: *search.Query,
+    matches: [search_sheet.max_rows + 1]usize = undefined,
+    shown: usize = 0, // How many of `matches` are listed
+
+    pub fn draw(ls: *LibrarySearch, part: screen.Part) !void {
+        const a = ls.a;
+        const words = ls.q.words();
+        const found = catalog.select(ls.lib.entries, .all, null, words, &ls.matches);
+        ls.shown = if (words.len > 0) @min(found, search_sheet.max_rows) else 0;
+        try search_sheet.render(a.ui, a.page(a.screen.pixels), words, ls.lib.entries, ls.matches[0..ls.shown], found > search_sheet.max_rows);
+        // The keyboard never changes, so after the first time only the part above it does
+        const bottom: u32 = if (part == .all) a.screen.height else keyboard.top;
+        try a.showBand(search_sheet.top, bottom - search_sheet.top);
+    }
+
+    pub fn onTap(ls: *LibrarySearch, t: screen.Tap) !screen.Step(SearchEnd) {
+        switch (typing.key(ls.q, t, typing.anything)) {
+            .changed => return .{ .redraw = .changing },
+            .enter => return .{ .done = .search },
+            .none => {},
+        }
+        return switch (search_sheet.hit(t.x, t.y, ls.shown)) {
+            .cancel => .close,
+            .row => |i| .{ .done = if (ls.lib.entries[ls.matches[i]].isLocal()) .{ .open = ls.matches[i] } else .search },
+            .field, .none => .stay,
+        };
+    }
+};
 
 fn moment(a: *const app.App) library.Moment {
     return .{ .unix = os.unixTime(), .utc_offset = a.utc_offset };
@@ -528,7 +537,7 @@ const Browser = struct {
     }
 
     fn searchBooks(b: *Browser) !Next {
-        switch (typeSearch(b.a, &b.lib, &b.query)) {
+        switch (try typeSearch(b.a, &b.lib, &b.query)) {
             .cancel => {
                 try b.a.present(b.buf, .screen); // What was there before the sheet
                 return .nothing;

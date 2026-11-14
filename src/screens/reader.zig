@@ -118,30 +118,35 @@ fn needs_all_pages(
 }
 
 pub fn read_book(a: *app.App, entry: *catalog.Entry) !Outcome {
-    // The open book: parsed text, pages, highlights. All freed together on close.
+    // Only one book is open at a time, so its regions start empty
+    assert(a.book_region.empty());
+    assert(a.scratch_region.empty());
+    // The open book: parsed text, pages, highlights. An arena, as its region hands out
+    // one block after another: all emptied together on close.
     var book_budget = memory.Budget{
         .name = "book",
-        .child = std.heap.smp_allocator,
-        .limit = 128 << 20,
+        .region = a.book_region,
+        .limit = a.book_region.bytes.len,
     };
-    var arena = std.heap.ArenaAllocator.init(book_budget.allocator());
     // What one action needs, like a Go To list or search results. Emptied after each.
     var scratch_budget = memory.Budget{
         .name = "scratch",
-        .child = std.heap.smp_allocator,
-        .limit = 32 << 20,
+        .region = a.scratch_region,
+        .limit = a.scratch_region.bytes.len,
     };
-    var scratch_arena = std.heap.ArenaAllocator.init(scratch_budget.allocator());
     defer {
         a.pictures.clear(a.alloc); // Its keys point into this book's memory
-        scratch_arena.deinit();
-        arena.deinit();
+        // Emptied for the next book, the pages touched handed back
+        scratch_budget.reset(.give_back);
+        book_budget.reset(.give_back);
+        assert(a.book_region.empty());
         book_budget.report();
         scratch_budget.report();
+        a.library_budget.report();
         a.app_budget.report();
         a.stb_budget.report();
     }
-    return read_book_open(a, entry, arena.allocator(), &scratch_arena);
+    return read_book_open(a, entry, book_budget.allocator(), &scratch_budget);
 }
 
 /// Opens the book in its memory: parses it, finds its pages and the place to open at,
@@ -150,7 +155,7 @@ fn read_book_open(
     a: *app.App,
     entry: *catalog.Entry,
     alloc: std.mem.Allocator,
-    scratch_arena: *std.heap.ArenaAllocator,
+    scratch_budget: *memory.Budget,
 ) !Outcome {
     const t0 = now_us();
     const data = try file.map(entry.path);
@@ -207,14 +212,14 @@ fn read_book_open(
         .s = &session,
         .entry = entry,
         .alloc = alloc,
-        .scratch = scratch_arena.allocator(),
+        .scratch = scratch_budget.allocator(),
         .chapters = book.chapters,
         .lang = lang,
         .state_path = state_path,
         .last_place = opened.start,
         .wifi_try_at = now_us() + wifi_saver.after_us,
     };
-    return reader.run(scratch_arena);
+    return reader.run(scratch_budget);
 }
 
 /// The book's text and contents, from its file, and its language, whose hyphenation
@@ -425,11 +430,11 @@ const Reader = struct {
     wifi_try_at: ?u64 = null, // When to turn Wi-Fi off; null once that's settled
     battery_minute: u64 = 0, // The battery is noted once a minute at most
 
-    fn run(r: *Reader, scratch_arena: *std.heap.ArenaAllocator) !Outcome {
+    fn run(r: *Reader, scratch_budget: *memory.Budget) !Outcome {
         // Unbounded: the reader's loop runs until the book is closed or noface leaves.
         while (true) {
             // Nothing from the last action is still needed
-            _ = scratch_arena.reset(.retain_capacity);
+            scratch_budget.reset(.keep);
             assert(r.s.current < r.s.pages.len);
             if (r.view != .toolbar) assert(!r.sheet_open);
             r.save_after_jump();

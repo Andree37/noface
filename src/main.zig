@@ -31,18 +31,6 @@ const dict_download = @import("kindle/dict_download.zig");
 /// fonts and the data folder.
 const reader_arguments_count = 7;
 
-/// Everything that lives as long as the app may take this much: screen buffers,
-/// fonts, picture cache.
-const app_budget_bytes = 96 << 20;
-
-/// Glyph bitmaps and decoded pictures from the stb C libraries may take this much.
-const stb_budget_bytes = 128 << 20;
-
-comptime {
-    // Both budgets fit in the ~480 MB a Kindle has free beside Amazon's services
-    assert(app_budget_bytes + stb_budget_bytes < 480 << 20);
-}
-
 /// A crash during `noface selftest` must say why, though the scenarios hide the app's
 /// own messages while they run.
 pub const panic = std.debug.FullPanic(struct {
@@ -88,16 +76,19 @@ pub fn main(init: std.process.Init.Minimal) !void {
 fn main_reader(init: std.process.Init.Minimal) !void {
     const argv = init.args.vector;
     assert(argv.len == reader_arguments_count);
+    // Reserved now; a book's, the library's and one action's by setup.assemble
+    var app_region = try memory.Region.reserve("app", .heap, setup.region_bytes.app);
     var app_budget = memory.Budget{
         .name = "app",
-        .child = std.heap.smp_allocator,
-        .limit = app_budget_bytes,
+        .region = &app_region,
+        .limit = setup.region_bytes.app,
     };
     const alloc = app_budget.allocator();
+    var stb_region = try memory.Region.reserve("stb", .heap, setup.region_bytes.stb);
     var stb_budget = memory.Budget{
         .name = "stb",
-        .child = std.heap.smp_allocator,
-        .limit = stb_budget_bytes,
+        .region = &stb_region,
+        .limit = setup.region_bytes.stb,
     };
     c_memory.use(&stb_budget);
 
@@ -145,6 +136,7 @@ fn main_reader(init: std.process.Init.Minimal) !void {
         .library_path = argv[1],
     });
     try main_reader_configure(&shared, init, &files);
+    memory.seal(); // From here on, every allocation comes out of a region reserved above
     try library_screen.run_library(&shared);
     std.debug.print("quit\n", .{});
 }

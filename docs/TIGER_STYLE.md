@@ -59,12 +59,22 @@ less debt than you found it.
     (`comptime { assert(rows * row_height <= screen_height); }`), which checks the
     design before it runs.
 
-- **Memory is reserved at startup.** noface reserves its budgets once (`base/memory.zig`:
-  the app, a book, scratch, the font and picture decoders) and nothing outside them.
-  *Where noface is today:* the budgets cap memory but still allocate from the system as
-  they go; the book's budget is filled when a book opens and emptied when it closes.
-  The target is Tiger Style's: each budget a fixed region taken at startup, and
-  allocation inside it never failing for lack of memory the design didn't plan for.
+- **Memory is reserved at startup.** Each budget (`base/memory.zig`) hands out memory
+  from a fixed region of address space taken from the system once, at startup, with
+  sizes set in `setup.zig`: the app (64 MB) and the stb decoders (64 MB) in `main.zig`;
+  the library (32 MB), an open book (128 MB) and one action's scratch (8 MB) by
+  `setup.assemble`. Then `memory.seal()`, and nothing more is asked of the system: a
+  region that runs out is an error the caller handles (a book too big shows a notice),
+  never a crash. The app's, stb's and the library's regions free and reuse blocks in
+  any order; the book's and scratch's hand out one block after another, as arenas, and
+  are emptied whole when the book closes. Pages come in as they're first touched, and
+  an emptied book region hands its pages back (`madvise`), still reserved, so an idle
+  noface holds no more than before. A budget without a region asking the system for
+  memory after `seal` is a bug: a crash in a debug build, else counted and logged.
+  *Left to do:* the picture viewer's budget (`screens/reader/picture.zig`) still takes
+  from the system, and a book's notes (`screens/reader/records.zig`) use
+  `std.heap.smp_allocator` directly; both should take their memory from the book's or
+  scratch's region.
 
 - **Smallest possible scope** for every variable, and as few in scope as possible.
 

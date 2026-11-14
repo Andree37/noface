@@ -13,7 +13,7 @@ const app = @import("../app.zig");
 const series_screen = @import("series.zig");
 
 pub const Library = struct {
-    arena: std.heap.ArenaAllocator,
+    arena: std.heap.ArenaAllocator, // On the library's budget, in its region
     data: []const u8,
     entries: []catalog.Entry,
     /// Indexes into `entries`, one place for each, for `catalog.select` to fill.
@@ -103,7 +103,7 @@ pub fn is_complete_book(path: [:0]const u8) bool {
 }
 
 pub fn load_library(a: *app.App) !Library {
-    var arena = std.heap.ArenaAllocator.init(std.heap.smp_allocator);
+    var arena = std.heap.ArenaAllocator.init(a.library_budget.allocator());
     errdefer arena.deinit();
     const alloc = arena.allocator();
     const data = try file.map(a.library_path);

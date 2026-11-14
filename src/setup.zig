@@ -13,6 +13,71 @@ const Font = @import("gfx/font.zig").Font;
 const Fonts = @import("ui/fonts.zig").Fonts;
 const text = @import("layout/text.zig");
 
+/// What each memory region reserves, taken once at startup (`memory.Region`). Pages
+/// come in as they're first touched, so a region costs what's used, not its size.
+/// Sized from the peaks the simulator logged opening eight books of 1 to 70 MB (the
+/// largest used 78 MB of the book's region), with room to spare.
+pub const region_bytes = struct {
+    /// Screen buffers (seven, 2 MB each), fonts and their glyphs, the open book's
+    /// eight pictures and hyphenation: 16 to 24 MB measured, so 64 leaves room for
+    /// glyphs of many sizes and a full picture cache.
+    pub const app: u32 = 64 << 20;
+    /// Glyph bitmaps and pictures decoded by the stb C libraries: 15 MB measured at
+    /// most (a large cover), so 64 for a picture four times that.
+    pub const stb: u32 = 64 << 20;
+    /// The library's list and its covers, 84 KB each once seen; a reload holds two
+    /// lists for a moment. A cover that doesn't fit is drawn as type instead.
+    pub const library: u32 = 32 << 20;
+    /// An open book: its text, pages and pictures' bytes. 12 to 78 MB measured (the
+    /// 78 from a 70 MB EPUB); kept at the old limit, so every book that opened still
+    /// does. A larger one shows a notice instead of opening, as before.
+    pub const book: u32 = 128 << 20;
+    /// One action's: a Go To list (27 KB measured) or search results (500 at most).
+    pub const scratch: u32 = 8 << 20;
+};
+
+comptime {
+    // Every region fits in the ~480 MB a Kindle has free beside Amazon's services
+    const b = region_bytes;
+    assert(b.app + b.stb + b.library + b.book + b.scratch < 480 << 20);
+    // A book's region holds the largest book measured, with room to spare
+    assert(b.book > 78 << 20);
+}
+
+/// The regions an App reads in, reserved by the first `assemble` and kept for good:
+/// the Kindle assembles one App, and the scenario tests one per scenario, in turn, each
+/// reading in the same regions.
+var reading: Reading = undefined;
+var reading_reserved = false;
+
+const Reading = struct {
+    library: memory.Region,
+    library_budget: memory.Budget, // Shared by a library list and the one reloaded after it
+    book: memory.Region,
+    scratch: memory.Region,
+};
+
+fn reserve_reading() !*Reading {
+    if (reading_reserved) {
+        // The last App closed its book and its library, so the next starts with
+        // nothing open
+        assert(reading.book.empty());
+        assert(reading.scratch.empty());
+        assert(reading.library_budget.live == 0);
+        return &reading;
+    }
+    reading.library = try .reserve("library", .heap, region_bytes.library);
+    reading.library_budget = .{
+        .name = "library",
+        .region = &reading.library,
+        .limit = region_bytes.library,
+    };
+    reading.book = try .reserve("book", .bump, region_bytes.book);
+    reading.scratch = try .reserve("scratch", .bump, region_bytes.scratch);
+    reading_reserved = true;
+    return &reading;
+}
+
 /// The font files the interface and a book's fallback text are drawn with.
 pub const FontFiles = struct {
     book: []const u8, // The book's regular face, for text with no typeface of its own
@@ -101,6 +166,7 @@ pub fn assemble(p: Parts) !app.App {
     const pixels = p.screen.pixels.len;
     assert(pixels > 0);
     assert(p.files.settings.len > 0); // DataFiles.init ran
+    const regions = try reserve_reading();
     var slots: [3]app.Slot = undefined;
     for (&slots) |*s| s.* = .{ .buf = try p.alloc.alloc(u8, pixels) };
     const ui = Fonts{
@@ -121,6 +187,9 @@ pub fn assemble(p: Parts) !app.App {
         .alloc = p.alloc,
         .app_budget = p.app_budget,
         .stb_budget = p.stb_budget,
+        .library_budget = &regions.library_budget,
+        .book_region = &regions.book,
+        .scratch_region = &regions.scratch,
         .screen = p.screen,
         .input = p.input,
         .body = &k.body,

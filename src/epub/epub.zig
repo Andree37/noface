@@ -336,6 +336,7 @@ const Builder = struct {
     /// A link within the book (not to the web) starts here.
     fn start_link(b: *Builder, tag: xml.Tag) void {
         const href = xml.attr(tag.attrs, "href") orelse return;
+        if (href.len == 0) return; // Nowhere to go, and `end_link` reads its first byte
         if (std.mem.indexOf(u8, href, "://") != null) return;
         b.link_start = b.text.items.len;
         b.link_target = href;
@@ -498,6 +499,15 @@ test "a heading's text after a picture and a line break stays a heading" {
     try std.testing.expectEqualStrings("Chapter I.", b.paragraphs.items[0].text);
     try std.testing.expect(b.paragraphs.items[0].look.size != book.normal_size);
     try std.testing.expectEqual(book.normal_size, b.paragraphs.items[1].look.size);
+}
+
+test "an empty link goes nowhere, and doesn't stop the reader" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var b = Builder{ .alloc = arena.allocator(), .files = &.{} };
+    try b.chapter("c.xhtml", "<html><body><p><a href=\"\">here</a></p></body></html>");
+    try std.testing.expectEqual(@as(usize, 0), b.links.items.len);
+    try std.testing.expectEqualStrings("here", b.paragraphs.items[0].text);
 }
 
 test "hrefs resolve against their folder" {

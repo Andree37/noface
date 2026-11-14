@@ -303,7 +303,8 @@ const Reader = struct {
     }
 
     fn draw_toolbar(r: *Reader, whole_page: bool) !void {
-        try controls.draw_toolbar(r.a, r.s, r.entry.title, r.sheet_open, whole_page);
+        const drawn: controls.Drawn = .{ .sheet_open = r.sheet_open, .whole_page = whole_page };
+        try controls.draw_toolbar(r.a, r.s, r.entry.title, drawn);
     }
 
     /// Back to the page alone, at `target`, from whatever was over it.

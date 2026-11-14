@@ -1,5 +1,6 @@
 //! Reading toolbar: a single tap at the top of a page opens it.
 const std = @import("std");
+const assert = std.debug.assert;
 const settings_model = @import("../model/settings.zig");
 const Page = @import("../gfx/page.zig").Page;
 const draw = @import("draw.zig");
@@ -18,9 +19,28 @@ const screen_height = style.screen_height;
 const margin = style.margin;
 pub const status_row = 66; // The clock and battery strip at the very top
 const tool_row = 156;
+const tool_reach = 56; // Taps this far either side of a tool's centre
+const tool_icon_y = 118; // The middle of the tools' icons, and of Home's
+const home_right = 300; // Home takes taps left of here
+const chapter_prev_right = 220; // The chapter buttons take taps out to here from each edge
+const chapter_next_left = 1052;
+const skip_inset = 110; // From each edge to the middle of a chapter button's icon
 const scrub = slider.Slider{ .left = 110, .right = 1162, .y = 1610 };
 
-pub const Hit = enum { close, stay, home, text, goto, bookmark, search, more, chapter_prev, chapter_next, scrub, sheet };
+pub const Hit = enum {
+    close,
+    stay,
+    home,
+    text,
+    goto,
+    bookmark,
+    search,
+    more,
+    chapter_prev,
+    chapter_next,
+    scrub,
+    sheet,
+};
 
 const Tool = struct { hit: Hit, x: i32 };
 const tools = [_]Tool{
@@ -31,46 +51,99 @@ const tools = [_]Tool{
     .{ .hit = .more, .x = 1176 },
 };
 
+comptime {
+    // The bands, top to bottom, each inside the screen
+    assert(status_row < tool_row);
+    assert(tool_row < top_height);
+    assert(top_height < aa.max_height);
+    assert(aa.max_height < bottom_top);
+    assert(bottom_top < scrub_top);
+    assert(scrub_top < scrub.y);
+    assert(scrub.y < screen_height);
+    assert(scrub.left < scrub.right);
+    assert(scrub.right <= style.screen_width);
+    // Each tool takes a fingertip, apart from Home and its neighbours, and on screen
+    assert(2 * tool_reach >= 100);
+    assert(home_right <= tools[0].x - tool_reach);
+    for (tools[0 .. tools.len - 1], tools[1..]) |left, right| {
+        assert(left.x + tool_reach <= right.x - tool_reach);
+    }
+    assert(tools[tools.len - 1].x + tool_reach <= style.screen_width);
+    // Icons are drawn where they take taps
+    assert(tool_icon_y >= status_row);
+    assert(tool_icon_y < tool_row + 12);
+    assert(skip_inset < chapter_prev_right);
+    assert(style.screen_width - skip_inset >= chapter_next_left);
+    assert(chapter_prev_right < chapter_next_left);
+}
+
 /// `sheet` is the Aa tab open, if the sheet is.
 pub fn hit(x: i32, y: i32, sheet: ?aa.Tab) Hit {
     if (y < status_row) return .stay;
     if (y < top_height) {
         if (y >= tool_row + 12) return .stay;
-        if (x < 300) return .home;
+        if (x < home_right) return .home;
         for (tools) |t| {
-            if (@abs(x - t.x) < 56) return t.hit;
+            if (@abs(x - t.x) < tool_reach) return t.hit;
         }
         return .stay;
     }
-    if (sheet) |tab| if (y < aa.height_for(tab)) return .sheet;
+    if (sheet) |tab| {
+        // The sheet hangs under the toolbar and clear of the bottom bar
+        assert(aa.height_for(tab) > top_height);
+        assert(aa.height_for(tab) < bottom_top);
+        if (y < aa.height_for(tab)) return .sheet;
+    }
     if (y < bottom_top) return .close;
     if (y >= scrub_top) return .scrub;
-    if (x < 220) return .chapter_prev;
-    if (x >= 1052) return .chapter_next;
+    if (x < chapter_prev_right) return .chapter_prev;
+    if (x >= chapter_next_left) return .chapter_next;
     return .stay;
 }
 
 /// Page index for a finger at `x` on the scrubber.
 pub fn page_at(x: i32, total: usize) usize {
     if (total <= 1) return 0;
-    return slider.value_at(scrub, x, @intCast(total - 1));
+    const page = slider.value_at(scrub, x, @intCast(total - 1));
+    assert(page < total);
+    return page;
 }
 
 /// Page where the chapter before or after the current one starts.
 /// `sections` holds each page's section. Back goes to this chapter's start first.
 pub fn chapter_target(sections: []const u32, current: usize, forward: bool) usize {
+    assert(current < sections.len);
+    assert(sections.len <= std.math.maxInt(u32));
+    const page: u32 = @intCast(current);
+    var target: u32 = undefined;
     if (forward) {
-        var i = current + 1;
-        while (i < sections.len) : (i += 1) {
-            if (sections[i] != sections[current]) return i;
-        }
-        return current;
+        target = chapter_target_next(sections, page);
+        assert(target >= page);
+    } else {
+        target = chapter_target_previous(sections, page);
+        assert(target <= page);
     }
+    assert(target < sections.len);
+    return target;
+}
+
+fn chapter_target_next(sections: []const u32, current: u32) u32 {
+    assert(current < sections.len);
+    var page = current + 1;
+    while (page < sections.len) : (page += 1) {
+        if (sections[page] != sections[current]) return page;
+    }
+    return current;
+}
+
+fn chapter_target_previous(sections: []const u32, current: u32) u32 {
+    assert(current < sections.len);
     var start = current;
     while (start > 0 and sections[start - 1] == sections[current]) start -= 1;
     if (start != current or start == 0) return start;
     start -= 1;
     while (start > 0 and sections[start - 1] == sections[current - 1]) start -= 1;
+    assert(start < current);
     return start;
 }
 
@@ -78,35 +151,57 @@ pub fn chapter_target(sections: []const u32, current: usize, forward: bool) usiz
 /// The page slider. A `total` of 0 means the pages are still being laid out: it says
 /// so, and has no knob until there's a place to put it.
 pub fn draw_scrub(fonts: Fonts, page: Page, index: usize, total: usize, mono: bool) !void {
+    if (total > 0) assert(index < total);
     page.fill_rect(0, scrub_top, page.width, screen_height - scrub_top, 0xff);
     var label: [32]u8 = undefined;
-    const s = if (total == 0) "Laying out pages\u{2026}" else std.fmt.bufPrint(&label, "Page {d} of {d}", .{ index + 1, total }) catch "";
-    try draw.centered(fonts.small, page, @floatFromInt(page.width / 2), scrub_top + 56, s);
+    var s: []const u8 = "Laying out pages\u{2026}";
+    if (total > 0) {
+        s = std.fmt.bufPrint(&label, "Page {d} of {d}", .{ index + 1, total }) catch "";
+    }
+    const centre: f32 = @floatFromInt(page.width / 2);
+    try draw.centered(fonts.small, page, centre, scrub_top + 56, s);
     if (total == 0) {
         page.tint(0, scrub_top + 20, page.width, 50, style.faded);
         if (mono) page.threshold(scrub_top, screen_height - scrub_top);
         return;
     }
-    slider.draw(page, scrub, slider.knob_at(scrub, @intCast(index), @intCast(@max(total, 1) - 1)));
+    const knob = slider.knob_at(scrub, @intCast(index), @intCast(@max(total, 1) - 1));
+    slider.draw(page, scrub, knob);
     if (mono) page.threshold(scrub_top, screen_height - scrub_top);
 }
 
-pub fn render(fonts: Fonts, page: Page, title: []const u8, index: usize, total: usize, quick: *const quick_model.Quick, sheet: ?aa.Tab, chosen: settings_model.Settings, bookmarked: bool) !void {
+pub fn render(
+    fonts: Fonts,
+    page: Page,
+    title: []const u8,
+    index: usize,
+    total: usize,
+    quick: *const quick_model.Quick,
+    sheet: ?aa.Tab,
+    chosen: settings_model.Settings,
+    bookmarked: bool,
+) !void {
+    if (total > 0) assert(index < total);
     const w: f32 = @floatFromInt(page.width);
     page.fill_rect(0, 0, page.width, top_height, 0xff);
 
     const clock = quick.clock_text();
     const time = clock[0 .. std.mem.indexOfScalar(u8, clock, ' ') orelse clock.len];
-    try draw.centered(fonts.caption, page, w / 2, 54, time); // Centred, as on the page and in the library
+    // Centred, as on the page and in the library
+    try draw.centered(fonts.caption, page, w / 2, 54, time);
     try icons.status_cluster(page, fonts.caption, w - margin, 45, 54, quick, false);
 
-    icons.back(page, margin + 18, 118);
+    icons.back(page, margin + 18, tool_icon_y);
     try fonts.small.draw(page, margin + 56, 130, "Home");
     try fonts.title.draw(page, tools[0].x - 34, 132, "Aa");
-    icons.lines(page, tools[1].x, 118);
-    if (bookmarked) icons.bookmark_filled(page, tools[2].x, 118) else icons.bookmark(page, tools[2].x, 118);
-    icons.search(page, tools[3].x, 118);
-    icons.dots(page, tools[4].x, 118);
+    icons.lines(page, tools[1].x, tool_icon_y);
+    if (bookmarked) {
+        icons.bookmark_filled(page, tools[2].x, tool_icon_y);
+    } else {
+        icons.bookmark(page, tools[2].x, tool_icon_y);
+    }
+    icons.search(page, tools[3].x, tool_icon_y);
+    icons.dots(page, tools[4].x, tool_icon_y);
 
     try draw.clipped(fonts.caption, page, margin, tool_row + 54, title, w - 2 * margin);
     page.tint(margin, tool_row + 20, page.width - 2 * margin, 46, style.faded);
@@ -115,8 +210,8 @@ pub fn render(fonts: Fonts, page: Page, title: []const u8, index: usize, total: 
 
     page.fill_rect(0, bottom_top, page.width, screen_height - bottom_top, 0xff);
     page.fill_rect(0, bottom_top, page.width, 4, 0x00);
-    icons.skip(page, 110, bottom_top + 46, false);
-    icons.skip(page, w - 110, bottom_top + 46, true);
+    icons.skip(page, skip_inset, bottom_top + 46, false);
+    icons.skip(page, w - skip_inset, bottom_top + 46, true);
     try draw_scrub(fonts, page, index, total, false);
 }
 
@@ -155,7 +250,8 @@ test "chapter skipping" {
     try std.testing.expectEqual(@as(usize, 2), chapter_target(&sections, 0, true));
     try std.testing.expectEqual(@as(usize, 5), chapter_target(&sections, 3, true));
     try std.testing.expectEqual(@as(usize, 6), chapter_target(&sections, 6, true));
-    try std.testing.expectEqual(@as(usize, 2), chapter_target(&sections, 4, false)); // Start of this one
-    try std.testing.expectEqual(@as(usize, 0), chapter_target(&sections, 2, false)); // Then the one before
+    // Back to the start of this one, then to the one before
+    try std.testing.expectEqual(@as(usize, 2), chapter_target(&sections, 4, false));
+    try std.testing.expectEqual(@as(usize, 0), chapter_target(&sections, 2, false));
     try std.testing.expectEqual(@as(usize, 0), chapter_target(&sections, 0, false));
 }

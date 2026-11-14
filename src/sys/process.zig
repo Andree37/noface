@@ -95,10 +95,11 @@ pub fn run(argv: [*:null]const ?[*:0]const u8, out: []u8) ?usize {
 /// Like `run`, but must be done by `deadline` (microseconds on the monotonic clock).
 pub fn run_until(argv: [*:null]const ?[*:0]const u8, out: []u8, deadline: u64) ?usize {
     assert(argv[0] != null);
+    assert(out.len <= std.math.maxInt(u32)); // A command's output is read into a small buffer
     if (fake) |f| return answer_fake(f, argv, out);
     if (os.now_us() >= deadline) return null;
     const child = spawn(argv) orelse return null;
-    var total: usize = 0;
+    var total: u32 = 0; // Bytes read into `out`
     // Bounded by the deadline, and by `out`, which each read fills further
     while (total < out.len) {
         const now = os.now_us();
@@ -109,7 +110,7 @@ pub fn run_until(argv: [*:null]const ?[*:0]const u8, out: []u8, deadline: u64) ?
         if (waited == 0) break;
         const got = linux.read(child.out, out[total..].ptr, out.len - total);
         if (failed(got) or got == 0) break;
-        total += got;
+        total += @intCast(got); // At most what was left of `out`
         assert(total <= out.len);
     }
     // Closing first means a child with more to say gets SIGPIPE instead of blocking.

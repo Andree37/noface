@@ -19,6 +19,10 @@ pub fn find_files(
     assert(root.len > 0);
     assert(suffix.len > 0);
     var out: std.ArrayList([:0]u8) = .empty;
+    errdefer {
+        for (out.items) |path| alloc.free(path);
+        out.deinit(alloc);
+    }
     try walk(alloc, root, suffix, &out);
     return out.toOwnedSlice(alloc);
 }

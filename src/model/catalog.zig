@@ -1,6 +1,7 @@
 //! The library catalog: the books on this Kindle and in the cloud, how they sort,
 //! filter, and which one leads the home screen. Plain data, no drawing.
 const std = @import("std");
+const assert = std.debug.assert;
 const search = @import("search.zig");
 
 pub const Availability = enum { local, cloud, downloading };
@@ -27,7 +28,8 @@ pub const Entry = struct {
     hero_tried: bool = false,
     series: []const u8 = "", // The series it belongs to, if known
     series_index: f32 = 0, // Its place in that series: 2 for "#2"
-    series_last: u64 = 0, // When any book of its series was last read, for sorting by series
+    /// When any book of its series was last read, for sorting by series.
+    series_last: u64 = 0,
 
     pub fn is_read(e: Entry) bool {
         return e.finished or e.percent >= finished_percent;
@@ -41,7 +43,9 @@ pub const Entry = struct {
 
     /// Started but not finished, which is what the hero leads with.
     pub fn in_progress(e: Entry) bool {
-        return !e.is_read() and e.percent > untouched_percent;
+        const going = !e.is_read() and e.percent > untouched_percent;
+        if (going) assert(e.was_opened()); // Past stock's 1%, so opened
+        return going;
     }
 
     /// An EPUB copied over the cable, which noface reads itself.
@@ -61,6 +65,11 @@ const finished_percent = 99;
 
 const untouched_percent = 1; // Stock gives new books 1% without them being opened
 
+comptime {
+    assert(untouched_percent < finished_percent);
+    assert(finished_percent <= 100);
+}
+
 pub const Order = enum {
     recent,
     progress,
@@ -70,7 +79,7 @@ pub const Order = enum {
     series,
 
     pub fn label(o: Order) []const u8 {
-        return switch (o) {
+        const text = switch (o) {
             .recent => "Recent",
             .progress => "Progress",
             .title => "A to Z",
@@ -78,10 +87,12 @@ pub const Order = enum {
             .added => "Newest",
             .series => "Series",
         };
+        assert(text.len > 0);
+        return text;
     }
 
     pub fn next(o: Order) Order {
-        return switch (o) {
+        const following: Order = switch (o) {
             .recent => .progress,
             .progress => .title,
             .title => .author,
@@ -89,12 +100,25 @@ pub const Order = enum {
             .added => .series,
             .series => .recent,
         };
+        assert(following != o);
+        return following;
     }
 };
+
+comptime {
+    // The sort button cycles through every order once before it comes back.
+    var order: Order = .recent;
+    for (0..@typeInfo(Order).@"enum".field_names.len - 1) |_| {
+        order = order.next();
+        assert(order != .recent);
+    }
+    assert(order.next() == .recent);
+}
 
 fn before(order: Order, a: Entry, b: Entry) bool {
     // A series stays together, downloaded or not
     if (order == .series) return by_series(a, b);
+    assert(order != .series);
     // Books on this Kindle always come first: cloud ones can't be opened yet.
     if (a.is_local() != b.is_local()) return a.is_local();
     return switch (order) {
@@ -114,6 +138,8 @@ fn by_series(a: Entry, b: Entry) bool {
     const in_b = b.series.len > 0;
     if (in_a != in_b) return in_a;
     if (!in_a) return a.last > b.last;
+    assert(in_a);
+    assert(in_b);
     if (!same_series(a.series, b.series)) {
         if (a.series_last != b.series_last) return a.series_last > b.series_last;
         return std.ascii.lessThanIgnoreCase(without_the(a.series), without_the(b.series));
@@ -125,12 +151,16 @@ fn by_series(a: Entry, b: Entry) bool {
 /// The next book of `e`'s series not yet read, by its place in the series.
 pub fn next_in_series(entries: []const Entry, e: *const Entry) ?usize {
     if (e.series.len == 0) return null;
-    var best: ?usize = null;
+    var best: ?u32 = null;
     for (entries, 0..) |o, i| {
-        if (!same_series(o.series, e.series) or o.series_index <= e.series_index or o.is_read()) continue;
-        if (best == null or o.series_index < entries[best.?].series_index) best = i;
+        if (!same_series(o.series, e.series)) continue;
+        if (o.series_index <= e.series_index or o.is_read()) continue;
+        if (best == null or o.series_index < entries[best.?].series_index) best = @intCast(i);
     }
-    return best;
+    const found = best orelse return null;
+    assert(found < entries.len);
+    assert(!entries[found].is_read());
+    return found;
 }
 
 /// Where a book stands, for sorting by progress: under way first, then not started,
@@ -165,6 +195,7 @@ fn by_title(a: Entry, b: Entry) bool {
     const in_a = a.series.len > 0;
     const in_b = b.series.len > 0;
     if (in_a != in_b) return in_b;
+    assert(in_a == in_b);
     if (in_a and a.series_index != b.series_index) return a.series_index < b.series_index;
     return std.ascii.lessThanIgnoreCase(a.title, b.title);
 }
@@ -176,9 +207,12 @@ fn by_title(a: Entry, b: Entry) bool {
 pub const SeriesPlace = struct { name: []const u8, index: f32 };
 
 pub fn series_from_file_name(path: []const u8) ?SeriesPlace {
-    const name_ext = path[(std.mem.lastIndexOfScalar(u8, path, '/') orelse return null) + 1 ..];
+    const slash = std.mem.lastIndexOfScalar(u8, path, '/') orelse return null;
+    assert(slash < path.len);
+    const name_ext = path[slash + 1 ..];
     // Without its extension, so a series named last ("... -- Saga #1.epub") reads as 1
     const dot = std.mem.lastIndexOfScalar(u8, name_ext, '.') orelse name_ext.len;
+    assert(dot <= name_ext.len);
     const ext_has_letters = for (name_ext[@min(dot + 1, name_ext.len)..]) |c| {
         if (std.ascii.isAlphabetic(c)) break true;
     } else false;
@@ -209,8 +243,10 @@ pub fn series_from_file_name(path: []const u8) ?SeriesPlace {
 fn bracketed(first: []const u8) ?SeriesPlace {
     if (!std.mem.startsWith(u8, first, "[")) return null;
     const close = std.mem.indexOfScalar(u8, first, ']') orelse return null;
+    assert(close > 0); // The first byte is the opening bracket
     const inside = first[1..close];
     const space = std.mem.lastIndexOfScalar(u8, inside, ' ') orelse return null;
+    assert(space < inside.len);
     return named(inside[0..space], inside[space + 1 ..], .guessed);
 }
 
@@ -222,19 +258,40 @@ pub const max_index = 9999;
 /// Words that make a guessed name not a series when they end it ("Penguin Edition") or
 /// a number follows them ("Volume 2", "Vol. 1", "Part 3"). Inside a name they're fine:
 /// "Malazan Book of the Fallen", "Book of the New Sun".
-const not_series = [_][]const u8{ "edition", "reprint", "printing", "impression", "book", "part", "volume", "vol" };
+const not_series = [_][]const u8{
+    "edition",
+    "reprint",
+    "printing",
+    "impression",
+    "book",
+    "part",
+    "volume",
+    "vol",
+};
+
+/// The highest place in a series believed when it's only guessed from a file name.
+const guessed_index_max = 200;
+
+comptime {
+    assert(guessed_index_max < max_index);
+    // Matched ignoring case, so written in lowercase.
+    for (not_series) |word| {
+        for (word) |c| assert(std.ascii.isLower(c) or c == '.');
+    }
+}
 
 fn named(name_part: []const u8, number_part: []const u8, sureness: Sureness) ?SeriesPlace {
     const name = std.mem.trim(u8, name_part, " ");
     const index = std.fmt.parseFloat(f32, std.mem.trim(u8, number_part, " _")) catch return null;
     // A place in a series, never an ISBN or a year: kept small enough to show as a number
-    if (name.len == 0 or std.math.isNan(index) or std.math.isInf(index) or index < 0 or index > max_index) return null;
+    if (name.len == 0 or std.math.isNan(index) or std.math.isInf(index)) return null;
+    if (index < 0 or index > max_index) return null;
     if (sureness == .guessed) {
         // A name has letters, in any script (not a year), and a place in a series is
         // a small number
         var letters = false;
         for (name) |c| letters = letters or std.ascii.isAlphabetic(c) or c >= 0x80;
-        if (!letters or index > 200) return null;
+        if (!letters or index > guessed_index_max) return null;
         var words = std.mem.tokenizeScalar(u8, name, ' ');
         while (words.next()) |w| {
             const bare = std.mem.trimEnd(u8, w, ".,");
@@ -246,6 +303,10 @@ fn named(name_part: []const u8, number_part: []const u8, sureness: Sureness) ?Se
             if (std.ascii.isDigit(after[0])) return null; // "Volume 2"
         }
     }
+    // What `series_label` and the overrides file rely on.
+    assert(name.len > 0);
+    assert(index >= 0);
+    assert(index <= max_index);
     return .{ .name = name, .index = index };
 }
 
@@ -256,14 +317,19 @@ pub fn same_series(a: []const u8, b: []const u8) bool {
 }
 
 fn without_the(name: []const u8) []const u8 {
-    return if (name.len > 4 and std.ascii.eqlIgnoreCase(name[0..4], "the ")) name[4..] else name;
+    const has_the = name.len > 4 and std.ascii.eqlIgnoreCase(name[0..4], "the ");
+    const bare = if (has_the) name[4..] else name;
+    assert(bare.len > 0 or name.len == 0);
+    return bare;
 }
 
 /// "Dune #1" for a line under a title, or "" outside a series.
 pub fn series_label(buf: []u8, e: Entry) []const u8 {
     if (e.series.len == 0) return "";
     if (@floor(e.series_index) == e.series_index) {
-        return std.fmt.bufPrint(buf, "{s} #{d}", .{ e.series, @as(u32, @intFromFloat(@min(@max(e.series_index, 0), max_index))) }) catch e.series;
+        const index: u32 = @intFromFloat(@min(@max(e.series_index, 0), max_index));
+        assert(index <= max_index);
+        return std.fmt.bufPrint(buf, "{s} #{d}", .{ e.series, index }) catch e.series;
     }
     return std.fmt.bufPrint(buf, "{s} #{d:.1}", .{ e.series, e.series_index }) catch e.series;
 }
@@ -272,8 +338,12 @@ pub fn series_label(buf: []u8, e: Entry) []const u8 {
 /// else the last word of "Andy Weir".
 pub fn surname(author: []const u8) []const u8 {
     const name = std.mem.trim(u8, author, " ");
-    if (std.mem.indexOfScalar(u8, name, ',')) |comma| return std.mem.trim(u8, name[0..comma], " ");
+    assert(name.len <= author.len);
+    if (std.mem.indexOfScalar(u8, name, ',')) |comma| {
+        return std.mem.trim(u8, name[0..comma], " ");
+    }
     const space = std.mem.lastIndexOfScalar(u8, name, ' ') orelse return name;
+    assert(space + 1 <= name.len);
     return name[space + 1 ..];
 }
 
@@ -282,8 +352,11 @@ fn by_author(a: Entry, b: Entry) bool {
     const sa = surname(a.author);
     const sb = surname(b.author);
     if ((sa.len == 0) != (sb.len == 0)) return sb.len == 0;
+    assert((sa.len == 0) == (sb.len == 0));
     if (!std.ascii.eqlIgnoreCase(sa, sb)) return std.ascii.lessThanIgnoreCase(sa, sb);
-    if (!std.ascii.eqlIgnoreCase(a.author, b.author)) return std.ascii.lessThanIgnoreCase(a.author, b.author);
+    if (!std.ascii.eqlIgnoreCase(a.author, b.author)) {
+        return std.ascii.lessThanIgnoreCase(a.author, b.author);
+    }
     return by_title(a, b); // An author's series in order, among their other books
 }
 
@@ -294,36 +367,49 @@ pub fn sort(entries: []Entry, order: Order) void {
             if (e.series.len == 0) continue;
             for (entries) |o| {
                 // Only books opened: a download's date isn't reading
-                if (same_series(o.series, e.series) and o.was_opened()) e.series_last = @max(e.series_last, o.last);
+                if (same_series(o.series, e.series) and o.was_opened()) {
+                    e.series_last = @max(e.series_last, o.last);
+                }
             }
         }
     }
     std.mem.sort(Entry, entries, order, before);
+    assert(std.sort.isSorted(Entry, entries, order, before));
 }
 
 /// The book for the hero: the latest one in progress, or else the latest opened.
 pub fn pick_hero(entries: []const Entry) ?usize {
-    var best: ?usize = null;
+    var best: ?u32 = null;
     for (entries, 0..) |e, i| {
         if (!e.in_progress() or !e.is_local()) continue;
-        if (best == null or e.last > entries[best.?].last) best = i;
+        if (best == null or e.last > entries[best.?].last) best = @intCast(i);
     }
-    if (best != null) return best;
+    if (best) |going| return going;
     for (entries, 0..) |e, i| {
         if (!e.is_local()) continue;
-        if (best == null or e.last > entries[best.?].last) best = i;
+        if (best == null or e.last > entries[best.?].last) best = @intCast(i);
     }
-    return best;
+    const hero = best orelse return null;
+    assert(hero < entries.len);
+    assert(entries[hero].is_local()); // A cloud book can't be opened from the hero
+    return hero;
 }
 
 /// Fills `out` with indexes of matching entries, leaving out the hero, and returns how
 /// many, stopping when `out` is full. A non-empty `query` keeps only books whose title,
 /// author or series has it in.
-pub fn select(entries: []const Entry, filter: Filter, hero: ?usize, query: []const u8, out: []usize) usize {
-    var n: usize = 0;
+pub fn select(
+    entries: []const Entry,
+    filter: Filter,
+    hero: ?usize,
+    query: []const u8,
+    out: []usize,
+) usize {
+    if (hero) |h| assert(h < entries.len);
+    var n: u32 = 0;
     for (entries, 0..) |e, i| {
         if (i == hero) continue;
-        if (query.len > 0 and !search.contains(e.title, query) and !search.contains(e.author, query) and !search.contains(e.series, query)) continue;
+        if (query.len > 0 and !matches_query(e, query)) continue;
         const matches = switch (filter) {
             .all => true,
             .read => e.is_read(),
@@ -335,7 +421,16 @@ pub fn select(entries: []const Entry, filter: Filter, hero: ?usize, query: []con
             n += 1;
         }
     }
+    assert(n <= out.len);
+    assert(n <= entries.len);
     return n;
+}
+
+/// Whether a book's title, author or series has `query` in it.
+fn matches_query(e: Entry, query: []const u8) bool {
+    assert(query.len > 0);
+    return search.contains(e.title, query) or search.contains(e.author, query) or
+        search.contains(e.series, query);
 }
 
 test "sort orders by title and by date added" {
@@ -361,10 +456,28 @@ test "authors sort by surname, whichever way the name is written" {
     try std.testing.expectEqualStrings("", surname(""));
     var rows = [_]Entry{
         .{ .path = "/a", .title = "Nameless", .author = "", .percent = 0, .last = 1 },
-        .{ .path = "/b", .title = "Project Hail Mary", .author = "Andy Weir", .percent = 0, .last = 1 },
-        .{ .path = "/c", .title = "Skeleton Crew", .author = "King, Stephen", .percent = 0, .last = 1 },
+        .{
+            .path = "/b",
+            .title = "Project Hail Mary",
+            .author = "Andy Weir",
+            .percent = 0,
+            .last = 1,
+        },
+        .{
+            .path = "/c",
+            .title = "Skeleton Crew",
+            .author = "King, Stephen",
+            .percent = 0,
+            .last = 1,
+        },
         .{ .path = "/d", .title = "Artemis", .author = "Andy Weir", .percent = 0, .last = 1 },
-        .{ .path = "/e", .title = "Restaurant", .author = "Adams, Douglas", .percent = 0, .last = 1 },
+        .{
+            .path = "/e",
+            .title = "Restaurant",
+            .author = "Adams, Douglas",
+            .percent = 0,
+            .last = 1,
+        },
     };
     sort(&rows, .author);
     try std.testing.expectEqualStrings("Restaurant", rows[0].title);
@@ -391,46 +504,78 @@ test "progress puts books under way first, furthest along at the top" {
 }
 
 test "series come from file names" {
-    const s = series_from_file_name("/mnt/us/documents/Restaurant -- Adams, Douglas -- The Hitchhiker's Guide To The Galaxy #2, 1980 -- Del Rey -- 2cf4.kfx").?;
+    const restaurant = "/mnt/us/documents/Restaurant -- Adams, Douglas -- " ++
+        "The Hitchhiker's Guide To The Galaxy #2, 1980 -- Del Rey -- 2cf4.kfx";
+    const s = series_from_file_name(restaurant).?;
     try std.testing.expectEqualStrings("The Hitchhiker's Guide To The Galaxy", s.name);
     try std.testing.expectEqual(@as(f32, 2), s.index);
-    try std.testing.expectEqual(@as(f32, 1.5), series_from_file_name("/d/X -- Y -- Saga #1.5 -- Z.kfx").?.index);
-    try std.testing.expect(series_from_file_name("/d/Snow Crash -- Stephenson, Neal -- 2010 -- Penguin.kfx") == null);
-    try std.testing.expect(series_from_file_name("/d/Plain title.kfx") == null);
-    const comma = series_from_file_name("/d/Death's End (US) -- Liu Cixin -- Three-Body, 3, 2016 -- Tor.kfx").?;
+    const half = series_from_file_name("/d/X -- Y -- Saga #1.5 -- Z.kfx").?;
+    try std.testing.expectEqual(@as(f32, 1.5), half.index);
+    const none = [_][]const u8{
+        "/d/Snow Crash -- Stephenson, Neal -- 2010 -- Penguin.kfx",
+        "/d/Plain title.kfx",
+        // A publisher's name with a year isn't a series, nor is an edition
+        "/d/X -- Y -- Penguin, 2010 -- Z.kfx",
+        "/d/X -- Y -- Kindle Edition, 1 -- Z.kfx",
+        "/d/X -- Y -- Revised edition, 2, 2009 -- Z.kfx",
+        "/d/X -- Y -- Saga, nan -- Z.kfx",
+        "/d/X -- Y -- MIT Electrical Engineering and -- Z.kfx",
+    };
+    for (none) |path| try std.testing.expect(series_from_file_name(path) == null);
+    const death = "/d/Death's End (US) -- Liu Cixin -- Three-Body, 3, 2016 -- Tor.kfx";
+    const comma = series_from_file_name(death).?;
     try std.testing.expectEqualStrings("Three-Body", comma.name);
     try std.testing.expectEqual(@as(f32, 3), comma.index);
-    const bk = series_from_file_name("/d/Life -- Douglas Adams -- The hitchhiker's guide to the galaxy, bk_ 3, New -- x.kfx").?;
+    const life = "/d/Life -- Douglas Adams -- " ++
+        "The hitchhiker's guide to the galaxy, bk_ 3, New -- x.kfx";
+    const bk = series_from_file_name(life).?;
     try std.testing.expectEqual(@as(f32, 3), bk.index);
     try std.testing.expect(same_series(bk.name, s.name));
-    const br = series_from_file_name("/d/[Hitchhiker's Guide to the Galaxy 01] \u{2022} The Hitchhiker's -- Adams -- 1992 -- Pan.kfx").?;
+    const pan = "/d/[Hitchhiker's Guide to the Galaxy 01] \u{2022} The Hitchhiker's -- " ++
+        "Adams -- 1992 -- Pan.kfx";
+    const br = series_from_file_name(pan).?;
     try std.testing.expectEqualStrings("Hitchhiker's Guide to the Galaxy", br.name);
     try std.testing.expectEqual(@as(f32, 1), br.index);
     try std.testing.expect(same_series(br.name, s.name));
-    // A publisher's name with a year isn't a series, nor is an edition
-    try std.testing.expect(series_from_file_name("/d/X -- Y -- Penguin, 2010 -- Z.kfx") == null);
-    const edition = "/d/X -- Y -- Kindle Edition, 1 -- Z.kfx";
-    try std.testing.expect(series_from_file_name(edition) == null);
-    try std.testing.expect(series_from_file_name("/d/X -- Y -- Revised edition, 2, 2009 -- Z.kfx") == null);
-    try std.testing.expect(series_from_file_name("/d/X -- Y -- Saga, nan -- Z.kfx") == null);
     // Said with "#", any name and number counts, and wins over brackets
-    try std.testing.expectEqualStrings("\u{4e09}\u{4f53}", series_from_file_name("/d/X -- Y -- \u{4e09}\u{4f53} #2 -- Z.kfx").?.name);
-    try std.testing.expectEqualStrings("1632", series_from_file_name("/d/X -- Y -- 1632 #2 -- Z.kfx").?.name);
-    try std.testing.expectEqual(@as(f32, 2500), series_from_file_name("/d/X -- Y -- Perry Rhodan #2500 -- Z.kfx").?.index);
+    const chinese = series_from_file_name("/d/X -- Y -- \u{4e09}\u{4f53} #2 -- Z.kfx").?;
+    try std.testing.expectEqualStrings("\u{4e09}\u{4f53}", chinese.name);
+    const year = series_from_file_name("/d/X -- Y -- 1632 #2 -- Z.kfx").?;
+    try std.testing.expectEqualStrings("1632", year.name);
+    const perry = series_from_file_name("/d/X -- Y -- Perry Rhodan #2500 -- Z.kfx").?;
+    try std.testing.expectEqual(@as(f32, 2500), perry.index);
     // The series named last, right before the extension
-    const last = series_from_file_name("/d/A Study in Scarlet -- Arthur Conan Doyle -- Sherlock Holmes #1.epub").?;
+    const scarlet = "/d/A Study in Scarlet -- Arthur Conan Doyle -- Sherlock Holmes #1.epub";
+    const last = series_from_file_name(scarlet).?;
     try std.testing.expectEqualStrings("Sherlock Holmes", last.name);
     try std.testing.expectEqual(@as(f32, 1), last.index);
-    try std.testing.expectEqual(@as(f32, 1.5), series_from_file_name("/d/X -- Y -- Saga #1.5.epub").?.index);
-    try std.testing.expectEqualStrings("Real Saga", series_from_file_name("/d/[Book 2] Odyssey -- Homer -- Real Saga #5, 2003 -- Z.kfx").?.name);
-    try std.testing.expect(series_from_file_name("/d/X -- Y -- MIT Electrical Engineering and -- Z.kfx") == null);
+    const epub_half = series_from_file_name("/d/X -- Y -- Saga #1.5.epub").?;
+    try std.testing.expectEqual(@as(f32, 1.5), epub_half.index);
+    const odyssey = "/d/[Book 2] Odyssey -- Homer -- Real Saga #5, 2003 -- Z.kfx";
+    try std.testing.expectEqualStrings("Real Saga", series_from_file_name(odyssey).?.name);
 }
 
 test "a series stays together and in order when sorted" {
     var rows = [_]Entry{
-        .{ .path = "/a", .title = "Mostly Harmless", .author = "Adams, Douglas", .percent = 0, .last = 1, .series = "Hitchhiker's Guide", .series_index = 5 },
+        .{
+            .path = "/a",
+            .title = "Mostly Harmless",
+            .author = "Adams, Douglas",
+            .percent = 0,
+            .last = 1,
+            .series = "Hitchhiker's Guide",
+            .series_index = 5,
+        },
         .{ .path = "/b", .title = "Artemis", .author = "Andy Weir", .percent = 0, .last = 1 },
-        .{ .path = "/c", .title = "The Restaurant", .author = "Adams, Douglas", .percent = 0, .last = 1, .series = "hitchhiker's guide", .series_index = 2 },
+        .{
+            .path = "/c",
+            .title = "The Restaurant",
+            .author = "Adams, Douglas",
+            .percent = 0,
+            .last = 1,
+            .series = "hitchhiker's guide",
+            .series_index = 2,
+        },
         .{ .path = "/d", .title = "Zed", .author = "", .percent = 0, .last = 1 },
     };
     sort(&rows, .title);
@@ -472,8 +617,20 @@ test "hero is the latest book in progress, and leaves the grid" {
 test "search keeps books whose title or author match" {
     const rows = [_]Entry{
         .{ .path = "/a", .title = "Artemis", .author = "Andy Weir", .percent = 0, .last = 1 },
-        .{ .path = "/b", .title = "Skeleton Crew", .author = "King, Stephen", .percent = 0, .last = 1 },
-        .{ .path = "/c", .title = "Project Hail Mary", .author = "Andy Weir", .percent = 100, .last = 1 },
+        .{
+            .path = "/b",
+            .title = "Skeleton Crew",
+            .author = "King, Stephen",
+            .percent = 0,
+            .last = 1,
+        },
+        .{
+            .path = "/c",
+            .title = "Project Hail Mary",
+            .author = "Andy Weir",
+            .percent = 100,
+            .last = 1,
+        },
     };
     var out: [3]usize = undefined;
     try std.testing.expectEqual(@as(usize, 2), select(&rows, .all, null, "weir", &out));
@@ -495,7 +652,14 @@ test "with nothing in progress the hero is the latest opened" {
 
 test "cloud books sort after local ones" {
     var rows = [_]Entry{
-        .{ .path = "", .title = "A cloud book", .author = "", .percent = 0, .last = 9, .availability = .cloud },
+        .{
+            .path = "",
+            .title = "A cloud book",
+            .author = "",
+            .percent = 0,
+            .last = 9,
+            .availability = .cloud,
+        },
         .{ .path = "/b", .title = "Zed", .author = "", .percent = 0, .last = 1 },
     };
     sort(&rows, .recent);
@@ -507,8 +671,21 @@ test "cloud books sort after local ones" {
 test "a book counts as opened once read past stock's 1% or read in noface" {
     const fresh = Entry{ .path = "/a", .title = "New", .author = "", .percent = 1, .last = 9 };
     try std.testing.expect(!fresh.was_opened());
-    try std.testing.expect((Entry{ .path = "/b", .title = "B", .author = "", .percent = 1, .last = 9, .seconds_read = 30 }).was_opened());
-    try std.testing.expect((Entry{ .path = "/c", .title = "C", .author = "", .percent = 5, .last = 9 }).was_opened());
+    try std.testing.expect((Entry{
+        .path = "/b",
+        .title = "B",
+        .author = "",
+        .percent = 1,
+        .last = 9,
+        .seconds_read = 30,
+    }).was_opened());
+    try std.testing.expect((Entry{
+        .path = "/c",
+        .title = "C",
+        .author = "",
+        .percent = 5,
+        .last = 9,
+    }).was_opened());
 }
 
 test "a new book at one percent is not in progress" {
@@ -523,10 +700,43 @@ test "a new book at one percent is not in progress" {
 test "by series: the latest series first, each in order, then the rest" {
     var entries = [_]Entry{
         .{ .path = "/a", .title = "Loose", .author = "", .percent = 0, .last = 50 },
-        .{ .path = "/b", .title = "Dune 2", .author = "", .percent = 0, .last = 1, .series = "Dune", .series_index = 2 },
-        .{ .path = "/c", .title = "TBP 1", .author = "", .percent = 100, .last = 30, .series = "Three-Body", .series_index = 1 },
-        .{ .path = "/d", .title = "Dune 1", .author = "", .percent = 100, .last = 5, .series = "Dune", .series_index = 1 },
-        .{ .path = "/e", .title = "TBP 2", .author = "", .percent = 40, .last = 40, .series = "Three-Body", .series_index = 2, .availability = .cloud },
+        .{
+            .path = "/b",
+            .title = "Dune 2",
+            .author = "",
+            .percent = 0,
+            .last = 1,
+            .series = "Dune",
+            .series_index = 2,
+        },
+        .{
+            .path = "/c",
+            .title = "TBP 1",
+            .author = "",
+            .percent = 100,
+            .last = 30,
+            .series = "Three-Body",
+            .series_index = 1,
+        },
+        .{
+            .path = "/d",
+            .title = "Dune 1",
+            .author = "",
+            .percent = 100,
+            .last = 5,
+            .series = "Dune",
+            .series_index = 1,
+        },
+        .{
+            .path = "/e",
+            .title = "TBP 2",
+            .author = "",
+            .percent = 40,
+            .last = 40,
+            .series = "Three-Body",
+            .series_index = 2,
+            .availability = .cloud,
+        },
     };
     sort(&entries, .series);
     const want = [_][]const u8{ "TBP 1", "TBP 2", "Dune 1", "Dune 2", "Loose" };
@@ -535,10 +745,42 @@ test "by series: the latest series first, each in order, then the rest" {
 
 test "next in a series skips what's read" {
     const entries = [_]Entry{
-        .{ .path = "/a", .title = "One", .author = "", .percent = 100, .last = 0, .series = "S", .series_index = 1 },
-        .{ .path = "/b", .title = "Three", .author = "", .percent = 0, .last = 0, .series = "S", .series_index = 3 },
-        .{ .path = "/c", .title = "Two", .author = "", .percent = 100, .last = 0, .series = "S", .series_index = 2 },
-        .{ .path = "/d", .title = "Other", .author = "", .percent = 0, .last = 0, .series = "T", .series_index = 2 },
+        .{
+            .path = "/a",
+            .title = "One",
+            .author = "",
+            .percent = 100,
+            .last = 0,
+            .series = "S",
+            .series_index = 1,
+        },
+        .{
+            .path = "/b",
+            .title = "Three",
+            .author = "",
+            .percent = 0,
+            .last = 0,
+            .series = "S",
+            .series_index = 3,
+        },
+        .{
+            .path = "/c",
+            .title = "Two",
+            .author = "",
+            .percent = 100,
+            .last = 0,
+            .series = "S",
+            .series_index = 2,
+        },
+        .{
+            .path = "/d",
+            .title = "Other",
+            .author = "",
+            .percent = 0,
+            .last = 0,
+            .series = "T",
+            .series_index = 2,
+        },
     };
     try std.testing.expectEqual(@as(usize, 1), next_in_series(&entries, &entries[0]).?);
     try std.testing.expect(next_in_series(&entries, &entries[1]) == null);
@@ -546,13 +788,34 @@ test "next in a series skips what's read" {
 
 test "sorting by title holds together when one series is named with and without The" {
     const rows = [_]Entry{
-        .{ .path = "/a", .title = "Hitchhiker", .author = "", .percent = 0, .last = 1, .series = "The Hitchhiker's Guide", .series_index = 1 },
-        .{ .path = "/b", .title = "Restaurant", .author = "", .percent = 0, .last = 1, .series = "Hitchhiker's Guide", .series_index = 2 },
+        .{
+            .path = "/a",
+            .title = "Hitchhiker",
+            .author = "",
+            .percent = 0,
+            .last = 1,
+            .series = "The Hitchhiker's Guide",
+            .series_index = 1,
+        },
+        .{
+            .path = "/b",
+            .title = "Restaurant",
+            .author = "",
+            .percent = 0,
+            .last = 1,
+            .series = "Hitchhiker's Guide",
+            .series_index = 2,
+        },
         .{ .path = "/c", .title = "Last Chance to See", .author = "", .percent = 0, .last = 1 },
         .{ .path = "/d", .title = "Hitchhiker's Guide", .author = "", .percent = 0, .last = 1 },
     };
     // Every starting order gives the same result
-    const want = [_][]const u8{ "Hitchhiker's Guide", "Hitchhiker", "Restaurant", "Last Chance to See" };
+    const want = [_][]const u8{
+        "Hitchhiker's Guide",
+        "Hitchhiker",
+        "Restaurant",
+        "Last Chance to See",
+    };
     var perm = [_]usize{ 0, 1, 2, 3 };
     for (0..24) |_| {
         var shuffled: [4]Entry = undefined;
@@ -569,17 +832,26 @@ test "sorting by title holds together when one series is named with and without 
 }
 
 test "volumes and parts aren't series" {
-    try std.testing.expect(series_from_file_name("/mnt/us/documents/Works -- Author -- Volume 2, 2, 1969 -- Pub.epub") == null);
-    try std.testing.expect(series_from_file_name("/mnt/us/documents/Works -- Author -- Vol. 1, 3, 1997 -- Pub.epub") == null);
-    try std.testing.expect(series_from_file_name("/mnt/us/documents/Works -- Author -- Part 2, 1, 2001 -- Pub.epub") == null);
-    const sun = series_from_file_name("/mnt/us/documents/[Book of the New Sun 01] The Shadow of the Torturer -- Gene Wolfe.kfx").?;
+    const none = [_][]const u8{
+        "/mnt/us/documents/Works -- Author -- Volume 2, 2, 1969 -- Pub.epub",
+        "/mnt/us/documents/Works -- Author -- Vol. 1, 3, 1997 -- Pub.epub",
+        "/mnt/us/documents/Works -- Author -- Part 2, 1, 2001 -- Pub.epub",
+    };
+    for (none) |path| try std.testing.expect(series_from_file_name(path) == null);
+    const torturer = "/mnt/us/documents/[Book of the New Sun 01] The Shadow of the Torturer" ++
+        " -- Gene Wolfe.kfx";
+    const sun = series_from_file_name(torturer).?;
     try std.testing.expectEqualStrings("Book of the New Sun", sun.name);
 }
 
 test "series with Book inside the name are found, ISBNs after # aren't numbers" {
-    const malazan = series_from_file_name("/mnt/us/documents/Gardens of the Moon -- Steven Erikson -- Malazan Book of the Fallen, 1, 2004 -- Tor.kfx").?;
+    const gardens = "/mnt/us/documents/Gardens of the Moon -- Steven Erikson -- " ++
+        "Malazan Book of the Fallen, 1, 2004 -- Tor.kfx";
+    const malazan = series_from_file_name(gardens).?;
     try std.testing.expectEqualStrings("Malazan Book of the Fallen", malazan.name);
     try std.testing.expectEqual(@as(f32, 1), malazan.index);
-    try std.testing.expect(series_from_file_name("/mnt/us/documents/Title -- Author -- Saga #5000000000.kfx") == null);
-    try std.testing.expect(series_from_file_name("/mnt/us/documents/Title -- Author -- Saga #9780141439518.kfx") == null);
+    const too_big = "/mnt/us/documents/Title -- Author -- Saga #5000000000.kfx";
+    try std.testing.expect(series_from_file_name(too_big) == null);
+    const isbn = "/mnt/us/documents/Title -- Author -- Saga #9780141439518.kfx";
+    try std.testing.expect(series_from_file_name(isbn) == null);
 }

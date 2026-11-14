@@ -216,7 +216,6 @@ fn ordered(span: Span) Span {
     return swapped;
 }
 
-/// Removes every mark of a highlight.
 /// Whether `list[i]` is the first mark of its highlight. A highlight keeps a mark per
 /// paragraph it covers; this lists or counts each one once.
 pub fn first_of_id(list: []const Highlight, i: usize) bool {
@@ -240,6 +239,7 @@ pub fn count(list: []const Highlight) usize {
     return highlights;
 }
 
+/// Removes every mark of a highlight.
 pub fn remove(list: *std.ArrayList(Highlight), id: []const u8) void {
     const count_before = list.items.len;
     var i: u32 = 0;

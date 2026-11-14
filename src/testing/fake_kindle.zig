@@ -106,7 +106,7 @@ pub const FakeKindle = struct {
         process.fake = null;
     }
 
-    fn answer(ctx: *anyopaque, argv: []const []const u8, out: []u8) ?usize {
+    fn answer(ctx: *anyopaque, argv: []const []const u8, out: []u8) ?u32 {
         const k: *FakeKindle = @ptrCast(@alignCast(ctx));
         if (argv.len == 0) return null;
         const program = std.fs.path.basename(argv[0]);

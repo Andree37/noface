@@ -705,7 +705,7 @@ const Reader = struct {
             },
             .more => switch (try more.run(a, s, r.entry)) {
                 .stay => try r.draw_toolbar(true),
-                .page => |target| try r.to_page(@intCast(target)),
+                .page => |target| try r.to_page(target),
                 .refresh => try r.to_page(@intCast(s.current)),
             },
             .search => {

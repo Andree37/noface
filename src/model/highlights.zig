@@ -88,10 +88,10 @@ pub fn dragged(
 pub fn excerpt(s: []const u8, max: u32) []const u8 {
     const trimmed = std.mem.trimStart(u8, s, " ");
     if (trimmed.len <= max) return trimmed;
-    var end: usize = max;
+    var end = max;
     while (end > 0 and trimmed[end] & 0xc0 == 0x80) end -= 1; // Inside a UTF-8 character
     if (std.mem.lastIndexOfScalar(u8, trimmed[0..end], ' ')) |space| {
-        if (space > max / 2) end = space;
+        if (space > max / 2) end = @intCast(space); // Before `end`, so below `max`
     }
     assert(end <= max);
     // The excerpt stops before a character, never inside one.

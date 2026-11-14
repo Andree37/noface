@@ -57,7 +57,7 @@ var own: [settings.max_own][4][:0]const u8 = undefined;
 var own_count: u32 = 0;
 
 /// The file for a family's weight and slant.
-pub fn path(family: usize, bold: bool, italic: bool) [*:0]const u8 {
+pub fn path(family: u32, bold: bool, italic: bool) [*:0]const u8 {
     const which: Which = @as(Which, @intFromBool(bold)) | @as(Which, @intFromBool(italic)) << 1;
     if (bold) assert(which & 1 == 1);
     if (italic) assert(which & 2 == 2);

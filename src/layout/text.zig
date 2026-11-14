@@ -32,11 +32,11 @@ fn is_marked(marks: []const book_model.Mark, para: u32, start: u32, end: u32) bo
 
 pub const Hits = struct {
     items: [32]Hit = undefined,
-    len: usize = 0,
+    len: u32 = 0,
     words: [1024]book_model.Word = undefined,
-    word_count: usize = 0,
+    word_count: u32 = 0,
     pictures: [16]Hit = undefined, // Where each picture sits; target is its paragraph
-    picture_count: usize = 0,
+    picture_count: u32 = 0,
 
     pub fn clear(h: *Hits) void {
         assert(h.len <= h.items.len);

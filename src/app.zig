@@ -210,7 +210,7 @@ pub const App = struct {
             }
             const file_slot = &a.face_files[i][0];
             if (file_slot.* == null) {
-                file_slot.* = file.map(fonts_db.path(i, false, false)) catch continue;
+                file_slot.* = file.map(fonts_db.path(@intCast(i), false, false)) catch continue;
             }
             a.family_samples[i] = Font.init(a.alloc, file_slot.*.?, 36, 1.2) catch continue;
             a.family_sample_ptrs[i] = &a.family_samples[i].?;

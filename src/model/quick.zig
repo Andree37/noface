@@ -27,7 +27,7 @@ pub const Quick = struct {
     wifi_on: bool = false,
     wifi_bars: u32 = 0, // 0 to 3
     clock: [40]u8 = undefined,
-    clock_len: usize = 0,
+    clock_len: u32 = 0,
 
     pub fn clock_text(q: *const Quick) []const u8 {
         assert(q.clock_len <= q.clock.len);

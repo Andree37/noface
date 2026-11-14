@@ -15,7 +15,7 @@ const highlights_model = @import("../../model/highlights.zig");
 /// What the reader does after the menu.
 pub const Result = union(enum) {
     stay, // Back to the toolbar
-    page: usize, // Show this page
+    page: u32, // Show this page
     refresh, // Show the current page with a full, clean refresh
 };
 

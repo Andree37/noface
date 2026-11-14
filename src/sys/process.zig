@@ -12,7 +12,7 @@ pub const Child = struct { pid: i32, out: i32 };
 /// Kindle, and must never change it: no airplane mode, no sync, no catalog export.
 pub const Fake = struct {
     ctx: *anyopaque,
-    answer: *const fn (ctx: *anyopaque, argv: []const []const u8, out: []u8) ?usize,
+    answer: *const fn (ctx: *anyopaque, argv: []const []const u8, out: []u8) ?u32,
 };
 pub var fake: ?Fake = null;
 
@@ -32,7 +32,7 @@ comptime {
     assert(reap_poll_ms < command_timeout_ms);
 }
 
-fn answer_fake(f: Fake, argv: [*:null]const ?[*:0]const u8, out: []u8) ?usize {
+fn answer_fake(f: Fake, argv: [*:null]const ?[*:0]const u8, out: []u8) ?u32 {
     assert(argv[0] != null); // A command names its program
     var arguments: [fake_arguments_max][]const u8 = undefined;
     var arguments_count: u32 = 0;
@@ -85,7 +85,7 @@ fn spawn_child(argv: [*:null]const ?[*:0]const u8, fds: [2]i32) noreturn {
 
 /// Runs a command, collecting what it prints. Null when it can't start or runs too long,
 /// in which case it is killed.
-pub fn run(argv: [*:null]const ?[*:0]const u8, out: []u8) ?usize {
+pub fn run(argv: [*:null]const ?[*:0]const u8, out: []u8) ?u32 {
     assert(argv[0] != null);
     const printed = run_until(argv, out, os.now_us() + command_timeout_ms * 1000);
     if (printed) |count| assert(count <= out.len);
@@ -93,7 +93,7 @@ pub fn run(argv: [*:null]const ?[*:0]const u8, out: []u8) ?usize {
 }
 
 /// Like `run`, but must be done by `deadline` (microseconds on the monotonic clock).
-pub fn run_until(argv: [*:null]const ?[*:0]const u8, out: []u8, deadline: u64) ?usize {
+pub fn run_until(argv: [*:null]const ?[*:0]const u8, out: []u8, deadline: u64) ?u32 {
     assert(argv[0] != null);
     assert(out.len <= std.math.maxInt(u32)); // A command's output is read into a small buffer
     if (fake) |f| return answer_fake(f, argv, out);
@@ -128,7 +128,7 @@ pub fn run_until(argv: [*:null]const ?[*:0]const u8, out: []u8, deadline: u64) ?
 pub fn run_all(
     argvs: []const [*:null]const ?[*:0]const u8,
     outs: [][]u8,
-    lens: []?usize,
+    lens: []?u32,
     deadline: u64,
 ) void {
     assert(argvs.len <= run_all_commands_max);
@@ -168,7 +168,7 @@ fn run_all_read(
     children: []const ?Child,
     open: []bool,
     outs: [][]u8,
-    lens: []?usize,
+    lens: []?u32,
     deadline: u64,
 ) bool {
     assert(children.len <= run_all_commands_max);
@@ -197,7 +197,7 @@ fn run_all_read(
             open[index] = false;
             continue;
         }
-        lens[index] = lens[index].? + got;
+        lens[index] = lens[index].? + @as(u32, @intCast(got)); // At most the buffer left
         assert(lens[index].? <= outs[index].len);
     }
     return true;

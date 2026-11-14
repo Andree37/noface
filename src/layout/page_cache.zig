@@ -5,15 +5,16 @@ const check = @import("../base/check.zig");
 
 /// Picks a free slot, else one outside the window around `center`.
 /// Keeps the page on screen and both of its neighbours.
-pub fn victim(pages: [3]i64, center: i64) usize {
+pub fn victim(pages: [3]i64, center: i64) u32 {
     check.that(center >= 0, "the page being read has a number");
-    const index = for (pages, 0..) |p, i| {
-        if (p < 0) break i;
+    const index: u32 = for (pages, 0..) |p, i| {
+        if (p < 0) break @intCast(i);
     } else for (pages, 0..) |p, i| {
-        if (p < center - 1 or p > center + 1) break i;
+        if (p < center - 1 or p > center + 1) break @intCast(i);
     } else for (pages, 0..) |p, i| {
-        if (p != center) break i;
+        if (p != center) break @intCast(i);
     } else 0;
+    assert(index < pages.len);
     // The page on screen is overwritten only when every slot holds it
     if (pages[index] == center) assert(std.mem.allEqual(i64, &pages, center));
     return index;

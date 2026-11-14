@@ -91,7 +91,7 @@ pub fn read(previous: quick_model.Quick) quick_model.Quick {
     var outs: [readings.len][]u8 = undefined;
     for (&outs, &buffers) |*out, *buffer| out.* = buffer;
     // How much each printed, as `process.run_all` counts it
-    var lengths: [readings.len]?usize = undefined;
+    var lengths: [readings.len]?u32 = undefined;
     process.run_all(&argvs, &outs, &lengths, lipc_deadline());
 
     // In the table's order. A value that couldn't be read keeps what `previous` had
@@ -178,7 +178,7 @@ fn apply_wifi_signal(quick: *quick_model.Quick, text: []const u8) void {
 
 fn apply_clock(quick: *quick_model.Quick, text: []const u8) void {
     assert(text.len > 0);
-    const length = @min(text.len, quick.clock.len);
+    const length: u32 = @intCast(@min(text.len, quick.clock.len));
     assert(length <= quick.clock.len);
     @memcpy(quick.clock[0..length], text[0..length]);
     quick.clock_len = length;

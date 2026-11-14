@@ -2,6 +2,8 @@
 //! per book, "<path>\t<series>\t<number>", with an empty series for "not in one".
 //! They win over what's read from file names and EPUB metadata.
 const std = @import("std");
+const assert = std.debug.assert;
+const catalog = @import("catalog.zig");
 
 pub const Override = struct { path: []const u8, name: []const u8, index: f32 };
 
@@ -14,7 +16,10 @@ pub fn parse(alloc: std.mem.Allocator, text: []const u8) ![]Override {
         const path = fields.next() orelse continue;
         const name = fields.next() orelse continue;
         const index = std.fmt.parseFloat(f32, fields.next() orelse continue) catch continue;
-        if (path.len == 0 or std.math.isNan(index) or index < 0 or index > @import("catalog.zig").max_index) continue;
+        if (path.len == 0 or std.math.isNan(index)) continue;
+        if (index < 0 or index > catalog.max_index) continue;
+        assert(index >= 0);
+        assert(index <= catalog.max_index);
         try out.append(alloc, .{ .path = path, .name = name, .index = index });
     }
     return out.items;
@@ -22,19 +27,29 @@ pub fn parse(alloc: std.mem.Allocator, text: []const u8) ![]Override {
 
 pub fn find(list: []const Override, path: []const u8) ?Override {
     for (list) |o| {
+        assert(o.path.len > 0); // `parse` keeps no line without a path
         if (std.mem.eql(u8, o.path, path)) return o;
     }
     return null;
 }
 
 /// The file's new contents: `list` with `path` set to `name` and `index`.
-pub fn format(alloc: std.mem.Allocator, list: []const Override, path: []const u8, name: []const u8, index: f32) ![]const u8 {
+pub fn format(
+    alloc: std.mem.Allocator,
+    list: []const Override,
+    path: []const u8,
+    name: []const u8,
+    index: f32,
+) ![]const u8 {
     var out: std.ArrayList(u8) = .empty;
     for (list) |o| {
+        assert(o.path.len > 0); // `parse` keeps no line without a path
         if (std.mem.eql(u8, o.path, path)) continue;
         try out.print(alloc, "{s}\t{s}\t{d}\n", .{ o.path, o.name, o.index });
     }
     try out.print(alloc, "{s}\t{s}\t{d}\n", .{ path, name, index });
+    assert(out.items.len > 0);
+    assert(out.items[out.items.len - 1] == '\n');
     return out.items;
 }
 
@@ -46,6 +61,8 @@ pub fn title_case(alloc: std.mem.Allocator, typed: []const u8) ![]const u8 {
         if (start) c.* = std.ascii.toUpper(c.*);
         start = c.* == ' ';
     }
+    assert(out.len <= typed.len);
+    if (out.len > 0) assert(!std.ascii.isLower(out[0]));
     return out;
 }
 
@@ -67,5 +84,6 @@ test "overrides read back as written, the newest winning" {
 test "typed names are capitalised" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    try std.testing.expectEqualStrings("Three Body Problem", try title_case(arena.allocator(), " three body problem "));
+    const typed = try title_case(arena.allocator(), " three body problem ");
+    try std.testing.expectEqualStrings("Three Body Problem", typed);
 }

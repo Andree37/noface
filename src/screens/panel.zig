@@ -136,7 +136,9 @@ pub fn panelControl(a: *app.App, background: []const u8, choice: menu.Hit, x: i3
             try drawMenu(a, background);
             lipc.setSchedule(a.quick.schedule);
         },
-        else => return false,
+        // Not a control: closing and leaving are the caller's. Every Hit is named, so
+        // a new tile doesn't compile until it's handled here or there
+        .none, .close, .settings, .kindle => return false,
     }
     return true;
 }

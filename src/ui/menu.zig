@@ -22,16 +22,100 @@ const schedule_bottom = 794;
 
 pub const Hit = enum { none, close, dimmer, brighter, slider, cooler, warmer, warmth, schedule, airplane, bluetooth, settings, kindle, sync };
 
-const Icon = enum { airplane, wifi, bluetooth, sync, kindle };
-const Shortcut = struct { icon: Icon, hit: Hit, x: i32, y: i32 };
-const icon_radius = 52;
-const shortcuts = [_]Shortcut{
-    .{ .icon = .airplane, .hit = .airplane, .x = 318, .y = 240 },
-    .{ .icon = .wifi, .hit = .settings, .x = 636, .y = 240 }, // Networks live in stock settings
-    .{ .icon = .bluetooth, .hit = .bluetooth, .x = 954, .y = 240 },
-    .{ .icon = .sync, .hit = .sync, .x = 477, .y = 430 },
-    .{ .icon = .kindle, .hit = .kindle, .x = 795, .y = 430 }, // Back to the Kindle's own home
+const Quick = quick_model.Quick;
+
+/// A round button at the top of the panel: what a tap on it does, its icon, whether
+/// it shows as on (filled), and the word under it.
+const Tile = struct {
+    hit: Hit,
+    glyph: *const fn (page: Page, quick: *const Quick, x: f32, y: f32) void,
+    on: *const fn (quick: *const Quick) bool = never,
+    label: *const fn (quick: *const Quick) []const u8,
 };
+
+fn never(_: *const Quick) bool {
+    return false;
+}
+
+/// The tiles, in order: three on the first row, the rest centred on the second.
+/// Adding one is an entry here (and its Hit); the panel places it.
+const tiles = [_]Tile{
+    .{ .hit = .airplane, .glyph = struct {
+        fn g(page: Page, _: *const Quick, x: f32, y: f32) void {
+            icons.airplane(page, x, y);
+        }
+    }.g, .on = struct {
+        fn on(q: *const Quick) bool {
+            return q.airplane;
+        }
+    }.on, .label = struct {
+        fn l(q: *const Quick) []const u8 {
+            return if (q.airplane) "On" else "Off";
+        }
+    }.l },
+    // Networks live in the Kindle's own settings
+    .{ .hit = .settings, .glyph = struct {
+        fn g(page: Page, q: *const Quick, x: f32, y: f32) void {
+            icons.wifi(page, x, y - 4, 0.8, if (q.wifi_on) q.wifi_bars else 0);
+        }
+    }.g, .on = struct {
+        fn on(q: *const Quick) bool {
+            return q.wifi_on;
+        }
+    }.on, .label = struct {
+        fn l(q: *const Quick) []const u8 {
+            return if (q.wifi_on) "Connected" else "Wi-Fi Off";
+        }
+    }.l },
+    .{ .hit = .bluetooth, .glyph = struct {
+        fn g(page: Page, _: *const Quick, x: f32, y: f32) void {
+            icons.bluetooth(page, x, y);
+        }
+    }.g, .on = struct {
+        fn on(q: *const Quick) bool {
+            return q.bluetooth;
+        }
+    }.on, .label = struct {
+        fn l(q: *const Quick) []const u8 {
+            return if (q.bluetooth) "On" else "Off";
+        }
+    }.l },
+    .{ .hit = .sync, .glyph = struct {
+        fn g(page: Page, _: *const Quick, x: f32, y: f32) void {
+            icons.sync(page, x, y);
+        }
+    }.g, .label = struct {
+        fn l(q: *const Quick) []const u8 {
+            return if (q.syncing) "Syncing" else "Sync";
+        }
+    }.l },
+    // Back to the Kindle's own home
+    .{ .hit = .kindle, .glyph = struct {
+        fn g(page: Page, _: *const Quick, x: f32, y: f32) void {
+            icons.smile(page, x, y);
+        }
+    }.g, .label = struct {
+        fn l(_: *const Quick) []const u8 {
+            return "Kindle";
+        }
+    }.l },
+};
+
+const icon_radius = 52;
+const tiles_per_row = 3;
+const tile_step_x = 318; // Between tile centres along a row
+const first_row_y = 240;
+const row_step_y = 190;
+
+/// The centre of tile `i`: rows of three, each row centred on the screen.
+fn tileCenter(i: usize) struct { x: i32, y: i32 } {
+    const row = i / tiles_per_row;
+    const col = i % tiles_per_row;
+    const in_row = @min(tiles_per_row, tiles.len - row * tiles_per_row);
+    // Doubled to keep the half-step of an even row whole
+    const offset2: i32 = 2 * @as(i32, @intCast(col)) - @as(i32, @intCast(in_row - 1));
+    return .{ .x = style.screen_width / 2 + @divExact(offset2 * tile_step_x, 2), .y = first_row_y + @as(i32, @intCast(row)) * row_step_y };
+}
 
 fn rowSlider(row: Row) slider.Slider {
     return .{ .left = slider_left, .right = slider_right, .y = row.y };
@@ -56,8 +140,9 @@ pub fn hit(x: i32, y: i32) Hit {
         if (x > slider_right) return .brighter;
         return .slider;
     }
-    for (shortcuts) |s| {
-        if (@abs(x - s.x) < 120 and @abs(y - s.y) < 95) return s.hit;
+    for (0..tiles.len) |i| {
+        const c = tileCenter(i);
+        if (@abs(x - c.x) < 120 and @abs(y - c.y) < 95) return tiles[i].hit;
     }
     return .none;
 }
@@ -114,74 +199,47 @@ pub fn drawSliderAt(fonts: Fonts, page: Page, row: Row, value: u32, knob: u32, m
 pub const Box = struct { left: u32, top: u32, width: u32, height: u32 };
 
 pub fn shortcutBox(choice: Hit) ?Box {
-    for (shortcuts) |s| {
-        if (s.hit != choice) continue;
-        return .{ .left = @intCast(s.x - 130), .top = @intCast(s.y - icon_radius - 8), .width = 260, .height = icon_radius + 8 + 130 };
+    for (0..tiles.len) |i| {
+        if (tiles[i].hit != choice) continue;
+        const c = tileCenter(i);
+        return .{ .left = @intCast(c.x - 130), .top = @intCast(c.y - icon_radius - 8), .width = 260, .height = icon_radius + 8 + 130 };
     }
     return null;
 }
 
 /// Redraws one toggle and its label, after a tap changed it.
-pub fn drawShortcut(fonts: Fonts, page: Page, choice: Hit, quick: *const quick_model.Quick) !void {
+pub fn drawShortcut(fonts: Fonts, page: Page, choice: Hit, quick: *const Quick) !void {
     const box = shortcutBox(choice) orelse return;
     page.fillRect(box.left, box.top, box.width, box.height, 0xff);
-    for (shortcuts) |s| {
-        if (s.hit != choice) continue;
-        drawIcon(page, s, quick);
-        try draw.centered(fonts.small, page, @floatFromInt(s.x), s.y + 92, label(s, quick));
+    for (0..tiles.len) |i| {
+        if (tiles[i].hit == choice) try drawTile(fonts, page, i, quick);
     }
 }
 
-fn drawGlyph(page: Page, s: Shortcut, quick: *const quick_model.Quick, x: f32, y: f32) void {
-    switch (s.icon) {
-        .airplane => icons.airplane(page, x, y),
-        .wifi => icons.wifi(page, x, y - 4, 0.8, if (quick.wifi_on) quick.wifi_bars else 0),
-        .bluetooth => icons.bluetooth(page, x, y),
-        .sync => icons.sync(page, x, y),
-        .kindle => icons.smile(page, x, y),
-    }
-}
+const tile_px = 2 * icon_radius + 8;
 
-const tile = 2 * icon_radius + 8;
-
-/// Off: a ring with the icon in black. On: a smooth black disc with the icon in white.
-fn drawIcon(page: Page, s: Shortcut, quick: *const quick_model.Quick) void {
-    const x: f32 = @floatFromInt(s.x);
-    const y: f32 = @floatFromInt(s.y);
-    if (!isOn(s, quick)) {
+/// A tile and the word under it. Off: a ring with the icon in black. On, like the
+/// stock panel: a smooth black disc with the icon in white.
+fn drawTile(fonts: Fonts, page: Page, i: usize, quick: *const Quick) !void {
+    const t = tiles[i];
+    const c = tileCenter(i);
+    const x: f32 = @floatFromInt(c.x);
+    const y: f32 = @floatFromInt(c.y);
+    if (!t.on(quick)) {
         icons.ring(page, x, y, icon_radius);
-        drawGlyph(page, s, quick, x, y);
-        return;
+        t.glyph(page, quick, x, y);
+    } else {
+        page.pill(x, x, y, icon_radius + 1.5, 0x00);
+        const Glyph = struct {
+            t: Tile,
+            quick: *const Quick,
+            pub fn draw(g: @This(), p: Page, cx: f32, cy: f32) !void {
+                g.t.glyph(p, g.quick, cx, cy);
+            }
+        };
+        icons.drawWhite(page, tile_px, tile_px, c.x, c.y, Glyph{ .t = t, .quick = quick }) catch {};
     }
-    page.pill(x, x, y, icon_radius + 1.5, 0x00);
-    const Glyph = struct {
-        s: Shortcut,
-        quick: *const quick_model.Quick,
-        pub fn draw(g: @This(), t: Page, cx: f32, cy: f32) !void {
-            drawGlyph(t, g.s, g.quick, cx, cy);
-        }
-    };
-    icons.drawWhite(page, tile, tile, s.x, s.y, Glyph{ .s = s, .quick = quick }) catch {};
-}
-
-/// Toggles fill when on, like the stock panel.
-pub fn isOn(s: Shortcut, quick: *const quick_model.Quick) bool {
-    return switch (s.icon) {
-        .airplane => quick.airplane,
-        .wifi => quick.wifi_on,
-        .bluetooth => quick.bluetooth,
-        else => false,
-    };
-}
-
-fn label(s: Shortcut, quick: *const quick_model.Quick) []const u8 {
-    return switch (s.icon) {
-        .airplane => if (quick.airplane) "On" else "Off",
-        .wifi => if (quick.wifi_on) "Connected" else "Wi-Fi Off",
-        .bluetooth => if (quick.bluetooth) "On" else "Off",
-        .sync => if (quick.syncing) "Syncing" else "Sync",
-        .kindle => "Kindle",
-    };
+    try draw.centered(fonts.small, page, x, c.y + 92, t.label(quick));
 }
 
 pub fn render(fonts: Fonts, page: Page, quick: *const quick_model.Quick) !void {
@@ -193,10 +251,7 @@ pub fn render(fonts: Fonts, page: Page, quick: *const quick_model.Quick) !void {
     try fonts.small.draw(page, 60, 120, quick.clockText());
     try icons.statusCluster(page, fonts.small, w - 60, 58, 70, quick, true);
 
-    for (shortcuts) |s| {
-        drawIcon(page, s, quick);
-        try draw.centered(fonts.small, page, @floatFromInt(s.x), s.y + 92, label(s, quick));
-    }
+    for (0..tiles.len) |i| try drawTile(fonts, page, i, quick);
 
     page.fillRect(40, 560, page.width - 80, 2, style.panel_rule);
     try fonts.small.draw(page, 60, 606, brightness_row.label);
@@ -261,17 +316,26 @@ test "sliders map position to level" {
 test "toggles report their state" {
     const on = quick_model.Quick{ .airplane = true, .wifi_on = true };
     const off = quick_model.Quick{};
-    try std.testing.expect(isOn(shortcuts[0], &on));
-    try std.testing.expect(!isOn(shortcuts[0], &off));
-    try std.testing.expect(isOn(shortcuts[1], &on));
-    try std.testing.expect(!isOn(shortcuts[2], &on));
+    try std.testing.expect(tiles[0].on(&on));
+    try std.testing.expect(!tiles[0].on(&off));
+    try std.testing.expect(tiles[1].on(&on));
+    try std.testing.expect(!tiles[2].on(&on));
 }
 
 test "bluetooth toggle shows its state" {
     const on = quick_model.Quick{ .bluetooth = true };
     const off = quick_model.Quick{};
-    try std.testing.expect(isOn(shortcuts[2], &on));
-    try std.testing.expect(!isOn(shortcuts[2], &off));
-    try std.testing.expectEqualStrings("On", label(shortcuts[2], &on));
-    try std.testing.expectEqualStrings("Off", label(shortcuts[2], &off));
+    try std.testing.expect(tiles[2].on(&on));
+    try std.testing.expect(!tiles[2].on(&off));
+    try std.testing.expectEqualStrings("On", tiles[2].label(&on));
+    try std.testing.expectEqualStrings("Off", tiles[2].label(&off));
+}
+
+test "tiles sit where they always have" {
+    const want = [_][2]i32{ .{ 318, 240 }, .{ 636, 240 }, .{ 954, 240 }, .{ 477, 430 }, .{ 795, 430 } };
+    for (want, 0..) |w, i| {
+        const c = tileCenter(i);
+        try std.testing.expectEqual(w[0], c.x);
+        try std.testing.expectEqual(w[1], c.y);
+    }
 }

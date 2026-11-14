@@ -212,16 +212,17 @@ pub fn bookSheet(a: *app.App, e: *catalog.Entry, entries: []const catalog.Entry,
 /// After finishing a book of a series: the next one, to read now. Only books on the
 /// Kindle can offer it: a series is read from a book's file name, and books in the
 /// cloud have none yet.
+/// The library takes every touch, even along the bottom edge where the reader ignores
+/// a resting thumb (the pager and keyboard are there), and taps act on lift so pressing
+/// and holding a book can bring up its actions.
+const touches = input_mod.Input.Modes{ .grips = false, .deferred = true, .edge_zones = true };
+
 fn upNext(a: *app.App, next: *const catalog.Entry, background: []u8) !bool {
     if (next.availability != .local) return false;
     var label_buf: [160]u8 = undefined;
     var subtitle_buf: [200]u8 = undefined;
     const subtitle = std.fmt.bufPrint(&subtitle_buf, "Up next in {s}", .{catalog.seriesLabel(&label_buf, next.*)}) catch "Up next";
     std.debug.print("up next: {s}\n", .{next.title});
-    // Straight from the reader: its resting-thumb zones would swallow the card's row,
-    // which sits along the bottom edge, so take the library's modes now
-    a.input.grips = false;
-    a.input.deferred = true;
     // Over the page just left, not whatever the reader last kept in this buffer
     @memcpy(background, a.screen.pixels);
     // Its cover beside the title, half the grid's size, when it has one
@@ -359,15 +360,12 @@ const Browser = struct {
         }
     }
 
-    /// The library takes every touch, even along the bottom edge where the reader
-    /// ignores a resting thumb (the pager and keyboard are there), and taps act on lift
-    /// so pressing and holding a book can bring up its actions. Set each time round, as
-    /// reading a book changes them. It ticks often while watching a download or the
-    /// status, else once a minute for the clock and the battery.
+    /// The library's `touches`, set each time round as a book changes them. It ticks
+    /// often while watching a download or the status, else once a minute for the clock
+    /// and the battery.
     fn setInput(b: *Browser) void {
         const in = b.a.input;
-        in.grips = false;
-        in.deferred = true;
+        in.restore(touches);
         const now = nowUs();
         in.tick_us = if (now < b.watch_until) download_poll_us else if (now < b.status_until) status_poll_us else idle_tick_us;
     }

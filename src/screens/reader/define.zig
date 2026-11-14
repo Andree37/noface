@@ -8,20 +8,50 @@ const hyphen = @import("../../layout/hyphen.zig");
 const app = @import("../../app.zig");
 const sess = @import("session.zig");
 const dict_get = @import("dict_get.zig");
+const screen = @import("../screen.zig");
 
 pub const Choice = enum { close, highlight };
 
 /// "Get dictionary" on the sheet: downloads it, and shows the sheet again, with the
 /// definition if it came.
-fn getDictionary(a: *app.App, s: *const sess.Session, word: book_model.Word, lang: ?hyphen.Lang, page_copy: []const u8, found: *definition.Found) !void {
-    const l = lang orelse return;
-    if (!found.no_dictionary) return;
-    if (try dict_get.get(a, page_copy, l)) found.* = find(a, s, word, lang);
-    if (found.no_dictionary) found.can_get = dict_get.languageOf(l).name;
-    @memcpy(a.screen.pixels, page_copy);
-    try definition.render(a.ui, a.page(a.screen.pixels), found.*);
-    try a.showBand(0, a.screen.height);
-}
+/// The sheet with what the dictionary says, over the page. Highlight sits on the
+/// bottom edge, so it takes touches as a sheet.
+const Sheet = struct {
+    pub const Result = Choice;
+    pub const touches = input_mod.Input.Modes.sheet;
+    a: *app.App,
+    s: *const sess.Session,
+    word: book_model.Word,
+    lang: ?hyphen.Lang,
+    page_copy: []const u8, // The page under it
+    found: definition.Found,
+
+    pub fn draw(sh: *Sheet, _: screen.Part) !void {
+        const a = sh.a;
+        @memcpy(a.screen.pixels, sh.page_copy); // Not over a card that was just answered
+        try definition.render(a.ui, a.page(a.screen.pixels), sh.found);
+        try a.showBand(0, a.screen.height);
+    }
+
+    pub fn onTap(sh: *Sheet, t: screen.Tap) !screen.Step(Choice) {
+        return switch (definition.hit(t.x, t.y)) {
+            .close => .close,
+            .highlight => .{ .done = .highlight },
+            .get_dictionary => if (try sh.getDictionary()) .{ .redraw = .all } else .stay,
+            .none => .stay,
+        };
+    }
+
+    /// Downloads the book's dictionary from "Get dictionary". True when the sheet
+    /// needs drawing again (the download's cards were over it).
+    fn getDictionary(sh: *Sheet) !bool {
+        const l = sh.lang orelse return false;
+        if (!sh.found.no_dictionary) return false;
+        if (try dict_get.get(sh.a, sh.page_copy, l)) sh.found = find(sh.a, sh.s, sh.word, sh.lang);
+        if (sh.found.no_dictionary) sh.found.can_get = dict_get.languageOf(l).name;
+        return true;
+    }
+};
 
 /// What the dictionary has for a word of the book.
 pub fn find(a: *app.App, s: *const sess.Session, word: book_model.Word, lang: ?hyphen.Lang) definition.Found {
@@ -54,19 +84,8 @@ pub fn run(a: *app.App, s: *const sess.Session, word: book_model.Word, lang: ?hy
             if (try dict_get.get(a, page_copy, l)) found = find(a, s, word, lang);
         }
     };
-    @memcpy(a.screen.pixels, page_copy); // Not over a card that was just answered
-    try definition.render(a.ui, a.page(a.screen.pixels), found);
-    try a.showBand(0, a.screen.height);
-    const was = a.input.use(input_mod.Input.Modes.sheet); // Highlight sits on the bottom edge
-    defer a.input.restore(was);
-    const choice: Choice = while (a.input.nextTap()) |t| {
-        switch (definition.hit(t.x, t.y)) {
-            .close => break .close,
-            .highlight => break .highlight,
-            .get_dictionary => try getDictionary(a, s, word, lang, page_copy, &found),
-            .none => {},
-        }
-    } else .close; // Locked, or leaving
+    var sheet = Sheet{ .a = a, .s = s, .word = word, .lang = lang, .page_copy = page_copy, .found = found };
+    const choice = try screen.run(a, &sheet) orelse .close; // Closed, locked or leaving
     @memcpy(a.screen.pixels, page_copy); // The cards drew into the overlay; this is the page
     try a.showBand(0, a.screen.height);
     return choice;

@@ -10,6 +10,7 @@ const lipc = @import("../../kindle/lipc.zig");
 const wifi_saver = @import("../../kindle/wifi_saver.zig");
 const dict_download = @import("../../kindle/dict_download.zig");
 const os = @import("../../sys/os.zig");
+const screen = @import("../screen.zig");
 
 /// The download for a book's language.
 pub fn languageOf(lang: hyphen.Lang) dict_download.Language {
@@ -93,23 +94,39 @@ pub fn get(a: *app.App, background: []const u8, lang: hyphen.Lang) !bool {
 
 /// Shows the card for about a second. True when Cancel was tapped.
 fn showProgress(a: *app.App, background: []const u8, title: []const u8, subtitle: []const u8, rows: []const card.Row) !bool {
-    @memcpy(a.overlay, background);
-    try card.renderWith(a.ui, a.page(a.overlay), title, subtitle, rows, null);
-    @memcpy(a.screen.pixels, a.overlay);
-    try a.showBand(0, a.screen.height);
-    const was = a.input.use(input_mod.Input.Modes.sheet);
-    defer a.input.restore(was);
-    const tick = a.input.tick_us;
-    defer a.input.tick_us = tick;
-    a.input.tick_us = 1_000_000; // Back to the caller in a second, to show progress
-    a.input.last_tick = os.nowUs();
-    while (a.input.nextFor()) |action| switch (action) {
-        .tick => return false,
-        .tap => |t| if (card.hitWith(t.x, t.y, rows.len, null) == 0) return true, // Cancel
-        else => {},
-    };
-    return true; // Locked, or leaving: stop the download
+    var progress = Progress{ .a = a, .background = background, .title = title, .subtitle = subtitle, .rows = rows };
+    // Locked, or leaving: stop the download, as Cancel does
+    return try screen.run(a, &progress) orelse true;
 }
+
+/// The download's card, how far it's got in its subtitle. Back to the download after
+/// a second, to show it again further along. Cancel is its first row.
+const Progress = struct {
+    pub const Result = bool; // Cancelled
+    pub const touches = input_mod.Input.Modes.sheet;
+    pub const tick_us = 1_000_000;
+    a: *app.App,
+    background: []const u8,
+    title: []const u8,
+    subtitle: []const u8,
+    rows: []const card.Row,
+
+    pub fn draw(p: *Progress, _: screen.Part) !void {
+        const a = p.a;
+        @memcpy(a.overlay, p.background);
+        try card.renderWith(a.ui, a.page(a.overlay), p.title, p.subtitle, p.rows, null);
+        @memcpy(a.screen.pixels, a.overlay);
+        try a.showBand(0, a.screen.height);
+    }
+
+    pub fn onTap(p: *Progress, t: screen.Tap) !screen.Step(bool) {
+        return if (card.hitWith(t.x, t.y, p.rows.len, null) == 0) .{ .done = true } else .stay;
+    }
+
+    pub fn onTick(_: *Progress) !screen.Step(bool) {
+        return .{ .done = false };
+    }
+};
 
 fn tell(a: *app.App, background: []const u8, title: []const u8, subtitle: []const u8) !void {
     const rows = [_]card.Row{.{ .label = "OK" }};

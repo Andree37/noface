@@ -6,6 +6,8 @@ const wifi_saver = @import("../kindle/wifi_saver.zig");
 const lipc = @import("../kindle/lipc.zig");
 const quick_model = @import("../model/quick.zig");
 const app = @import("../app.zig");
+const screen = @import("screen.zig");
+const input_mod = @import("../kindle/input.zig");
 
 /// Shows the panel at once with the last status read, then reads it again (about a
 /// quarter second of lipc calls) and redraws only if something changed.
@@ -141,37 +143,39 @@ pub fn panelControl(a: *app.App, background: []const u8, choice: menu.Hit, x: i3
 
 /// The quick panel over the library. Returns true to quit to the stock UI.
 pub fn libraryMenu(a: *app.App, background: []const u8) !bool {
-    // Touches as they land, as in the reader: a slider follows the finger from there,
-    // and a tap that only arrived on the lift would leave it waiting for a drag
-    const deferred = a.input.deferred;
-    a.input.deferred = false;
-    defer a.input.deferred = deferred;
-    try drawFresh(a, background);
-    while (true) {
-        switch (a.input.next()) {
-            .tap => |t| {
-                const choice = menu.hit(t.x, t.y);
-                if (try panelControl(a, background, choice, t.x)) continue;
-                switch (choice) {
-                    .settings => {
-                        lipc.openSettings();
-                        return true;
-                    },
-                    .kindle => return true, // noface.sh brings back the Kindle's home
-                    .close => {
-                        try closeMenu(a, background);
-                        return false;
-                    },
-                    else => {},
-                }
-            },
-            .pull, .hold, .drag, .drag_end, .swipe, .tick, .unlock => {},
-            .lock => {
-                a.input.stashed = .lock;
-                try closeMenu(a, background);
-                return false;
-            },
-            .power, .computer, .stop => return true,
-        }
-    }
+    var panel = LibraryPanel{ .a = a, .background = background };
+    if (try screen.run(a, &panel)) |_| return true;
+    // Closed, or the Kindle locking: the library comes back from under it. Leaving
+    // noface, it doesn't need to.
+    const leaving = if (a.input.stashed) |act| act != .lock else false;
+    if (!leaving) try closeMenu(a, background);
+    return false;
 }
+
+/// Touches as they land, as in the reader: a slider follows the finger from there, and
+/// a tap that only arrived on the lift would leave it waiting for a drag. Done when
+/// noface should go to the Kindle's own screens.
+const LibraryPanel = struct {
+    pub const Result = void;
+    pub const touches = input_mod.Input.Modes.sheet;
+    a: *app.App,
+    background: []const u8,
+
+    pub fn draw(p: *LibraryPanel, _: screen.Part) !void {
+        try drawFresh(p.a, p.background);
+    }
+
+    pub fn onTap(p: *LibraryPanel, t: screen.Tap) !screen.Step(void) {
+        const choice = menu.hit(t.x, t.y);
+        if (try panelControl(p.a, p.background, choice, t.x)) return .stay; // Drew itself
+        return switch (choice) {
+            .settings => {
+                lipc.openSettings();
+                return .{ .done = {} };
+            },
+            .kindle => .{ .done = {} }, // noface.sh brings back the Kindle's home
+            .close => .close,
+            else => .stay,
+        };
+    }
+};

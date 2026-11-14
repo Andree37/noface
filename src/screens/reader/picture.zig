@@ -11,6 +11,7 @@ const touch_zones = @import("../../kindle/touch.zig");
 const draw = @import("../../ui/draw.zig");
 const style = @import("../../ui/style.zig");
 const app = @import("../../app.zig");
+const screen = @import("../screen.zig");
 const input_mod = @import("../../kindle/input.zig");
 const os = @import("../../sys/os.zig");
 
@@ -180,39 +181,52 @@ fn onClose(x: i32, y: i32) bool {
     return dx * dx + dy * dy <= reach * reach;
 }
 
-/// A finger on the picture: a drag pans it; a tap on the close button closes it; a
-/// double tap shows it whole; a single tap goes a step closer, centred on it. False
-/// when the viewer should close.
-fn onPictureTap(a: *app.App, v: *View, t: input_mod.Tap) !bool {
-    a.input.beginDrag();
-    var follow = Follow{ .a = a, .v = v, .x0 = t.x, .y0 = t.y, .start_cx = v.cx, .start_cy = v.cy };
-    _ = try app.followDrag(a, null, &follow);
-    if (a.input.stashed != null) return false; // Locked, or leaving
-    if (follow.panned) {
-        if (v.step > 0) try render(a, v.*); // Its grays back
-        return true;
+/// The picture, full screen, until it's closed. Touches come at once, so a drag can
+/// follow them; edge zones would hold back taps near the top, so they're off, and a
+/// resting thumb is skipped in `onTap` instead.
+const Viewer = struct {
+    pub const Result = void;
+    pub const touches = input_mod.Input.Modes{ .grips = false, .deferred = false, .edge_zones = false };
+    a: *app.App,
+    v: View,
+
+    pub fn draw(vw: *Viewer, _: screen.Part) !void {
+        try render(vw.a, vw.v);
     }
-    // Closing on the lift, so a drag that starts by the button still pans
-    if (onClose(t.x, t.y)) return false;
-    switch (afterTap(a, t.x, t.y)) {
-        .quit => return false,
-        .double_tap => {
-            if (v.step == 0) return true;
-            v.whole();
-        },
-        .nothing, .other_tap => {
-            if (v.step + 1 == steps.len) return true; // Already at the closest step
-            const at = v.pictureAt(t.x, t.y);
-            v.step += 1;
-            v.cx = at.x;
-            v.cy = at.y;
-        },
+
+    /// A finger on the picture: a drag pans it; a tap on the close button closes it; a
+    /// double tap shows it whole; a single tap goes a step closer, centred on it.
+    pub fn onTap(vw: *Viewer, t: screen.Tap) !screen.Step(void) {
+        const a = vw.a;
+        const v = &vw.v;
+        // A thumb resting where the Kindle is held isn't a tap
+        if (touch_zones.isGrip(t.x, t.y, a.input.width, a.input.height)) return .stay;
+        a.input.beginDrag();
+        var follow = Follow{ .a = a, .v = v, .x0 = t.x, .y0 = t.y, .start_cx = v.cx, .start_cy = v.cy };
+        _ = try app.followDrag(a, null, &follow);
+        if (a.input.stashed != null) return .close; // Locked, or leaving
+        if (follow.panned) return if (v.step > 0) .{ .redraw = .all } else .stay; // Its grays back
+        // Closing on the lift, so a drag that starts by the button still pans
+        if (onClose(t.x, t.y)) return .close;
+        switch (afterTap(a, t.x, t.y)) {
+            .quit => return .close,
+            .double_tap => {
+                if (v.step == 0) return .stay;
+                v.whole();
+            },
+            .nothing, .other_tap => {
+                if (v.step + 1 == steps.len) return .stay; // Already at the closest step
+                const at = v.pictureAt(t.x, t.y);
+                v.step += 1;
+                v.cx = at.x;
+                v.cy = at.y;
+            },
+        }
+        v.clamp();
+        std.debug.print("picture zoom {d}x\n", .{@as(u32, @intFromFloat(steps[v.step]))});
+        return .{ .redraw = .all };
     }
-    v.clamp();
-    std.debug.print("picture zoom {d}x\n", .{@as(u32, @intFromFloat(steps[v.step]))});
-    try render(a, v.*);
-    return true;
-}
+};
 
 /// Shows the picture until it's closed, then puts the page back as it was.
 pub fn show(a: *app.App, img: book_model.Image) !void {
@@ -232,24 +246,8 @@ pub fn show(a: *app.App, img: book_model.Image) !void {
     std.debug.print("picture: {d}x{d}\n", .{ picture.width, picture.height });
     const pw: f32 = @floatFromInt(picture.width);
     const ph: f32 = @floatFromInt(picture.height);
-    var v = View{ .picture = picture, .cx = pw / 2, .cy = ph / 2, .fit = @min(style.screen_width / pw, style.screen_height / ph) };
-    try render(a, v);
-
-    // Touches come at once, so a drag can follow them. Edge zones would hold back
-    // taps near the top; resting thumbs are skipped below instead.
-    const deferred = a.input.deferred;
-    const edges = a.input.edge_zones;
-    a.input.deferred = false;
-    a.input.edge_zones = false;
-    defer {
-        a.input.deferred = deferred;
-        a.input.edge_zones = edges;
-    }
-    while (a.input.nextTap()) |t| {
-        // A thumb resting where the Kindle is held isn't a tap
-        if (touch_zones.isGrip(t.x, t.y, a.input.width, a.input.height)) continue;
-        if (!try onPictureTap(a, &v, t)) break;
-    }
+    var viewer = Viewer{ .a = a, .v = .{ .picture = picture, .cx = pw / 2, .cy = ph / 2, .fit = @min(style.screen_width / pw, style.screen_height / ph) } };
+    _ = try screen.run(a, &viewer);
     try a.present(saved, .flash);
 }
 

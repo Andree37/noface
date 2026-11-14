@@ -57,14 +57,15 @@ pub const View = enum { page, toolbar, panel, note, highlight };
 /// Wi-Fi may go off, and the Back button can be tapped. On the page a press may become
 /// a hold, so taps wait for the finger to lift; controls that sit where a thumb rests
 /// turn the thumb filter off; a highlight's handles can reach the screen's edges.
-const Mode = struct { reading: bool, taps_on_lift: bool, thumb_filter: bool, edge_zones: bool };
-
-fn modeOf(view: View) Mode {
+/// How each view takes touches.
+fn touchesFor(view: View) input_mod.Input.Modes {
     return switch (view) {
-        .page => .{ .reading = true, .taps_on_lift = true, .thumb_filter = true, .edge_zones = true },
-        .toolbar => .{ .reading = false, .taps_on_lift = false, .thumb_filter = false, .edge_zones = true },
-        .highlight => .{ .reading = false, .taps_on_lift = false, .thumb_filter = true, .edge_zones = false },
-        .note, .panel => .{ .reading = false, .taps_on_lift = false, .thumb_filter = true, .edge_zones = true },
+        // Taps on the lift, so a press can become a hold; a resting thumb is ignored
+        .page => .{ .grips = true, .deferred = true, .edge_zones = true },
+        .toolbar => input_mod.Input.Modes.sheet,
+        // The handles can sit at the screen edges
+        .highlight => .{ .grips = true, .deferred = false, .edge_zones = false },
+        .note, .panel => .{ .grips = true, .deferred = false, .edge_zones = true },
     };
 }
 
@@ -176,10 +177,9 @@ pub fn readBook(a: *app.App, entry: *catalog.Entry) !Outcome {
     a.wifi_hands_off = false;
     defer wifi_saver.restore(); // Leaving the book, Wi-Fi comes back
     defer sess.saveProgress(entry, state_path, &session);
+    const touches = a.input.modes(); // Put back for the library on leaving
     defer {
-        a.input.grips = true;
-        a.input.deferred = false;
-        a.input.edge_zones = true;
+        a.input.restore(touches);
         a.input.grip_exempt = null;
         a.input.tick_us = 0;
     }
@@ -223,13 +223,13 @@ const Reader = struct {
         while (true) {
             _ = scratch_arena.reset(.retain_capacity); // Nothing from the last action is still needed
             r.saveAfterJump();
-            if (r.mode().reading) r.s.resumeClock() else r.s.pauseClock();
+            if (r.reading()) r.s.resumeClock() else r.s.pauseClock();
             r.setInput();
             const action = r.a.input.next();
             if (r.s.layoutPending() and needsAllPages(action, r.view, r.sheet(), r.s)) {
                 try r.s.finishLayout();
                 // The page's footer gains its count; anything else is about to be redrawn
-                if (r.mode().reading) try r.s.showFooter();
+                if (r.reading()) try r.s.showFooter();
             }
             switch (action) {
                 .lock => try r.onLock(),
@@ -241,8 +241,9 @@ const Reader = struct {
         }
     }
 
-    fn mode(r: *const Reader) Mode {
-        return modeOf(r.view);
+    /// The page alone is up: the reading clock runs, and the page's own corners count.
+    fn reading(r: *const Reader) bool {
+        return r.view == .page;
     }
 
     /// The Aa sheet's tab, while it's open.
@@ -254,11 +255,8 @@ const Reader = struct {
     /// first open is still laid out in idle moments, else for the clock.
     fn setInput(r: *Reader) void {
         const in = r.a.input;
-        const m = r.mode();
-        in.deferred = m.taps_on_lift;
-        in.grips = m.thumb_filter;
-        in.edge_zones = m.edge_zones;
-        in.grip_exempt = if (m.reading) r.s.backZone() else null; // The Back button counts
+        in.restore(touchesFor(r.view));
+        in.grip_exempt = if (r.reading()) r.s.backZone() else null; // The Back button counts
         in.tick_us = if (r.s.layoutPending()) 1000 else clock_check_us;
     }
 
@@ -343,7 +341,7 @@ const Reader = struct {
             r.battery_minute = unixTime() / 60;
             a.noteBattery();
         }
-        if (!r.mode().reading) return; // The rest only while the page alone is up
+        if (!r.reading()) return; // The rest only while the page alone is up
         r.pauseWifi();
         if (unixTime() / 60 != a.clock_minute) try a.updateClock();
     }

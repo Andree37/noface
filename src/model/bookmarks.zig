@@ -1,5 +1,6 @@
 //! Bookmarks: a single position marking a page.
 const std = @import("std");
+const assert = std.debug.assert;
 const book_model = @import("book.zig");
 const highlights = @import("highlights.zig");
 
@@ -7,7 +8,11 @@ pub const Bookmark = struct { id: []const u8, para: u32, byte: u32 };
 
 /// Reads "id|start|end" lines from the annotation database. Bookmarks start and
 /// end at the same place, so only the start counts.
-pub fn parse(alloc: std.mem.Allocator, paragraphs: []const book_model.Paragraph, lines: []const u8) ![]Bookmark {
+pub fn parse(
+    alloc: std.mem.Allocator,
+    paragraphs: []const book_model.Paragraph,
+    lines: []const u8,
+) ![]Bookmark {
     var out: std.ArrayList(Bookmark) = .empty;
     var it = std.mem.tokenizeScalar(u8, lines, '\n');
     while (it.next()) |line| {
@@ -15,23 +20,35 @@ pub fn parse(alloc: std.mem.Allocator, paragraphs: []const book_model.Paragraph,
         const id = fields.next() orelse continue;
         const start = std.fmt.parseInt(u32, fields.next() orelse continue, 10) catch continue;
         const at = highlights.locate(paragraphs, start) orelse continue;
+        assert(at.para < paragraphs.len);
+        assert(at.byte <= paragraphs[at.para].text.len);
         try out.append(alloc, .{ .id = try alloc.dupe(u8, id), .para = at.para, .byte = at.byte });
     }
-    return out.toOwnedSlice(alloc);
+    const list = try out.toOwnedSlice(alloc);
+    for (list) |b| assert(b.para < paragraphs.len);
+    return list;
 }
 
 fn at_or_after(b: Bookmark, pos: book_model.Pos) bool {
-    return b.para > pos.para or (b.para == pos.para and b.byte >= pos.byte);
+    const after = b.para > pos.para or (b.para == pos.para and b.byte >= pos.byte);
+    if (after) assert(b.para >= pos.para);
+    if (!after) assert(b.para <= pos.para);
+    return after;
 }
 
 /// True when bookmark `b` falls on the page from `from` up to `to` (the next page's start).
 pub fn is_on_page(b: Bookmark, from: book_model.Pos, to: ?book_model.Pos) bool {
+    // Pages follow each other: the next page never starts before this one.
+    if (to) |end| assert(from.para <= end.para);
     if (!at_or_after(b, from)) return false;
     const end = to orelse return true;
-    return !at_or_after(b, end);
+    const on_page = !at_or_after(b, end);
+    if (on_page) assert(b.para <= end.para);
+    return on_page;
 }
 
 pub fn any_on_page(list: []const Bookmark, from: book_model.Pos, to: ?book_model.Pos) bool {
+    if (to) |end| assert(from.para <= end.para);
     for (list) |b| {
         if (is_on_page(b, from, to)) return true;
     }
@@ -50,7 +67,10 @@ test "a bookmark belongs to the page it falls on" {
 test "bookmark lines become positions" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    const paras = [_]book_model.Paragraph{ .{ .text = "abcdef", .style = 0, .position = 100 }, .{ .text = "ghij", .style = 0, .position = 106 } };
+    const paras = [_]book_model.Paragraph{
+        .{ .text = "abcdef", .style = 0, .position = 100 },
+        .{ .text = "ghij", .style = 0, .position = 106 },
+    };
     const list = try parse(arena.allocator(), &paras, "kindle.bookmark-107|107|107\nbad\n");
     try std.testing.expectEqual(@as(usize, 1), list.len);
     try std.testing.expectEqual(@as(u32, 1), list[0].para);

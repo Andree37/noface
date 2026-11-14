@@ -1,6 +1,7 @@
 //! A book as noface holds it, whatever format it came from: paragraphs with their look,
 //! links, pictures and contents. Parsers fill it; layout and screens read it.
 const std = @import("std");
+const assert = std.debug.assert;
 
 /// A byte range of a paragraph that links to another paragraph.
 /// `inside`: the target is an anchor partway into its paragraph (a page marker, say),
@@ -24,13 +25,30 @@ pub const size_scales = [_]f32{ 0.8, 1.0, 1.2, 1.45, 1.75 };
 
 pub const normal_size = 1;
 
+/// Where `size_class` moves to the next step: halfway between two scales, roughly.
+const size_class_bounds = [_]f64{ 0.9, 1.1, 1.33, 1.62 };
+
+comptime {
+    assert(size_scales.len == size_class_bounds.len + 1);
+    assert(normal_size < size_scales.len);
+    assert(size_scales[normal_size] == 1.0);
+    for (size_class_bounds, 0..) |bound, index| {
+        // Each bound sits between the two scales it divides.
+        assert(bound > size_scales[index]);
+        assert(bound < size_scales[index + 1]);
+    }
+}
+
 /// Snaps a book's size (1.0 is body text) to the nearest step in `size_scales`.
 pub fn size_class(rem: f64) u8 {
-    if (rem < 0.9) return 0;
-    if (rem < 1.1) return 1;
-    if (rem < 1.33) return 2;
-    if (rem < 1.62) return 3;
-    return 4;
+    // Not below a bound (NaN included) moves up past it, so NaN snaps to the largest.
+    var class: u8 = 0;
+    for (size_class_bounds) |bound| {
+        if (rem < bound) break;
+        class += 1;
+    }
+    assert(class < size_scales.len);
+    return class;
 }
 
 /// Bold or italic over part of a paragraph.
@@ -56,41 +74,52 @@ pub const Paragraph = struct {
 /// A paragraph's number counting text only. Saved reading positions use this, so
 /// they stay put whether or not pictures are shown.
 pub fn text_index(paragraphs: []const Paragraph, para: usize) usize {
-    var n: usize = 0;
+    var count: u32 = 0;
     for (paragraphs[0..@min(para, paragraphs.len)]) |p| {
-        if (p.image == null) n += 1;
+        if (p.image == null) count += 1;
     }
-    return n;
+    assert(count <= para);
+    assert(count <= paragraphs.len);
+    return count;
 }
 
 /// The paragraph for a number from `text_index`.
 pub fn from_text_index(paragraphs: []const Paragraph, index: usize) usize {
-    var n: usize = 0;
+    var count: u32 = 0;
     for (paragraphs, 0..) |p, i| {
         if (p.image != null) continue;
-        if (n == index) return i;
-        n += 1;
+        if (count == index) {
+            assert(i >= index); // Pictures before it only push it further on
+            return i;
+        }
+        count += 1;
     }
+    assert(count <= paragraphs.len);
     return paragraphs.len;
 }
 
 /// Characters before a byte offset, which is how Amazon counts positions.
 pub fn char_offset(text: []const u8, byte: usize) u32 {
-    var bytes: usize = 0;
+    var bytes: u32 = 0;
     var chars: u32 = 0;
     while (bytes < byte and bytes < text.len) : (chars += 1) {
         bytes += std.unicode.utf8ByteSequenceLength(text[bytes]) catch 1;
     }
+    // Every character takes at least one byte.
+    assert(chars <= bytes);
+    assert(chars <= text.len);
     return chars;
 }
 
 /// Byte offset of the `count`th code point, as KFX offsets count characters.
 pub fn byte_offset(text: []const u8, count: u64) usize {
-    var bytes: usize = 0;
+    var bytes: u32 = 0;
     var seen: u64 = 0;
     while (bytes < text.len and seen < count) : (seen += 1) {
         bytes += std.unicode.utf8ByteSequenceLength(text[bytes]) catch 1;
     }
+    assert(seen <= count);
+    assert(seen <= bytes);
     return @min(bytes, text.len);
 }
 
@@ -108,13 +137,15 @@ pub const Book = struct {
 /// make them regular. When most text paragraphs are bold, bold is that book's normal
 /// weight: show it regular. Bold words inside paragraphs stay bold.
 pub fn plain_body(paragraphs: []Paragraph) void {
-    var text: usize = 0;
-    var bold: usize = 0;
+    var text: u32 = 0;
+    var bold: u32 = 0;
     for (paragraphs) |p| {
         if (p.image != null) continue;
         text += 1;
         if (p.look.bold) bold += 1;
     }
+    assert(bold <= text);
+    assert(text <= paragraphs.len);
     if (bold * 2 <= text) return;
     for (paragraphs) |*p| p.look.bold = false;
 }
@@ -161,7 +192,11 @@ test "book sizes snap to the reader's steps" {
 
 test "saved positions count text paragraphs only" {
     const img = Image{ .data = "", .width = 1, .height = 1 };
-    const paras = [_]Paragraph{ .{ .text = "a", .style = 0 }, .{ .text = "", .style = 0, .image = img }, .{ .text = "b", .style = 0 } };
+    const paras = [_]Paragraph{
+        .{ .text = "a", .style = 0 },
+        .{ .text = "", .style = 0, .image = img },
+        .{ .text = "b", .style = 0 },
+    };
     try std.testing.expectEqual(@as(usize, 1), text_index(&paras, 2));
     try std.testing.expectEqual(@as(usize, 2), from_text_index(&paras, 1));
     try std.testing.expectEqual(@as(usize, 0), from_text_index(&paras, 0));

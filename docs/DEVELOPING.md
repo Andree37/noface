@@ -49,7 +49,13 @@ Code is split by who owns it. `zig build check` fails if a file imports across t
 
 - `src/kindle/`: everything that knows Amazon: the KFX format, lipc services, the
   store, annotation sync, the catalog export, fonts, the screen and input devices.
-- `src/linux/`: Linux itself: files, processes with timeouts, time.
+  Screens ask the display for a kind of refresh (`.page`, `.screen`, `.flash`,
+  `.quick`, `.clock`, `.clean`); `hwtcon.Refresh` turns those into this panel's
+  waveforms, the one table a different panel would change.
+- `src/sys/`: the system: files, processes with timeouts, time. `sys/calls.zig` is the
+  system calls under Linux's names: Linux's own on the Kindle, the C library's on a
+  Mac (`sys/calls_portable.zig`), so everything but the Kindle's screen and touch
+  drivers builds and runs on a computer too.
 - `src/model/`: our data, with no I/O: books, settings, the library, highlights,
   bookmarks, search, the dictionary format, the reading journal, reading stats.
 - `src/gfx/`: pixels, fonts and pictures.
@@ -57,6 +63,8 @@ Code is split by who owns it. `zig build check` fails if a file imports across t
 - `src/ui/`: drawing screens and mapping taps to controls.
 - `src/screens/`: the flow of each screen. The only place that calls into `kindle/`.
 - `src/app.zig`, `src/main.zig`: what screens share, and startup.
+- `src/scenarios.zig`, `src/fake_kindle.zig`: the scenario tests, and the pretend
+  Kindle they run against.
 - `src/core.zig`: the parts the tools share. `src/tests.zig` runs every test.
 - `device/`: scripts installed on the Kindle, and `jxr2pgm`, the picture helper that
   decodes JPEG XR with the Kindle's own library.
@@ -75,3 +83,53 @@ memory; the e‑ink panel's own refresh follows and takes the same time in both.
 book is Project Gutenberg's edition of *Pride and Prejudice*, with Hugh Thomson's 1894
 illustrations.
 
+
+## Measuring the battery
+
+noface notes the battery level each time it changes (`noface-data/battery`) and how
+long you read each day (`noface-data/journal`). After a few whole days off the charger,
+run this on the Kindle:
+
+```sh
+/mnt/us/noface/noface battery-report
+```
+
+It fits the drain of each unplugged day against that day's reading, and prints the
+drain per hour of reading, the drain per day on standby, and how long a full charge
+lasts at your pace. Days with any charging in them are left out.
+
+## The simulator
+
+noface runs on a computer too, without a Kindle:
+
+```sh
+zig build sim                     # with a small test book
+zig build sim -Dbooks=$HOME/Books # with the EPUBs in a folder (a full path)
+```
+
+Then open http://localhost:8080. It's the real app (library, reader, Aa, the
+dictionary, everything) on a screen in memory, against the pretend Kindle the tests
+use, so it starts no programs and changes nothing outside `./noface-sim-data`, where
+it keeps positions and settings. Click to tap, press and hold to hold, drag sideways
+to turn a page, drag down from the top for the light panel; the arrow keys turn
+pages. It sets text in the Go fonts, as the Kindle's own aren't on a computer, and
+reads only EPUBs. `NOFACE_SIM_PORT` picks another port.
+
+## Tests
+
+- `zig build test`: unit tests, on the Mac.
+- `zig build scenarios`: the scenario tests, which play scripted touches through the
+  real app on a screen in memory, a clock it moves itself and a pretend Kindle that
+  starts no programs. GitHub runs them on every push; on the Kindle they're part of
+  `noface selftest`.
+- One scenario compares five screens (a page, the toolbar, Aa, a definition and the
+  library) with reference images in `src/testdata/snapshots`. When a screen changes on
+  purpose, write new ones and convert them:
+
+```sh
+zig build scenarios                                  # builds zig-out/bin/noface-scenarios for the Kindle
+NOFACE_WRITE_SNAPSHOTS=/tmp/snaps <noface-scenarios> # on the Kindle or a computer: writes <name>.pgm
+for n in page toolbar aa-font definition library; do
+  tools/pgm2png.py /tmp/snaps/$n.pgm src/testdata/snapshots/$n.png
+done
+```

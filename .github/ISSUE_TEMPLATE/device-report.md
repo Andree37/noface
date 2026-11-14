@@ -14,7 +14,7 @@ title: "Device report: "
 paste here
 ```
 
-**`selftest` output** (run `/mnt/us/noface/selftest`):
+**`selftest` output** (run `/mnt/us/noface/noface selftest`):
 
 ```
 paste here

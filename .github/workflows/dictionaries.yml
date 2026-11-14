@@ -31,5 +31,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release view dictionaries >/dev/null 2>&1 || \
-            gh release create dictionaries --title "Dictionaries" --notes "English and Portuguese definitions from Wiktionary (CC BY-SA 4.0), for noface. Unzip, then copy the dict file into the noface-data folder on the Kindle."
+            gh release create dictionaries --latest=false --title "Dictionaries" --notes "English and Portuguese definitions from Wiktionary (CC BY-SA 4.0), for noface. Unzip, then copy the dict file into the noface-data folder on the Kindle."
           gh release upload dictionaries work/dict-en.zip work/dict-pt.zip --clobber

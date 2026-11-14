@@ -33,9 +33,11 @@ pub fn forget_finished(a: *app.App, e: *const catalog.Entry) !void {
     const path = try a.state_path(&path_buffer, e.path);
     var saved = state.load(path);
     saved.percent = 0;
-    saved.opened = @max(saved.opened, e.kindle_last) + 1;
-    // Newer than stock's record, so the 0% wins over its 100%
-    assert(saved.opened > e.kindle_last);
+    // Saturating: both times come from files, and a broken one mustn't stop the reader
+    saved.opened = @max(saved.opened, e.kindle_last) +| 1;
+    // Newer than stock's record, so the 0% wins over its 100%: newer always, but for a
+    // broken file at the very end of time
+    assert(saved.opened >= e.kindle_last);
     state.save(path, saved);
 }
 

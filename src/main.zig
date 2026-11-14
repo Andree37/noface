@@ -8,11 +8,11 @@
 //! same place. The panel's Kindle button and Wi-Fi settings hand over to the stock UI.
 const std = @import("std");
 const paths = @import("kindle/paths.zig");
+const setup = @import("setup.zig");
 const fonts_db = @import("kindle/fonts.zig");
 const memory = @import("base/memory.zig");
 const c_memory = @import("gfx/c_memory.zig");
 const Font = @import("gfx/font.zig").Font;
-const Fonts = @import("ui/fonts.zig").Fonts;
 const file = @import("sys/file.zig");
 const hwtcon = @import("kindle/hwtcon.zig");
 const library = @import("ui/library.zig");
@@ -78,18 +78,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         _ = doctor.report(2);
         return err;
     };
-    var fallback_body = try Font.init(alloc, regular, 46, 1.35);
-    var note_font = try Font.init(alloc, regular, 36, 1.3);
-    var footer = try Font.init(alloc, ui_regular, 28, 1.2); // Under the page: interface text
-    var reference = try Font.init(alloc, regular, 28, 1.2); // Note marks in the text: the book's own face
-    var title = try Font.init(alloc, ui_bold, 34, 1.2);
-    var small = try Font.init(alloc, ui_regular, 34, 1.2);
-    var caption = try Font.init(alloc, ui_regular, 26, 1.2);
-    var hero = try Font.init(alloc, book_bold, 56, 1.2);
-    var cover_type = try Font.init(alloc, book_bold, 36, 1.2);
-
-    var slots: [3]app.Slot = undefined;
-    for (&slots) |*s| s.* = .{ .buf = try alloc.alloc(u8, screen.pixels.len) };
+    var kit = try setup.Kit.init(alloc, .{ .book = regular, .book_bold = book_bold, .ui = ui_regular, .ui_bold = ui_bold });
 
     var input = try input_mod.open(screen.width, screen.height);
     defer input_mod.release(&input);
@@ -106,51 +95,29 @@ pub fn main(init: std.process.Init.Minimal) !void {
         } else |_| {}
     }
 
-    var settings_buf: [320]u8 = undefined;
-    const settings_path = try std.fmt.bufPrintSentinel(&settings_buf, "{s}/" ++ paths.data.settings, .{state_dir}, 0);
-    var speed_buf: [320]u8 = undefined;
-    const speed_path = try std.fmt.bufPrintSentinel(&speed_buf, "{s}/" ++ paths.data.speed, .{state_dir}, 0);
-    var journal_buf: [320]u8 = undefined;
-    const journal_path = try std.fmt.bufPrintSentinel(&journal_buf, "{s}/" ++ paths.data.journal, .{state_dir}, 0);
-    var battery_buf: [320]u8 = undefined;
-    const battery_path = try std.fmt.bufPrintSentinel(&battery_buf, "{s}/" ++ paths.data.battery, .{state_dir}, 0);
+    var files: setup.DataFiles = .{};
+    try files.init(state_dir);
     fonts_db.findOwn(alloc, setsText); // Before the settings: a chosen typeface of the reader's is found by name
-    const ui = Fonts{ .title = &title, .small = &small, .caption = &caption, .hero = &hero, .cover = &cover_type };
-
-    var shared = app.App{
+    var shared = try setup.assemble(.{
         .alloc = alloc,
-        .screen = &screen,
-        .input = &input,
-        .body = &fallback_body,
-        .note_font = &note_font,
-        .footer = &footer,
-        .ui = ui,
-        .slots = slots,
-        .overlay = try alloc.alloc(u8, screen.pixels.len),
-        .lock_saved = try alloc.alloc(u8, screen.pixels.len),
-        .lock_cover = try alloc.alloc(u8, screen.pixels.len),
-        .state_dir = state_dir,
-        .library_path = argv[1],
-        .settings_path = settings_path,
-        .speed_path = speed_path,
-        .journal_path = journal_path,
-        .battery_path = battery_path,
-        // A different folder for EPUBs, for a demo or test run beside the real library
-        .documents = if (init.environ.getPosix("NOFACE_DOCUMENTS")) |d| d else paths.documents,
-        .dictionary_base = init.environ.getPosix("NOFACE_DICT_URL") orelse @import("kindle/dict_download.zig").default_base,
-        .journal = app.loadJournal(journal_path),
         .app_budget = &app_budget,
         .stb_budget = &stb_budget,
-        .speed = app.loadSpeed(speed_path),
-        .utc_offset = clock.utcOffset(),
-        .settings = app.loadSettings(settings_path),
-        .layout = .{ .margin_x = 100, .margin_top = 90, .margin_bottom = 150, .indent = 60, .reference = &reference },
-    };
+        .screen = &screen,
+        .input = &input,
+        .kit = &kit,
+        .data_dir = state_dir,
+        .files = &files,
+        .library_path = argv[1],
+    });
+    // A different folder for EPUBs, for a demo or test run beside the real library
+    shared.documents = if (init.environ.getPosix("NOFACE_DOCUMENTS")) |d| d else paths.documents;
+    shared.dictionary_base = init.environ.getPosix("NOFACE_DICT_URL") orelse @import("kindle/dict_download.zig").default_base;
+    shared.utc_offset = clock.utcOffset();
     shared.applySettings() catch {
         shared.settings = .{};
         try shared.applySettings();
     };
-    app.saveSettings(settings_path, shared.settings); // Older files come back in the current format
+    app.saveSettings(files.settings, shared.settings); // Older files come back in the current format
     // On, but the system's startup file isn't this version's (an older install's points
     // somewhere that no longer reads the settings): put the current one back, as the
     // reader agreed to when they turned it on

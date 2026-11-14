@@ -10,7 +10,6 @@ const app = @import("app.zig");
 const hwtcon = @import("kindle/hwtcon.zig");
 const input_mod = @import("kindle/input.zig");
 const Font = @import("gfx/font.zig").Font;
-const Fonts = @import("ui/fonts.zig").Fonts;
 const c_memory = @import("gfx/c_memory.zig");
 const memory = @import("base/memory.zig");
 const catalog = @import("model/catalog.zig");
@@ -32,6 +31,7 @@ const dictionary = @import("model/dictionary.zig");
 const FakeKindle = @import("fake_kindle.zig").FakeKindle;
 const wifi_saver = @import("kindle/wifi_saver.zig");
 const paths = @import("kindle/paths.zig");
+const setup = @import("setup.zig");
 const linux = @import("sys/calls.zig");
 
 const go_regular = @embedFile("testdata/fonts/Go-Regular.ttf");
@@ -259,48 +259,25 @@ fn playOn(kindle: Kindle, steps: []const Step) !Outcome {
     c_memory.use(&stb_budget);
     defer c_memory.useDefault();
 
-    var body = try Font.init(alloc, go_regular, 46, 1.35);
-    var note_font = try Font.init(alloc, go_regular, 36, 1.3);
-    var footer = try Font.init(alloc, go_regular, 28, 1.2);
-    var reference = try Font.init(alloc, go_regular, 28, 1.2);
-    var title = try Font.init(alloc, go_bold, 34, 1.2);
-    var small = try Font.init(alloc, go_regular, 34, 1.2);
-    var caption = try Font.init(alloc, go_regular, 26, 1.2);
-    var hero = try Font.init(alloc, go_bold, 56, 1.2);
-    var cover_type = try Font.init(alloc, go_bold, 36, 1.2);
-    var slots: [3]app.Slot = undefined;
-    for (&slots) |*s| s.* = .{ .buf = try alloc.alloc(u8, screen.pixels.len) };
-
-    var path_bufs: [4][160]u8 = undefined;
-    const settings_path = try std.fmt.bufPrintSentinel(&path_bufs[0], "{s}/" ++ paths.data.settings, .{dir}, 0);
-    const speed_path = try std.fmt.bufPrintSentinel(&path_bufs[1], "{s}/" ++ paths.data.speed, .{dir}, 0);
-    const journal_path = try std.fmt.bufPrintSentinel(&path_bufs[2], "{s}/" ++ paths.data.journal, .{dir}, 0);
-    const battery_path = try std.fmt.bufPrintSentinel(&path_bufs[3], "{s}/" ++ paths.data.battery, .{dir}, 0);
-    var a = app.App{
+    var kit = try setup.Kit.init(alloc, .{ .book = go_regular, .book_bold = go_bold, .ui = go_regular, .ui_bold = go_bold });
+    var files: setup.DataFiles = .{};
+    try files.init(dir);
+    var a = try setup.assemble(.{
         .alloc = alloc,
-        .screen = &screen,
-        .input = &input,
-        .body = &body,
-        .note_font = &note_font,
-        .footer = &footer,
-        .ui = Fonts{ .title = &title, .small = &small, .caption = &caption, .hero = &hero, .cover = &cover_type },
-        .slots = slots,
-        .overlay = try alloc.alloc(u8, screen.pixels.len),
-        .lock_saved = try alloc.alloc(u8, screen.pixels.len),
-        .lock_cover = try alloc.alloc(u8, screen.pixels.len),
-        .state_dir = dir,
-        .library_path = library_path,
-        .settings_path = settings_path,
-        .speed_path = speed_path,
-        .journal_path = journal_path,
-        .battery_path = battery_path,
-        .documents = dir,
         .app_budget = &budget,
         .stb_budget = &stb_budget,
-        .settings = .{},
-        .utc_offset = 0,
-        .layout = .{ .margin_x = 100, .margin_top = 90, .margin_bottom = 150, .indent = 60, .reference = &reference },
-    };
+        .screen = &screen,
+        .input = &input,
+        .kit = &kit,
+        .data_dir = dir,
+        .files = &files,
+        .library_path = library_path,
+    });
+    a.documents = dir;
+    // Each run starts as a new reader: nothing read before, every setting as shipped
+    a.settings = .{};
+    a.speed = .{};
+    a.journal = .{};
     // Every typeface the settings could pick is the test font: no Kindle fonts needed.
     // A real book is set in the Kindle's own, found by the app as it always does.
     if (kindle.real_book == null) for (&a.face_files) |*family| {

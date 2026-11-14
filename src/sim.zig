@@ -13,11 +13,10 @@ const std = @import("std");
 const app = @import("app.zig");
 const hwtcon = @import("kindle/hwtcon.zig");
 const input_mod = @import("kindle/input.zig");
-const Font = @import("gfx/font.zig").Font;
-const Fonts = @import("ui/fonts.zig").Fonts;
 const c_memory = @import("gfx/c_memory.zig");
 const memory = @import("base/memory.zig");
 const wifi_saver = @import("kindle/wifi_saver.zig");
+const setup = @import("setup.zig");
 const library_screen = @import("screens/library.zig");
 const FakeKindle = @import("fake_kindle.zig").FakeKindle;
 const sys = @import("sys/calls.zig");
@@ -65,43 +64,21 @@ pub fn main(init: std.process.Init.Minimal) !void {
     if (sys.pipe2(&pipe, .{ .CLOEXEC = true }) > std.math.maxInt(usize) - 4096) return error.NoPipe;
     var input = input_mod.Input{ .touch = -1, .power = -1, .width = width, .height = height, .x_max = width, .y_max = height, .remote = pipe[0] };
 
-    var body = try Font.init(a_alloc, go_regular, 46, 1.35);
-    var note_font = try Font.init(a_alloc, go_regular, 36, 1.3);
-    var footer = try Font.init(a_alloc, go_regular, 28, 1.2);
-    var reference = try Font.init(a_alloc, go_regular, 28, 1.2);
-    var title = try Font.init(a_alloc, go_bold, 34, 1.2);
-    var small = try Font.init(a_alloc, go_regular, 34, 1.2);
-    var caption = try Font.init(a_alloc, go_regular, 26, 1.2);
-    var hero = try Font.init(a_alloc, go_bold, 56, 1.2);
-    var cover_type = try Font.init(a_alloc, go_bold, 36, 1.2);
-    var slots: [3]app.Slot = undefined;
-    for (&slots) |*s| s.* = .{ .buf = try a_alloc.alloc(u8, screen.pixels.len) };
-
-    var a = app.App{
+    var kit = try setup.Kit.init(a_alloc, .{ .book = go_regular, .book_bold = go_bold, .ui = go_regular, .ui_bold = go_bold });
+    var files: setup.DataFiles = .{};
+    try files.init(data);
+    var a = try setup.assemble(.{
         .alloc = a_alloc,
-        .screen = &screen,
-        .input = &input,
-        .body = &body,
-        .note_font = &note_font,
-        .footer = &footer,
-        .ui = Fonts{ .title = &title, .small = &small, .caption = &caption, .hero = &hero, .cover = &cover_type },
-        .slots = slots,
-        .overlay = try a_alloc.alloc(u8, screen.pixels.len),
-        .lock_saved = try a_alloc.alloc(u8, screen.pixels.len),
-        .lock_cover = try a_alloc.alloc(u8, screen.pixels.len),
-        .state_dir = data,
-        .library_path = data ++ "/library.tsv",
-        .settings_path = data ++ "/settings",
-        .speed_path = data ++ "/speed",
-        .journal_path = data ++ "/journal",
-        .battery_path = data ++ "/battery",
-        .documents = books,
         .app_budget = &app_budget,
         .stb_budget = &stb_budget,
-        .settings = app.loadSettings(data ++ "/settings"),
-        .utc_offset = 0,
-        .layout = .{ .margin_x = 100, .margin_top = 90, .margin_bottom = 150, .indent = 60, .reference = &reference },
-    };
+        .screen = &screen,
+        .input = &input,
+        .kit = &kit,
+        .data_dir = data,
+        .files = &files,
+        .library_path = data ++ "/library.tsv",
+    });
+    a.documents = books;
     // Every typeface is the Go font: the Kindle's own aren't on a computer
     for (&a.face_files) |*family| family.* = .{ go_regular, go_bold, go_regular, go_bold };
     try a.applySettings();

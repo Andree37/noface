@@ -30,6 +30,7 @@ test {
     _ = @import("sys/process.zig");
     _ = @import("app.zig");
     _ = @import("kindle/paths.zig");
+    _ = @import("setup.zig");
     _ = @import("model/stats.zig");
     _ = @import("model/search.zig");
     _ = @import("model/battery.zig");

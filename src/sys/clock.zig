@@ -1,5 +1,6 @@
 //! Local time for the clocks noface draws.
 const std = @import("std");
+const assert = std.debug.assert;
 const process = @import("process.zig");
 
 /// Turns date's "+0100" into seconds.
@@ -8,21 +9,31 @@ pub fn parse_offset(zone: []const u8) i64 {
     const hours = std.fmt.parseInt(i64, zone[1..3], 10) catch return 0;
     const minutes = std.fmt.parseInt(i64, zone[3..5], 10) catch return 0;
     const seconds = hours * 3600 + minutes * 60;
+    // Two digits each way: whatever date said, the offset is whole minutes within days
+    assert(@mod(seconds, 60) == 0);
+    assert(@abs(seconds) <= 99 * 3600 + 99 * 60);
     return if (zone[0] == '-') -seconds else seconds;
 }
 
 /// The device's offset from UTC, so the clock needs no process per minute.
 pub fn utc_offset() i64 {
     const argv = [_:null]?[*:0]const u8{ "/bin/date", "+%z" };
-    var buf: [16]u8 = undefined;
-    const n = process.run(&argv, &buf) orelse return 0;
-    return parse_offset(std.mem.trim(u8, buf[0..n], " \n"));
+    var buffer: [16]u8 = undefined;
+    const printed = process.run(&argv, &buffer) orelse return 0;
+    assert(printed <= buffer.len);
+    return parse_offset(std.mem.trim(u8, buffer[0..printed], " \n"));
 }
 
 /// "HH:MM" for a Unix time.
-pub fn format_clock(buf: []u8, unix: i64, offset: i64) []const u8 {
-    const minutes: u32 = @intCast(@divFloor(@mod(unix + offset, 86400), 60));
-    return std.fmt.bufPrint(buf, "{d:0>2}:{d:0>2}", .{ minutes / 60, minutes % 60 }) catch "";
+pub fn format_clock(buffer: []u8, unix: i64, offset: i64) []const u8 {
+    assert(buffer.len >= "HH:MM".len);
+    const minutes: u32 = @intCast(@divFloor(@mod(unix + offset, std.time.s_per_day), 60));
+    assert(minutes < 24 * 60);
+    const hours_minutes = .{ minutes / 60, minutes % 60 };
+    // Can't fail: the buffer holds "HH:MM", as asserted
+    const text = std.fmt.bufPrint(buffer, "{d:0>2}:{d:0>2}", hours_minutes) catch return "";
+    assert(text.len == "HH:MM".len);
+    return text;
 }
 
 test "clock formats local time" {

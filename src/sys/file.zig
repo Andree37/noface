@@ -1,38 +1,54 @@
 //! Read-only memory mapping of a file, using raw Linux syscalls.
 const std = @import("std");
+const assert = std.debug.assert;
 const linux = @import("calls.zig");
+const failed = @import("os.zig").failed;
 
 pub fn map(path: [*:0]const u8) ![]const u8 {
+    assert(path[0] != 0);
     const fd = linux.open(path, .{ .ACCMODE = .RDONLY }, 0);
-    if (fd > std.math.maxInt(usize) - 4096) return error.OpenFailed;
+    if (failed(fd)) return error.OpenFailed;
     defer _ = linux.close(@intCast(fd)); // The mapping outlives it
-    var end: i64 = 0;
-    _ = linux.llseek(@intCast(fd), 0, &end, 2); // SEEK_END
+    var end: linux.off_t = 0;
+    _ = linux.llseek(@intCast(fd), 0, &end, linux.SEEK.END); // Failed: `end` stays 0, empty
     const size: usize = @intCast(end);
     if (size == 0) return error.EmptyFile;
-    const addr = linux.mmap(null, size, .{ .READ = true }, .{ .TYPE = .PRIVATE }, @intCast(fd), 0);
-    if (addr > std.math.maxInt(usize) - 4096) return error.MmapFailed;
-    return @as([*]const u8, @ptrFromInt(addr))[0..size];
+    const address = linux.mmap(
+        null,
+        size,
+        .{ .READ = true },
+        .{ .TYPE = .PRIVATE },
+        @intCast(fd),
+        0,
+    );
+    if (failed(address)) return error.MmapFailed;
+    assert(std.mem.isAligned(address, std.heap.page_size_min)); // Mappings start on a page
+    return @as([*]const u8, @ptrFromInt(address))[0..size];
 }
 
 pub fn unmap(data: []const u8) void {
-    _ = linux.munmap(data.ptr, data.len);
+    assert(data.len > 0); // `map` never maps an empty file
+    const rc = linux.munmap(data.ptr, data.len);
+    assert(!failed(rc)); // It was mapped whole, by `map`
 }
 
 /// Whether `path` names something that can be read.
 pub fn exists(path: [*:0]const u8) bool {
+    assert(path[0] != 0);
     const fd = linux.open(path, .{ .ACCMODE = .RDONLY }, 0);
-    if (fd > std.math.maxInt(usize) - 4096) return false;
-    _ = linux.close(@intCast(fd));
+    if (failed(fd)) return false;
+    _ = linux.close(@intCast(fd)); // Only opened to see that it could be
     return true;
 }
 
 /// How many bytes `path` holds now, or 0 when it can't be opened.
 pub fn size_of(path: [*:0]const u8) u64 {
+    assert(path[0] != 0);
     const fd = linux.open(path, .{ .ACCMODE = .RDONLY }, 0);
-    if (fd > std.math.maxInt(usize) - 4096) return 0;
+    if (failed(fd)) return 0;
     defer _ = linux.close(@intCast(fd));
     var end: linux.off_t = 0;
-    if (linux.llseek(@intCast(fd), 0, &end, linux.SEEK.END) > std.math.maxInt(usize) - 4096) return 0;
+    if (failed(linux.llseek(@intCast(fd), 0, &end, linux.SEEK.END))) return 0;
+    assert(end >= 0); // A file's end is never before its start
     return @intCast(end);
 }

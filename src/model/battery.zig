@@ -2,6 +2,7 @@
 //! level each time it changes; the time between two notes, both unplugged and the level
 //! not risen, is real use (reading, and asleep in between). Plain data, no drawing.
 const std = @import("std");
+const assert = std.debug.assert;
 
 pub const Sample = struct { time: u64, level: u32, plugged: bool };
 
@@ -10,6 +11,20 @@ pub const window_s: u64 = 14 * 86400;
 /// Less than this to go on, and the estimate would be noise.
 const min_span_s: u64 = 12 * 3600;
 const min_drop = 3;
+const level_max = 100;
+/// The longest line `format_line` writes: a u64 time, a u32 level, a flag, two spaces and
+/// a newline.
+const line_size_max = 20 + 1 + 10 + 1 + 1 + 1;
+/// The longest text `describe` writes: "About " and " weeks" around a u64.
+const describe_size_max = "About ".len + 20 + " weeks".len;
+
+comptime {
+    assert(min_span_s < window_s);
+    assert(min_drop > 0);
+    assert(min_drop < level_max);
+    assert(line_size_max <= 40); // The buffer kindle/battery_log.zig writes a line into
+    assert(describe_size_max <= 32); // The buffer screens/battery.zig describes into
+}
 
 /// "1793990000 87 u": time, level, plugged ("p") or unplugged ("u").
 pub fn parse_line(line: []const u8) ?Sample {
@@ -17,12 +32,21 @@ pub fn parse_line(line: []const u8) ?Sample {
     const time = std.fmt.parseInt(u64, it.next() orelse return null, 10) catch return null;
     const level = std.fmt.parseInt(u32, it.next() orelse return null, 10) catch return null;
     const plug = it.next() orelse return null;
-    if (level > 100) return null;
-    return .{ .time = time, .level = level, .plugged = std.mem.eql(u8, plug, "p") };
+    if (level > level_max) return null;
+    const sample: Sample = .{ .time = time, .level = level, .plugged = std.mem.eql(u8, plug, "p") };
+    assert(sample.level <= level_max);
+    assert(sample.time == time);
+    return sample;
 }
 
 pub fn format_line(buf: []u8, s: Sample) []const u8 {
-    return std.fmt.bufPrint(buf, "{d} {d} {s}\n", .{ s.time, s.level, if (s.plugged) "p" else "u" }) catch "";
+    assert(buf.len >= line_size_max);
+    const plug = if (s.plugged) "p" else "u";
+    const line = std.fmt.bufPrint(buf, "{d} {d} {s}\n", .{ s.time, s.level, plug }) catch "";
+    // The buffer holds the longest line, so the line is always written whole.
+    assert(line.len > 0);
+    assert(line[line.len - 1] == '\n');
+    return line;
 }
 
 /// Seconds the battery has left at `level`, at the drain seen in `log` (oldest first).
@@ -38,10 +62,14 @@ pub fn seconds_left(log: []const Sample, now: u64, level: u32) ?u64 {
         if (!plausible(a.time, now) or !plausible(b.time, now)) continue;
         if (a.time < since or b.time <= a.time) continue;
         if (a.plugged or b.plugged or b.level > a.level) continue; // Charged in between
+        assert(b.time > a.time);
+        assert(b.level <= a.level);
         drop += a.level - b.level;
         span += b.time - a.time;
     }
     if (span < min_span_s or drop < min_drop) return null;
+    assert(drop >= min_drop);
+    assert(span >= min_span_s);
     return @as(u64, level) * span / drop;
 }
 
@@ -52,9 +80,11 @@ pub fn plausible(time: u64, now: u64) bool {
 
 /// "About 2 weeks", "About 5 days", "About 20 hours".
 pub fn describe(buf: []u8, seconds: u64) []const u8 {
+    assert(buf.len >= describe_size_max);
     const hours = seconds / 3600;
     const days = (seconds + 43200) / 86400;
     const weeks = (seconds + 3 * 86400) / (7 * 86400);
+    assert(days >= hours / 24);
     if (hours < 2) return "Less than 2 hours";
     if (hours < 36) return std.fmt.bufPrint(buf, "About {d} hours", .{hours}) catch "";
     if (days < 14) return std.fmt.bufPrint(buf, "About {d} days", .{days}) catch "";
@@ -142,7 +172,8 @@ pub const Usage = struct {
     days: u32, // Whole days measured
     per_day: f64, // Average drop a day, in percent
     hours_read: f64, // Average reading a day
-    per_hour_reading: ?f64, // Null when every day had the same reading, so it can't be told apart
+    // Null when every day had the same reading, so it can't be told apart
+    per_hour_reading: ?f64,
     per_day_idle: ?f64,
 };
 
@@ -152,14 +183,23 @@ fn level_at(log: []const Sample, t: u64) ?f64 {
     for (log[0..log.len -| 1], log[1..]) |a, b| {
         if (a.time > t or b.time < t) continue;
         if (a.plugged or b.plugged or b.level > a.level or b.time <= a.time) return null;
-        const f = @as(f64, @floatFromInt(t - a.time)) / @as(f64, @floatFromInt(b.time - a.time));
-        return @as(f64, @floatFromInt(a.level)) - f * @as(f64, @floatFromInt(a.level - b.level));
+        assert(a.time <= t);
+        assert(t <= b.time);
+        const elapsed: f64 = @floatFromInt(t - a.time);
+        const between: f64 = @floatFromInt(b.time - a.time);
+        const fraction = elapsed / between;
+        assert(fraction >= 0);
+        assert(fraction <= 1);
+        const level_from: f64 = @floatFromInt(a.level);
+        const level_drop: f64 = @floatFromInt(a.level - b.level);
+        return level_from - fraction * level_drop;
     }
     return null;
 }
 
 /// Unplugged the whole of [from, to]: no sample in it says plugged.
 fn off_charger_through(log: []const Sample, from: u64, to: u64) bool {
+    assert(from < to);
     for (log) |s| {
         if (s.time >= from and s.time <= to and s.plugged) return false;
     }
@@ -179,6 +219,7 @@ pub fn usage(log: []const Sample, first_day: i32, read: []const u32, utc_offset:
         if (start_signed < 0) continue;
         const start: u64 = @intCast(start_signed);
         const end = start + 86400;
+        assert(end > start);
         if (!off_charger_through(log, start, end)) continue;
         const from = level_at(log, start) orelse continue;
         const to = level_at(log, end) orelse continue;
@@ -190,15 +231,24 @@ pub fn usage(log: []const Sample, first_day: i32, read: []const u32, utc_offset:
         sxx += x * x;
         sxy += x * y;
     }
+    assert(n <= read.len);
     if (n == 0) return null;
     const nf: f64 = @floatFromInt(n);
     const spread = nf * sxx - sx * sx;
-    var out = Usage{ .days = n, .per_day = sy / nf, .hours_read = sx / nf, .per_hour_reading = null, .per_day_idle = null };
+    var out = Usage{
+        .days = n,
+        .per_day = sy / nf,
+        .hours_read = sx / nf,
+        .per_hour_reading = null,
+        .per_day_idle = null,
+    };
     if (n >= 3 and spread > 1e-6) {
         const slope = (nf * sxy - sx * sy) / spread;
         out.per_hour_reading = slope;
         out.per_day_idle = (sy - slope * sx) / nf;
     }
+    assert(out.days > 0);
+    assert((out.per_hour_reading == null) == (out.per_day_idle == null));
     return out;
 }
 

@@ -12,7 +12,8 @@ pub const Entry = struct {
 
 const method_stored = 0;
 const method_deflated = 8;
-const size_max = 64 << 20; // Larger than any file a book should carry
+/// Larger than any file a book should carry.
+pub const size_max = 64 << 20;
 /// Offsets in a zip without zip64 are 32 bits: an archive past them isn't one noface reads.
 const archive_size_max = std.math.maxInt(u32);
 

@@ -267,7 +267,6 @@ comment_style 1 src/sys/calls.zig
 loop_unbounded 1 src/sys/calls.zig
 usize_used 7 src/sys/calls.zig
 line_length 3 src/sys/calls_portable.zig
-function_name 2 src/sys/calls_portable.zig
 assertion_density 60 src/sys/calls_portable.zig
 comment_style 1 src/sys/calls_portable.zig
 usize_used 34 src/sys/calls_portable.zig

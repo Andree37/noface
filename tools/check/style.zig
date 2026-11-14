@@ -20,7 +20,8 @@ pub const Rule = enum {
     /// A function over 70 lines, signature to closing brace: it must fit on a screen.
     function_length,
     /// A function named in camelCase: functions are snake_case, as variables and files
-    /// are. A function returning a type keeps TitleCase, as Zig has it.
+    /// are. A function returning a type keeps TitleCase, as Zig has it, and one copying
+    /// a C macro keeps its capitals.
     function_name,
     /// Fewer than two assertions per function, counted per file: the shortfall.
     assertion_density,
@@ -117,11 +118,16 @@ fn columns(text: []const u8) u32 {
     return @intCast(count);
 }
 
+/// Whether a function name is snake_case, or all capitals: a C macro's name kept as C
+/// has it (`IFEXITED`), so code written against the system's API reads the same.
 fn is_snake_case(name: []const u8) bool {
+    var lower = false;
+    var upper = false;
     for (name) |c| {
-        if (std.ascii.isUpper(c)) return false;
+        if (std.ascii.isUpper(c)) upper = true;
+        if (std.ascii.isLower(c)) lower = true;
     }
-    return true;
+    return !(upper and lower);
 }
 
 /// The name of the function a line declares, if it declares one.
@@ -452,6 +458,7 @@ test "long lines and camelCase functions count; type functions keep their case" 
     const source =
         \\fn goodName() void {}
         \\fn good_name() void {}
+        \\fn IFEXITED() void {}
         \\fn Step(comptime T: type) type {
         \\    return T;
         \\}

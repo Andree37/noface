@@ -217,11 +217,12 @@ fn pictureLeft(l: Layout, line_width: f32, w: i32) u32 {
 
 /// Lay out one page and return where the next page starts.
 /// With `page` null this only measures, which is how the book gets paginated.
+/// Lays out one page from `start`, drawing it into `maybe_page` when given (else only
+/// measuring, to find where pages break), and returns where the next page starts.
 pub fn layoutPage(font: *Font, maybe_page: ?Page, geometry: Page, paras: []const Paragraph, start: book_model.Pos, l: Layout, hits: ?*Hits) !book_model.Pos {
     if (maybe_page) |p| @memset(p.buf, 0xff);
-    const page = geometry;
-    const line_width: f32 = @floatFromInt(@as(i32, @intCast(page.width)) - 2 * l.margin_x);
-    const bottom = @as(i32, @intCast(page.height)) - l.margin_bottom;
+    const line_width: f32 = @floatFromInt(@as(i32, @intCast(geometry.width)) - 2 * l.margin_x);
+    const bottom = @as(i32, @intCast(geometry.height)) - l.margin_bottom;
     var top = l.margin_top; // Top of the next line
     var pos = start;
 
@@ -231,186 +232,235 @@ pub fn layoutPage(font: *Font, maybe_page: ?Page, geometry: Page, paras: []const
     }) {
         if (atStop(l, pos.para, pos.byte)) return pos;
         const para = paras[pos.para];
-        if (para.note) continue;
+        if (para.note) continue; // Notes open in a panel, not in the text
         if (para.image) |img| {
-            const room: f32 = @floatFromInt(bottom - l.margin_top);
-            const size = imageSize(img, line_width, room);
-            // A picture never splits: it starts the next page unless it opens this one.
+            const size = imageSize(img, line_width, @floatFromInt(bottom - l.margin_top));
+            // A picture never splits: it starts the next page unless it opens this one
             if (top + size.h > bottom + font.ascent and top > l.margin_top) return .{ .para = pos.para, .byte = 0 };
-            if (maybe_page) |p| {
-                const x = pictureLeft(l, line_width, size.w);
-                if (l.images) |im| im.draw(im.ctx, p, img, x, @intCast(top), @intCast(size.w), @intCast(size.h));
-                if (hits) |h| h.addPicture(.{ .x = @intCast(x), .y = @intCast(top), .w = size.w, .h = size.h, .target = @intCast(pos.para) });
-            }
+            if (maybe_page) |p| drawPicture(p, l, img, line_width, size, top, @intCast(pos.para), hits);
             top += size.h + @divTrunc(font.line_height, 2);
             continue;
         }
-        const text = para.text;
-        const links = para.links;
         const look = para.look;
         const pf = try face(l, font, look.bold, look.italic, look.size); // Sets the line height
+        const style = ParagraphStyle.of(look, l);
         const space = try pf.measure(" ");
-        // Headings and centred lines aren't indented, and only body text is justified.
-        const plain = look.size == book_model.normal_size and (look.alignment == .auto or look.alignment == .justify or look.alignment == .left);
-        const justify = switch (look.alignment) {
-            .auto => l.justify and look.size == book_model.normal_size,
-            .justify => true,
-            else => false,
-        };
+        const text = para.text;
         var i = pos.byte;
-        var indent: f32 = if (i == 0 and plain) l.indent else 0;
+        var indent: f32 = if (i == 0 and style.plain) l.indent else 0;
         if (i == 0 and top > l.margin_top) top += spaceLines(look.space_before, font);
 
         while (i < text.len) {
             while (i < text.len and (text[i] == ' ' or text[i] == '\n')) i += 1;
             if (i >= text.len) break;
             if (atStop(l, pos.para, i)) return .{ .para = pos.para, .byte = i };
-            // In the stop's paragraph, a line goes no further than the stop
-            const line_limit = if (l.stop) |st| (if (st.para == pos.para) @max(st.byte, i + 1) else text.len) else text.len;
-
-            var words: [max_words][]const u8 = undefined;
-            var widths: [max_words]f32 = undefined;
-            var fonts: [max_words]*Font = undefined;
-            var starts: [max_words]?*Font = undefined; // Bold word starts' face, per word
-            var n: usize = 0;
-            var used: f32 = 0;
-            var j = i;
-            var line_ends_para = false;
-            var hyphen_end = false; // The last word is the first part of a broken word
             const avail = line_width - indent;
-
-            while (n < max_words) {
-                if (j >= line_limit) {
-                    line_ends_para = true; // Ends early at the stop: set like a paragraph's last line
-                    break;
-                }
-                var end = j;
-                while (end < line_limit and end < text.len and text[end] != ' ' and text[end] != '\n') end += 1;
-                const word = text[j..end];
-                const wf = try wordFace(l, font, para, j);
-                const sf = try startFace(l, font, para, wf, text, j);
-                const w = try wordWidth(wf, sf, word);
-                if (n == 0 and w > avail) {
-                    // Wider than a whole line, as with a URL or unspaced CJK: split it.
-                    const part = word[0..try wf.fit(word, avail)];
-                    words[0] = part;
-                    widths[0] = try wf.measure(part);
-                    fonts[0] = wf;
-                    starts[0] = null;
-                    n = 1;
-                    j += part.len;
-                    break;
-                }
-                const gap: f32 = if (n == 0) 0 else space;
-                if (n > 0 and used + gap + w > avail) {
-                    // Rather than leave a hole, take as much of the word as fits.
-                    const room = avail - used - gap;
-                    if (plain and room > space) {
-                        var found: [24]hyphen.Break = undefined;
-                        const breaks = hyphen.breaks(l.hyphenator, word, &found);
-                        var k = breaks.len;
-                        while (k > 0) {
-                            k -= 1;
-                            const b = breaks[k];
-                            const head_w = try wordWidth(wf, sf, word[0..b.at]) + if (b.hyphen) try wf.measure("-") else 0;
-                            if (head_w > room) continue;
-                            words[n] = word[0..b.at];
-                            widths[n] = head_w;
-                            fonts[n] = wf;
-                            starts[n] = sf;
-                            n += 1;
-                            j += b.at;
-                            hyphen_end = b.hyphen;
-                            break;
-                        }
-                    }
-                    break;
-                }
-                words[n] = word;
-                widths[n] = w;
-                fonts[n] = wf;
-                starts[n] = sf;
-                n += 1;
-                used += gap + w;
-                j = end;
-                if (j >= text.len or text[j] == '\n') {
-                    line_ends_para = true;
-                    if (j < text.len) j += 1;
-                    break;
-                }
-                while (j < text.len and text[j] == ' ') j += 1;
-                if (j >= text.len) {
-                    line_ends_para = true;
-                    break;
-                }
-            }
-
-            const y = top + pf.ascent; // Baseline
-            if (y > bottom) return .{ .para = pos.para, .byte = i };
-
-            var word_total: f32 = 0;
-            for (widths[0..n]) |w| word_total += w;
-            var gap = space;
-            if (justify and !line_ends_para and n > 1) {
-                gap = @min((avail - word_total) / @as(f32, @floatFromInt(n - 1)), space * 2.5);
-            }
-            const line_used = word_total + gap * @as(f32, @floatFromInt(@max(n, 1) - 1));
-            var x = @as(f32, @floatFromInt(l.margin_x)) + indent + switch (look.alignment) {
-                .center => @max(avail - line_used, 0) / 2,
-                .right => @max(avail - line_used, 0),
+            const line = try fillLine(l, font, para, i, lineLimit(l, pos.para, i, text.len), avail, style.plain, space);
+            const baseline = top + pf.ascent;
+            if (baseline > bottom) return .{ .para = pos.para, .byte = i }; // The page is full
+            // Justified lines spread their words, up to a limit; others keep a space
+            const gap = if (style.justify and !line.ends_para and line.n > 1)
+                @min((avail - line.width()) / @as(f32, @floatFromInt(line.n - 1)), space * 2.5)
+            else
+                space;
+            const used = line.width() + gap * @as(f32, @floatFromInt(@max(line.n, 1) - 1));
+            const left = @as(f32, @floatFromInt(l.margin_x)) + indent + switch (look.alignment) {
+                .center => @max(avail - used, 0) / 2,
+                .right => @max(avail - used, 0),
                 else => 0,
             };
-            for (words[0..n], widths[0..n], fonts[0..n], starts[0..n], 0..) |word, w, wf, sf, word_index| {
-                var shrink: f32 = 0; // A small mark takes less room than was measured
-                if (maybe_page) |p| {
-                    const word_start = @intFromPtr(word.ptr) - @intFromPtr(text.ptr);
-                    if (isMarked(l.marks, pos.para, word_start, word_start + word.len)) {
-                        // Reaches into the gap, so a marked phrase reads as one band.
-                        const band: u32 = @intFromFloat(w + gap);
-                        p.fillRect(@intFromFloat(x), @intCast(y - pf.ascent + 4), band, @intCast(pf.line_height - 8), mark_shade);
-                    }
-                    if (hits) |h| h.addWord(.{
-                        .x = @intFromFloat(x),
-                        .y = y - pf.ascent,
-                        .w = @intFromFloat(w),
-                        .h = pf.line_height,
-                        .para = @intCast(pos.para),
-                        .start = @intCast(word_start),
-                        .end = @intCast(word_start + word.len),
-                    });
-                    const reference = findReference(links, paras, word_start, word.len);
-                    if (reference) |r| {
-                        // Raised and small, like a printed note mark.
-                        const small = l.reference orelse wf;
-                        const a = @max(r.start, word_start) - word_start;
-                        const b = @min(r.end, word_start + word.len) - word_start;
-                        try wf.draw(p, x, y, word[0..a]);
-                        const mark_x = x + try wf.measure(word[0..a]);
-                        try small.draw(p, mark_x, y - @divTrunc(pf.line_height, 3), word[a..b]);
-                        const mark_w = try small.measure(word[a..b]);
-                        try wf.draw(p, mark_x + mark_w, y, word[b..]);
-                        shrink = try wf.measure(word[a..b]) - mark_w;
-                        if (hits) |h| h.add(.{
-                            .x = @intFromFloat(mark_x),
-                            .y = y - pf.ascent,
-                            .w = @intFromFloat(@max(mark_w, 1)),
-                            .h = pf.line_height,
-                            .target = r.target,
-                        });
-                    } else {
-                        try drawWord(p, wf, sf, x, y, word);
-                    }
-                    if (hyphen_end and word_index + 1 == n) try wf.draw(p, x + try wordWidth(wf, sf, word), y, "-");
-                }
-                x += w + gap - shrink;
-            }
+            if (maybe_page) |p| try drawLine(p, l, paras, pos.para, &line, left, baseline, gap, pf, hits);
             top += pf.line_height;
-            i = j;
-            indent = if (line_ends_para and plain) l.indent else 0;
+            i = line.next;
+            indent = if (line.ends_para and style.plain) l.indent else 0;
         }
         top += spaceLines(look.space_after, font);
     }
     return pos;
+}
+
+/// How a paragraph's lines are set: `plain` body text is indented and may be
+/// hyphenated; `justify`ed lines are spread to the margins.
+const ParagraphStyle = struct {
+    plain: bool,
+    justify: bool,
+
+    fn of(look: book_model.Look, l: Layout) ParagraphStyle {
+        const body_size = look.size == book_model.normal_size;
+        return .{
+            // Headings and centred lines aren't indented
+            .plain = body_size and (look.alignment == .auto or look.alignment == .justify or look.alignment == .left),
+            // Only body text is justified, unless the book asks for it
+            .justify = switch (look.alignment) {
+                .auto => l.justify and body_size,
+                .justify => true,
+                else => false,
+            },
+        };
+    }
+};
+
+/// Where a line starting at byte `i` must end: the paragraph's end, or in the stop's
+/// paragraph, the stop.
+fn lineLimit(l: Layout, para: usize, i: usize, text_len: usize) usize {
+    const st = l.stop orelse return text_len;
+    return if (st.para == para) @max(st.byte, i + 1) else text_len;
+}
+
+/// The words of one line, as measured, and where the next line starts.
+const Line = struct {
+    words: [max_words][]const u8 = undefined,
+    widths: [max_words]f32 = undefined,
+    fonts: [max_words]*Font = undefined,
+    starts: [max_words]?*Font = undefined, // Bold word starts' face, per word
+    n: usize = 0,
+    next: usize = 0, // Where the next line starts, in the paragraph's text
+    ends_para: bool = false, // Set like a paragraph's last line: not spread
+    hyphen_end: bool = false, // The last word is the first part of a broken word
+
+    fn add(line: *Line, word: []const u8, w: f32, wf: *Font, sf: ?*Font) void {
+        line.words[line.n] = word;
+        line.widths[line.n] = w;
+        line.fonts[line.n] = wf;
+        line.starts[line.n] = sf;
+        line.n += 1;
+    }
+
+    fn width(line: *const Line) f32 {
+        var total: f32 = 0;
+        for (line.widths[0..line.n]) |w| total += w;
+        return total;
+    }
+};
+
+/// The words from byte `i` that fit in `avail`. The word that doesn't fit is
+/// hyphenated if part of it fits (in plain text), else left for the next line; a
+/// word wider than a whole line (a URL, unspaced CJK) is cut.
+fn fillLine(l: Layout, font: *Font, para: Paragraph, i: usize, limit: usize, avail: f32, plain: bool, space: f32) !Line {
+    const text = para.text;
+    var line = Line{};
+    var used: f32 = 0;
+    var j = i;
+    while (line.n < max_words) {
+        if (j >= limit) {
+            line.ends_para = true; // Ends early at the stop
+            break;
+        }
+        var end = j;
+        while (end < limit and end < text.len and text[end] != ' ' and text[end] != '\n') end += 1;
+        const word = text[j..end];
+        const wf = try wordFace(l, font, para, j);
+        const sf = try startFace(l, font, para, wf, text, j);
+        const w = try wordWidth(wf, sf, word);
+        if (line.n == 0 and w > avail) {
+            const part = word[0..try wf.fit(word, avail)];
+            line.add(part, try wf.measure(part), wf, null);
+            j += part.len;
+            break;
+        }
+        const gap: f32 = if (line.n == 0) 0 else space;
+        if (line.n > 0 and used + gap + w > avail) {
+            // Rather than leave a hole, take as much of the word as fits
+            const room = avail - used - gap;
+            if (plain and room > space) {
+                if (try hyphenated(l, wf, sf, word, room)) |b| {
+                    line.add(word[0..b.at], b.width, wf, sf);
+                    j += b.at;
+                    line.hyphen_end = b.hyphen;
+                }
+            }
+            break;
+        }
+        line.add(word, w, wf, sf);
+        used += gap + w;
+        j = end;
+        if (j >= text.len or text[j] == '\n') {
+            line.ends_para = true;
+            if (j < text.len) j += 1;
+            break;
+        }
+        while (j < text.len and text[j] == ' ') j += 1;
+        if (j >= text.len) {
+            line.ends_para = true;
+            break;
+        }
+    }
+    line.next = j;
+    return line;
+}
+
+/// The longest first part of `word` (by its hyphenation points) that fits in `room`,
+/// with its width, the hyphen included where one is drawn.
+fn hyphenated(l: Layout, wf: *Font, sf: ?*Font, word: []const u8, room: f32) !?struct { at: usize, hyphen: bool, width: f32 } {
+    var found: [24]hyphen.Break = undefined;
+    const breaks = hyphen.breaks(l.hyphenator, word, &found);
+    var k = breaks.len;
+    while (k > 0) {
+        k -= 1;
+        const b = breaks[k];
+        const w = try wordWidth(wf, sf, word[0..b.at]) + if (b.hyphen) try wf.measure("-") else 0;
+        if (w <= room) return .{ .at = b.at, .hyphen = b.hyphen, .width = w };
+    }
+    return null;
+}
+
+/// Draws a line's words from `left`, `gap` apart: a highlight's shading under them,
+/// their tap areas, note marks raised and small, and the hyphen of a broken word.
+fn drawLine(p: Page, l: Layout, paras: []const Paragraph, para_index: usize, line: *const Line, left: f32, baseline: i32, gap: f32, pf: *Font, hits: ?*Hits) !void {
+    const para = paras[para_index];
+    var x = left;
+    for (line.words[0..line.n], line.widths[0..line.n], line.fonts[0..line.n], line.starts[0..line.n], 0..) |word, w, wf, sf, k| {
+        const word_start = @intFromPtr(word.ptr) - @intFromPtr(para.text.ptr);
+        const line_top = baseline - pf.ascent;
+        if (isMarked(l.marks, para_index, word_start, word_start + word.len)) {
+            // Reaches into the gap, so a marked phrase reads as one band
+            p.fillRect(@intFromFloat(x), @intCast(line_top + 4), @intFromFloat(w + gap), @intCast(pf.line_height - 8), mark_shade);
+        }
+        if (hits) |h| h.addWord(.{
+            .x = @intFromFloat(x),
+            .y = line_top,
+            .w = @intFromFloat(w),
+            .h = pf.line_height,
+            .para = @intCast(para_index),
+            .start = @intCast(word_start),
+            .end = @intCast(word_start + word.len),
+        });
+        var shrink: f32 = 0; // A small mark takes less room than was measured
+        if (findReference(para.links, paras, word_start, word.len)) |r| {
+            shrink = try drawWithMark(p, l, wf, pf, word, word_start, r, x, baseline, hits);
+        } else {
+            try drawWord(p, wf, sf, x, baseline, word);
+        }
+        if (line.hyphen_end and k + 1 == line.n) try wf.draw(p, x + try wordWidth(wf, sf, word), baseline, "-");
+        x += w + gap - shrink;
+    }
+}
+
+/// A word holding a note's reference: the mark raised and small, like a printed one,
+/// and tappable. Returns how much narrower the mark is than measured.
+fn drawWithMark(p: Page, l: Layout, wf: *Font, pf: *Font, word: []const u8, word_start: usize, r: Link, x: f32, baseline: i32, hits: ?*Hits) !f32 {
+    const small = l.reference orelse wf;
+    const a = @max(r.start, word_start) - word_start;
+    const b = @min(r.end, word_start + word.len) - word_start;
+    try wf.draw(p, x, baseline, word[0..a]);
+    const mark_x = x + try wf.measure(word[0..a]);
+    try small.draw(p, mark_x, baseline - @divTrunc(pf.line_height, 3), word[a..b]);
+    const mark_w = try small.measure(word[a..b]);
+    try wf.draw(p, mark_x + mark_w, baseline, word[b..]);
+    if (hits) |h| h.add(.{
+        .x = @intFromFloat(mark_x),
+        .y = baseline - pf.ascent,
+        .w = @intFromFloat(@max(mark_w, 1)),
+        .h = pf.line_height,
+        .target = r.target,
+    });
+    return try wf.measure(word[a..b]) - mark_w;
+}
+
+fn drawPicture(p: Page, l: Layout, img: book_model.Image, line_width: f32, size: anytype, top: i32, para_index: u32, hits: ?*Hits) void {
+    const x = pictureLeft(l, line_width, size.w);
+    if (l.images) |im| im.draw(im.ctx, p, img, x, @intCast(top), @intCast(size.w), @intCast(size.h));
+    if (hits) |h| h.addPicture(.{ .x = @intCast(x), .y = @intCast(top), .w = size.w, .h = size.h, .target = para_index });
 }
 
 pub fn renderPage(font: *Font, page: Page, paras: []const Paragraph, start: book_model.Pos, l: Layout, hits: ?*Hits) !book_model.Pos {

@@ -4,6 +4,9 @@ const assert = std.debug.assert;
 const check = @import("../base/check.zig");
 const file = @import("../sys/file.zig");
 const Page = @import("page.zig").Page;
+const decoded = @import("decoded.zig");
+const jpeg_decoder = @import("jpeg.zig");
+const png_decoder = @import("png.zig");
 
 extern fn img_gray(data: [*]const u8, len: c_int, w: *c_int, h: *c_int) ?[*]u8;
 extern fn img_free(p: [*]u8) void;
@@ -240,6 +243,23 @@ pub fn load(alloc: std.mem.Allocator, path: [*:0]const u8, dw: usize, dh: usize)
 
 /// A decoded picture at its own size, one gray byte per pixel.
 pub const Gray = struct { pixels: []u8, width: usize, height: usize };
+
+/// Decodes a PNG or a JPEG into gray pixels from `alloc`, which the caller frees, or
+/// null for a file that isn't one, or can't be read.
+fn decode_picture(alloc: std.mem.Allocator, encoded: []const u8) ?decoded.Gray {
+    // A picture that can't be decoded, or has no room, is shown as none: nothing worse
+    const picture = decode_either(alloc, encoded) catch return null;
+    // Paired with the callers, which index rows by the width
+    assert(picture.pixels.len == @as(u64, picture.width) * picture.height);
+    assert(picture.width > 0);
+    return picture;
+}
+
+fn decode_either(alloc: std.mem.Allocator, encoded: []const u8) !decoded.Gray {
+    if (png_decoder.is_png(encoded)) return png_decoder.decode(alloc, encoded);
+    if (jpeg_decoder.is_jpeg(encoded)) return jpeg_decoder.decode(alloc, encoded);
+    return error.NotAPicture;
+}
 
 /// Decodes a JPEG or PNG at full size. The caller owns the pixels.
 pub fn decode_gray(alloc: std.mem.Allocator, encoded: []const u8) ?Gray {
@@ -511,4 +531,66 @@ test "pictures millions of pixels long fit without overflowing" {
     var dst: [1]u8 = undefined;
     scale(&src, .{ .width = 1, .height = 3000 }, &dst, .{ .width = 1, .height = 1 });
     try std.testing.expectEqual(@as(u8, 200), dst[0]);
+}
+
+/// Small pictures of every kind the decoders read, with the size and grays stb_image
+/// decoded them to (a hash of the pixels).
+const test_pictures = [_]struct { []const u8, u32, u32, u64 }{
+    .{ "baseline420.jpg", 41, 29, 0xaeef13c678bc8f28 },
+    .{ "cmyk.jpg", 41, 29, 0x55656065ba7164ae },
+    .{ "gray_alpha16.png", 5, 70, 0x0ecf83ee1ef5f828 },
+    .{ "gray.jpg", 41, 29, 0xaeef13c678bc8f28 },
+    .{ "gray2_interlaced.png", 37, 23, 0xad7efaf1d6b02989 },
+    .{ "palette4_interlaced.png", 37, 23, 0x7691cc9c49076f77 },
+    .{ "palette8_transparent.png", 30, 20, 0x17d72d02550457bf },
+    .{ "progressive_restarts.jpg", 41, 29, 0xaeef13c678bc8f28 },
+    .{ "restarts444.jpg", 41, 29, 0xaeef13c678bc8f28 },
+    .{ "rgb_subsampled.jpg", 41, 29, 0xfd7f8cb5dbb11168 },
+    .{ "rgb16.png", 37, 23, 0xe8f2973a35fb5967 },
+    .{ "rgba8_interlaced.png", 37, 23, 0xcb6bb63a35908269 },
+};
+
+fn test_picture(comptime name: []const u8) []const u8 {
+    return @embedFile("../testdata/pictures/" ++ name);
+}
+
+test "pictures decode to the grays stb_image gave" {
+    inline for (test_pictures) |case| {
+        const picture = decode_picture(std.testing.allocator, test_picture(case[0])).?;
+        defer std.testing.allocator.free(picture.pixels);
+        try std.testing.expectEqual(case[1], picture.width);
+        try std.testing.expectEqual(case[2], picture.height);
+        try std.testing.expectEqual(case[3], std.hash.Wyhash.hash(0, picture.pixels));
+    }
+}
+
+test "pictures cut short are turned down" {
+    inline for (test_pictures) |case| {
+        const data = test_picture(case[0]);
+        // A PNG may lose its last checksum, a JPEG its end marker: the picture is all
+        // there, and stb_image showed it
+        const kept: u32 = if (png_decoder.is_png(data)) 4 else 2;
+        for (0..data.len - kept) |length| {
+            try std.testing.expect(decode_picture(std.testing.allocator, data[0..length]) == null);
+        }
+    }
+}
+
+test "damaged pictures decode or are turned down, never crash" {
+    var prng = std.Random.DefaultPrng.init(0x5eed);
+    const random = prng.random();
+    var buffer: [4096]u8 = undefined;
+    inline for (test_pictures) |case| {
+        const data = test_picture(case[0]);
+        for (0..200) |_| {
+            const damaged = buffer[0..data.len];
+            @memcpy(damaged, data);
+            for (0..1 + random.uintLessThan(u32, 6)) |_| {
+                damaged[random.uintLessThan(u32, @intCast(data.len))] = random.int(u8);
+            }
+            if (decode_picture(std.testing.allocator, damaged)) |picture| {
+                std.testing.allocator.free(picture.pixels);
+            }
+        }
+    }
 }

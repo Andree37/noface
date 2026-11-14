@@ -54,7 +54,7 @@ pub const Journal = struct {
     }
 
     /// Seconds read over the `n` days ending with `day`.
-    pub fn secondsOver(j: *const Journal, day: i32, n: i32) u64 {
+    pub fn seconds_over(j: *const Journal, day: i32, n: i32) u64 {
         var total: u64 = 0;
         for (j.days[0..j.len]) |d| {
             if (d.day > day - n and d.day <= day) total += d.seconds;
@@ -86,12 +86,12 @@ pub const Journal = struct {
 };
 
 /// The local calendar day of a Unix time, `utc_offset` seconds east of UTC.
-pub fn dayOf(unix: u64, utc_offset: i64) i32 {
+pub fn day_of(unix: u64, utc_offset: i64) i32 {
     return @intCast(@divFloor(@as(i64, @intCast(unix)) + utc_offset, 86400));
 }
 
 /// The first day of the year `day` falls in.
-pub fn yearStart(day: i32) i32 {
+pub fn year_start(day: i32) i32 {
     const es = std.time.epoch.EpochDay{ .day = @intCast(day) };
     const year = es.calculateYearDay().year;
     var start: i32 = 0;
@@ -146,8 +146,8 @@ test "days add up and a new day starts its own entry" {
     try std.testing.expectEqual(@as(u32, 360), j.get(100).seconds);
     try std.testing.expectEqual(@as(u32, 3), j.get(100).pages);
     try std.testing.expectEqual(@as(u32, 0), j.get(99).seconds);
-    try std.testing.expectEqual(@as(u64, 480), j.secondsOver(101, 7));
-    try std.testing.expectEqual(@as(u64, 120), j.secondsOver(101, 1));
+    try std.testing.expectEqual(@as(u64, 480), j.seconds_over(101, 7));
+    try std.testing.expectEqual(@as(u64, 120), j.seconds_over(101, 1));
 }
 
 test "a clock set back adds to the latest day rather than rewriting history" {
@@ -204,11 +204,11 @@ test "journal survives saving, and a damaged file starts over" {
 }
 
 test "calendar helpers" {
-    try std.testing.expectEqual(@as(i32, 0), dayOf(3600, 0));
-    try std.testing.expectEqual(@as(i32, 1), dayOf(86400 - 1800, 3600)); // Past midnight an hour east
+    try std.testing.expectEqual(@as(i32, 0), day_of(3600, 0));
+    try std.testing.expectEqual(@as(i32, 1), day_of(86400 - 1800, 3600)); // Past midnight an hour east
     try std.testing.expectEqual(@as(u32, 3), weekday(0)); // Thursday
     // 2026-11-10 is day 20767, a Tuesday; 2026 began on day 20454
-    try std.testing.expectEqual(@as(i32, 20454), yearStart(20767));
-    try std.testing.expectEqual(@as(i32, 20454), yearStart(20454));
+    try std.testing.expectEqual(@as(i32, 20454), year_start(20767));
+    try std.testing.expectEqual(@as(i32, 20454), year_start(20454));
     try std.testing.expectEqual(@as(u32, 1), weekday(20767));
 }

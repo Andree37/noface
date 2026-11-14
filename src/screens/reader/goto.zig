@@ -15,10 +15,10 @@ pub fn run(a: *app.App, s: *sess.Session, alloc: std.mem.Allocator, chapters: []
     var go = GoTo{
         .a = a,
         .background = try s.ensure(s.current, s.current),
-        .contents = try contentsRows(alloc, s, chapters),
-        .notes = try notesRows(alloc, s),
+        .contents = try contents_rows(alloc, s, chapters),
+        .notes = try notes_rows(alloc, s),
         .reading = reading,
-        .pages = .{ .page = if (reading) |r| goto.listPageOf(r) else 0 },
+        .pages = .{ .page = if (reading) |r| goto.list_page_of(r) else 0 },
     };
     return screen.run(a, &go);
 }
@@ -46,10 +46,10 @@ const GoTo = struct {
         @memcpy(a.overlay[0 .. goto.top * a.screen.stride], a.screen.pixels[0 .. goto.top * a.screen.stride]);
         try goto.render(a.ui, a.page(a.overlay), go.tab, go.list(), if (go.tab == .contents) go.reading else null, go.pages.page);
         @memcpy(a.screen.pixels, a.overlay);
-        try a.showBand(goto.top, a.screen.height - goto.top);
+        try a.show_band(goto.top, a.screen.height - goto.top);
     }
 
-    pub fn onTap(go: *GoTo, t: screen.Tap) !screen.Step(usize) {
+    pub fn on_tap(go: *GoTo, t: screen.Tap) !screen.Step(usize) {
         const rows = go.list();
         switch (go.pages.tap(t.x, t.y, rows.len)) {
             .none => return .stay,
@@ -62,16 +62,16 @@ const GoTo = struct {
             .tab => |tab| {
                 if (tab == go.tab) return .stay;
                 go.tab = tab;
-                go.pages.page = if (tab == .contents) (if (go.reading) |r| goto.listPageOf(r) else 0) else 0;
+                go.pages.page = if (tab == .contents) (if (go.reading) |r| goto.list_page_of(r) else 0) else 0;
                 return .{ .redraw = .all };
             },
         }
     }
 };
 
-fn contentsRows(alloc: std.mem.Allocator, s: *const sess.Session, chapters: []const book_model.Chapter) ![]goto.Row {
+fn contents_rows(alloc: std.mem.Allocator, s: *const sess.Session, chapters: []const book_model.Chapter) ![]goto.Row {
     const out = try alloc.alloc(goto.Row, chapters.len);
-    for (chapters, out) |c, *r| r.* = .{ .label = c.title, .page = sess.pageContaining(s.pages, c.para, 0), .depth = c.depth };
+    for (chapters, out) |c, *r| r.* = .{ .label = c.title, .page = sess.page_containing(s.pages, c.para, 0), .depth = c.depth };
     return out;
 }
 
@@ -82,21 +82,21 @@ fn before(_: void, x: Placed, y: Placed) bool {
 }
 
 /// Bookmarks and highlights in reading order, each with the text where it starts.
-fn notesRows(alloc: std.mem.Allocator, s: *const sess.Session) ![]goto.Row {
+fn notes_rows(alloc: std.mem.Allocator, s: *const sess.Session) ![]goto.Row {
     var placed: std.ArrayList(Placed) = .empty;
     for (s.bookmarks.items) |b| {
         const words = highlights.excerpt(s.paragraphs[b.para].text[b.byte..], excerpt_bytes);
-        try placed.append(alloc, .{ .para = b.para, .byte = b.byte, .row = .{ .label = words, .page = sess.pageContaining(s.pages, b.para, b.byte), .mark = .bookmark } });
+        try placed.append(alloc, .{ .para = b.para, .byte = b.byte, .row = .{ .label = words, .page = sess.page_containing(s.pages, b.para, b.byte), .mark = .bookmark } });
     }
     // A highlight has a mark per paragraph it covers; list it once, from its start.
     for (s.highlights.items, 0..) |h, i| {
-        if (!highlights.firstOfId(s.highlights.items, i)) continue;
+        if (!highlights.first_of_id(s.highlights.items, i)) continue;
         const span = highlights.extent(s.highlights.items, h.id) orelse continue;
         const para = s.paragraphs[span.first_para].text;
         const end = @min(if (span.last_para == span.first_para) span.last_byte else para.len, para.len);
         const start = @min(span.first_byte, end); // A damaged record can end before it starts
         const words = highlights.excerpt(para[start..end], excerpt_bytes);
-        try placed.append(alloc, .{ .para = span.first_para, .byte = span.first_byte, .row = .{ .label = words, .page = sess.pageContaining(s.pages, span.first_para, span.first_byte), .mark = .highlight } });
+        try placed.append(alloc, .{ .para = span.first_para, .byte = span.first_byte, .row = .{ .label = words, .page = sess.page_containing(s.pages, span.first_para, span.first_byte), .mark = .highlight } });
     }
     std.mem.sort(Placed, placed.items, {}, before);
     const out = try alloc.alloc(goto.Row, placed.items.len);

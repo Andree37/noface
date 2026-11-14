@@ -15,7 +15,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     var ts0: linux.timespec = undefined;
     var ts1: linux.timespec = undefined;
     _ = linux.clock_gettime(.MONOTONIC, &ts0);
-    std.debug.print("complete {}\n", .{kfx.isComplete(data)});
+    std.debug.print("complete {}\n", .{kfx.is_complete(data)});
     const book = try kfx.parse(std.heap.page_allocator, data);
     var deepest: u8 = 0;
     var ordered = true;
@@ -42,7 +42,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     for (book.paragraphs, 0..) |p, i| {
         const img = p.image orelse continue;
         pictures += 1;
-        if (first_picture == null and img.width > 200) first_picture = book_model.textIndex(book.paragraphs, i);
+        if (first_picture == null and img.width > 200) first_picture = book_model.text_index(book.paragraphs, i);
         const jpeg = img.data.len > 2 and img.data[0] == 0xff and img.data[1] == 0xd8;
         const png = img.data.len > 8 and std.mem.eql(u8, img.data[1..4], "PNG");
         if (jpeg or png) decodable += 1;
@@ -83,7 +83,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     for (book.paragraphs, 0..) |p, i| {
         for (p.links) |l| {
             if (l.target >= book.paragraphs.len or !book.paragraphs[l.target].note_start) continue;
-            if (note_rules.isMark(p.text[l.start..l.end])) refs_mark += 1 else refs_word += 1;
+            if (note_rules.is_mark(p.text[l.start..l.end])) refs_mark += 1 else refs_word += 1;
             if (first_refs_len < first_refs.len) {
                 first_refs[first_refs_len] = i;
                 first_refs_len += 1;
@@ -91,7 +91,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         }
         if (!p.note_start) continue;
         starts += 1;
-        const parts = note_rules.noteLength(book.paragraphs, i);
+        const parts = note_rules.note_length(book.paragraphs, i);
         if (parts > 1) multi += 1;
         if (parts == note_rules.max_note_parts) capped += 1;
         var size: usize = 0;

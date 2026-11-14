@@ -21,7 +21,7 @@ pub const O = struct {
     NONBLOCK: bool = false,
 };
 
-fn cFlags(o: O) c.O {
+fn c_flags(o: O) c.O {
     var f: c.O = .{};
     f.ACCMODE = switch (o.ACCMODE) {
         .RDONLY => .RDONLY,
@@ -38,7 +38,7 @@ fn cFlags(o: O) c.O {
 }
 
 pub fn open(path: [*:0]const u8, flags: O, mode: u32) usize {
-    return ret(c.open(path, cFlags(flags), @as(c.mode_t, @intCast(mode))));
+    return ret(c.open(path, c_flags(flags), @as(c.mode_t, @intCast(mode))));
 }
 pub fn close(fd: i32) usize {
     return ret(c.close(fd));

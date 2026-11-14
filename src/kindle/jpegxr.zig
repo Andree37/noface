@@ -11,7 +11,7 @@ const jxr_helper = paths.jxr_helper;
 const jxr_input = paths.jxr_input;
 
 /// True for JPEG XR data, which most pictures in Kindle books are.
-pub fn isJpegXr(data: []const u8) bool {
+pub fn is_jpeg_xr(data: []const u8) bool {
     return data.len > 4 and data[0] == 'I' and data[1] == 'I' and data[2] == 0xbc and data[3] == 0x01;
 }
 
@@ -19,7 +19,12 @@ pub const Gray = struct { pixels: []u8, width: usize, height: usize };
 
 /// Decodes a JPEG XR picture with the Kindle's own decoder, through the helper,
 /// which scales it to exactly `width` x `height`: the size it will be drawn.
-pub fn decodeJpegXr(alloc: std.mem.Allocator, data: []const u8, width: usize, height: usize) ?Gray {
+pub fn decode_jpeg_xr(
+    alloc: std.mem.Allocator,
+    data: []const u8,
+    width: usize,
+    height: usize,
+) ?Gray {
     const rc = linux.open(jxr_input, .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true, .CLOEXEC = true }, 0o600);
     if (failed(rc)) return null;
     const written = linux.write(@intCast(rc), data.ptr, data.len);
@@ -30,11 +35,11 @@ pub fn decodeJpegXr(alloc: std.mem.Allocator, data: []const u8, width: usize, he
     const command = std.fmt.bufPrintSentinel(&command_buf, jxr_helper ++ " {d} {d} < " ++ jxr_input, .{ width, height }, 0) catch return null;
     const argv = [_:null]?[*:0]const u8{ "/bin/sh", "-c", command };
     const n = process.run(&argv, out) orelse return null;
-    return parsePgm(out[0..n]);
+    return parse_pgm(out[0..n]);
 }
 
 /// Reads "P5\n<w> <h>\n255\n<pixels>".
-pub fn parsePgm(data: []u8) ?Gray {
+pub fn parse_pgm(data: []u8) ?Gray {
     var at: usize = 0;
     var fields: [4][]const u8 = undefined;
     for (&fields) |*f| {
@@ -53,11 +58,11 @@ pub fn parsePgm(data: []u8) ?Gray {
 
 test "helper output is read as a grayscale image" {
     var data = "P5\n2 2\n255\n\x00\x40\x80\xff".*;
-    const g = parsePgm(&data).?;
+    const g = parse_pgm(&data).?;
     try std.testing.expectEqual(@as(usize, 2), g.width);
     try std.testing.expectEqual(@as(u8, 0x80), g.pixels[2]);
     var short = "P5\n4 4\n255\nab".*;
-    try std.testing.expect(parsePgm(&short) == null);
-    try std.testing.expect(isJpegXr("II\xbc\x01\x20"));
-    try std.testing.expect(!isJpegXr("\xff\xd8\xff"));
+    try std.testing.expect(parse_pgm(&short) == null);
+    try std.testing.expect(is_jpeg_xr("II\xbc\x01\x20"));
+    try std.testing.expect(!is_jpeg_xr("\xff\xd8\xff"));
 }

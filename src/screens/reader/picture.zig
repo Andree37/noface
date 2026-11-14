@@ -35,11 +35,11 @@ fn decodable(width: u64, height: u64) bool {
 
 fn decode(alloc: std.mem.Allocator, img: book_model.Image) ?image.Gray {
     if (!decodable(img.width, img.height)) return null;
-    if (jpegxr.isJpegXr(img.data)) {
-        const g = jpegxr.decodeJpegXr(alloc, img.data, img.width, img.height) orelse return null;
+    if (jpegxr.is_jpeg_xr(img.data)) {
+        const g = jpegxr.decode_jpeg_xr(alloc, img.data, img.width, img.height) orelse return null;
         return .{ .pixels = g.pixels, .width = g.width, .height = g.height };
     }
-    const g = image.decodeGray(alloc, img.data) orelse return null;
+    const g = image.decode_gray(alloc, img.data) orelse return null;
     if (!decodable(g.width, g.height)) return null;
     return g;
 }
@@ -58,8 +58,8 @@ const View = struct {
     fn clamp(v: *View) void {
         const w: f32 = @floatFromInt(v.picture.width);
         const h: f32 = @floatFromInt(v.picture.height);
-        v.cx = image.clampCentre(v.cx, w, style.screen_width, v.zoom());
-        v.cy = image.clampCentre(v.cy, h, style.screen_height, v.zoom());
+        v.cx = image.clamp_centre(v.cx, w, style.screen_width, v.zoom());
+        v.cy = image.clamp_centre(v.cy, h, style.screen_height, v.zoom());
     }
 
     fn whole(v: *View) void {
@@ -69,7 +69,7 @@ const View = struct {
     }
 
     /// The picture point under a screen point.
-    fn pictureAt(v: View, x: i32, y: i32) struct { x: f32, y: f32 } {
+    fn picture_at(v: View, x: i32, y: i32) struct { x: f32, y: f32 } {
         return .{
             .x = v.cx + (@as(f32, @floatFromInt(x)) - style.screen_width / 2) / v.zoom(),
             .y = v.cy + (@as(f32, @floatFromInt(y)) - style.screen_height / 2) / v.zoom(),
@@ -80,11 +80,11 @@ const View = struct {
 /// Draws the view and starts the update, returning it to wait on. Settled, the
 /// picture gets its 16 grays; while a finger moves it's made pure black and white
 /// for the fast update, which leaves grays alone.
-fn drawView(a: *app.App, v: View, settled: bool) !u32 {
+fn draw_view(a: *app.App, v: View, settled: bool) !u32 {
     // Drawn in ordinary memory, then copied: the screen's own memory is slow to read
     // back, and dithering reads every pixel it writes
     const page = a.page(a.overlay);
-    const t0 = os.nowUs();
+    const t0 = os.now_us();
     image.zoomed(v.picture, v.cx, v.cy, v.zoom(), page, a.screen.width, a.screen.height, settled);
     if (settled) {
         image.dither(a.alloc, a.overlay[0 .. a.screen.stride * a.screen.height], a.screen.stride) catch {};
@@ -108,12 +108,12 @@ fn drawView(a: *app.App, v: View, settled: bool) !u32 {
         try draw.centered(a.ui.caption, page, @floatFromInt(a.screen.width / 2), @intCast(top + 42), hint);
     }
     @memcpy(a.screen.pixels, a.overlay);
-    std.debug.print("picture drawn in {d} ms\n", .{(os.nowUs() - t0) / 1000});
+    std.debug.print("picture drawn in {d} ms\n", .{(os.now_us() - t0) / 1000});
     return a.screen.show(if (settled) .screen else .quick);
 }
 
 fn render(a: *app.App, v: View) !void {
-    try a.screen.waitComplete(try drawView(a, v, true));
+    try a.screen.wait_complete(try draw_view(a, v, true));
 }
 
 /// Follows one finger from touching to lifting: past the slop it pans a zoomed view.
@@ -127,13 +127,13 @@ const Follow = struct {
     panned: bool = false, // Moved past the slop: a drag, not a tap
 
     pub fn moved(f: *Follow, x: i32, y: i32) !?u32 {
-        if (!f.panned and !touch_zones.movedOff(f.x0, f.y0, x, y)) return null;
+        if (!f.panned and !touch_zones.moved_off(f.x0, f.y0, x, y)) return null;
         f.panned = true;
         if (f.v.step == 0) return null; // The whole picture shows: nowhere to go
         f.v.cx = f.start_cx - @as(f32, @floatFromInt(x - f.x0)) / f.v.zoom();
         f.v.cy = f.start_cy - @as(f32, @floatFromInt(y - f.y0)) / f.v.zoom();
         f.v.clamp();
-        return try drawView(f.a, f.v.*, false);
+        return try draw_view(f.a, f.v.*, false);
     }
 };
 
@@ -142,14 +142,14 @@ const After = enum { nothing, double_tap, other_tap, quit };
 
 /// Waits briefly for a second tap near the first. One that lands elsewhere is left
 /// for the main loop as a tap of its own.
-fn afterTap(a: *app.App, x: i32, y: i32) After {
+fn after_tap(a: *app.App, x: i32, y: i32) After {
     const was = a.input.enter(a.input.modes(), double_tap_us);
     defer a.input.leave(was);
-    while (a.input.nextFor()) |action| switch (action) {
+    while (a.input.next_for()) |action| switch (action) {
         .tick => return .nothing, // No second tap in time
         .tap => |t| {
-            if (@abs(t.x - x) <= double_tap_reach and @abs(t.y - y) <= double_tap_reach) return followSecondTap(a, t);
-            a.input.holdBack(action);
+            if (@abs(t.x - x) <= double_tap_reach and @abs(t.y - y) <= double_tap_reach) return follow_second_tap(a, t);
+            a.input.hold_back(action);
             return .other_tap;
         },
         else => {},
@@ -159,12 +159,12 @@ fn afterTap(a: *app.App, x: i32, y: i32) After {
 
 /// The second tap's finger, followed to its lift (which isn't a new tap): a double tap
 /// if it stayed put, else a drag after all.
-fn followSecondTap(a: *app.App, t: input_mod.Tap) After {
-    a.input.beginDrag();
+fn follow_second_tap(a: *app.App, t: input_mod.Tap) After {
+    a.input.begin_drag();
     var still = true;
-    while (a.input.nextFor()) |action| switch (action) {
+    while (a.input.next_for()) |action| switch (action) {
         .drag => |dx| {
-            if (touch_zones.movedOff(t.x, t.y, dx, a.input.drag_y)) still = false;
+            if (touch_zones.moved_off(t.x, t.y, dx, a.input.drag_y)) still = false;
         },
         .drag_end => return if (still) .double_tap else .nothing,
         else => {},
@@ -172,7 +172,7 @@ fn followSecondTap(a: *app.App, t: input_mod.Tap) After {
     return .quit;
 }
 
-fn onClose(x: i32, y: i32) bool {
+fn on_close(x: i32, y: i32) bool {
     const dx = x - close_cx;
     const dy = y - close_cy;
     const reach = close_r + 30;
@@ -181,7 +181,7 @@ fn onClose(x: i32, y: i32) bool {
 
 /// The picture, full screen, until it's closed. Touches come at once, so a drag can
 /// follow them; edge zones would hold back taps near the top, so they're off, and a
-/// resting thumb is skipped in `onTap` instead.
+/// resting thumb is skipped in `on_tap` instead.
 const Viewer = struct {
     pub const Result = void;
     pub const touches = input_mod.Input.Modes{ .grips = false, .deferred = false, .edge_zones = false };
@@ -194,19 +194,19 @@ const Viewer = struct {
 
     /// A finger on the picture: a drag pans it; a tap on the close button closes it; a
     /// double tap shows it whole; a single tap goes a step closer, centred on it.
-    pub fn onTap(vw: *Viewer, t: screen.Tap) !screen.Step(void) {
+    pub fn on_tap(vw: *Viewer, t: screen.Tap) !screen.Step(void) {
         const a = vw.a;
         const v = &vw.v;
         // A thumb resting where the Kindle is held isn't a tap
-        if (touch_zones.isGrip(t.x, t.y, a.input.width, a.input.height)) return .stay;
-        a.input.beginDrag();
+        if (touch_zones.is_grip(t.x, t.y, a.input.width, a.input.height)) return .stay;
+        a.input.begin_drag();
         var follow = Follow{ .a = a, .v = v, .x0 = t.x, .y0 = t.y, .start_cx = v.cx, .start_cy = v.cy };
-        _ = try app.followDrag(a, null, &follow);
-        if (a.input.heldBack() != null) return .close; // Locked, leaving, or another touch came in
+        _ = try app.follow_drag(a, null, &follow);
+        if (a.input.held_back() != null) return .close; // Locked, leaving, or another touch came in
         if (follow.panned) return if (v.step > 0) .{ .redraw = .all } else .stay; // Its grays back
         // Closing on the lift, so a drag that starts by the button still pans
-        if (onClose(t.x, t.y)) return .close;
-        switch (afterTap(a, t.x, t.y)) {
+        if (on_close(t.x, t.y)) return .close;
+        switch (after_tap(a, t.x, t.y)) {
             .quit => return .close,
             .double_tap => {
                 if (v.step == 0) return .stay;
@@ -214,7 +214,7 @@ const Viewer = struct {
             },
             .nothing, .other_tap => {
                 if (v.step + 1 == steps.len) return .stay; // Already at the closest step
-                const at = v.pictureAt(t.x, t.y);
+                const at = v.picture_at(t.x, t.y);
                 v.step += 1;
                 v.cx = at.x;
                 v.cy = at.y;
@@ -236,7 +236,7 @@ pub fn show(a: *app.App, img: book_model.Image) !void {
     }
     const saved = try arena.allocator().dupe(u8, a.screen.pixels);
     const picture = decode(arena.allocator(), img) orelse {
-        try app.showNotice(a, "This picture can't be shown larger.");
+        try app.show_notice(a, "This picture can't be shown larger.");
         // The notice was drawn over the page: put the page back
         try a.present(saved, .page);
         return;
@@ -250,9 +250,9 @@ pub fn show(a: *app.App, img: book_model.Image) !void {
 }
 
 test "taps on and near the close button close" {
-    try std.testing.expect(onClose(close_cx, close_cy));
-    try std.testing.expect(onClose(close_cx - close_r - 20, close_cy));
-    try std.testing.expect(!onClose(600, 800));
+    try std.testing.expect(on_close(close_cx, close_cy));
+    try std.testing.expect(on_close(close_cx - close_r - 20, close_cy));
+    try std.testing.expect(!on_close(600, 800));
 }
 
 test "sizes too big to decode are refused without overflowing" {

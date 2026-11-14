@@ -9,35 +9,35 @@ const sess = @import("session.zig");
 const lock = @import("../lock.zig");
 
 /// Draws the toolbar over the current page.
-pub fn drawToolbar(a: *app.App, s: *sess.Session, title: []const u8, sheet: bool, whole_page: bool) !void {
+pub fn draw_toolbar(a: *app.App, s: *sess.Session, title: []const u8, sheet: bool, whole_page: bool) !void {
     @memcpy(a.overlay, try s.ensure(s.current, s.current));
-    const total = if (s.layoutPending()) 0 else s.pages.len; // No page count until it's known
+    const total = if (s.layout_pending()) 0 else s.pages.len; // No page count until it's known
     var fonts = a.ui;
-    if (sheet and a.tab == .font) fonts.families = a.familySamples();
-    try toolbar.render(fonts, a.page(a.overlay), title, s.current, total, &a.quick, if (sheet) a.tab else null, a.settings, s.isBookmarked(s.current));
+    if (sheet and a.tab == .font) fonts.families = a.load_family_samples();
+    try toolbar.render(fonts, a.page(a.overlay), title, s.current, total, &a.quick, if (sheet) a.tab else null, a.settings, s.is_bookmarked(s.current));
     @memcpy(a.screen.pixels, a.overlay);
     if (whole_page) {
-        try a.showBand(0, a.screen.height);
+        try a.show_band(0, a.screen.height);
         return;
     }
     // The tallest sheet's reach: switching from More to a shorter tab uncovers the page
     const top: u32 = if (sheet) aa.max_height else toolbar.top_height;
-    const first = try a.screen.showRegion(0, 0, a.screen.width, top, .page);
-    try a.showBand(toolbar.bottom_top, a.screen.height - toolbar.bottom_top);
-    try a.screen.waitComplete(first);
+    const first = try a.screen.show_region(0, 0, a.screen.width, top, .page);
+    try a.show_band(toolbar.bottom_top, a.screen.height - toolbar.bottom_top);
+    try a.screen.wait_complete(first);
 }
 
-pub fn closeToolbar(a: *app.App, s: *sess.Session, sheet: bool) !void {
+pub fn close_toolbar(a: *app.App, s: *sess.Session, sheet: bool) !void {
     @memcpy(a.screen.pixels, try s.ensure(s.current, s.current));
     const top: u32 = if (sheet) aa.max_height else toolbar.top_height;
-    const first = try a.screen.showRegion(0, 0, a.screen.width, top, .page);
-    try a.showBand(toolbar.bottom_top, a.screen.height - toolbar.bottom_top);
-    try a.screen.waitComplete(first);
+    const first = try a.screen.show_region(0, 0, a.screen.width, top, .page);
+    try a.show_band(toolbar.bottom_top, a.screen.height - toolbar.bottom_top);
+    try a.screen.wait_complete(first);
 }
 
 /// Follows a finger along the page scrubber, then jumps there.
-pub fn dragScrub(a: *app.App, s: *sess.Session, title: []const u8, sheet: bool, first_x: i32) !void {
-    a.input.beginDrag();
+pub fn drag_scrub(a: *app.App, s: *sess.Session, title: []const u8, sheet: bool, first_x: i32) !void {
+    a.input.begin_drag();
     const band = a.screen.height - toolbar.scrub_top;
     const Follow = struct {
         a: *app.App,
@@ -45,23 +45,23 @@ pub fn dragScrub(a: *app.App, s: *sess.Session, title: []const u8, sheet: bool, 
         band: u32,
         target: *usize,
         pub fn moved(f: @This(), x: i32, _: i32) !?u32 {
-            const next = toolbar.pageAt(x, f.pages);
+            const next = toolbar.page_at(x, f.pages);
             if (next == f.target.*) return null;
             f.target.* = next;
-            try toolbar.drawScrub(f.a.ui, f.a.page(f.a.screen.pixels), next, f.pages, true);
-            return try f.a.screen.showRegion(0, toolbar.scrub_top, f.a.screen.width, f.band, .quick);
+            try toolbar.draw_scrub(f.a.ui, f.a.page(f.a.screen.pixels), next, f.pages, true);
+            return try f.a.screen.show_region(0, toolbar.scrub_top, f.a.screen.width, f.band, .quick);
         }
     };
-    var target = toolbar.pageAt(first_x, s.pages.len);
-    try toolbar.drawScrub(a.ui, a.page(a.screen.pixels), target, s.pages.len, true);
-    const first = try a.screen.showRegion(0, toolbar.scrub_top, a.screen.width, band, .quick);
-    _ = try app.followDrag(a, first, Follow{ .a = a, .pages = s.pages.len, .band = band, .target = &target });
-    s.setPage(target);
-    try drawToolbar(a, s, title, sheet, true);
-    try app.cleanBand(a, toolbar.scrub_top, band);
+    var target = toolbar.page_at(first_x, s.pages.len);
+    try toolbar.draw_scrub(a.ui, a.page(a.screen.pixels), target, s.pages.len, true);
+    const first = try a.screen.show_region(0, toolbar.scrub_top, a.screen.width, band, .quick);
+    _ = try app.follow_drag(a, first, Follow{ .a = a, .pages = s.pages.len, .band = band, .target = &target });
+    s.set_page(target);
+    try draw_toolbar(a, s, title, sheet, true);
+    try app.clean_band(a, toolbar.scrub_top, band);
 }
 
-pub fn rowSetting(a: *app.App, row: aa.Row) *usize {
+pub fn row_setting(a: *app.App, row: aa.Row) *usize {
     return switch (row.hit) {
         .text_size => &a.settings.size,
         .spacing => &a.settings.spacing,
@@ -70,31 +70,32 @@ pub fn rowSetting(a: *app.App, row: aa.Row) *usize {
 }
 
 /// Follows a finger along an Aa slider, and applies it when lifted.
-pub fn dragSetting(a: *app.App, alloc: std.mem.Allocator, s: *sess.Session, title: []const u8, row: aa.Row, first_x: i32) !void {
-    var value = aa.stepAt(row, first_x);
-    const started = rowSetting(a, row).*;
-    a.input.beginDrag();
-    try aa.drawRow(a.ui, a.page(a.screen.pixels), row, value, true);
-    const first = try a.screen.showRegion(0, row.top, a.screen.width, aa.row_height, .quick);
+pub fn drag_setting(a: *app.App, alloc: std.mem.Allocator, s: *sess.Session, title: []const u8, row: aa.Row, first_x: i32) !void {
+    var value = aa.step_at(row, first_x);
+    const started = row_setting(a, row).*;
+    a.input.begin_drag();
+    try aa.draw_row(a.ui, a.page(a.screen.pixels), row, value, true);
+    const first = try a.screen.show_region(0, row.top, a.screen.width, aa.row_height, .quick);
     const Follow = struct {
         a: *app.App,
         row: aa.Row,
         value: *usize,
         pub fn moved(f: @This(), x: i32, _: i32) !?u32 {
-            const next = aa.stepAt(f.row, x);
+            const next = aa.step_at(f.row, x);
             if (next == f.value.*) return null;
             f.value.* = next;
-            try aa.drawRow(f.a.ui, f.a.page(f.a.screen.pixels), f.row, next, true);
-            return try f.a.screen.showRegion(0, f.row.top, f.a.screen.width, aa.row_height, .quick);
+            try aa.draw_row(f.a.ui, f.a.page(f.a.screen.pixels), f.row, next, true);
+            const width = f.a.screen.width;
+            return try f.a.screen.show_region(0, f.row.top, width, aa.row_height, .quick);
         }
     };
-    _ = try app.followDrag(a, first, Follow{ .a = a, .row = row, .value = &value });
+    _ = try app.follow_drag(a, first, Follow{ .a = a, .row = row, .value = &value });
     if (value != started) {
-        rowSetting(a, row).* = value;
+        row_setting(a, row).* = value;
         try sess.relayout(a, alloc, s);
     }
-    try drawToolbar(a, s, title, true, true);
-    try app.cleanBand(a, row.top, aa.row_height);
+    try draw_toolbar(a, s, title, true, true);
+    try app.clean_band(a, row.top, aa.row_height);
 }
 
 /// Whether a switch with this guard may turn on: asks, or says what's missing, first.
@@ -107,39 +108,39 @@ fn ready(a: *app.App, s: *sess.Session, title: []const u8, guard: aa.Guard) !boo
             if (autostart.installed()) return true;
             const page = try s.ensure(s.current, s.current);
             const rows = [_]card.Row{.{ .label = "Turn on" }};
-            const agreed = try app.chooseFromCard(a, page, "Open noface when the Kindle starts", "This adds one small startup file to the Kindle's system.", &rows) != null;
+            const agreed = try app.choose_from_card(a, page, "Open noface when the Kindle starts", "This adds one small startup file to the Kindle's system.", &rows) != null;
             if (!agreed) {
-                try drawToolbar(a, s, title, true, false);
+                try draw_toolbar(a, s, title, true, false);
                 return false;
             }
             if (autostart.install()) return true;
-            try drawToolbar(a, s, title, true, false);
-            try app.showNotice(a, "Couldn't set up starting with the Kindle.");
+            try draw_toolbar(a, s, title, true, false);
+            try app.show_notice(a, "Couldn't set up starting with the Kindle.");
             return false;
         },
         .lock_picture => {
             // Turning it on needs a picture to show
-            if (lock.hasPicture(a)) return true;
+            if (lock.has_picture(a)) return true;
             const page = try s.ensure(s.current, s.current);
             const rows = [_]card.Row{.{ .label = "OK" }};
-            _ = try app.chooseFromCard(a, page, "Add your picture first", "Name it lockscreen.jpg or lockscreen.png, and put it in the noface-data folder.", &rows);
-            try drawToolbar(a, s, title, true, false);
+            _ = try app.choose_from_card(a, page, "Add your picture first", "Name it lockscreen.jpg or lockscreen.png, and put it in the noface-data folder.", &rows);
+            try draw_toolbar(a, s, title, true, false);
             return false;
         },
     }
 }
 
 /// Handles a tap inside the Aa sheet.
-pub fn tapSheet(a: *app.App, alloc: std.mem.Allocator, s: *sess.Session, title: []const u8, x: i32, y: i32) !void {
+pub fn tap_sheet(a: *app.App, alloc: std.mem.Allocator, s: *sess.Session, title: []const u8, x: i32, y: i32) !void {
     switch (aa.hit(a.tab, x, y)) {
         .none => return,
         .tab => |tab| {
             a.tab = tab;
-            return drawToolbar(a, s, title, true, false);
+            return draw_toolbar(a, s, title, true, false);
         },
-        .text_size => return dragSetting(a, alloc, s, title, aa.size_row, x),
-        .spacing => return dragSetting(a, alloc, s, title, aa.spacing_row, x),
-        .margins => return dragSetting(a, alloc, s, title, aa.margin_row, x),
+        .text_size => return drag_setting(a, alloc, s, title, aa.size_row, x),
+        .spacing => return drag_setting(a, alloc, s, title, aa.spacing_row, x),
+        .margins => return drag_setting(a, alloc, s, title, aa.margin_row, x),
         .theme => |i| {
             const t = aa.themes[i];
             a.settings.size = t.size;
@@ -149,19 +150,20 @@ pub fn tapSheet(a: *app.App, alloc: std.mem.Allocator, s: *sess.Session, title: 
         .family => |i| a.settings.font = i,
         .toggle => |i| {
             const sw = aa.switches[i];
-            const turning_on = !aa.isOn(i, a.settings);
+            const turning_on = !aa.is_on(i, a.settings);
             if (turning_on and !try ready(a, s, title, sw.guard)) return;
             aa.flip(i, &a.settings);
             switch (sw.effect) {
                 .relayout => {}, // Below
                 .footer, .nothing => {
-                    app.saveSettings(a.settings_path, a.settings);
-                    if (sw.effect == .footer) a.forgetPages(); // The footer is drawn into each page
-                    return drawToolbar(a, s, title, true, false);
+                    app.save_settings(a.settings_path, a.settings);
+                    // The footer is drawn into each page
+                    if (sw.effect == .footer) a.forget_pages();
+                    return draw_toolbar(a, s, title, true, false);
                 },
             }
         },
     }
     try sess.relayout(a, alloc, s);
-    try drawToolbar(a, s, title, true, true);
+    try draw_toolbar(a, s, title, true, true);
 }

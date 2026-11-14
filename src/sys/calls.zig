@@ -60,7 +60,7 @@ pub const sigaction = chosen.sigaction;
 
 /// The names in a folder, each passed to `each` with whether it's a folder (without
 /// "." and ".."). Linux reads them with getdents64; elsewhere the C library's readdir.
-pub fn eachEntry(dir: [*:0]const u8, ctx: anytype, comptime each: fn (@TypeOf(ctx), []const u8, bool) void) void {
+pub fn each_entry(dir: [*:0]const u8, ctx: anytype, comptime each: fn (@TypeOf(ctx), []const u8, bool) void) void {
     if (is_linux) {
         const rc = linux.open(dir, .{ .ACCMODE = .RDONLY, .DIRECTORY = true, .CLOEXEC = true }, 0);
         if (rc > std.math.maxInt(usize) - 4096) return;

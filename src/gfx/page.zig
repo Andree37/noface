@@ -9,7 +9,7 @@ pub const Page = struct {
     stride: u32,
 
     /// Fills a rectangle, clipped to the page.
-    pub fn fillRect(p: Page, x: u32, y: u32, w: u32, h: u32, value: u8) void {
+    pub fn fill_rect(p: Page, x: u32, y: u32, w: u32, h: u32, value: u8) void {
         if (x >= p.width or y >= p.height) return;
         const width = @min(w, p.width - x);
         var row = y;
@@ -65,19 +65,19 @@ pub const Page = struct {
                         x = end;
                         continue;
                     }
-                    blendAt(p, row + @as(usize, @intCast(x)), v, mid_cover);
+                    blend_at(p, row + @as(usize, @intCast(x)), v, mid_cover);
                     continue;
                 }
                 const px = @as(f32, @floatFromInt(x)) + 0.5;
                 const ex = px - std.math.clamp(px, x0, x1);
                 const coverage = std.math.clamp(radius + 0.5 - @sqrt(ex * ex + ey * ey), 0, 1);
                 if (coverage <= 0) continue;
-                blendAt(p, row + @as(usize, @intCast(x)), v, coverage);
+                blend_at(p, row + @as(usize, @intCast(x)), v, coverage);
             }
         }
     }
 
-    fn blendAt(p: Page, at: usize, v: f32, coverage: f32) void {
+    fn blend_at(p: Page, at: usize, v: f32, coverage: f32) void {
         if (coverage >= 1) {
             p.buf[at] = @intFromFloat(v);
             return;
@@ -87,7 +87,7 @@ pub const Page = struct {
     }
 
     /// How much of the pixel at (`px`, `py`) a rectangle with rounded corners covers.
-    fn roundCoverage(px: f32, py: f32, x: f32, y: f32, w: f32, h: f32, radius: f32) f32 {
+    fn round_coverage(px: f32, py: f32, x: f32, y: f32, w: f32, h: f32, radius: f32) f32 {
         const dx = @max(@abs(px - (x + w / 2)) - (w / 2 - radius), 0);
         const dy = @max(@abs(py - (y + h / 2)) - (h / 2 - radius), 0);
         if (dx == 0 and dy == 0) return 1;
@@ -95,7 +95,7 @@ pub const Page = struct {
     }
 
     /// Fills a rectangle with rounded corners, in any gray, with smooth edges.
-    pub fn roundRect(p: Page, x: u32, y: u32, w: u32, h: u32, radius: f32, value: u8) void {
+    pub fn round_rect(p: Page, x: u32, y: u32, w: u32, h: u32, radius: f32, value: u8) void {
         const v: f32 = @floatFromInt(value);
         const fx: f32 = @floatFromInt(x);
         const fy: f32 = @floatFromInt(y);
@@ -117,9 +117,9 @@ pub const Page = struct {
                     col = end;
                     continue;
                 }
-                const c = roundCoverage(@as(f32, @floatFromInt(col)) + 0.5, py, fx, fy, fw, fh, radius);
+                const c = round_coverage(@as(f32, @floatFromInt(col)) + 0.5, py, fx, fy, fw, fh, radius);
                 if (c <= 0) continue;
-                p.blendAt(row * p.stride + col, v, c);
+                p.blend_at(row * p.stride + col, v, c);
             }
         }
     }
@@ -159,7 +159,7 @@ pub const Page = struct {
     }
 
     /// Fills a polygon, sampling each pixel four times for smooth edges.
-    pub fn fillPoly(p: Page, points: []const [2]f32) void {
+    pub fn fill_poly(p: Page, points: []const [2]f32) void {
         var min_x: f32 = std.math.inf(f32);
         var max_x: f32 = -std.math.inf(f32);
         var min_y: f32 = std.math.inf(f32);
@@ -193,7 +193,7 @@ pub const Page = struct {
     }
 
     /// White tick for the finished badge.
-    pub fn fillPolyWhiteCheck(p: Page, cx: f32, cy: f32) void {
+    pub fn fill_poly_white_check(p: Page, cx: f32, cy: f32) void {
         const pts = [_][4]f32{ .{ -11, 1, -3, 9 }, .{ -3, 9, 12, -8 } };
         for (pts) |l| {
             var t: f32 = 0;
@@ -252,7 +252,7 @@ pub const Page = struct {
     /// Lays an icon drawn in black on the white `tile` onto this page in white,
     /// centred on (`cx`, `cy`). Each pixel lightens as far as the icon covers it, so
     /// smooth edges stay smooth over black or over gray. Clipped to the page.
-    pub fn stampWhite(p: Page, tile: Page, cx: i32, cy: i32) void {
+    pub fn stamp_white(p: Page, tile: Page, cx: i32, cy: i32) void {
         const left = cx - @as(i32, @intCast(tile.width / 2));
         const top = cy - @as(i32, @intCast(tile.height / 2));
         for (0..tile.height) |row| {
@@ -269,7 +269,7 @@ pub const Page = struct {
         }
     }
 
-    pub fn copyImage(p: Page, x: u32, y: u32, src: []const u8, w: u32, h: u32) void {
+    pub fn copy_image(p: Page, x: u32, y: u32, src: []const u8, w: u32, h: u32) void {
         var row: u32 = 0;
         while (row < h) : (row += 1) {
             @memcpy(p.buf[(y + row) * p.stride + x ..][0..w], src[row * w ..][0..w]);
@@ -280,7 +280,7 @@ pub const Page = struct {
 test "rounded rectangles fill square in the middle and leave the corners" {
     var buf: [20 * 20]u8 = @splat(0xff);
     const p = Page{ .buf = &buf, .width = 20, .height = 20, .stride = 20 };
-    p.roundRect(0, 0, 20, 20, 6, 0x00);
+    p.round_rect(0, 0, 20, 20, 6, 0x00);
     try std.testing.expectEqual(@as(u8, 0x00), buf[10 * 20 + 10]);
     try std.testing.expectEqual(@as(u8, 0x00), buf[0 * 20 + 10]); // Straight edge
     try std.testing.expectEqual(@as(u8, 0xff), buf[0]); // Corner stays out
@@ -298,7 +298,7 @@ test "stamped icons lighten by how much they cover, over any gray" {
     tile_buf[2] = 0x00;
     tile_buf[3] = 0x80;
     const tile = Page{ .buf = &tile_buf, .width = 4, .height = 2, .stride = 6 };
-    page.stampWhite(tile, 4, 4); // Covers columns 2..5, rows 3..4
+    page.stamp_white(tile, 4, 4); // Covers columns 2..5, rows 3..4
     try std.testing.expectEqual(@as(u8, 0xff), under[3 * 10 + 2]); // Full, over black
     try std.testing.expectEqual(@as(u8, 0x7f), under[3 * 10 + 3]); // Half, over black
     try std.testing.expectEqual(@as(u8, 0xff), under[3 * 10 + 4]); // Full, over gray
@@ -306,8 +306,8 @@ test "stamped icons lighten by how much they cover, over any gray" {
     try std.testing.expectEqual(@as(u8, 0x00), under[4 * 10 + 2]); // Uncovered stays
     try std.testing.expectEqual(@as(u8, 0x40), under[3 * 10 + 6]); // Beside it stays
     try std.testing.expectEqual(@as(u8, 0x00), under[3 * 10 + 8]); // Past the page width
-    page.stampWhite(tile, -1, 7); // Mostly off the page: no crash, nothing outside
-    page.stampWhite(tile, 100, 100);
+    page.stamp_white(tile, -1, 7); // Mostly off the page: no crash, nothing outside
+    page.stamp_white(tile, 100, 100);
 }
 
 test "discs have smooth edges" {
@@ -333,7 +333,7 @@ test "dim and tint clip to the page" {
     try std.testing.expect(buf[0] != 0x00);
 }
 
-fn pillReference(p: Page, x0: f32, x1: f32, cy: f32, radius: f32, value: u8) void {
+fn pill_reference(p: Page, x0: f32, x1: f32, cy: f32, radius: f32, value: u8) void {
     const top: i32 = @intFromFloat(@floor(cy - radius - 1));
     const bottom: i32 = @intFromFloat(@ceil(cy + radius + 1));
     const left: i32 = @intFromFloat(@floor(x0 - radius - 1));
@@ -355,13 +355,13 @@ fn pillReference(p: Page, x0: f32, x1: f32, cy: f32, radius: f32, value: u8) voi
     }
 }
 
-fn roundRectReference(p: Page, x: u32, y: u32, w: u32, h: u32, radius: f32, value: u8) void {
+fn round_rect_reference(p: Page, x: u32, y: u32, w: u32, h: u32, radius: f32, value: u8) void {
     const v: f32 = @floatFromInt(value);
     var row = y;
     while (row < @min(y + h, p.height)) : (row += 1) {
         var col = x;
         while (col < @min(x + w, p.width)) : (col += 1) {
-            const c = Page.roundCoverage(@as(f32, @floatFromInt(col)) + 0.5, @as(f32, @floatFromInt(row)) + 0.5, @floatFromInt(x), @floatFromInt(y), @floatFromInt(w), @floatFromInt(h), radius);
+            const c = Page.round_coverage(@as(f32, @floatFromInt(col)) + 0.5, @as(f32, @floatFromInt(row)) + 0.5, @floatFromInt(x), @floatFromInt(y), @floatFromInt(w), @floatFromInt(h), radius);
             if (c <= 0) continue;
             const at = row * p.stride + col;
             const old: f32 = @floatFromInt(p.buf[at]);
@@ -389,8 +389,8 @@ test "the fast rounded rectangle draws exactly what the plain one did" {
         const h = rand.uintLessThan(u32, 40) + 1;
         const r = rand.float(f32) * @as(f32, @floatFromInt(@min(w, h))) / 2;
         const value = rand.int(u8);
-        pa.roundRect(x, y, w, h, r, value);
-        roundRectReference(pb, x, y, w, h, r, value);
+        pa.round_rect(x, y, w, h, r, value);
+        round_rect_reference(pb, x, y, w, h, r, value);
         try std.testing.expectEqualSlices(u8, &b, &a);
     }
 }
@@ -414,7 +414,7 @@ test "the fast pill draws exactly what the plain one did" {
         const r = rand.float(f32) * 20 + 0.5;
         const value = rand.int(u8);
         pa.pill(x0, x1, cy, r, value);
-        pillReference(pb, x0, x1, cy, r, value);
+        pill_reference(pb, x0, x1, cy, r, value);
         try std.testing.expectEqualSlices(u8, &b, &a);
     }
 }
@@ -433,10 +433,10 @@ test "pills fill their middle and blend their edge" {
 test "fills clip to the page, even when they start off it" {
     var buf: [16]u8 = @splat(0xff);
     const p = Page{ .buf = &buf, .width = 4, .height = 4, .stride = 4 };
-    p.fillRect(3, 3, 10, 10, 0);
+    p.fill_rect(3, 3, 10, 10, 0);
     try std.testing.expectEqual(@as(u8, 0), buf[15]);
     try std.testing.expectEqual(@as(u8, 0xff), buf[14]);
-    p.fillRect(9, 0, 2, 2, 0); // Starts past the right edge: draws nothing
-    p.fillRect(0, 9, 2, 2, 0);
+    p.fill_rect(9, 0, 2, 2, 0); // Starts past the right edge: draws nothing
+    p.fill_rect(0, 9, 2, 2, 0);
     try std.testing.expectEqual(@as(u8, 0xff), buf[0]);
 }

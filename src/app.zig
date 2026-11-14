@@ -30,7 +30,7 @@ const os = @import("sys/os.zig");
 const battery_model = @import("model/battery.zig");
 const battery_log = @import("kindle/battery_log.zig");
 const Input = input_mod.Input;
-const unixTime = os.unixTime;
+const unix_time = os.unix_time;
 
 pub const clock_top = 16;
 
@@ -72,7 +72,7 @@ pub const App = struct {
     battery_path: [*:0]const u8,
     documents: []const u8 = paths.documents, // Where EPUBs copied over USB are found
     battery_last: ?battery_model.Sample = null, // Last level noted, so only changes are logged
-    downloads_until: u64 = 0, // A download may still be running until then (nowUs)
+    downloads_until: u64 = 0, // A download may still be running until then (now_us)
     dictionary_base: []const u8 = @import("kindle/dict_download.zig").default_base, // Where dictionaries download from
     wifi_hands_off: bool = false, // The reader took charge of airplane mode in this book
     journal: journal_model.Journal = .{}, // What was read each day, for the stats screen
@@ -90,14 +90,14 @@ pub const App = struct {
 
     /// Forgets a language's dictionary, so the next lookup maps the file again: after
     /// one has just been downloaded.
-    pub fn forgetDictionary(a: *App, lang: hyphen.Lang) void {
+    pub fn forget_dictionary(a: *App, lang: hyphen.Lang) void {
         if (a.dictionaries[@backingInt(lang)]) |d| file.unmap(d.data);
         a.dictionaries[@backingInt(lang)] = null;
     }
 
     /// The dictionary for a book's language, from dict-en or dict-pt beside the
     /// settings. Null when the language isn't known or its file isn't there.
-    pub fn dictionaryFor(a: *App, lang: ?hyphen.Lang) ?dictionary.Dictionary {
+    pub fn dictionary_for(a: *App, lang: ?hyphen.Lang) ?dictionary.Dictionary {
         const l = lang orelse return null;
         const slot = &a.dictionaries[@backingInt(l)];
         if (slot.* == null) {
@@ -119,11 +119,11 @@ pub const App = struct {
 
     /// Today, as the journal counts days: the local calendar day.
     pub fn today(a: *const App) i32 {
-        return journal_model.dayOf(unixTime(), a.utc_offset);
+        return journal_model.day_of(unix_time(), a.utc_offset);
     }
 
     /// Hyphenation for a book's language, or null to break only at spaces and dashes.
-    pub fn hyphenatorFor(a: *App, lang: ?hyphen.Lang) ?*const hyphen.Hyphenator {
+    pub fn hyphenator_for(a: *App, lang: ?hyphen.Lang) ?*const hyphen.Hyphenator {
         const l = lang orelse return null;
         const slot = &a.hyphenators[@backingInt(l)];
         if (slot.* == null) slot.* = hyphen.Hyphenator.init(a.alloc, l) catch |err| {
@@ -134,10 +134,10 @@ pub const App = struct {
     }
 
     /// Fonts are kept per size, so stepping through sizes doesn't reload them.
-    pub fn applySettings(a: *App) !void {
+    pub fn apply_settings(a: *App) !void {
         a.body = try a.face(false, false, book_model.normal_size);
-        a.layout.faces = .{ .ctx = a, .pick = pickFace };
-        a.layout.images = .{ .ctx = a, .draw = drawImage };
+        a.layout.faces = .{ .ctx = a, .pick = pick_face };
+        a.layout.images = .{ .ctx = a, .draw = draw_image };
         a.layout.margin_x = settings_model.margins[a.settings.margin];
         a.layout.justify = !a.settings.left_align;
         a.layout.bold_starts = a.settings.bold_starts;
@@ -145,7 +145,7 @@ pub const App = struct {
 
     /// Each typeface offered, at interface size, to show its name in itself. One that
     /// can't be loaded is null, and its name shows in the interface font.
-    pub fn familySamples(a: *App) []const ?*Font {
+    pub fn load_family_samples(a: *App) []const ?*Font {
         for (settings_model.families, 0..) |_, i| {
             if (a.family_sample_ptrs[i] != null) continue;
             const file_slot = &a.face_files[i][0];
@@ -167,17 +167,17 @@ pub const App = struct {
         const slot = &a.face_fonts[a.settings.font][which][a.settings.size][size];
         if (slot.* == null) slot.* = try Font.init(a.alloc, file_slot.*.?, a.settings.px() * scale, 1);
         // Spacing can change without the font changing, so set it every time.
-        slot.*.?.line_height = @intFromFloat(@as(f32, @floatFromInt(a.settings.lineHeight())) * scale);
+        slot.*.?.line_height = @intFromFloat(@as(f32, @floatFromInt(a.settings.line_height())) * scale);
         return &slot.*.?;
     }
 
-    fn drawImage(ctx: *anyopaque, page_buf: Page, image: book_model.Image, x: u32, y: u32, w: u32, h: u32) void {
+    fn draw_image(ctx: *anyopaque, page_buf: Page, image: book_model.Image, x: u32, y: u32, w: u32, h: u32) void {
         const a: *App = @ptrCast(@alignCast(ctx));
         const ready = a.pictures.get(image.data.ptr, w, h) orelse blk: {
-            const made = if (jpegxr.isJpegXr(image.data))
-                preparedJpegXr(a.alloc, image.data, w, h)
+            const made = if (jpegxr.is_jpeg_xr(image.data))
+                prepared_jpeg_xr(a.alloc, image.data, w, h)
             else
-                cover.decodeAndPrepare(a.alloc, image.data, w, h);
+                cover.decode_and_prepare(a.alloc, image.data, w, h);
             const pixels = made orelse {
                 std.debug.print("picture not drawn\n", .{});
                 return;
@@ -188,14 +188,14 @@ pub const App = struct {
         cover.blit(page_buf, ready, x, y, w, h);
     }
 
-    fn preparedJpegXr(alloc: std.mem.Allocator, data: []const u8, w: u32, h: u32) ?[]u8 {
+    fn prepared_jpeg_xr(alloc: std.mem.Allocator, data: []const u8, w: u32, h: u32) ?[]u8 {
         var arena = std.heap.ArenaAllocator.init(alloc);
         defer arena.deinit();
-        const gray = jpegxr.decodeJpegXr(arena.allocator(), data, w, h) orelse return null;
+        const gray = jpegxr.decode_jpeg_xr(arena.allocator(), data, w, h) orelse return null;
         return cover.prepare(alloc, gray.pixels, gray.width, gray.height, w, h);
     }
 
-    fn pickFace(ctx: *anyopaque, bold: bool, italic: bool, size: u8) anyerror!*Font {
+    fn pick_face(ctx: *anyopaque, bold: bool, italic: bool, size: u8) anyerror!*Font {
         const a: *App = @ptrCast(@alignCast(ctx));
         return a.face(bold, italic, size) catch a.face(false, false, size);
     }
@@ -209,51 +209,51 @@ pub const App = struct {
     pub fn flash(a: *App, r: library.Rect) void {
         const target = a.page(a.screen.pixels);
         const t = 6;
-        target.fillRect(r.x, r.y, r.w, t, 0x00);
-        target.fillRect(r.x, r.y + r.h - t, r.w, t, 0x00);
-        target.fillRect(r.x, r.y, t, r.h, 0x00);
-        target.fillRect(r.x + r.w - t, r.y, t, r.h, 0x00);
-        const marker = a.screen.showRegion(r.x, r.y, r.w, r.h, .quick) catch return;
-        a.screen.waitComplete(marker) catch {};
+        target.fill_rect(r.x, r.y, r.w, t, 0x00);
+        target.fill_rect(r.x, r.y + r.h - t, r.w, t, 0x00);
+        target.fill_rect(r.x, r.y, t, r.h, 0x00);
+        target.fill_rect(r.x + r.w - t, r.y, t, r.h, 0x00);
+        const marker = a.screen.show_region(r.x, r.y, r.w, r.h, .quick) catch return;
+        a.screen.wait_complete(marker) catch {};
     }
 
     /// Writes the time into the page on screen, without refreshing the panel.
-    pub fn stampClock(a: *App) void {
+    pub fn stamp_clock(a: *App) void {
         if (!a.settings.clock) return;
         const target = a.page(a.screen.pixels);
         const left = (a.screen.width - clock_width) / 2;
-        target.fillRect(left, clock_top, clock_width, clock_height, 0xff);
+        target.fill_rect(left, clock_top, clock_width, clock_height, 0xff);
         var buf: [8]u8 = undefined;
-        const time = clock.formatClock(&buf, @intCast(unixTime()), a.utc_offset);
+        const time = clock.format_clock(&buf, @intCast(unix_time()), a.utc_offset);
         draw.centered(a.ui.caption, target, @floatFromInt(a.screen.width / 2), clock_top + 38, time) catch {};
-        a.clock_minute = unixTime() / 60;
+        a.clock_minute = unix_time() / 60;
     }
 
     /// Notes the battery level if it changed, for how long it will last.
-    pub fn noteBattery(a: *App) void {
+    pub fn note_battery(a: *App) void {
         battery_log.note(a.battery_path, &a.battery_last);
     }
 
     /// Redraws just the clock, which is too small to need a flash.
-    pub fn updateClock(a: *App) !void {
+    pub fn update_clock(a: *App) !void {
         if (!a.settings.clock) return;
-        a.stampClock();
+        a.stamp_clock();
         const left = (a.screen.width - clock_width) / 2;
-        try a.screen.waitComplete(try a.screen.showRegion(left, clock_top, clock_width, clock_height, .clock));
+        try a.screen.wait_complete(try a.screen.show_region(left, clock_top, clock_width, clock_height, .clock));
     }
 
     /// Refreshes part of the screen with the page waveform, and waits for it.
-    pub fn showRect(a: *App, left: u32, top: u32, width: u32, height: u32) !void {
-        try a.screen.waitComplete(try a.screen.showRegion(left, top, width, height, .page));
+    pub fn show_rect(a: *App, left: u32, top: u32, width: u32, height: u32) !void {
+        try a.screen.wait_complete(try a.screen.show_region(left, top, width, height, .page));
     }
 
     /// Refreshes a full-width band of the screen, and waits for it.
-    pub fn showBand(a: *App, top: u32, height: u32) !void {
-        try a.showRect(0, top, a.screen.width, height);
+    pub fn show_band(a: *App, top: u32, height: u32) !void {
+        try a.show_rect(0, top, a.screen.width, height);
     }
 
     /// The cached page buffer holding `page`, if any.
-    pub fn slotFor(a: *App, page_index: usize) ?*Slot {
+    pub fn slot_for(a: *App, page_index: usize) ?*Slot {
         for (&a.slots) |*slot| {
             if (slot.page == @as(i64, @intCast(page_index))) return slot;
         }
@@ -261,34 +261,34 @@ pub const App = struct {
     }
 
     /// Drops every cached page, after anything that changes how pages look.
-    pub fn forgetPages(a: *App) void {
+    pub fn forget_pages(a: *App) void {
         for (&a.slots) |*slot| slot.page = -1;
     }
 
     /// Where a book's reading position is kept.
-    pub fn statePath(a: *const App, buf: []u8, book_path: []const u8) ![:0]u8 {
-        return state.pathFor(buf, a.state_dir, book_path);
+    pub fn state_path(a: *const App, buf: []u8, book_path: []const u8) ![:0]u8 {
+        return state.path_for(buf, a.state_dir, book_path);
     }
 
     pub fn present(a: *App, buf: []const u8, refresh: hwtcon.Refresh) !void {
         @memcpy(a.screen.pixels, buf);
-        try a.screen.waitComplete(try a.screen.show(refresh));
+        try a.screen.wait_complete(try a.screen.show(refresh));
     }
 };
 
 /// Shows a sheet over `background` and waits for a row to be tapped. Null when the
 /// tap lands above the sheet, or the Kindle locks or quits (which is passed on to
 /// the caller's loop). What was under the sheet is put back either way.
-pub fn chooseFromCard(a: *App, background: []const u8, title: []const u8, subtitle: []const u8, rows: []const card.Row) !?usize {
-    return chooseFromCardWith(a, background, title, subtitle, rows, null);
+pub fn choose_from_card(a: *App, background: []const u8, title: []const u8, subtitle: []const u8, rows: []const card.Row) !?usize {
+    return choose_from_card_with(a, background, title, subtitle, rows, null);
 }
 
 /// The same, with a small cover beside the title.
-pub fn chooseFromCardWith(a: *App, background: []const u8, title: []const u8, subtitle: []const u8, rows: []const card.Row, book_cover: ?card.Cover) !?usize {
+pub fn choose_from_card_with(a: *App, background: []const u8, title: []const u8, subtitle: []const u8, rows: []const card.Row, book_cover: ?card.Cover) !?usize {
     var c = Card{ .a = a, .background = background, .title = title, .subtitle = subtitle, .rows = rows, .cover = book_cover };
     const chosen = try screen.run(a, &c);
     @memcpy(a.screen.pixels, background);
-    try a.showBand(0, a.screen.height);
+    try a.show_band(0, a.screen.height);
     return chosen;
 }
 
@@ -306,13 +306,13 @@ const Card = struct {
     pub fn draw(c: *Card, _: screen.Part) !void {
         const a = c.a;
         @memcpy(a.overlay, c.background);
-        try card.renderWith(a.ui, a.page(a.overlay), c.title, c.subtitle, c.rows, c.cover);
+        try card.render_with(a.ui, a.page(a.overlay), c.title, c.subtitle, c.rows, c.cover);
         @memcpy(a.screen.pixels, a.overlay);
-        try a.showBand(0, a.screen.height); // The whole screen dims behind it
+        try a.show_band(0, a.screen.height); // The whole screen dims behind it
     }
 
-    pub fn onTap(c: *Card, t: screen.Tap) !screen.Step(usize) {
-        const index = card.hitWith(t.x, t.y, c.rows.len, c.cover) orelse return .close; // Above it
+    pub fn on_tap(c: *Card, t: screen.Tap) !screen.Step(usize) {
+        const index = card.hit_with(t.x, t.y, c.rows.len, c.cover) orelse return .close; // Above it
         return if (index < c.rows.len) .{ .done = index } else .stay; // Its title: nothing
     }
 };
@@ -320,7 +320,7 @@ const Card = struct {
 pub const notice_ms = 1800;
 
 /// Says something went wrong, over the page, for a moment.
-pub fn showNotice(a: *App, message: []const u8) !void {
+pub fn show_notice(a: *App, message: []const u8) !void {
     const screen_page = a.page(a.screen.pixels);
     const width: u32 = 760;
     const height: u32 = 100;
@@ -328,67 +328,67 @@ pub fn showNotice(a: *App, message: []const u8) !void {
     const top = a.screen.height - 260;
     draw.box(screen_page, left, top, width, height);
     try draw.centered(a.ui.small, screen_page, @floatFromInt(left + width / 2), @intCast(top + 62), message);
-    try a.showRect(left, top, width, height);
-    os.sleepMs(notice_ms);
+    try a.show_rect(left, top, width, height);
+    os.sleep_ms(notice_ms);
 }
 
 /// Settles a band after a drag: its smooth edges come back, without a flash. Full mode
 /// would drive every pixel, but on this panel full mode always flashes.
-pub fn cleanBand(a: *App, top: u32, height: u32) !void {
-    try cleanRect(a, 0, top, a.screen.width, height);
+pub fn clean_band(a: *App, top: u32, height: u32) !void {
+    try clean_rect(a, 0, top, a.screen.width, height);
 }
 
-pub fn cleanRect(a: *App, left: u32, top: u32, width: u32, height: u32) !void {
-    try a.screen.waitComplete(try a.screen.showRegion(left, top, width, height, .clean));
+pub fn clean_rect(a: *App, left: u32, top: u32, width: u32, height: u32) !void {
+    try a.screen.wait_complete(try a.screen.show_region(left, top, width, height, .clean));
 }
 
 /// Follows the dragged finger until it lifts. `follow.moved(x, y)` redraws for a
 /// new position and returns the update to wait on, or null when nothing changed.
 /// Only one update runs at a time: overlapping ones smear on the panel. False when
 /// the drag was cut short (the Kindle locking, say) rather than the finger lifting.
-pub fn followDrag(a: *App, first: ?u32, follow: anytype) !bool {
+pub fn follow_drag(a: *App, first: ?u32, follow: anytype) !bool {
     var marker = first;
     var lifted = true;
-    while (a.input.nextFor()) |action| switch (action) {
+    while (a.input.next_for()) |action| switch (action) {
         .drag => |x0| {
-            if (marker) |m| try a.screen.waitComplete(m);
-            marker = try follow.moved(a.input.latestDrag() orelse x0, a.input.drag_y);
+            if (marker) |m| try a.screen.wait_complete(m);
+            marker = try follow.moved(a.input.latest_drag() orelse x0, a.input.drag_y);
         },
         .drag_end => break,
         else => {},
     } else lifted = false; // Locked, or leaving, before the finger lifted
-    if (marker) |m| try a.screen.waitComplete(m);
+    if (marker) |m| try a.screen.wait_complete(m);
     return lifted;
 }
 
-pub fn loadJournal(path: [*:0]const u8) journal_model.Journal {
+pub fn load_journal(path: [*:0]const u8) journal_model.Journal {
     var buf: [journal_model.max_format_bytes]u8 = undefined;
-    return journal_model.parse(state.readSmall(path, &buf));
+    return journal_model.parse(state.read_small(path, &buf));
 }
 
-pub fn saveJournal(a: *const App) void {
+pub fn save_journal(a: *const App) void {
     var buf: [journal_model.max_format_bytes]u8 = undefined;
-    state.writeSmall(a.journal_path, journal_model.format(&buf, &a.journal));
+    state.write_small(a.journal_path, journal_model.format(&buf, &a.journal));
 }
 
-pub fn loadSpeed(path: [*:0]const u8) stats.Speed {
+pub fn load_speed(path: [*:0]const u8) stats.Speed {
     var buf: [64]u8 = undefined;
-    return stats.parse(state.readSmall(path, &buf));
+    return stats.parse(state.read_small(path, &buf));
 }
 
-pub fn saveSpeed(a: *const App) void {
+pub fn save_speed(a: *const App) void {
     var buf: [64]u8 = undefined;
-    state.writeSmall(a.speed_path, stats.format(&buf, a.speed));
+    state.write_small(a.speed_path, stats.format(&buf, a.speed));
 }
 
-pub fn loadSettings(path: [*:0]const u8) settings_model.Settings {
+pub fn load_settings(path: [*:0]const u8) settings_model.Settings {
     var buf: [512]u8 = undefined;
-    return settings_model.parse(state.readSmall(path, &buf));
+    return settings_model.parse(state.read_small(path, &buf));
 }
 
-pub fn saveSettings(path: [*:0]const u8, s: settings_model.Settings) void {
+pub fn save_settings(path: [*:0]const u8, s: settings_model.Settings) void {
     var buf: [512]u8 = undefined;
-    state.writeSmall(path, settings_model.format(&buf, s));
+    state.write_small(path, settings_model.format(&buf, s));
 }
 
 /// The last few pictures drawn, decoded, scaled and dithered, so drawing a page

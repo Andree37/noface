@@ -23,7 +23,7 @@ pub const Download = struct {
         var buf: [321]u8 = undefined;
         @memcpy(buf[0..d.part_len], d.part[0..d.part_len]);
         buf[d.part_len] = 0;
-        return file.sizeOf(@ptrCast(&buf)) / (1024 * 1024);
+        return file.size_of(@ptrCast(&buf)) / (1024 * 1024);
     }
 
     /// Null while it runs, then whether the dictionary is in place.

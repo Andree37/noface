@@ -13,7 +13,7 @@ const max_bytes = 48 * 1024;
 /// The battery now, or null off a Kindle.
 pub fn now() ?battery.Sample {
     const p = devices.power() orelse return null;
-    return .{ .time = os.unixTime(), .level = p.level, .plugged = p.plugged };
+    return .{ .time = os.unix_time(), .level = p.level, .plugged = p.plugged };
 }
 
 /// Adds the battery to the log at `path` if it changed since `last`, which it updates.
@@ -24,7 +24,7 @@ pub fn note(path: [*:0]const u8, last: *?battery.Sample) void {
     }
     last.* = s;
     var line_buf: [40]u8 = undefined;
-    const line = battery.formatLine(&line_buf, s);
+    const line = battery.format_line(&line_buf, s);
     const rc = linux.open(path, .{ .ACCMODE = .WRONLY, .CREAT = true, .APPEND = true, .CLOEXEC = true }, 0o644);
     if (os.failed(rc)) return;
     const fd: i32 = @intCast(rc);
@@ -38,21 +38,21 @@ pub fn note(path: [*:0]const u8, last: *?battery.Sample) void {
 /// Keeps the newest half of the log, from a line start.
 fn trim(path: [*:0]const u8) void {
     var buf: [max_bytes + 4096]u8 = undefined;
-    const all = state.readSmall(path, &buf);
+    const all = state.read_small(path, &buf);
     const cut = all.len / 2;
     const start = (std.mem.indexOfScalarPos(u8, all, cut, '\n') orelse return) + 1;
-    state.writeSmall(path, all[start..]);
+    state.write_small(path, all[start..]);
 }
 
 /// The samples in the log, oldest first, as many as `out` holds (the newest).
 pub fn load(path: [*:0]const u8, out: []battery.Sample) []battery.Sample {
     var buf: [max_bytes + 4096]u8 = undefined;
-    const all = state.readSmall(path, &buf);
+    const all = state.read_small(path, &buf);
     // Kept in a ring, so a long log costs one pass, then put in order
     var n: usize = 0;
     var lines = std.mem.tokenizeScalar(u8, all, '\n');
     while (lines.next()) |line| {
-        const s = battery.parseLine(line) orelse continue;
+        const s = battery.parse_line(line) orelse continue;
         out[n % out.len] = s;
         n += 1;
     }
@@ -79,7 +79,7 @@ pub fn report(fd: i32, data_dir: []const u8) void {
     const log_path = std.fmt.bufPrintSentinel(&path_buf, "{s}/battery", .{data_dir}, 0) catch return;
     // Only times the Kindle's clock could really have had, in order: a torn line or
     // one from a clock reset after a flat battery would point the report at 1970
-    const now_s = @import("../sys/os.zig").unixTime();
+    const now_s = @import("../sys/os.zig").unix_time();
     var kept: usize = 0;
     for (load(log_path, &samples)) |sm| {
         if (!battery.plausible(sm.time, now_s)) continue;
@@ -90,7 +90,7 @@ pub fn report(fd: i32, data_dir: []const u8) void {
     const log = samples[0..kept];
     var journal_buf: [journal.max_format_bytes]u8 = undefined;
     const journal_path = std.fmt.bufPrintSentinel(&path_buf, "{s}/journal", .{data_dir}, 0) catch return;
-    const j = journal.parse(state.readSmall(journal_path, &journal_buf));
+    const j = journal.parse(state.read_small(journal_path, &journal_buf));
 
     out(fd, "noface battery report", .{});
     if (log.len < 2) {
@@ -98,9 +98,9 @@ pub fn report(fd: i32, data_dir: []const u8) void {
         return;
     }
     // Seconds read on each day the log covers
-    const offset = clock.utcOffset();
-    const first = journal.dayOf(log[0].time, offset);
-    const last = journal.dayOf(log[log.len - 1].time, offset);
+    const offset = clock.utc_offset();
+    const first = journal.day_of(log[0].time, offset);
+    const last = journal.day_of(log[log.len - 1].time, offset);
     var read: [400]u32 = @splat(0);
     const span: usize = @intCast(@min(@max(last - first + 1, 0), read.len));
     for (read[0..span], 0..) |*r, i| r.* = j.get(first + @as(i32, @intCast(i))).seconds;

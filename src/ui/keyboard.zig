@@ -17,7 +17,7 @@ pub const top = style.screen_height - 5 * row_step - 16;
 
 pub const Key = union(enum) { char: u8, backspace, space, enter };
 
-fn rowLeft(row: usize) i32 {
+fn row_left(row: usize) i32 {
     const n: i32 = @intCast(rows[row].len);
     const width = n * (key_width + gap) - gap;
     return @divTrunc(style.screen_width - width, 2);
@@ -35,7 +35,7 @@ pub fn hit(x: i32, y: i32) ?Key {
     const row: usize = @intCast(@divTrunc(y - top, row_step));
     if (row < rows.len) {
         if (row == 3 and x >= backspace_x) return .backspace;
-        const left = rowLeft(row);
+        const left = row_left(row);
         if (x < left) return null;
         const col: usize = @intCast(@divTrunc(x - left, key_width + gap));
         return if (col < rows[row].len) .{ .char = rows[row][col] } else null;
@@ -55,21 +55,21 @@ const corner = style.key_corner;
 // Drawn a little inside their tap area, so neighbours have a clear gap
 const inset = 3;
 
-fn keyFace(page: Page, x: i32, y: u32, w: u32, face: u8) void {
+fn key_face(page: Page, x: i32, y: u32, w: u32, face: u8) void {
     const left: u32 = @intCast(x + inset);
     const width = w - 2 * inset;
     const height = key_height - 2 * inset;
-    page.roundRect(left, y + inset + 3, width, height, corner, shadow);
-    page.roundRect(left, y + inset, width, height, corner, face);
+    page.round_rect(left, y + inset + 3, width, height, corner, shadow);
+    page.round_rect(left, y + inset, width, height, corner, face);
 }
 
 fn key(fonts: Fonts, page: Page, x: i32, y: u32, w: u32, label: []const u8, face: u8) !void {
-    keyFace(page, x, y, w, face);
+    key_face(page, x, y, w, face);
     try draw.centered(fonts.small, page, @floatFromInt(x + @as(i32, @intCast(w / 2))), @intCast(y + 68), label);
 }
 
 /// Backspace: a tag pointing left with a cross in it.
-fn backspaceIcon(page: Page, cx: f32, cy: f32) void {
+fn backspace_icon(page: Page, cx: f32, cy: f32) void {
     const l = cx - 30;
     const r = cx + 26;
     page.stroke(l, cy, l + 16, cy - 18, 3);
@@ -82,34 +82,34 @@ fn backspaceIcon(page: Page, cx: f32, cy: f32) void {
 }
 
 pub fn render(fonts: Fonts, page: Page) !void {
-    page.fillRect(0, top - 16, page.width, page.height - (top - 16), tray);
+    page.fill_rect(0, top - 16, page.width, page.height - (top - 16), tray);
     for (rows, 0..) |r, row| {
         const y: u32 = top + @as(u32, @intCast(row)) * row_step;
         for (r, 0..) |c, col| {
-            const x = rowLeft(row) + @as(i32, @intCast(col)) * (key_width + gap);
+            const x = row_left(row) + @as(i32, @intCast(col)) * (key_width + gap);
             try key(fonts, page, x, y, key_width, &.{c}, style.white);
         }
     }
     const last: u32 = top + 3 * row_step;
-    keyFace(page, backspace_x, last, 180, special);
-    backspaceIcon(page, backspace_x + 90, @floatFromInt(last + key_height / 2));
+    key_face(page, backspace_x, last, 180, special);
+    backspace_icon(page, backspace_x + 90, @floatFromInt(last + key_height / 2));
     const bottom: u32 = top + 4 * row_step;
     try key(fonts, page, space_left, bottom, space_width, "space", style.white);
     // The main key: black like a key that's on, shadow and all, its label in white
-    keyFace(page, enter_left, bottom, enter_width, style.black);
+    key_face(page, enter_left, bottom, enter_width, style.black);
     const Label = struct {
         fonts: Fonts,
         pub fn draw(l: @This(), t: Page, cx: f32, _: f32) !void {
             try centered(l.fonts.title, t, cx, 70, "Search"); // Baseline as on the other keys
         }
     };
-    try icons.drawWhite(page, enter_width, key_height, enter_left + enter_width / 2, @intCast(bottom + key_height / 2), Label{ .fonts = fonts });
+    try icons.draw_white(page, enter_width, key_height, enter_left + enter_width / 2, @intCast(bottom + key_height / 2), Label{ .fonts = fonts });
 }
 
 test "keys map to letters, and the special keys answer" {
-    try std.testing.expectEqual(Key{ .char = 'q' }, hit(rowLeft(1) + 10, top + row_step + 10).?);
-    try std.testing.expectEqual(Key{ .char = '0' }, hit(rowLeft(0) + 9 * (key_width + gap) + 10, top + 10).?);
-    try std.testing.expectEqual(Key{ .char = 'm' }, hit(rowLeft(3) + 6 * (key_width + gap) + 10, top + 3 * row_step + 10).?);
+    try std.testing.expectEqual(Key{ .char = 'q' }, hit(row_left(1) + 10, top + row_step + 10).?);
+    try std.testing.expectEqual(Key{ .char = '0' }, hit(row_left(0) + 9 * (key_width + gap) + 10, top + 10).?);
+    try std.testing.expectEqual(Key{ .char = 'm' }, hit(row_left(3) + 6 * (key_width + gap) + 10, top + 3 * row_step + 10).?);
     try std.testing.expectEqual(Key.backspace, hit(backspace_x + 20, top + 3 * row_step + 10).?);
     try std.testing.expectEqual(Key.space, hit(space_left + 100, top + 4 * row_step + 10).?);
     try std.testing.expectEqual(Key.enter, hit(enter_left + 100, top + 4 * row_step + 10).?);
@@ -118,5 +118,5 @@ test "keys map to letters, and the special keys answer" {
 
 test "the keyboard fits, with backspace clear of the letters" {
     try std.testing.expect(top + 5 * row_step <= style.screen_height);
-    try std.testing.expect(rowLeft(3) + 7 * (key_width + gap) < backspace_x);
+    try std.testing.expect(row_left(3) + 7 * (key_width + gap) < backspace_x);
 }

@@ -35,39 +35,39 @@ const Search = struct {
     pub fn draw(se: *Search, part: screen.Part) !void {
         const a = se.a;
         const page = a.page(a.screen.pixels);
-        try search_sheet.renderBar(a.ui, page, toolbar.status_row, se.s.query.slice(), "Search this book", .search);
+        try search_sheet.render_bar(a.ui, page, toolbar.status_row, se.s.query.slice(), "Search this book", .search);
         if (part == .all) {
             if (se.typing) {
-                page.fillRect(0, search_sheet.content_top, page.width, keyboard.top - search_sheet.content_top, 0xff);
+                page.fill_rect(0, search_sheet.content_top, page.width, keyboard.top - search_sheet.content_top, 0xff);
                 try keyboard.render(a.ui, page);
-            } else try se.drawResults(page);
+            } else try se.draw_results(page);
         }
         const bottom: u32 = if (part == .all) a.screen.height else search_sheet.content_top;
-        try a.showBand(toolbar.status_row, bottom - toolbar.status_row);
+        try a.show_band(toolbar.status_row, bottom - toolbar.status_row);
     }
 
-    fn drawResults(se: *Search, page: @import("../../gfx/page.zig").Page) !void {
+    fn draw_results(se: *Search, page: @import("../../gfx/page.zig").Page) !void {
         const a = se.a;
-        page.fillRect(0, search_sheet.content_top, page.width, goto.list_top - search_sheet.content_top, 0xff);
+        page.fill_rect(0, search_sheet.content_top, page.width, goto.list_top - search_sheet.content_top, 0xff);
         var count_buf: [32]u8 = undefined;
         const n = se.results.len;
         const count = if (n >= max_results) "500+ results" else std.fmt.bufPrint(&count_buf, "{d} result{s}", .{ n, if (n == 1) "" else "s" }) catch "";
         try a.ui.caption.draw(page, style.margin, search_sheet.content_top + 56, count);
-        try goto.renderList(a.ui, page, se.results, null, se.pages.page, "No matches in this book.");
+        try goto.render_list(a.ui, page, se.results, null, se.pages.page, "No matches in this book.");
     }
 
-    pub fn onTap(se: *Search, t: screen.Tap) !screen.Step(usize) {
-        if (search_sheet.barHit(t.x, t.y)) |h| {
+    pub fn on_tap(se: *Search, t: screen.Tap) !screen.Step(usize) {
+        if (search_sheet.bar_hit(t.x, t.y)) |h| {
             if (h == .cancel) return .close;
             if (se.typing) return .stay;
             se.typing = true; // The field: the keyboard back over the results
             return .{ .redraw = .all };
         }
         if (t.y < search_sheet.top) return .close; // Above the sheet
-        return if (se.typing) se.onKeyboard(t) else se.onResults(t);
+        return if (se.typing) se.on_keyboard(t) else se.on_results(t);
     }
 
-    fn onKeyboard(se: *Search, t: screen.Tap) !screen.Step(usize) {
+    fn on_keyboard(se: *Search, t: screen.Tap) !screen.Step(usize) {
         switch (typing.key(&se.s.query, t, typing.anything)) {
             .none => return .stay,
             .changed => return .{ .redraw = .changing },
@@ -83,7 +83,7 @@ const Search = struct {
         }
     }
 
-    fn onResults(se: *Search, t: screen.Tap) screen.Step(usize) {
+    fn on_results(se: *Search, t: screen.Tap) screen.Step(usize) {
         return switch (se.pages.tap(t.x, t.y, se.results.len)) {
             .row => |i| .{ .done = se.results[i].page },
             .turned => .{ .redraw = .all },
@@ -97,7 +97,7 @@ fn find(alloc: std.mem.Allocator, s: *const sess.Session, query: []const u8) ![]
     const rows = try alloc.alloc(goto.Row, matches.len);
     for (matches, rows) |m, *r| r.* = .{
         .label = search.snippet(s.paragraphs[m.para].text, m.byte, snippet_bytes),
-        .page = sess.pageContaining(s.pages, m.para, m.byte),
+        .page = sess.page_containing(s.pages, m.para, m.byte),
     };
     return rows;
 }

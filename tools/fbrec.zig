@@ -12,7 +12,7 @@
 const std = @import("std");
 const core = @import("core");
 const linux = std.os.linux;
-const nowUs = core.os.nowUs;
+const now_us = core.os.now_us;
 
 pub fn main(init: std.process.Init.Minimal) !void {
     const argv = init.args.vector;
@@ -54,16 +54,16 @@ pub fn main(init: std.process.Init.Minimal) !void {
     var wall: linux.timespec = undefined;
     _ = linux.clock_gettime(.REALTIME, &wall);
     const wall_us: i64 = @as(i64, wall.sec) * 1_000_000 + @divTrunc(@as(i64, wall.nsec), 1000);
-    const wall_to_mono: i64 = @as(i64, @intCast(nowUs())) - wall_us;
+    const wall_to_mono: i64 = @as(i64, @intCast(now_us())) - wall_us;
 
     const frame = try std.heap.page_allocator.alloc(u8, 8 + out_w * out_h);
     var row: [4096]u8 = undefined;
     const step_us: u64 = 1_000_000 / fps;
-    const end = nowUs() + @as(u64, seconds) * 1_000_000;
-    var next = nowUs();
+    const end = now_us() + @as(u64, seconds) * 1_000_000;
+    var next = now_us();
     var frames: u32 = 0;
-    while (nowUs() < end) {
-        const t = nowUs();
+    while (now_us() < end) {
+        const t = now_us();
         std.mem.writeInt(u64, frame[0..8], t, .little);
         for (0..out_h) |y| {
             const off: i64 = @as(i64, yoffset + @as(u32, @intCast(y)) * scale) * width;
@@ -73,10 +73,10 @@ pub fn main(init: std.process.Init.Minimal) !void {
         }
         _ = linux.write(out, frame.ptr, frame.len);
         frames += 1;
-        if (touch >= 0 and touches_out >= 0) logTouches(touch, touches_out, wall_to_mono);
+        if (touch >= 0 and touches_out >= 0) log_touches(touch, touches_out, wall_to_mono);
         next += step_us;
-        const now = nowUs();
-        if (next > now) core.os.sleepMs((next - now) / 1000);
+        const now = now_us();
+        if (next > now) core.os.sleep_ms((next - now) / 1000);
     }
     std.debug.print("fbrec: {d} frames of {d}x{d}\n", .{ frames, out_w, out_h });
 }
@@ -84,7 +84,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 const InputEvent = extern struct { sec: u32, usec: u32, kind: u16, code: u16, value: i32 };
 
 /// Writes a line for each finger landing or lifting since last time.
-fn logTouches(touch: i32, out: i32, wall_to_mono: i64) void {
+fn log_touches(touch: i32, out: i32, wall_to_mono: i64) void {
     var events: [64]InputEvent = undefined;
     while (true) {
         const n = linux.read(touch, @ptrCast(&events), @sizeOf(@TypeOf(events)));

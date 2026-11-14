@@ -40,19 +40,19 @@ pub fn main(init: std.process.Init.Minimal) !void {
     const books: []const u8 = if (args.len >= 2) std.mem.sliceTo(args[1], 0) else blk: {
         const dir = data ++ "/books";
         _ = sys.mkdir(dir, 0o755);
-        try writeFile(dir ++ "/Scenario Book.epub", test_book);
+        try write_file(dir ++ "/Scenario Book.epub", test_book);
         break :blk dir;
     };
-    try writeFile(data ++ "/library.tsv", "\n"); // No Amazon books: only the EPUBs
+    try write_file(data ++ "/library.tsv", "\n"); // No Amazon books: only the EPUBs
 
     // The pretend Kindle answers the system; the Wi-Fi saver's note stays in the folder
     var fake = try FakeKindle.init(alloc);
-    fake.clock = localClock;
+    fake.clock = local_clock;
     // A computer is on its charger, and full
     try fake.put("com.lab126.powerd battLevel", "100");
     try fake.put("com.lab126.powerd usbState", "1");
     fake.install();
-    wifi_saver.useDataDir(data);
+    wifi_saver.use_data_dir(data);
 
     var app_budget = memory.Budget{ .name = "app", .child = alloc, .limit = 512 << 20 };
     var stb_budget = memory.Budget{ .name = "stb", .child = alloc, .limit = 256 << 20 };
@@ -81,14 +81,14 @@ pub fn main(init: std.process.Init.Minimal) !void {
     a.documents = books;
     // Every typeface is the Go font: the Kindle's own aren't on a computer
     for (&a.face_files) |*family| family.* = .{ go_regular, go_bold, go_regular, go_bold };
-    try a.applySettings();
+    try a.apply_settings();
 
     var server = Server{ .screen = &screen, .actions = pipe[1], .port = port };
     const thread = try std.Thread.spawn(.{}, Server.run, .{&server});
     thread.detach();
     std.debug.print("noface-sim: open http://localhost:{d}  (books from {s})\n", .{ port, books });
 
-    try library_screen.runLibrary(&a);
+    try library_screen.run_library(&a);
 }
 
 extern "c" fn time(t: ?*i64) i64;
@@ -96,14 +96,14 @@ extern "c" fn localtime_r(t: *const i64, out: *anyopaque) ?*anyopaque;
 extern "c" fn strftime(buf: [*]u8, max: usize, format: [*:0]const u8, tm: *const anyopaque) usize;
 
 /// The computer's local time, as the Kindle's `date +"%H:%M - %d %b %Y"` prints it.
-fn localClock(out: []u8) usize {
+fn local_clock(out: []u8) usize {
     var now = time(null);
     var tm: [128]u8 align(16) = undefined; // A struct tm, of whatever size this system's is
     _ = localtime_r(&now, &tm) orelse return 0;
     return strftime(out.ptr, out.len, "%H:%M - %d %b %Y", &tm);
 }
 
-fn writeFile(path: [*:0]const u8, bytes: []const u8) !void {
+fn write_file(path: [*:0]const u8, bytes: []const u8) !void {
     const rc = sys.open(path, .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, 0o644);
     if (rc > std.math.maxInt(usize) - 4096) return error.CantWrite;
     const fd: i32 = @intCast(rc);
@@ -154,7 +154,7 @@ const Server = struct {
             var buf: [16]u8 = undefined;
             return reply(conn, "text/plain", std.fmt.bufPrint(&buf, "{d}", .{s.screen.updates}) catch "0");
         }
-        if (std.mem.eql(u8, path, "/screen.bmp")) return s.sendScreen(conn);
+        if (std.mem.eql(u8, path, "/screen.bmp")) return s.send_screen(conn);
         if (std.mem.eql(u8, path, "/act")) {
             if (action(query)) |act| {
                 var bytes = act;
@@ -170,7 +170,7 @@ const Server = struct {
     }
 
     /// The screen as an 8-bit gray BMP, which every browser shows as it is.
-    fn sendScreen(s: *Server, conn: c_int) void {
+    fn send_screen(s: *Server, conn: c_int) void {
         const palette = 256 * 4;
         const offset = 14 + 40 + palette;
         const size = offset + width * height;
@@ -192,20 +192,20 @@ const Server = struct {
         }
         var http: [160]u8 = undefined;
         const h = std.fmt.bufPrint(&http, "HTTP/1.1 200 OK\r\nContent-Type: image/bmp\r\nContent-Length: {d}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n", .{size}) catch return;
-        writeAll(conn, h);
-        writeAll(conn, &head);
-        writeAll(conn, s.screen.pixels[0 .. width * height]);
+        write_all(conn, h);
+        write_all(conn, &head);
+        write_all(conn, s.screen.pixels[0 .. width * height]);
     }
 };
 
 fn reply(conn: c_int, kind: []const u8, body: []const u8) void {
     var http: [160]u8 = undefined;
     const h = std.fmt.bufPrint(&http, "HTTP/1.1 200 OK\r\nContent-Type: {s}\r\nContent-Length: {d}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n", .{ kind, body.len }) catch return;
-    writeAll(conn, h);
-    writeAll(conn, body);
+    write_all(conn, h);
+    write_all(conn, body);
 }
 
-fn writeAll(conn: c_int, bytes: []const u8) void {
+fn write_all(conn: c_int, bytes: []const u8) void {
     var at: usize = 0;
     while (at < bytes.len) {
         const n = c.write(conn, bytes[at..].ptr, bytes.len - at);

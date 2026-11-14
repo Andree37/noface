@@ -12,7 +12,7 @@ const min_span_s: u64 = 12 * 3600;
 const min_drop = 3;
 
 /// "1793990000 87 u": time, level, plugged ("p") or unplugged ("u").
-pub fn parseLine(line: []const u8) ?Sample {
+pub fn parse_line(line: []const u8) ?Sample {
     var it = std.mem.tokenizeScalar(u8, line, ' ');
     const time = std.fmt.parseInt(u64, it.next() orelse return null, 10) catch return null;
     const level = std.fmt.parseInt(u32, it.next() orelse return null, 10) catch return null;
@@ -21,13 +21,13 @@ pub fn parseLine(line: []const u8) ?Sample {
     return .{ .time = time, .level = level, .plugged = std.mem.eql(u8, plug, "p") };
 }
 
-pub fn formatLine(buf: []u8, s: Sample) []const u8 {
+pub fn format_line(buf: []u8, s: Sample) []const u8 {
     return std.fmt.bufPrint(buf, "{d} {d} {s}\n", .{ s.time, s.level, if (s.plugged) "p" else "u" }) catch "";
 }
 
 /// Seconds the battery has left at `level`, at the drain seen in `log` (oldest first).
 /// Null while there isn't enough unplugged use to tell.
-pub fn secondsLeft(log: []const Sample, now: u64, level: u32) ?u64 {
+pub fn seconds_left(log: []const Sample, now: u64, level: u32) ?u64 {
     var drop: u64 = 0;
     var span: u64 = 0;
     if (log.len < 2) return null;
@@ -64,11 +64,11 @@ pub fn describe(buf: []u8, seconds: u64) []const u8 {
 test "lines read back as written" {
     var buf: [40]u8 = undefined;
     const s = Sample{ .time = 1793990000, .level = 87, .plugged = false };
-    const line = formatLine(&buf, s);
+    const line = format_line(&buf, s);
     try std.testing.expectEqualStrings("1793990000 87 u\n", line);
-    try std.testing.expectEqual(s, parseLine(std.mem.trimEnd(u8, line, "\n")).?);
-    try std.testing.expect(parseLine("12 300 u") == null);
-    try std.testing.expect(parseLine("junk") == null);
+    try std.testing.expectEqual(s, parse_line(std.mem.trimEnd(u8, line, "\n")).?);
+    try std.testing.expect(parse_line("12 300 u") == null);
+    try std.testing.expect(parse_line("junk") == null);
 }
 
 test "drain counts only unplugged time, and charging breaks it" {
@@ -82,7 +82,7 @@ test "drain counts only unplugged time, and charging breaks it" {
         .{ .time = t + 3 * d, .level = 95, .plugged = false }, // 5% a day again
     };
     // 10% over 2 days: at 95%, 19 days left
-    try std.testing.expectEqual(@as(u64, 19 * d), secondsLeft(&log, t + 3 * d, 95).?);
+    try std.testing.expectEqual(@as(u64, 19 * d), seconds_left(&log, t + 3 * d, 95).?);
 }
 
 test "too little to go on says nothing" {
@@ -91,8 +91,8 @@ test "too little to go on says nothing" {
         .{ .time = t, .level = 100, .plugged = false },
         .{ .time = t + 3600, .level = 99, .plugged = false },
     };
-    try std.testing.expect(secondsLeft(&log, t + 3600, 99) == null);
-    try std.testing.expect(secondsLeft(log[0..1], t, 100) == null);
+    try std.testing.expect(seconds_left(&log, t + 3600, 99) == null);
+    try std.testing.expect(seconds_left(log[0..1], t, 100) == null);
 }
 
 test "old drain falls out of the window" {
@@ -104,7 +104,7 @@ test "old drain falls out of the window" {
         .{ .time = t + 30 * d, .level = 100, .plugged = false },
         .{ .time = t + 32 * d, .level = 90, .plugged = false },
     };
-    try std.testing.expectEqual(@as(u64, 18 * d), secondsLeft(&log, t + 32 * d, 90).?);
+    try std.testing.expectEqual(@as(u64, 18 * d), seconds_left(&log, t + 32 * d, 90).?);
 }
 
 test "times read naturally" {
@@ -124,7 +124,7 @@ test "a long gap or a clock reset doesn't run the estimate" {
         .{ .time = t + 60 * d, .level = 95, .plugged = false },
         .{ .time = t + 61 * d, .level = 90, .plugged = false },
     };
-    try std.testing.expectEqual(@as(u64, 18 * d), secondsLeft(&gap, t + 61 * d, 90).?);
+    try std.testing.expectEqual(@as(u64, 18 * d), seconds_left(&gap, t + 61 * d, 90).?);
     // A note from a reset clock (1970), and a damaged huge time: skipped, no overflow
     const reset = [_]Sample{
         .{ .time = 5, .level = 100, .plugged = false },
@@ -132,7 +132,7 @@ test "a long gap or a clock reset doesn't run the estimate" {
         .{ .time = t + d, .level = 90, .plugged = false },
         .{ .time = std.math.maxInt(u64), .level = 80, .plugged = false },
     };
-    try std.testing.expectEqual(@as(u64, 18 * d), secondsLeft(&reset, t + d, 90).?);
+    try std.testing.expectEqual(@as(u64, 18 * d), seconds_left(&reset, t + d, 90).?);
 }
 
 /// What the battery spent on whole days off the charger, split between reading and
@@ -148,7 +148,7 @@ pub const Usage = struct {
 
 /// The level at `t`, from the samples either side of it, if both are off the charger
 /// and it didn't rise between them.
-fn levelAt(log: []const Sample, t: u64) ?f64 {
+fn level_at(log: []const Sample, t: u64) ?f64 {
     for (log[0..log.len -| 1], log[1..]) |a, b| {
         if (a.time > t or b.time < t) continue;
         if (a.plugged or b.plugged or b.level > a.level or b.time <= a.time) return null;
@@ -159,7 +159,7 @@ fn levelAt(log: []const Sample, t: u64) ?f64 {
 }
 
 /// Unplugged the whole of [from, to]: no sample in it says plugged.
-fn offChargerThrough(log: []const Sample, from: u64, to: u64) bool {
+fn off_charger_through(log: []const Sample, from: u64, to: u64) bool {
     for (log) |s| {
         if (s.time >= from and s.time <= to and s.plugged) return false;
     }
@@ -179,9 +179,9 @@ pub fn usage(log: []const Sample, first_day: i32, read: []const u32, utc_offset:
         if (start_signed < 0) continue;
         const start: u64 = @intCast(start_signed);
         const end = start + 86400;
-        if (!offChargerThrough(log, start, end)) continue;
-        const from = levelAt(log, start) orelse continue;
-        const to = levelAt(log, end) orelse continue;
+        if (!off_charger_through(log, start, end)) continue;
+        const from = level_at(log, start) orelse continue;
+        const to = level_at(log, end) orelse continue;
         const x = @as(f64, @floatFromInt(seconds)) / 3600;
         const y = from - to;
         n += 1;

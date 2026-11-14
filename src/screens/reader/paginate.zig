@@ -29,7 +29,7 @@ fn run(a: *app.App, alloc: std.mem.Allocator, paragraphs: []const book_model.Par
         if (added == max) return pos;
         try out.append(alloc, pos);
         added += 1;
-        const next = try text.layoutPage(a.body, null, geometry, paragraphs, pos, layout, null);
+        const next = try text.layout_page(a.body, null, geometry, paragraphs, pos, layout, null);
         // A page that fits nothing would repeat forever; layout always places something.
         check.thatf(next.para > pos.para or (next.para == pos.para and next.byte > pos.byte), "page at {d}:{d} moves forward", .{ pos.para, pos.byte });
         pos = next;

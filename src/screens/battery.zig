@@ -22,12 +22,12 @@ pub const Lines = struct { title: []const u8, detail: []const u8 };
 pub fn lines(buf: []u8, log: []const battery.Sample, now: ?battery.Sample, read_per_day_s: u64) Lines {
     const n = now orelse return .{ .title = "Battery", .detail = "Its level can't be read right now." };
     if (n.plugged) return .{ .title = "Plugged in", .detail = "How long it lasts shows once it's unplugged." };
-    const left_s = battery.secondsLeft(log, n.time, n.level) orelse
+    const left_s = battery.seconds_left(log, n.time, n.level) orelse
         return .{ .title = "Still learning", .detail = "A day or two unplugged, and this shows how long it lasts." };
     var time_buf: [32]u8 = undefined;
     const title = std.fmt.bufPrint(buf[0..64], "{s} left", .{battery.describe(&time_buf, left_s)}) catch "";
     var read_buf: [32]u8 = undefined;
-    const detail = if (stats.readingTime(&read_buf, read_per_day_s)) |r|
+    const detail = if (stats.reading_time(&read_buf, read_per_day_s)) |r|
         std.fmt.bufPrint(buf[64..], "Reading about {s} a day, as lately", .{r}) catch ""
     else
         "At the way it's been used lately";
@@ -37,7 +37,7 @@ pub fn lines(buf: []u8, log: []const battery.Sample, now: ?battery.Sample, read_
 pub fn show(a: *app.App) !void {
     var samples: [2048]battery.Sample = undefined;
     const log = battery_log.load(a.battery_path, &samples);
-    const per_day = a.journal.secondsOver(a.today(), usual_days) / usual_days;
+    const per_day = a.journal.seconds_over(a.today(), usual_days) / usual_days;
     var buf: [160]u8 = undefined;
     const said = lines(&buf, log, battery_log.now(), per_day);
     std.debug.print("battery: {s} ({d} samples)\n", .{ said.title, log.len });
@@ -46,7 +46,7 @@ pub fn show(a: *app.App) !void {
     var bubble = Bubble{ .a = a, .said = said };
     _ = try screen.run(a, &bubble);
     @memcpy(a.screen.pixels, a.overlay);
-    try a.showRect(left, top, width, height);
+    try a.show_rect(left, top, width, height);
 }
 
 /// The estimate, in a bubble by the battery. Any tap closes it.
@@ -64,10 +64,10 @@ const Bubble = struct {
         try draw_ui.clipped(a.ui.title, page, x, top + 72, b.said.title, avail);
         try draw_ui.clipped(a.ui.caption, page, x, top + 128, b.said.detail, avail);
         page.tint(left + 36, top + 96, width - 72, 44, style.faded);
-        try a.showRect(left, top, width, height);
+        try a.show_rect(left, top, width, height);
     }
 
-    pub fn onTap(_: *Bubble, _: screen.Tap) !screen.Step(void) {
+    pub fn on_tap(_: *Bubble, _: screen.Tap) !screen.Step(void) {
         return .close;
     }
 };

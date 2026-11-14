@@ -28,7 +28,7 @@ pub fn exists(path: [*:0]const u8) bool {
 }
 
 /// How many bytes `path` holds now, or 0 when it can't be opened.
-pub fn sizeOf(path: [*:0]const u8) u64 {
+pub fn size_of(path: [*:0]const u8) u64 {
     const fd = linux.open(path, .{ .ACCMODE = .RDONLY }, 0);
     if (fd > std.math.maxInt(usize) - 4096) return 0;
     defer _ = linux.close(@intCast(fd));

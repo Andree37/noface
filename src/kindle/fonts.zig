@@ -23,7 +23,7 @@ comptime {
     if (faces.len != settings.builtin_families.len) @compileError("every family needs its font files");
 }
 
-/// The reader's own families' files, found by `findOwn`.
+/// The reader's own families' files, found by `find_own`.
 var own: [settings.max_own][4][:0]const u8 = undefined;
 
 /// The file for a family's weight and slant.
@@ -50,11 +50,11 @@ pub fn named(file_name: []const u8) ?Named {
     var n: usize = 0;
     var i: usize = 0;
     while (i < stem.len and n < starts.len) {
-        while (i < stem.len and isSeparator(stem[i])) i += 1;
+        while (i < stem.len and is_separator(stem[i])) i += 1;
         if (i == stem.len) break;
         starts[n] = i;
         n += 1;
-        while (i < stem.len and !isSeparator(stem[i])) i += 1;
+        while (i < stem.len and !is_separator(stem[i])) i += 1;
     }
     var take: usize = @min(n -| 1, 3);
     while (take > 0) : (take -= 1) {
@@ -62,7 +62,7 @@ pub fn named(file_name: []const u8) ?Named {
         var joined: [48]u8 = undefined;
         var len: usize = 0;
         for (stem[from..]) |c| {
-            if (isSeparator(c)) continue;
+            if (is_separator(c)) continue;
             if (len == joined.len) break;
             joined[len] = c;
             len += 1;
@@ -70,7 +70,7 @@ pub fn named(file_name: []const u8) ?Named {
         // "Roman" is the regular after a dash ("Crimson-Roman"), but part of the name
         // after a space ("Times New Roman")
         const roman = take == 1 and std.ascii.eqlIgnoreCase(joined[0..len], "Roman") and from > 0 and stem[from - 1] != ' ';
-        if (if (roman) @as(??usize, 0) else styleOf(joined[0..len])) |which| {
+        if (if (roman) @as(??usize, 0) else style_of(joined[0..len])) |which| {
             const family = std.mem.trimEnd(u8, stem[0..from], "-_ ");
             return if (family.len > 0) .{ .family = family, .which = which } else null;
         }
@@ -78,13 +78,13 @@ pub fn named(file_name: []const u8) ?Named {
     return .{ .family = stem, .which = 0 }; // No style in the name: the regular
 }
 
-fn isSeparator(c: u8) bool {
+fn is_separator(c: u8) bool {
     return c == '-' or c == '_' or c == ' ';
 }
 
 /// Which of the four a style word is; null inside for weights noface doesn't use,
 /// null outside for a word that isn't a style at all.
-fn styleOf(word: []const u8) ??usize {
+fn style_of(word: []const u8) ??usize {
     const styles = [_]struct { []const u8, ?usize }{
         .{ "Regular", 0 },           .{ "Rg", 0 },                  .{ "Book", 0 },
         .{ "Bold", 1 },              .{ "Bd", 1 },                  .{ "Italic", 2 },
@@ -145,9 +145,9 @@ pub fn complete(files: [4]?[]const u8) [4][]const u8 {
 /// Finds the reader's own typefaces in the fonts folder and offers them. Files that
 /// `usable` turns down (not fonts noface can set text in) are left out. Called once,
 /// before the settings are read, so a chosen one is found by name.
-pub fn findOwn(alloc: std.mem.Allocator, usable_font: *const fn ([]const u8) bool) void {
+pub fn find_own(alloc: std.mem.Allocator, usable_font: *const fn ([]const u8) bool) void {
     var names_buf: [64][]const u8 = undefined;
-    const names = listDir(alloc, own_dir, &names_buf);
+    const names = list_dir(alloc, own_dir, &names_buf);
     var found_buf: [8]Found = undefined;
     const found = group(alloc, names, &found_buf) catch return;
     var added: usize = 0;
@@ -168,7 +168,7 @@ pub fn findOwn(alloc: std.mem.Allocator, usable_font: *const fn ([]const u8) boo
             std.debug.print("fonts: {s} can't be used\n", .{f.name});
             continue;
         }
-        if (!settings.addFamily(f.name)) continue;
+        if (!settings.add_family(f.name)) continue;
         own[added] = full;
         added += 1;
         std.debug.print("fonts: added {s}\n", .{f.name});
@@ -184,7 +184,7 @@ const FontTrial = struct {
 };
 
 /// The names of the files in `dir`.
-fn listDir(alloc: std.mem.Allocator, dir: [*:0]const u8, out: [][]const u8) [][]const u8 {
+fn list_dir(alloc: std.mem.Allocator, dir: [*:0]const u8, out: [][]const u8) [][]const u8 {
     const Into = struct {
         alloc: std.mem.Allocator,
         out: [][]const u8,
@@ -196,7 +196,7 @@ fn listDir(alloc: std.mem.Allocator, dir: [*:0]const u8, out: [][]const u8) [][]
         }
     };
     var into = Into{ .alloc = alloc, .out = out };
-    linux.eachEntry(dir, &into, Into.add);
+    linux.each_entry(dir, &into, Into.add);
     return out[0..into.n];
 }
 

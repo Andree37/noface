@@ -76,7 +76,7 @@ pub fn locate(paragraphs: []const book_model.Paragraph, short: u32) ?struct { pa
     }
     const i = found orelse return null;
     const p = paragraphs[i];
-    return .{ .para = @intCast(i), .byte = @intCast(book_model.byteOffset(p.text, short - p.position)) };
+    return .{ .para = @intCast(i), .byte = @intCast(book_model.byte_offset(p.text, short - p.position)) };
 }
 
 /// Reads "id|start|end" lines from the annotation database.
@@ -111,7 +111,7 @@ fn overlaps(m: book_model.Mark, w: book_model.Word) bool {
 
 /// An ID for a highlight starting at `short`. Moving a highlight's start keeps
 /// its ID, so that spot can already be taken by a highlight elsewhere.
-pub fn freeId(alloc: std.mem.Allocator, list: []const Highlight, short: u32) ![]const u8 {
+pub fn free_id(alloc: std.mem.Allocator, list: []const Highlight, short: u32) ![]const u8 {
     var n = short;
     next: while (true) : (n += 1) {
         const id = try std.fmt.allocPrint(alloc, "kindle.highlight-{d}", .{n});
@@ -137,7 +137,7 @@ pub fn add(list: *std.ArrayList(Highlight), alloc: std.mem.Allocator, paragraphs
 /// Removes every mark of a highlight.
 /// Whether `list[i]` is the first mark of its highlight. A highlight keeps a mark per
 /// paragraph it covers; this lists or counts each one once.
-pub fn firstOfId(list: []const Highlight, i: usize) bool {
+pub fn first_of_id(list: []const Highlight, i: usize) bool {
     for (list[0..i]) |earlier| {
         if (std.mem.eql(u8, earlier.id, list[i].id)) return false;
     }
@@ -147,7 +147,7 @@ pub fn firstOfId(list: []const Highlight, i: usize) bool {
 /// How many highlights there are, each counted once however many paragraphs it covers.
 pub fn count(list: []const Highlight) usize {
     var n: usize = 0;
-    for (0..list.len) |i| n += @intFromBool(firstOfId(list, i));
+    for (0..list.len) |i| n += @intFromBool(first_of_id(list, i));
     return n;
 }
 
@@ -161,7 +161,7 @@ pub fn remove(list: *std.ArrayList(Highlight), id: []const u8) void {
 }
 
 /// First and last word of a highlight on this page.
-pub fn wordRange(words: []const book_model.Word, list: []const Highlight, id: []const u8) ?struct { lo: usize, hi: usize } {
+pub fn word_range(words: []const book_model.Word, list: []const Highlight, id: []const u8) ?struct { lo: usize, hi: usize } {
     var lo: ?usize = null;
     var hi: usize = 0;
     for (words, 0..) |w, i| {
@@ -176,7 +176,7 @@ pub fn wordRange(words: []const book_model.Word, list: []const Highlight, id: []
 }
 
 /// The ID of the highlight containing a word, if any.
-pub fn atWord(list: []const Highlight, w: book_model.Word) ?[]const u8 {
+pub fn at_word(list: []const Highlight, w: book_model.Word) ?[]const u8 {
     for (list) |h| {
         if (overlaps(h.mark, w)) return h.id;
     }
@@ -217,12 +217,12 @@ test "words map to a highlight" {
         .{ .x = 40, .y = 0, .w = 10, .h = 10, .para = 0, .start = 8, .end = 11 },
     };
     const list = [_]Highlight{.{ .mark = .{ .para = 0, .start = 4, .end = 11 }, .id = "x" }};
-    const r = wordRange(&words, &list, "x").?;
+    const r = word_range(&words, &list, "x").?;
     try std.testing.expectEqual(@as(usize, 1), r.lo);
     try std.testing.expectEqual(@as(usize, 2), r.hi);
-    try std.testing.expect(wordRange(&words, &list, "y") == null);
-    try std.testing.expectEqualStrings("x", atWord(&list, words[1]).?);
-    try std.testing.expect(atWord(&list, words[0]) == null);
+    try std.testing.expect(word_range(&words, &list, "y") == null);
+    try std.testing.expectEqualStrings("x", at_word(&list, words[1]).?);
+    try std.testing.expect(at_word(&list, words[0]) == null);
 }
 
 test "a highlight crossing paragraphs covers both and stays one highlight" {
@@ -240,7 +240,7 @@ test "a highlight crossing paragraphs covers both and stays one highlight" {
     try std.testing.expectEqual(@as(usize, 2), list.items.len);
     try std.testing.expectEqual(@as(u32, 20), list.items[0].mark.end);
     try std.testing.expectEqual(@as(u32, 0), list.items[1].mark.start);
-    const r = wordRange(&words, list.items, "h").?;
+    const r = word_range(&words, list.items, "h").?;
     try std.testing.expectEqual(@as(usize, 0), r.lo);
     try std.testing.expectEqual(@as(usize, 2), r.hi);
     remove(&list, "h");
@@ -279,8 +279,8 @@ test "a new highlight never takes an ID in use" {
     defer arena.deinit();
     const mark = book_model.Mark{ .para = 0, .start = 0, .end = 1 };
     const list = [_]Highlight{ .{ .mark = mark, .id = "kindle.highlight-100" }, .{ .mark = mark, .id = "kindle.highlight-101" } };
-    try std.testing.expectEqualStrings("kindle.highlight-99", try freeId(arena.allocator(), &list, 99));
-    try std.testing.expectEqualStrings("kindle.highlight-102", try freeId(arena.allocator(), &list, 100));
+    try std.testing.expectEqualStrings("kindle.highlight-99", try free_id(arena.allocator(), &list, 99));
+    try std.testing.expectEqualStrings("kindle.highlight-102", try free_id(arena.allocator(), &list, 100));
 }
 
 test "excerpts end at a word and never split a character" {
@@ -297,5 +297,7 @@ test "a highlight over several paragraphs counts once" {
         .{ .id = "b", .mark = .{ .para = 2, .start = 0, .end = 3 } },
     };
     try std.testing.expectEqual(@as(usize, 2), count(&list));
-    try std.testing.expect(firstOfId(&list, 0) and !firstOfId(&list, 1) and firstOfId(&list, 2));
+    try std.testing.expect(first_of_id(&list, 0));
+    try std.testing.expect(!first_of_id(&list, 1));
+    try std.testing.expect(first_of_id(&list, 2));
 }

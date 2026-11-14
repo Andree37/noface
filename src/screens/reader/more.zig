@@ -34,11 +34,11 @@ fn label(o: Option) []const u8 {
 
 pub fn run(a: *app.App, s: *sess.Session, entry: *catalog.Entry) !Result {
     // No Cancel: tapping above the sheet closes it
-    const list = [_]Option{ .go_to_page, .beginning, .details, .refresh, if (entry.isRead()) .unread else .finished };
+    const list = [_]Option{ .go_to_page, .beginning, .details, .refresh, if (entry.is_read()) .unread else .finished };
     var rows: [list.len]card.Row = undefined;
     for (list, &rows) |o, *r| r.* = .{ .label = label(o) };
     const background = try s.ensure(s.current, s.current);
-    const picked = try app.chooseFromCard(a, background, entry.title, entry.author, &rows) orelse return .stay;
+    const picked = try app.choose_from_card(a, background, entry.title, entry.author, &rows) orelse return .stay;
     switch (list[picked]) {
         .cancel => return .stay,
         .go_to_page => return if (try page_number.run(a, s)) |index| .{ .page = index } else .stay,
@@ -49,7 +49,7 @@ pub fn run(a: *app.App, s: *sess.Session, entry: *catalog.Entry) !Result {
             return .stay;
         },
         .finished, .unread => |choice| {
-            book_actions.markRead(a, entry, choice == .finished);
+            book_actions.mark_read(a, entry, choice == .finished);
             return .stay;
         },
     }
@@ -67,9 +67,9 @@ fn details(a: *app.App, s: *sess.Session, entry: *const catalog.Entry, backgroun
     const highlights = highlights_model.count(s.highlights.items);
     const rows = [_]card.Row{
         .{ .quiet = true, .label = std.fmt.bufPrint(&progress_buf, "Page {d} of {d}, {d}%", .{ s.current + 1, s.pages.len, percent }) catch "" },
-        .{ .quiet = true, .label = if (stats.readingTime(&t1, s.secondsRead())) |time| std.fmt.bufPrint(&read_buf, "Read here for {s}", .{time}) catch "" else "Not read here yet" },
-        .{ .quiet = true, .label = if (s.timeLeft(s.current).book) |m| std.fmt.bufPrint(&left_buf, "{s} left in the book", .{stats.formatMinutes(&t2, m)}) catch "" else "Learning your reading speed" },
+        .{ .quiet = true, .label = if (stats.reading_time(&t1, s.seconds_read_total())) |time| std.fmt.bufPrint(&read_buf, "Read here for {s}", .{time}) catch "" else "Not read here yet" },
+        .{ .quiet = true, .label = if (s.time_left(s.current).book) |m| std.fmt.bufPrint(&left_buf, "{s} left in the book", .{stats.format_minutes(&t2, m)}) catch "" else "Learning your reading speed" },
         .{ .quiet = true, .label = std.fmt.bufPrint(&counts_buf, "{d} chapters, {d} highlights, {d} bookmarks", .{ s.chapters.len, highlights, s.bookmarks.items.len }) catch "" },
     };
-    _ = try app.chooseFromCard(a, background, entry.title, entry.author, &rows);
+    _ = try app.choose_from_card(a, background, entry.title, entry.author, &rows);
 }

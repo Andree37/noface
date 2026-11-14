@@ -26,24 +26,24 @@ pub const Fit = struct { height: u32, next: ?book_model.Pos };
 /// A fixed `height` keeps the panel steady while paging through a long note.
 pub fn fit(font: *Font, parts: []const book_model.Paragraph, start: book_model.Pos, width: u32, stride: u32, fixed: ?u32) !Fit {
     if (fixed) |h| {
-        const next = try text.layoutPage(font, null, geometry(width, h, stride), parts, start, layout(), null);
+        const next = try text.layout_page(font, null, geometry(width, h, stride), parts, start, layout(), null);
         return .{ .height = h, .next = if (next.para >= parts.len) null else next };
     }
     for (heights) |h| {
-        const next = try text.layoutPage(font, null, geometry(width, h, stride), parts, start, layout(), null);
+        const next = try text.layout_page(font, null, geometry(width, h, stride), parts, start, layout(), null);
         if (next.para >= parts.len) return .{ .height = h, .next = null };
     }
     const tallest = heights[heights.len - 1];
-    const next = try text.layoutPage(font, null, geometry(width, tallest, stride), parts, start, layout(), null);
+    const next = try text.layout_page(font, null, geometry(width, tallest, stride), parts, start, layout(), null);
     return .{ .height = tallest, .next = next };
 }
 
 /// Draws into `panel`, whose buffer starts at the panel's top row.
 pub fn render(font: *Font, fonts: Fonts, panel: Page, parts: []const book_model.Paragraph, start: book_model.Pos, more: bool) !void {
-    _ = try text.renderPage(font, panel, parts, start, layout(), null);
-    panel.fillRect(0, 0, panel.width, 4, 0x00);
+    _ = try text.render_page(font, panel, parts, start, layout(), null);
+    panel.fill_rect(0, 0, panel.width, 4, 0x00);
     try fonts.title.draw(panel, margin, 62, "Note");
     const right: f32 = @floatFromInt(panel.width - margin);
     try fonts.small.draw(panel, right - 110, 62, if (more) "More >" else "Close");
-    panel.fillRect(margin, header, panel.width - 2 * margin, 2, style.note_rule);
+    panel.fill_rect(margin, header, panel.width - 2 * margin, 2, style.note_rule);
 }

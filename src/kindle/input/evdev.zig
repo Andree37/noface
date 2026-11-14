@@ -27,23 +27,23 @@ pub const abs_mt_x = 0x35;
 pub const abs_mt_y = 0x36;
 pub const abs_mt_tracking = 0x39;
 
-pub fn openInput(path: [*:0]const u8) !i32 {
+pub fn open_input(path: [*:0]const u8) !i32 {
     const rc = linux.open(path, .{ .ACCMODE = .RDONLY, .NONBLOCK = true, .CLOEXEC = true }, 0);
     if (failed(rc)) return error.InputOpen;
     const fd: i32 = @intCast(rc);
-    var clock: i32 = 1; // CLOCK_MONOTONIC, so event times compare with nowUs
+    var clock: i32 = 1; // CLOCK_MONOTONIC, so event times compare with now_us
     _ = linux.ioctl(fd, eviocsclockid, @intFromPtr(&clock));
     return fd;
 }
 
-pub fn axisMax(fd: i32, req: u32) i32 {
+pub fn axis_max(fd: i32, req: u32) i32 {
     var info = std.mem.zeroes([6]i32);
     _ = linux.ioctl(fd, req, @intFromPtr(&info));
     return @max(info[2], 1);
 }
 
 /// Current position of a multitouch axis in both slots.
-pub fn slotValues(fd: i32, code: u32) [2]i32 {
+pub fn slot_values(fd: i32, code: u32) [2]i32 {
     var request = [_]i32{ @intCast(code), 0, 0 };
     _ = linux.ioctl(fd, eviocgmtslots, @intFromPtr(&request));
     return .{ request[1], request[2] };

@@ -34,7 +34,7 @@ const Package = struct {
     }
 };
 
-fn readFile(alloc: std.mem.Allocator, files: []const zip.Entry, name: []const u8) ![]u8 {
+fn read_file(alloc: std.mem.Allocator, files: []const zip.Entry, name: []const u8) ![]u8 {
     const e = zip.find(files, name) orelse return error.MissingFile;
     return zip.read(alloc, e);
 }
@@ -74,7 +74,7 @@ fn unescape(alloc: std.mem.Allocator, s: []const u8) ![]const u8 {
     return out.items;
 }
 
-fn textOf(alloc: std.mem.Allocator, t: *xml.Tokenizer, closing: []const u8) ![]const u8 {
+fn text_of(alloc: std.mem.Allocator, t: *xml.Tokenizer, closing: []const u8) ![]const u8 {
     var out: std.ArrayList(u8) = .empty;
     while (t.next()) |tok| switch (tok) {
         .text => |s| try xml.decode(&out, alloc, s),
@@ -84,8 +84,8 @@ fn textOf(alloc: std.mem.Allocator, t: *xml.Tokenizer, closing: []const u8) ![]c
     return std.mem.trim(u8, out.items, " \t\r\n");
 }
 
-fn readPackage(alloc: std.mem.Allocator, files: []const zip.Entry) !Package {
-    const container = try readFile(alloc, files, "META-INF/container.xml");
+fn read_package(alloc: std.mem.Allocator, files: []const zip.Entry) !Package {
+    const container = try read_file(alloc, files, "META-INF/container.xml");
     var path: ?[]const u8 = null;
     var t = xml.Tokenizer{ .data = container };
     while (t.next()) |tok| {
@@ -95,7 +95,7 @@ fn readPackage(alloc: std.mem.Allocator, files: []const zip.Entry) !Package {
         }
     }
     const opf_path = path orelse return error.NoPackage;
-    const opf = try readFile(alloc, files, opf_path);
+    const opf = try read_file(alloc, files, opf_path);
     var p = Package{ .dir = std.fs.path.dirnamePosix(opf_path) orelse "", .items = &.{}, .spine = &.{} };
     var items: std.ArrayList(Package.Item) = .empty;
     var spine: std.ArrayList([]const u8) = .empty;
@@ -103,8 +103,8 @@ fn readPackage(alloc: std.mem.Allocator, files: []const zip.Entry) !Package {
     while (t.next()) |tok| {
         if (tok != .open) continue;
         const o = tok.open;
-        if (std.mem.eql(u8, o.name, "title") and p.title.len == 0) p.title = try textOf(alloc, &t, "title");
-        if (std.mem.eql(u8, o.name, "creator") and p.author.len == 0) p.author = try textOf(alloc, &t, "creator");
+        if (std.mem.eql(u8, o.name, "title") and p.title.len == 0) p.title = try text_of(alloc, &t, "title");
+        if (std.mem.eql(u8, o.name, "creator") and p.author.len == 0) p.author = try text_of(alloc, &t, "creator");
         if (std.mem.eql(u8, o.name, "item")) try items.append(alloc, .{
             .id = xml.attr(o.attrs, "id") orelse "",
             .href = xml.attr(o.attrs, "href") orelse "",
@@ -131,19 +131,19 @@ fn readPackage(alloc: std.mem.Allocator, files: []const zip.Entry) !Package {
 /// Title, author and, if asked for, the cover, for the library.
 pub fn info(alloc: std.mem.Allocator, data: []const u8, with_cover: bool) !Info {
     const files = try zip.entries(alloc, data);
-    const p = try readPackage(alloc, files);
+    const p = try read_package(alloc, files);
     var cover: ?[]const u8 = null;
     if (with_cover) for (p.items) |i| {
         const is_cover = std.mem.indexOf(u8, i.properties, "cover-image") != null or (p.cover_id != null and std.mem.eql(u8, i.id, p.cover_id.?));
         if (!is_cover) continue;
-        cover = readFile(alloc, files, try resolve(alloc, p.dir, i.href)) catch null;
+        cover = read_file(alloc, files, try resolve(alloc, p.dir, i.href)) catch null;
         break;
     };
     return .{ .title = p.title, .author = p.author, .cover = cover, .series = p.series, .series_index = p.series_index };
 }
 
 /// Where a heading tag puts its text: bigger and bold, the largest centred.
-fn headingLook(name: []const u8) ?book.Look {
+fn heading_look(name: []const u8) ?book.Look {
     if (name.len != 2 or name[0] != 'h' or name[1] < '1' or name[1] > '6') return null;
     return switch (name[1]) {
         '1' => .{ .bold = true, .size = 4, .alignment = .center, .space_before = 10, .space_after = 6 },
@@ -153,15 +153,15 @@ fn headingLook(name: []const u8) ?book.Look {
     };
 }
 
-fn isBlock(name: []const u8) bool {
+fn is_block(name: []const u8) bool {
     const blocks = [_][]const u8{ "p", "div", "li", "blockquote", "br", "tr", "dt", "dd", "section", "article", "aside", "figure", "figcaption", "hr", "pre", "table", "ul", "ol", "body" };
     for (blocks) |b| {
         if (std.mem.eql(u8, b, name)) return true;
     }
-    return headingLook(name) != null;
+    return heading_look(name) != null;
 }
 
-fn eqlAny(name: []const u8, comptime list: []const []const u8) bool {
+fn eql_any(name: []const u8, comptime list: []const []const u8) bool {
     inline for (list) |l| {
         if (std.mem.eql(u8, name, l)) return true;
     }
@@ -199,17 +199,17 @@ const Builder = struct {
     }
 
     /// Closes the bold or italic stretch running so far, before the style changes.
-    fn endRun(b: *Builder) !void {
+    fn end_run(b: *Builder) !void {
         const start = b.run_start orelse return;
         b.run_start = null;
         if (b.text.items.len > start) try b.runs.append(b.alloc, .{ .start = @intCast(start), .end = @intCast(b.text.items.len), .bold = b.bold > 0, .italic = b.italic > 0 });
     }
 
-    fn startRun(b: *Builder) void {
+    fn start_run(b: *Builder) void {
         if (b.styled()) b.run_start = b.text.items.len;
     }
 
-    fn addText(b: *Builder, raw: []const u8) !void {
+    fn add_text(b: *Builder, raw: []const u8) !void {
         var decoded: std.ArrayList(u8) = .empty;
         try xml.decode(&decoded, b.alloc, raw);
         // Whitespace in markup is layout, not text: runs of it become one space.
@@ -224,20 +224,20 @@ const Builder = struct {
 
     /// Ends the paragraph being built, if it has any text.
     fn flush(b: *Builder) !void {
-        try b.endRun();
+        try b.end_run();
         while (b.text.items.len > 0 and b.text.items[b.text.items.len - 1] == ' ') _ = b.text.pop();
         if (b.text.items.len > 0) {
             const index: u32 = @intCast(b.paragraphs.items.len);
             const text = try b.alloc.dupe(u8, b.text.items);
             try b.paragraphs.append(b.alloc, .{ .text = text, .style = 0, .look = b.look, .runs = try b.alloc.dupe(book.Run, b.runs.items), .section = b.section });
-            try b.placeAnchors(index);
+            try b.place_anchors(index);
         }
         b.text.clearRetainingCapacity();
         b.runs.clearRetainingCapacity();
-        b.startRun();
+        b.start_run();
     }
 
-    fn placeAnchors(b: *Builder, index: u32) !void {
+    fn place_anchors(b: *Builder, index: u32) !void {
         for (b.waiting_ids.items) |id| {
             const key = try std.fmt.allocPrint(b.alloc, "{s}#{s}", .{ b.file, id });
             const slot = try b.anchors.getOrPut(b.alloc, key);
@@ -248,7 +248,7 @@ const Builder = struct {
         if (!file_slot.found_existing) file_slot.value_ptr.* = index;
     }
 
-    fn addPicture(b: *Builder, dir: []const u8, src: []const u8) !void {
+    fn add_picture(b: *Builder, dir: []const u8, src: []const u8) !void {
         const path = try resolve(b.alloc, dir, src);
         const entry = zip.find(b.files, path) orelse return;
         const data = zip.read(b.alloc, entry) catch return;
@@ -256,7 +256,7 @@ const Builder = struct {
         try b.flush();
         const index: u32 = @intCast(b.paragraphs.items.len);
         try b.paragraphs.append(b.alloc, .{ .text = "", .style = 0, .image = .{ .data = data, .width = size.width, .height = size.height }, .section = b.section });
-        try b.placeAnchors(index);
+        try b.place_anchors(index);
     }
 
     /// Adds one chapter's text: its paragraphs, with their styles, pictures, links and
@@ -268,43 +268,43 @@ const Builder = struct {
         b.skipping = null;
         var t = xml.Tokenizer{ .data = xhtml };
         while (t.next()) |tok| switch (tok) {
-            .text => |text| if (b.in_body and b.skipping == null) try b.addText(text),
-            .open => |tag| try b.openTag(tag),
-            .close => |name| try b.closeTag(name),
+            .text => |text| if (b.in_body and b.skipping == null) try b.add_text(text),
+            .open => |tag| try b.open_tag(tag),
+            .close => |name| try b.close_tag(name),
         };
         try b.flush();
         b.bold = 0;
         b.italic = 0;
     }
 
-    fn openTag(b: *Builder, tag: xml.Tag) !void {
+    fn open_tag(b: *Builder, tag: xml.Tag) !void {
         if (b.skipping != null) return;
         if (std.mem.eql(u8, tag.name, "body")) b.in_body = true;
         if (!b.in_body) return;
-        if (eqlAny(tag.name, &.{ "style", "script", "head" }) and !tag.self_closing) {
+        if (eql_any(tag.name, &.{ "style", "script", "head" }) and !tag.self_closing) {
             b.skipping = tag.name;
             return;
         }
-        if (xml.attr(tag.attrs, "id")) |id| try b.noteAnchor(id);
-        if (isBlock(tag.name)) try b.startBlock(tag.name);
-        if (eqlAny(tag.name, &.{ "b", "strong" })) try b.nestStyle(&b.bold, .in);
-        if (eqlAny(tag.name, &.{ "i", "em", "cite" })) try b.nestStyle(&b.italic, .in);
-        if (std.mem.eql(u8, tag.name, "a")) b.startLink(tag);
-        if (eqlAny(tag.name, &.{ "img", "image" })) {
+        if (xml.attr(tag.attrs, "id")) |id| try b.note_anchor(id);
+        if (is_block(tag.name)) try b.start_block(tag.name);
+        if (eql_any(tag.name, &.{ "b", "strong" })) try b.nest_style(&b.bold, .in);
+        if (eql_any(tag.name, &.{ "i", "em", "cite" })) try b.nest_style(&b.italic, .in);
+        if (std.mem.eql(u8, tag.name, "a")) b.start_link(tag);
+        if (eql_any(tag.name, &.{ "img", "image" })) {
             const src = xml.attr(tag.attrs, "src") orelse xml.attr(tag.attrs, "href") orelse return;
-            try b.addPicture(b.dir, src);
+            try b.add_picture(b.dir, src);
         }
     }
 
-    fn closeTag(b: *Builder, name: []const u8) !void {
+    fn close_tag(b: *Builder, name: []const u8) !void {
         if (b.skipping) |skipped| {
             if (std.mem.eql(u8, skipped, name)) b.skipping = null;
             return;
         }
-        if (eqlAny(name, &.{ "b", "strong" })) try b.nestStyle(&b.bold, .out);
-        if (eqlAny(name, &.{ "i", "em", "cite" })) try b.nestStyle(&b.italic, .out);
-        if (std.mem.eql(u8, name, "a")) try b.endLink();
-        if (isBlock(name)) {
+        if (eql_any(name, &.{ "b", "strong" })) try b.nest_style(&b.bold, .out);
+        if (eql_any(name, &.{ "i", "em", "cite" })) try b.nest_style(&b.italic, .out);
+        if (std.mem.eql(u8, name, "a")) try b.end_link();
+        if (is_block(name)) {
             try b.flush();
             b.look = .{};
         }
@@ -312,7 +312,7 @@ const Builder = struct {
 
     /// An element with an id, which links can point to: kept for the paragraph about to
     /// start, and noted as partway in when text has already started.
-    fn noteAnchor(b: *Builder, id: []const u8) !void {
+    fn note_anchor(b: *Builder, id: []const u8) !void {
         if (b.text.items.len > 0) try b.inner_anchors.put(b.alloc, try std.fmt.allocPrint(b.alloc, "{s}#{s}", .{ b.file, id }), {});
         try b.waiting_ids.append(b.alloc, id);
     }
@@ -320,21 +320,21 @@ const Builder = struct {
     /// A block begins a paragraph, in its heading's look if it is one. A line break
     /// stays in its block's look: "<h2><img/><br/>Chapter I.</h2>" is still a heading
     /// after the picture.
-    fn startBlock(b: *Builder, name: []const u8) !void {
+    fn start_block(b: *Builder, name: []const u8) !void {
         try b.flush();
-        if (!std.mem.eql(u8, name, "br")) b.look = headingLook(name) orelse .{};
+        if (!std.mem.eql(u8, name, "br")) b.look = heading_look(name) orelse .{};
     }
 
     /// Bold or italic going in or out: the text so far ends its run, a new one starts.
-    fn nestStyle(b: *Builder, depth: *u32, way: enum { in, out }) !void {
+    fn nest_style(b: *Builder, depth: *u32, way: enum { in, out }) !void {
         if (way == .out and depth.* == 0) return; // A stray closing tag
-        try b.endRun();
+        try b.end_run();
         if (way == .in) depth.* += 1 else depth.* -= 1;
-        b.startRun();
+        b.start_run();
     }
 
     /// A link within the book (not to the web) starts here.
-    fn startLink(b: *Builder, tag: xml.Tag) void {
+    fn start_link(b: *Builder, tag: xml.Tag) void {
         const href = xml.attr(tag.attrs, "href") orelse return;
         if (std.mem.indexOf(u8, href, "://") != null) return;
         b.link_start = b.text.items.len;
@@ -343,7 +343,7 @@ const Builder = struct {
 
     /// The link that started ends here, over the text since, its target resolved
     /// against this chapter: "#note1" or "notes.xhtml#note1".
-    fn endLink(b: *Builder) !void {
+    fn end_link(b: *Builder) !void {
         const start = b.link_start orelse return;
         b.link_start = null;
         if (b.text.items.len <= start) return;
@@ -356,7 +356,7 @@ const Builder = struct {
     }
 
     /// Ties each link to the paragraph its target landed in.
-    fn resolveLinks(b: *Builder) !void {
+    fn resolve_links(b: *Builder) !void {
         var per_para = std.AutoHashMapUnmanaged(u32, std.ArrayList(book.Link)).empty;
         for (b.links.items) |l| {
             if (l.para >= b.paragraphs.items.len) continue;
@@ -371,12 +371,12 @@ const Builder = struct {
 };
 
 /// Contents from EPUB 3's nav document, or EPUB 2's NCX.
-fn readContents(alloc: std.mem.Allocator, files: []const zip.Entry, p: Package, anchors: anytype) ![]book.Chapter {
+fn read_contents(alloc: std.mem.Allocator, files: []const zip.Entry, p: Package, anchors: anytype) ![]book.Chapter {
     var out: std.ArrayList(book.Chapter) = .empty;
     for (p.items) |i| {
         if (std.mem.indexOf(u8, i.properties, "nav") == null) continue;
         const path = try resolve(alloc, p.dir, i.href);
-        const nav = readFile(alloc, files, path) catch break;
+        const nav = read_file(alloc, files, path) catch break;
         const dir = std.fs.path.dirnamePosix(path) orelse "";
         var t = xml.Tokenizer{ .data = nav };
         var in_toc = false;
@@ -388,8 +388,8 @@ fn readContents(alloc: std.mem.Allocator, files: []const zip.Entry, p: Package, 
                 if (std.mem.eql(u8, o.name, "ol")) depth +|= 1;
                 if (std.mem.eql(u8, o.name, "a")) {
                     const href = xml.attr(o.attrs, "href") orelse continue;
-                    const title = try textOf(alloc, &t, "a");
-                    if (try anchorFor(alloc, dir, href, anchors)) |para| try out.append(alloc, .{ .title = title, .para = para, .depth = depth -| 1 });
+                    const title = try text_of(alloc, &t, "a");
+                    if (try anchor_for(alloc, dir, href, anchors)) |para| try out.append(alloc, .{ .title = title, .para = para, .depth = depth -| 1 });
                 }
             },
             .close => |name| {
@@ -403,7 +403,7 @@ fn readContents(alloc: std.mem.Allocator, files: []const zip.Entry, p: Package, 
     const ncx_id = p.toc_ncx orelse return out.items;
     const ncx_item = p.item(ncx_id) orelse return out.items;
     const path = try resolve(alloc, p.dir, ncx_item.href);
-    const ncx = readFile(alloc, files, path) catch return out.items;
+    const ncx = read_file(alloc, files, path) catch return out.items;
     const dir = std.fs.path.dirnamePosix(path) orelse "";
     var t = xml.Tokenizer{ .data = ncx };
     var depth: u8 = 0;
@@ -411,10 +411,10 @@ fn readContents(alloc: std.mem.Allocator, files: []const zip.Entry, p: Package, 
     while (t.next()) |tok| switch (tok) {
         .open => |o| {
             if (std.mem.eql(u8, o.name, "navPoint")) depth +|= 1;
-            if (std.mem.eql(u8, o.name, "text")) title = try textOf(alloc, &t, "text");
+            if (std.mem.eql(u8, o.name, "text")) title = try text_of(alloc, &t, "text");
             if (std.mem.eql(u8, o.name, "content")) {
                 const src = xml.attr(o.attrs, "src") orelse continue;
-                if (try anchorFor(alloc, dir, src, anchors)) |para| try out.append(alloc, .{ .title = title, .para = para, .depth = depth -| 1 });
+                if (try anchor_for(alloc, dir, src, anchors)) |para| try out.append(alloc, .{ .title = title, .para = para, .depth = depth -| 1 });
             }
         },
         .close => |name| if (std.mem.eql(u8, name, "navPoint")) {
@@ -425,7 +425,7 @@ fn readContents(alloc: std.mem.Allocator, files: []const zip.Entry, p: Package, 
     return out.items;
 }
 
-fn anchorFor(alloc: std.mem.Allocator, dir: []const u8, href: []const u8, anchors: anytype) !?u32 {
+fn anchor_for(alloc: std.mem.Allocator, dir: []const u8, href: []const u8, anchors: anytype) !?u32 {
     const file = try resolve(alloc, dir, href);
     if (std.mem.indexOfScalar(u8, href, '#')) |hash| {
         const key = try std.fmt.allocPrint(alloc, "{s}{s}", .{ file, href[hash..] });
@@ -438,13 +438,13 @@ fn anchorFor(alloc: std.mem.Allocator, dir: []const u8, href: []const u8, anchor
 /// long as the book is open; the paragraphs point into it.
 pub fn parse(alloc: std.mem.Allocator, data: []const u8) !book.Book {
     const files = try zip.entries(alloc, data);
-    const p = try readPackage(alloc, files);
+    const p = try read_package(alloc, files);
     var b = Builder{ .alloc = alloc, .files = files };
     for (p.spine, 0..) |id, i| {
         const item = p.item(id) orelse continue;
         if (std.mem.indexOf(u8, item.media, "html") == null) continue;
         const path = try resolve(alloc, p.dir, item.href);
-        const xhtml = readFile(alloc, files, path) catch continue;
+        const xhtml = read_file(alloc, files, path) catch continue;
         b.section = @intCast(i + 1);
         try b.chapter(path, xhtml);
     }
@@ -454,11 +454,11 @@ pub fn parse(alloc: std.mem.Allocator, data: []const u8) !book.Book {
     var position: u32 = 1;
     for (b.paragraphs.items) |*para| {
         para.position = position;
-        position += book.charOffset(para.text, para.text.len) + 1;
+        position += book.char_offset(para.text, para.text.len) + 1;
     }
-    try b.resolveLinks();
-    notes.markNotes(b.paragraphs.items);
-    const chapters = try readContents(alloc, files, p, &b.anchors);
+    try b.resolve_links();
+    notes.mark_notes(b.paragraphs.items);
+    const chapters = try read_contents(alloc, files, p, &b.anchors);
     return .{ .paragraphs = b.paragraphs.items, .chapters = chapters, .sections = @intCast(p.spine.len), .missing_refs = 0 };
 }
 

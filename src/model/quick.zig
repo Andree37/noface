@@ -21,7 +21,7 @@ pub const Quick = struct {
     clock: [40]u8 = undefined,
     clock_len: usize = 0,
 
-    pub fn clockText(q: *const Quick) []const u8 {
+    pub fn clock_text(q: *const Quick) []const u8 {
         return q.clock[0..q.clock_len];
     }
 
@@ -33,7 +33,7 @@ pub const Quick = struct {
             if (comptime std.mem.eql(u8, name, "clock") or std.mem.eql(u8, name, "clock_len")) continue;
             if (@field(a, name) != @field(b, name)) return false;
         }
-        return std.mem.eql(u8, a.clockText(), b.clockText());
+        return std.mem.eql(u8, a.clock_text(), b.clock_text());
     }
 };
 
@@ -51,13 +51,13 @@ test "readings compare by what they show" {
 }
 
 /// Steps brightness, stopping at both ends.
-pub fn stepBrightness(level: u32, up: bool) u32 {
+pub fn step_brightness(level: u32, up: bool) u32 {
     if (up) return @min(level + brightness_step, max_brightness);
     return level -| brightness_step;
 }
 
 test "brightness stops at both ends" {
-    try std.testing.expectEqual(@as(u32, 24), stepBrightness(23, true));
-    try std.testing.expectEqual(@as(u32, 0), stepBrightness(1, false));
-    try std.testing.expectEqual(@as(u32, 12), stepBrightness(10, true));
+    try std.testing.expectEqual(@as(u32, 24), step_brightness(23, true));
+    try std.testing.expectEqual(@as(u32, 0), step_brightness(1, false));
+    try std.testing.expectEqual(@as(u32, 12), step_brightness(10, true));
 }

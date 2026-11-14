@@ -11,7 +11,7 @@ const max_note_gap = 3;
 pub const max_note_parts = 8;
 
 /// Paragraphs a note spans, starting at its target.
-pub fn noteLength(paragraphs: []const book.Paragraph, target: usize) usize {
+pub fn note_length(paragraphs: []const book.Paragraph, target: usize) usize {
     var n: usize = 1;
     while (n < max_note_parts and target + n < paragraphs.len) : (n += 1) {
         const p = paragraphs[target + n];
@@ -20,7 +20,7 @@ pub fn noteLength(paragraphs: []const book.Paragraph, target: usize) usize {
     return n;
 }
 
-fn hasNoteReference(p: book.Paragraph, paragraphs: []const book.Paragraph) bool {
+fn has_note_reference(p: book.Paragraph, paragraphs: []const book.Paragraph) bool {
     for (p.links) |l| {
         if (l.target < paragraphs.len and paragraphs[l.target].note_start) return true;
     }
@@ -28,7 +28,7 @@ fn hasNoteReference(p: book.Paragraph, paragraphs: []const book.Paragraph) bool 
 }
 
 /// Note marks are numbers or symbols. A word in a link is an ordinary cross-reference.
-pub fn isMark(s: []const u8) bool {
+pub fn is_mark(s: []const u8) bool {
     var letters: usize = 0;
     var it = (std.unicode.Utf8View.init(s) catch return false).iterator();
     while (it.nextCodepoint()) |cp| {
@@ -43,7 +43,7 @@ pub fn isMark(s: []const u8) bool {
 /// back-links inside notes, which point backward.
 /// Whether `text` begins with the letters and digits of `mark`, ignoring brackets and
 /// spaces around either: "[12] See…" opens with "12", as does "12. See…".
-fn opensWith(text: []const u8, mark: []const u8) bool {
+fn opens_with(text: []const u8, mark: []const u8) bool {
     const core = std.mem.trim(u8, mark, " []().*\u{a0}");
     if (core.len == 0) return true; // An asterisk or dagger: nothing to compare
     const start = std.mem.trimStart(u8, text, " [(\u{a0}");
@@ -52,7 +52,7 @@ fn opensWith(text: []const u8, mark: []const u8) bool {
     return start.len == core.len or !std.ascii.isDigit(start[core.len]);
 }
 
-pub fn markNotes(paragraphs: []book.Paragraph) void {
+pub fn mark_notes(paragraphs: []book.Paragraph) void {
     for (paragraphs, 0..) |p, i| {
         for (p.links) |l| {
             if (l.target <= i or l.target >= paragraphs.len) continue;
@@ -64,10 +64,10 @@ pub fn markNotes(paragraphs: []book.Paragraph) void {
             const span = l.end - l.start;
             if (span > max_reference_bytes or span * 2 > p.text.len) continue;
             const mark = p.text[l.start..l.end];
-            if (!isMark(mark)) continue;
+            if (!is_mark(mark)) continue;
             // Smaller than the text: a note only if it opens with the same mark, as
             // notes do ("1 The…"); a caption a list of pictures links to doesn't
-            if (t.look.size < book.normal_size and !opensWith(t.text, mark)) continue;
+            if (t.look.size < book.normal_size and !opens_with(t.text, mark)) continue;
             paragraphs[l.target].note = true;
             paragraphs[l.target].note_start = true;
         }
@@ -89,7 +89,7 @@ pub fn markNotes(paragraphs: []book.Paragraph) void {
         const gap = paragraphs[from + 1 .. i];
         var is_body = false;
         for (gap) |g| {
-            if (hasNoteReference(g, paragraphs)) is_body = true;
+            if (has_note_reference(g, paragraphs)) is_body = true;
         }
         if (is_body) continue;
         for (gap) |*g| g.note = true;
@@ -102,7 +102,7 @@ test "short forward references mark their target as a note" {
         .{ .text = "more body", .style = 0 },
         .{ .text = "the note", .style = 0, .links = &.{.{ .start = 0, .end = 1, .target = 0 }} },
     };
-    markNotes(&paras);
+    mark_notes(&paras);
     try std.testing.expect(paras[2].note);
     try std.testing.expect(!paras[0].note); // Back-link from the note
     try std.testing.expect(!paras[1].note);
@@ -117,7 +117,7 @@ test "page numbers that point at headings or into paragraphs hide nothing" {
         .{ .text = "Chapter I.", .style = 0, .look = .{ .size = book.normal_size + 1 } },
         .{ .text = "It is a truth universally acknowledged", .style = 0 },
     };
-    markNotes(&paras);
+    mark_notes(&paras);
     try std.testing.expect(!paras[1].note);
     try std.testing.expect(!paras[2].note);
 }
@@ -127,7 +127,7 @@ test "a contents line does not hide its chapter" {
         .{ .text = "book.Chapter 1", .style = 0, .links = &.{.{ .start = 0, .end = 9, .target = 1 }} },
         .{ .text = "book.Chapter 1 begins", .style = 0 },
     };
-    markNotes(&paras);
+    mark_notes(&paras);
     try std.testing.expect(!paras[1].note);
 }
 
@@ -138,7 +138,7 @@ test "a number on its own takes the next paragraph with it" {
         .{ .text = "the note text itself, which is much longer", .style = 0 },
         .{ .text = "body continues here", .style = 0 },
     };
-    markNotes(&paras);
+    mark_notes(&paras);
     try std.testing.expect(paras[1].note);
     try std.testing.expect(paras[2].note);
     try std.testing.expect(!paras[3].note);
@@ -152,10 +152,10 @@ test "paragraphs between notes stay with their note" {
         .{ .text = "second note", .style = 0, .section = 1 },
         .{ .text = "next chapter", .style = 0, .section = 2 },
     };
-    markNotes(&paras);
+    mark_notes(&paras);
     try std.testing.expect(paras[2].note);
-    try std.testing.expectEqual(@as(usize, 2), noteLength(&paras, 1));
-    try std.testing.expectEqual(@as(usize, 1), noteLength(&paras, 3));
+    try std.testing.expectEqual(@as(usize, 2), note_length(&paras, 1));
+    try std.testing.expectEqual(@as(usize, 1), note_length(&paras, 3));
     try std.testing.expect(!paras[4].note);
 }
 
@@ -166,18 +166,18 @@ test "inline notes do not swallow body text with references" {
         .{ .text = "more body text with its own reference", .style = 0, .links = &.{.{ .start = 5, .end = 6, .target = 3 }} },
         .{ .text = "another inline note", .style = 0 },
     };
-    markNotes(&paras);
+    mark_notes(&paras);
     try std.testing.expect(!paras[2].note);
 }
 
 test "marks are numbers and symbols, not words" {
-    try std.testing.expect(isMark("12"));
-    try std.testing.expect(isMark("[3]"));
-    try std.testing.expect(isMark("*"));
-    try std.testing.expect(isMark("\u{2020}"));
-    try std.testing.expect(isMark("a"));
-    try std.testing.expect(!isMark("Taleb"));
-    try std.testing.expect(!isMark("\u{e9}t\u{e9}"));
+    try std.testing.expect(is_mark("12"));
+    try std.testing.expect(is_mark("[3]"));
+    try std.testing.expect(is_mark("*"));
+    try std.testing.expect(is_mark("\u{2020}"));
+    try std.testing.expect(is_mark("a"));
+    try std.testing.expect(!is_mark("Taleb"));
+    try std.testing.expect(!is_mark("\u{e9}t\u{e9}"));
 }
 
 test "a linked word does not hide its target" {
@@ -185,7 +185,7 @@ test "a linked word does not hide its target" {
         .{ .text = "as argued by Popper in the earlier chapter", .style = 0, .links = &.{.{ .start = 13, .end = 19, .target = 1 }} },
         .{ .text = "a heading that must stay visible", .style = 0 },
     };
-    markNotes(&paras);
+    mark_notes(&paras);
     try std.testing.expect(!paras[1].note);
 }
 
@@ -194,7 +194,7 @@ test "a note set smaller than the text is still a note" {
         .{ .text = "See the note.1", .style = 0, .links = &.{.{ .start = 13, .end = 14, .target = 1 }} },
         .{ .text = "1 The note itself.", .style = 0, .look = .{ .size = 0 } },
     };
-    markNotes(&paras);
+    mark_notes(&paras);
     try std.testing.expect(paras[1].note_start);
 }
 
@@ -203,6 +203,6 @@ test "a smaller caption a list of pictures links to stays in the text" {
         .{ .text = "The castle at dawn 21", .style = 0, .links = &.{.{ .start = 19, .end = 21, .target = 1 }} },
         .{ .text = "Plate 3. The castle at dawn.", .style = 0, .look = .{ .size = 0 } },
     };
-    markNotes(&paras);
+    mark_notes(&paras);
     try std.testing.expect(!paras[1].note_start);
 }

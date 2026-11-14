@@ -34,7 +34,7 @@ pub const Query = struct {
 const Folded = struct { cp: u32, len: usize };
 
 /// The character at `i`, lowercased and without its accent where that's simple.
-fn foldAt(s: []const u8, i: usize) Folded {
+fn fold_at(s: []const u8, i: usize) Folded {
     const len = std.unicode.utf8ByteSequenceLength(s[i]) catch return .{ .cp = s[i], .len = 1 };
     if (i + len > s.len) return .{ .cp = s[i], .len = 1 };
     const cp = std.unicode.utf8Decode(s[i..][0..len]) catch return .{ .cp = s[i], .len = 1 };
@@ -58,7 +58,7 @@ pub fn find(alloc: std.mem.Allocator, paragraphs: []const book_model.Paragraph, 
     defer wanted.deinit(alloc);
     var q: usize = 0;
     while (q < query.len) {
-        const f = foldAt(query, q);
+        const f = fold_at(query, q);
         try wanted.append(alloc, f.cp);
         q += f.len;
     }
@@ -69,8 +69,8 @@ pub fn find(alloc: std.mem.Allocator, paragraphs: []const book_model.Paragraph, 
         const s = p.text;
         var i: usize = 0;
         while (i < s.len) {
-            const first = foldAt(s, i);
-            if (first.cp == wanted.items[0] and matchesAt(s, i, wanted.items)) {
+            const first = fold_at(s, i);
+            if (first.cp == wanted.items[0] and matches_at(s, i, wanted.items)) {
                 try out.append(alloc, .{ .para = @intCast(para), .byte = @intCast(i) });
                 if (out.items.len >= limit) return out.toOwnedSlice(alloc);
             }
@@ -88,7 +88,7 @@ pub fn contains(s: []const u8, query: []const u8) bool {
     var q: usize = 0;
     while (q < query.len) {
         if (n == wanted.len) return false;
-        const f = foldAt(query, q);
+        const f = fold_at(query, q);
         wanted[n] = f.cp;
         n += 1;
         q += f.len;
@@ -96,8 +96,8 @@ pub fn contains(s: []const u8, query: []const u8) bool {
     if (n == 0) return true;
     var i: usize = 0;
     while (i < s.len) {
-        if (matchesAt(s, i, wanted[0..n])) return true;
-        i += foldAt(s, i).len;
+        if (matches_at(s, i, wanted[0..n])) return true;
+        i += fold_at(s, i).len;
     }
     return false;
 }
@@ -110,11 +110,11 @@ test "contains ignores case and accents" {
     try std.testing.expect(!contains("ab", "abc"));
 }
 
-fn matchesAt(s: []const u8, start: usize, wanted: []const u32) bool {
+fn matches_at(s: []const u8, start: usize, wanted: []const u32) bool {
     var i = start;
     for (wanted) |cp| {
         if (i >= s.len) return false;
-        const f = foldAt(s, i);
+        const f = fold_at(s, i);
         if (f.cp != cp) return false;
         i += f.len;
     }

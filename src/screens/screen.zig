@@ -13,12 +13,12 @@
 //!   - `pub const tick_us: u64 = ...;` a tick this often, for a screen that changes on
 //!     its own. Optional: without it, no ticks.
 //!   - `fn draw(s, part: Part) !void` draws it: all of it, or what changes as it's used.
-//!   - `fn onTap(s, Tap) !Step(Result)` what a tap does.
-//!   - `fn onTick(s) !Step(Result)` what a tick does, if it asks for ticks.
-//!   - `fn onAction(s, Action) !Step(Result)` holds, swipes and drags, if it cares.
+//!   - `fn on_tap(s, Tap) !Step(Result)` what a tap does.
+//!   - `fn on_tick(s) !Step(Result)` what a tick does, if it asks for ticks.
+//!   - `fn on_action(s, Action) !Step(Result)` holds, swipes and drags, if it cares.
 //!
 //! Anything else `pub` on it, or a name spelled wrong (`onTik`), doesn't compile, nor
-//! does a tick without `onTick`: a screen can't quietly miss what it meant to handle.
+//! does a tick without `on_tick`: a screen can't quietly miss what it meant to handle.
 //! Helpers of its own stay private. The test at the end of this file is a screen to
 //! copy from.
 //!
@@ -26,7 +26,7 @@
 //! step asks for. When the Kindle locks or noface is told to leave, the screen closes
 //! (`run` returns null) and the action is kept for the screen underneath, so it locks
 //! or leaves in turn. Touch modes and the tick are put back as they were either way.
-//! A caller that must tell "closed" from "locked or leaving" uses `runToEnd`.
+//! A caller that must tell "closed" from "locked or leaving" uses `run_to_end`.
 const std = @import("std");
 const app = @import("../app.zig");
 const input_mod = @import("../kindle/input.zig");
@@ -50,7 +50,7 @@ pub fn Step(comptime Result: type) type {
 }
 
 /// What a screen may declare `pub`.
-const hooks = [_][]const u8{ "Result", "touches", "tick_us", "draw", "onTap", "onTick", "onAction" };
+const hooks = [_][]const u8{ "Result", "touches", "tick_us", "draw", "on_tap", "on_tick", "on_action" };
 
 /// Fails the build when `S` isn't a screen as described above.
 fn check(comptime S: type) void {
@@ -58,12 +58,12 @@ fn check(comptime S: type) void {
     for (std.meta.declarations(S)) |decl| {
         for (hooks) |h| {
             if (std.mem.eql(u8, decl, h)) break;
-        } else @compileError(name ++ ": a screen has no `" ++ decl ++ "` (it may have Result, touches, tick_us, draw, onTap, onTick, onAction); make a helper private");
+        } else @compileError(name ++ ": a screen has no `" ++ decl ++ "` (it may have Result, touches, tick_us, draw, on_tap, on_tick, on_action); make a helper private");
     }
-    for ([_][]const u8{ "Result", "draw", "onTap" }) |needed| {
+    for ([_][]const u8{ "Result", "draw", "on_tap" }) |needed| {
         if (!@hasDecl(S, needed)) @compileError(name ++ ": a screen needs a pub `" ++ needed ++ "`");
     }
-    if (@hasDecl(S, "tick_us") != @hasDecl(S, "onTick")) @compileError(name ++ ": `tick_us` and `onTick` go together");
+    if (@hasDecl(S, "tick_us") != @hasDecl(S, "on_tick")) @compileError(name ++ ": `tick_us` and `on_tick` go together");
     if (@hasDecl(S, "touches") and @TypeOf(S.touches) != input_mod.Input.Modes) @compileError(name ++ ": `touches` is an Input.Modes");
 }
 
@@ -78,14 +78,14 @@ pub fn Ending(comptime Result: type) type {
 
 /// Runs screen `s` until it's done (its result), or closes or the Kindle locks (null).
 pub fn run(a: *app.App, s: anytype) !?@TypeOf(s.*).Result {
-    return switch (try runToEnd(a, s)) {
+    return switch (try run_to_end(a, s)) {
         .done => |result| result,
         .closed, .interrupted => null,
     };
 }
 
 /// Runs screen `s`, saying how it ended.
-pub fn runToEnd(a: *app.App, s: anytype) !Ending(@TypeOf(s.*).Result) {
+pub fn run_to_end(a: *app.App, s: anytype) !Ending(@TypeOf(s.*).Result) {
     const S = @TypeOf(s.*);
     comptime check(S);
     const was = a.input.enter(if (@hasDecl(S, "touches")) S.touches else a.input.modes(), if (@hasDecl(S, "tick_us")) S.tick_us else 0);
@@ -95,11 +95,11 @@ pub fn runToEnd(a: *app.App, s: anytype) !Ending(@TypeOf(s.*).Result) {
     while (true) {
         if (part) |p| try s.draw(p);
         part = null;
-        const action = a.input.nextFor() orelse return .{ .interrupted = a.input.heldBack().? }; // Locked, or leaving
+        const action = a.input.next_for() orelse return .{ .interrupted = a.input.held_back().? }; // Locked, or leaving
         const step: Step(S.Result) = switch (action) {
-            .tap => |t| try s.onTap(t),
-            .tick => if (@hasDecl(S, "onTick")) try s.onTick() else .stay,
-            else => if (@hasDecl(S, "onAction")) try s.onAction(action) else .stay,
+            .tap => |t| try s.on_tap(t),
+            .tick => if (@hasDecl(S, "on_tick")) try s.on_tick() else .stay,
+            else => if (@hasDecl(S, "on_action")) try s.on_action(action) else .stay,
         };
         switch (step) {
             .stay => {},
@@ -124,8 +124,8 @@ const Example = struct {
         e.drawn[@backingInt(part)] += 1;
     }
 
-    /// Every tap comes here; holds, swipes and ticks go to `onAction` and `onTick`.
-    pub fn onTap(e: *Example, _: Tap) !Step(u32) {
+    /// Every tap comes here; holds, swipes and ticks go to `on_action` and `on_tick`.
+    pub fn on_tap(e: *Example, _: Tap) !Step(u32) {
         e.taps += 1;
         if (e.taps == 3) return .{ .done = e.taps };
         return .{ .redraw = .changing };
@@ -153,5 +153,5 @@ test "a screen draws whole, takes taps until done, and gives back its result" {
     script = .{ .steps = &none };
     e = .{};
     try std.testing.expect(try run(&a, &e) == null);
-    try std.testing.expect(input.heldBack().? == .stop);
+    try std.testing.expect(input.held_back().? == .stop);
 }

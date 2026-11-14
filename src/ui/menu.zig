@@ -108,7 +108,7 @@ const first_row_y = 240;
 const row_step_y = 190;
 
 /// The centre of tile `i`: rows of three, each row centred on the screen.
-fn tileCenter(i: usize) struct { x: i32, y: i32 } {
+fn tile_center(i: usize) struct { x: i32, y: i32 } {
     const row = i / tiles_per_row;
     const col = i % tiles_per_row;
     const in_row = @min(tiles_per_row, tiles.len - row * tiles_per_row);
@@ -117,13 +117,13 @@ fn tileCenter(i: usize) struct { x: i32, y: i32 } {
     return .{ .x = style.screen_width / 2 + @divExact(offset2 * tile_step_x, 2), .y = first_row_y + @as(i32, @intCast(row)) * row_step_y };
 }
 
-fn rowSlider(row: Row) slider.Slider {
+fn row_slider(row: Row) slider.Slider {
     return .{ .left = slider_left, .right = slider_right, .y = row.y };
 }
 
 /// Level for a tap at `x` on a row's slider.
-pub fn levelAt(row: Row, x: i32) u32 {
-    return slider.valueAt(rowSlider(row), x, row.max);
+pub fn level_at(row: Row, x: i32) u32 {
+    return slider.value_at(row_slider(row), x, row.max);
 }
 
 pub fn hit(x: i32, y: i32) Hit {
@@ -141,7 +141,7 @@ pub fn hit(x: i32, y: i32) Hit {
         return .slider;
     }
     for (0..tiles.len) |i| {
-        const c = tileCenter(i);
+        const c = tile_center(i);
         if (@abs(x - c.x) < 120 and @abs(y - c.y) < 95) return tiles[i].hit;
     }
     return .none;
@@ -150,31 +150,32 @@ pub fn hit(x: i32, y: i32) Hit {
 const band_above = 60;
 const band_below = 50;
 
-pub fn bandTop(row: Row) u32 {
+pub fn band_top(row: Row) u32 {
     return row.y - band_above;
 }
 
 pub const band_height = band_above + band_below;
 
 /// One slider row at rest, with the knob on its step.
-pub fn drawSlider(fonts: Fonts, page: Page, row: Row, value: u32, mono: bool) !void {
-    try drawSliderAt(fonts, page, row, value, slider.knobAt(rowSlider(row), value, row.max), mono);
+pub fn draw_slider(fonts: Fonts, page: Page, row: Row, value: u32, mono: bool) !void {
+    const knob = slider.knob_at(row_slider(row), value, row.max);
+    try draw_slider_at(fonts, page, row, value, knob, mono);
 }
 
 /// Where the knob sits for `value`.
-pub fn knobAt(row: Row, value: u32) u32 {
-    return slider.knobAt(rowSlider(row), value, row.max);
+pub fn knob_at(row: Row, value: u32) u32 {
+    return slider.knob_at(row_slider(row), value, row.max);
 }
 
 /// Knob position under a finger at `x`, kept on the bar. While dragging, the knob
 /// follows the finger rather than jumping from step to step.
-pub fn knobUnder(x: i32) u32 {
+pub fn knob_under(x: i32) u32 {
     return @intCast(std.math.clamp(x, slider_left, slider_right));
 }
 
 /// The columns a slider frame changes when its knob moves from `from` to `to`:
 /// the knob, its level above it, and the bar between them.
-pub fn knobSpan(from: u32, to: u32) struct { left: u32, width: u32 } {
+pub fn knob_span(from: u32, to: u32) struct { left: u32, width: u32 } {
     const reach = 60; // Half the widest level text, and more than the knob
     const left = @min(from, to) -| reach;
     return .{ .left = left, .width = @max(from, to) + reach - left };
@@ -182,9 +183,9 @@ pub fn knobSpan(from: u32, to: u32) struct { left: u32, width: u32 } {
 
 /// One slider row with the knob at `knob`. `mono` is pure black and white for the
 /// fast waveform used while dragging, which breaks up gray.
-pub fn drawSliderAt(fonts: Fonts, page: Page, row: Row, value: u32, knob: u32, mono: bool) !void {
-    page.fillRect(0, bandTop(row), page.width, band_height, 0xff);
-    const bar = rowSlider(row);
+pub fn draw_slider_at(fonts: Fonts, page: Page, row: Row, value: u32, knob: u32, mono: bool) !void {
+    page.fill_rect(0, band_top(row), page.width, band_height, 0xff);
+    const bar = row_slider(row);
     var level: [8]u8 = undefined;
     try draw.centered(fonts.small, page, @floatFromInt(@as(i32, @intCast(knob))), @intCast(row.y - 40), std.fmt.bufPrint(&level, "{d}", .{value}) catch "");
     const y: f32 = @floatFromInt(row.y);
@@ -192,27 +193,27 @@ pub fn drawSliderAt(fonts: Fonts, page: Page, row: Row, value: u32, knob: u32, m
     page.stroke(1160, y, 1200, y, 4);
     page.stroke(1180, y - 20, 1180, y + 20, 4);
     slider.draw(page, bar, knob);
-    if (mono) page.threshold(bandTop(row), band_height);
+    if (mono) page.threshold(band_top(row), band_height);
 }
 
 /// Where a toggle and its label sit, to redraw it alone.
 pub const Box = struct { left: u32, top: u32, width: u32, height: u32 };
 
-pub fn shortcutBox(choice: Hit) ?Box {
+pub fn shortcut_box(choice: Hit) ?Box {
     for (0..tiles.len) |i| {
         if (tiles[i].hit != choice) continue;
-        const c = tileCenter(i);
+        const c = tile_center(i);
         return .{ .left = @intCast(c.x - 130), .top = @intCast(c.y - icon_radius - 8), .width = 260, .height = icon_radius + 8 + 130 };
     }
     return null;
 }
 
 /// Redraws one toggle and its label, after a tap changed it.
-pub fn drawShortcut(fonts: Fonts, page: Page, choice: Hit, quick: *const Quick) !void {
-    const box = shortcutBox(choice) orelse return;
-    page.fillRect(box.left, box.top, box.width, box.height, 0xff);
+pub fn draw_shortcut(fonts: Fonts, page: Page, choice: Hit, quick: *const Quick) !void {
+    const box = shortcut_box(choice) orelse return;
+    page.fill_rect(box.left, box.top, box.width, box.height, 0xff);
     for (0..tiles.len) |i| {
-        if (tiles[i].hit == choice) try drawTile(fonts, page, i, quick);
+        if (tiles[i].hit == choice) try draw_tile(fonts, page, i, quick);
     }
 }
 
@@ -220,9 +221,9 @@ const tile_px = 2 * icon_radius + 8;
 
 /// A tile and the word under it. Off: a ring with the icon in black. On, like the
 /// stock panel: a smooth black disc with the icon in white.
-fn drawTile(fonts: Fonts, page: Page, i: usize, quick: *const Quick) !void {
+fn draw_tile(fonts: Fonts, page: Page, i: usize, quick: *const Quick) !void {
     const t = tiles[i];
-    const c = tileCenter(i);
+    const c = tile_center(i);
     const x: f32 = @floatFromInt(c.x);
     const y: f32 = @floatFromInt(c.y);
     if (!t.on(quick)) {
@@ -237,32 +238,33 @@ fn drawTile(fonts: Fonts, page: Page, i: usize, quick: *const Quick) !void {
                 g.t.glyph(p, g.quick, cx, cy);
             }
         };
-        icons.drawWhite(page, tile_px, tile_px, c.x, c.y, Glyph{ .t = t, .quick = quick }) catch {};
+        const glyph = Glyph{ .t = t, .quick = quick };
+        icons.draw_white(page, tile_px, tile_px, c.x, c.y, glyph) catch {};
     }
     try draw.centered(fonts.small, page, x, c.y + 92, t.label(quick));
 }
 
 pub fn render(fonts: Fonts, page: Page, quick: *const quick_model.Quick) !void {
     const w: f32 = @floatFromInt(page.width);
-    page.fillRect(0, 0, page.width, height, 0xff);
-    page.fillRect(0, height - 4, page.width, 4, 0x00);
+    page.fill_rect(0, 0, page.width, height, 0xff);
+    page.fill_rect(0, height - 4, page.width, 4, 0x00);
 
     try fonts.title.draw(page, 60, 70, "Kindle Paperwhite");
-    try fonts.small.draw(page, 60, 120, quick.clockText());
-    try icons.statusCluster(page, fonts.small, w - 60, 58, 70, quick, true);
+    try fonts.small.draw(page, 60, 120, quick.clock_text());
+    try icons.status_cluster(page, fonts.small, w - 60, 58, 70, quick, true);
 
-    for (0..tiles.len) |i| try drawTile(fonts, page, i, quick);
+    for (0..tiles.len) |i| try draw_tile(fonts, page, i, quick);
 
-    page.fillRect(40, 560, page.width - 80, 2, style.panel_rule);
+    page.fill_rect(40, 560, page.width - 80, 2, style.panel_rule);
     try fonts.small.draw(page, 60, 606, brightness_row.label);
-    try drawSlider(fonts, page, brightness_row, quick.brightness, false);
+    try draw_slider(fonts, page, brightness_row, quick.brightness, false);
     try fonts.small.draw(page, 60, 776, warmth_row.label);
     const schedule = if (quick.schedule) "Schedule: On" else "Schedule: Off";
     const schedule_w = try fonts.small.measure(schedule);
     try fonts.small.draw(page, w - 96 - schedule_w, 776, schedule);
     page.stroke(w - 80, 752, w - 66, 766, 4);
     page.stroke(w - 66, 766, w - 80, 780, 4);
-    try drawSlider(fonts, page, warmth_row, quick.warmth, false);
+    try draw_slider(fonts, page, warmth_row, quick.warmth, false);
     icons.chevron(page, w / 2, 934);
 }
 
@@ -285,31 +287,31 @@ test "panel maps taps like the stock layout" {
 }
 
 test "knob follows the finger but stays on the bar" {
-    try std.testing.expectEqual(@as(u32, 160), knobUnder(20));
-    try std.testing.expectEqual(@as(u32, 500), knobUnder(500));
-    try std.testing.expectEqual(@as(u32, 1110), knobUnder(1250));
+    try std.testing.expectEqual(@as(u32, 160), knob_under(20));
+    try std.testing.expectEqual(@as(u32, 500), knob_under(500));
+    try std.testing.expectEqual(@as(u32, 1110), knob_under(1250));
 }
 
 test "a knob move redraws only around old and new knob" {
-    const span = knobSpan(700, 400);
+    const span = knob_span(700, 400);
     try std.testing.expectEqual(@as(u32, 340), span.left);
     try std.testing.expectEqual(@as(u32, 420), span.width);
-    try std.testing.expectEqual(@as(u32, 0), knobSpan(20, 30).left);
+    try std.testing.expectEqual(@as(u32, 0), knob_span(20, 30).left);
 }
 
 test "toggle boxes stay apart and on screen" {
-    const a = shortcutBox(.airplane).?;
-    const b = shortcutBox(.bluetooth).?;
-    try std.testing.expect(a.left + a.width <= shortcutBox(.settings).?.left);
+    const a = shortcut_box(.airplane).?;
+    const b = shortcut_box(.bluetooth).?;
+    try std.testing.expect(a.left + a.width <= shortcut_box(.settings).?.left);
     try std.testing.expect(b.left + b.width <= 1272);
-    try std.testing.expect(shortcutBox(.close) == null);
+    try std.testing.expect(shortcut_box(.close) == null);
 }
 
 test "sliders map position to level" {
-    try std.testing.expectEqual(@as(u32, 0), levelAt(brightness_row, 160));
-    try std.testing.expectEqual(@as(u32, 24), levelAt(brightness_row, 1110));
-    try std.testing.expectEqual(@as(u32, 12), levelAt(warmth_row, 635));
-    try std.testing.expectEqual(@as(u32, 24), levelAt(warmth_row, 1200));
+    try std.testing.expectEqual(@as(u32, 0), level_at(brightness_row, 160));
+    try std.testing.expectEqual(@as(u32, 24), level_at(brightness_row, 1110));
+    try std.testing.expectEqual(@as(u32, 12), level_at(warmth_row, 635));
+    try std.testing.expectEqual(@as(u32, 24), level_at(warmth_row, 1200));
 }
 
 test "toggles report their state" {
@@ -333,7 +335,7 @@ test "bluetooth toggle shows its state" {
 test "tiles sit where they always have" {
     const want = [_][2]i32{ .{ 318, 240 }, .{ 636, 240 }, .{ 954, 240 }, .{ 477, 430 }, .{ 795, 430 } };
     for (want, 0..) |w, i| {
-        const c = tileCenter(i);
+        const c = tile_center(i);
         try std.testing.expectEqual(w[0], c.x);
         try std.testing.expectEqual(w[1], c.y);
     }

@@ -16,7 +16,7 @@ pub const Value = struct {
         if (v.kind != .struct_) return null;
         var pos: usize = 0;
         while (pos < v.body.len) {
-            const key = readVarUint(v.body, &pos) catch return null;
+            const key = read_var_uint(v.body, &pos) catch return null;
             const value = decode(v.body, &pos) catch return null;
             if (value.kind != .pad and key == field) return value;
         }
@@ -77,7 +77,7 @@ pub const Items = struct {
     }
 };
 
-fn readVarUint(d: []const u8, pos: *usize) !u64 {
+fn read_var_uint(d: []const u8, pos: *usize) !u64 {
     var v: u64 = 0;
     while (true) {
         if (pos.* >= d.len) return error.Truncated;
@@ -88,7 +88,7 @@ fn readVarUint(d: []const u8, pos: *usize) !u64 {
     }
 }
 
-fn beInt(d: []const u8) u64 {
+fn be_int(d: []const u8) u64 {
     var v: u64 = 0;
     for (d) |c| v = (v << 8) | c;
     return v;
@@ -104,7 +104,7 @@ pub const Fields = struct {
 
     pub fn next(f: *Fields) ?Field {
         while (f.pos < f.data.len) {
-            const key = readVarUint(f.data, &f.pos) catch return null;
+            const key = read_var_uint(f.data, &f.pos) catch return null;
             const value = decode(f.data, &f.pos) catch return null;
             if (value.kind != .pad) return .{ .key = key, .value = value };
         }
@@ -122,19 +122,19 @@ pub fn decode(d: []const u8, pos: *usize) anyerror!Value {
 
         if (t == 1) return .{ .kind = .bool_, .int = @intFromBool(len == 1) };
         if (len == 15) return .{ .kind = .null_ };
-        if (len == 14 or (t == 13 and len == 1)) len = try readVarUint(d, pos);
+        if (len == 14 or (t == 13 and len == 1)) len = try read_var_uint(d, pos);
         if (len > d.len - pos.*) return error.Truncated;
         const body = d[pos.*..][0..@intCast(len)];
         pos.* += @intCast(len);
 
         switch (t) {
             0 => return .{ .kind = .pad },
-            2 => return .{ .kind = .uint, .body = body, .int = beInt(body) },
-            3 => return .{ .kind = .nint, .body = body, .int = beInt(body) },
+            2 => return .{ .kind = .uint, .body = body, .int = be_int(body) },
+            3 => return .{ .kind = .nint, .body = body, .int = be_int(body) },
             4 => return .{ .kind = .float, .body = body },
             5 => return .{ .kind = .decimal, .body = body },
             6 => return .{ .kind = .timestamp, .body = body },
-            7 => return .{ .kind = .symbol, .body = body, .int = beInt(body) },
+            7 => return .{ .kind = .symbol, .body = body, .int = be_int(body) },
             8 => return .{ .kind = .string, .body = body },
             9 => return .{ .kind = .clob, .body = body },
             10 => return .{ .kind = .blob, .body = body },
@@ -143,7 +143,7 @@ pub fn decode(d: []const u8, pos: *usize) anyerror!Value {
             13 => return .{ .kind = .struct_, .body = body },
             14 => {
                 var inner: usize = 0;
-                const ann_len = try readVarUint(body, &inner);
+                const ann_len = try read_var_uint(body, &inner);
                 inner += @intCast(ann_len);
                 return decode(body, &inner);
             },
@@ -197,15 +197,15 @@ test "padding in lists is skipped, even at the end" {
 
 /// Reads every value inside `v`, the way the KFX parser does, to reach all the code
 /// a hostile file could steer.
-fn walkAll(v: Value, depth: u32) void {
+fn walk_all(v: Value, depth: u32) void {
     if (depth > 40) return;
     _ = v.text();
     _ = v.symbol();
     _ = v.number();
     var items = v.items();
-    while (items.next()) |item| walkAll(item, depth + 1);
+    while (items.next()) |item| walk_all(item, depth + 1);
     var fields = v.fields();
-    while (fields.next()) |f| walkAll(f.value, depth + 1);
+    while (fields.next()) |f| walk_all(f.value, depth + 1);
 }
 
 test "random and broken input never crashes the reader" {
@@ -218,6 +218,6 @@ test "random and broken input never crashes the reader" {
         // Half the rounds start like real Ion, so the parser gets past the first byte.
         if (round % 2 == 0 and len >= 4) @memcpy(buf[0..4], &[_]u8{ 0xe0, 0x01, 0x00, 0xea });
         const v = parse(buf[0..len]) catch continue;
-        walkAll(v, 0);
+        walk_all(v, 0);
     }
 }

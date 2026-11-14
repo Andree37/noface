@@ -6,7 +6,7 @@ const state = @import("../sys/state.zig");
 
 /// Whether bit `bit` is set in a sysfs capability mask: hex words separated by spaces,
 /// the most significant first, each as wide as a kernel `long`.
-pub fn hasBit(mask: []const u8, bit: usize) bool {
+pub fn has_bit(mask: []const u8, bit: usize) bool {
     const word_bits = @bitSizeOf(usize);
     var words: [16][]const u8 = undefined;
     var n: usize = 0;
@@ -30,15 +30,15 @@ pub const Input = struct { path: [24]u8 = undefined, len: usize = 0, name: [64]u
 fn read(comptime fmt: []const u8, args: anytype, buf: []u8) []const u8 {
     var path_buf: [96]u8 = undefined;
     const path = std.fmt.bufPrintSentinel(&path_buf, fmt, args, 0) catch return "";
-    return std.mem.trim(u8, state.readSmall(path, buf), " \n");
+    return std.mem.trim(u8, state.read_small(path, buf), " \n");
 }
 
 /// Which kind of input device eventN is: the touch panel reports multitouch positions,
 /// a power button reports the power key. Virtual devices that claim every key (as
 /// "kindle-input-pt" does) don't count as the button.
 fn classify(name: []const u8, abs: []const u8, keys: []const u8) enum { touch, power, other } {
-    if (hasBit(abs, abs_mt_position_x)) return .touch;
-    if (!hasBit(keys, key_power)) return .other;
+    if (has_bit(abs, abs_mt_position_x)) return .touch;
+    if (!has_bit(keys, key_power)) return .other;
     var all_bits = true;
     var words = std.mem.tokenizeAny(u8, keys, " \n");
     while (words.next()) |w| all_bits = all_bits and std.mem.allEqual(u8, w, 'f');
@@ -49,7 +49,7 @@ fn classify(name: []const u8, abs: []const u8, keys: []const u8) enum { touch, p
 pub const Found = struct { touch: ?u8 = null, power: ?u8 = null };
 
 /// The event numbers of the touch panel and the power button.
-pub fn findInputs() Found {
+pub fn find_inputs() Found {
     var found = Found{};
     for (0..16) |i| {
         var name_buf: [96]u8 = undefined;
@@ -74,7 +74,7 @@ pub fn findInputs() Found {
 
 /// A power supply's role, from its type. USB_WET is a moisture sensor in the port, not
 /// a charger, though it says it's online.
-pub fn isCharger(kind: []const u8) bool {
+pub fn is_charger(kind: []const u8) bool {
     if (std.mem.eql(u8, kind, "USB_WET")) return false;
     return std.mem.startsWith(u8, kind, "USB") or std.mem.eql(u8, kind, "Mains") or std.mem.eql(u8, kind, "Wireless");
 }
@@ -85,7 +85,7 @@ pub const Power = struct { level: u32, plugged: bool };
 pub fn power() ?Power {
     var names: [12][32]u8 = undefined;
     var lens: [12]usize = undefined;
-    const n = listSupplies(&names, &lens);
+    const n = list_supplies(&names, &lens);
     var level: ?u32 = null;
     var plugged = false;
     for (names[0..n], lens[0..n]) |*name_buf, len| {
@@ -95,7 +95,7 @@ pub fn power() ?Power {
         const kind = read("/sys/class/power_supply/{s}/type", .{name}, &kind_buf);
         if (std.mem.eql(u8, kind, "Battery")) {
             if (level == null) level = std.fmt.parseInt(u32, read("/sys/class/power_supply/{s}/capacity", .{name}, &value_buf), 10) catch null;
-        } else if (isCharger(kind)) {
+        } else if (is_charger(kind)) {
             if (std.mem.eql(u8, read("/sys/class/power_supply/{s}/online", .{name}, &value_buf), "1")) plugged = true;
         }
     }
@@ -103,7 +103,7 @@ pub fn power() ?Power {
 }
 
 /// The names under /sys/class/power_supply.
-fn listSupplies(names: *[12][32]u8, lens: *[12]usize) usize {
+fn list_supplies(names: *[12][32]u8, lens: *[12]usize) usize {
     const Into = struct {
         names: *[12][32]u8,
         lens: *[12]usize,
@@ -116,17 +116,17 @@ fn listSupplies(names: *[12][32]u8, lens: *[12]usize) usize {
         }
     };
     var into = Into{ .names = names, .lens = lens };
-    @import("../sys/calls.zig").eachEntry("/sys/class/power_supply", &into, Into.add);
+    @import("../sys/calls.zig").each_entry("/sys/class/power_supply", &into, Into.add);
     return into.n;
 }
 
 test "capability masks read from the right word" {
     // The PW12's touch panel (32-bit words) and power button
     const touch = if (@bitSizeOf(usize) == 32) "2618000 0" else "261800000000000";
-    try std.testing.expect(hasBit(touch, abs_mt_position_x));
-    try std.testing.expect(!hasBit(touch, 0));
+    try std.testing.expect(has_bit(touch, abs_mt_position_x));
+    try std.testing.expect(!has_bit(touch, 0));
     const pwr = if (@bitSizeOf(usize) == 32) "100000 0 0 0" else "10000000000000 0";
-    try std.testing.expect(hasBit(pwr, key_power));
+    try std.testing.expect(has_bit(pwr, key_power));
 }
 
 test "the touch panel, the power button, and a device that claims every key" {
@@ -138,8 +138,8 @@ test "the touch panel, the power button, and a device that claims every key" {
 }
 
 test "a moisture sensor isn't a charger" {
-    try std.testing.expect(isCharger("USB_CDP"));
-    try std.testing.expect(isCharger("Mains"));
-    try std.testing.expect(!isCharger("USB_WET"));
-    try std.testing.expect(!isCharger("Battery"));
+    try std.testing.expect(is_charger("USB_CDP"));
+    try std.testing.expect(is_charger("Mains"));
+    try std.testing.expect(!is_charger("USB_WET"));
+    try std.testing.expect(!is_charger("Battery"));
 }

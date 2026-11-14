@@ -27,7 +27,7 @@ pub fn clipped(font: *Font, page: Page, x: f32, y: i32, s: []const u8, avail: f3
 /// Where the line starting `s` ends to fit `avail`: after the last whole word that
 /// fits (the word just before an overflowing space counts), or mid-word when even
 /// the first word doesn't fit.
-pub fn lineEnd(font: *Font, s: []const u8, avail: f32) !usize {
+pub fn line_end(font: *Font, s: []const u8, avail: f32) !usize {
     if (try font.measure(s) <= avail) return s.len;
     const cut = try font.fit(s, avail);
     if (cut < s.len and s[cut] == ' ' and cut > 0) return cut;
@@ -48,7 +48,7 @@ pub fn wrapped(font: *Font, page: Page, x: f32, y: i32, step: i32, s: []const u8
             try clipped(font, page, x, row, rest, avail);
             return line + 1;
         }
-        const n = try lineEnd(font, rest, avail);
+        const n = try line_end(font, rest, avail);
         try font.draw(page, x, row, rest[0..n]);
         rest = std.mem.trimStart(u8, rest[n..], " ");
     }
@@ -57,22 +57,22 @@ pub fn wrapped(font: *Font, page: Page, x: f32, y: i32, step: i32, s: []const u8
 
 /// An outlined box with rounded corners, the shape every button and bubble shares.
 pub fn box(page: Page, x: u32, y: u32, w: u32, h: u32) void {
-    boxWith(page, x, y, w, h, style.border, @floatFromInt(@min(style.button_corner, h / 2)));
+    box_with(page, x, y, w, h, style.border, @floatFromInt(@min(style.button_corner, h / 2)));
 }
 
 /// A box with an outline `edge` thick and corners of radius `corner`.
-pub fn boxWith(page: Page, x: u32, y: u32, w: u32, h: u32, edge: u32, corner: f32) void {
-    page.roundRect(x, y, w, h, corner, style.black);
-    page.roundRect(x + edge, y + edge, w - 2 * edge, h - 2 * edge, corner - @as(f32, @floatFromInt(edge)), style.white);
+pub fn box_with(page: Page, x: u32, y: u32, w: u32, h: u32, edge: u32, corner: f32) void {
+    page.round_rect(x, y, w, h, corner, style.black);
+    page.round_rect(x + edge, y + edge, w - 2 * edge, h - 2 * edge, corner - @as(f32, @floatFromInt(edge)), style.white);
 }
 
 /// A sheet rising from the bottom of the screen from `top`: outlined, rounded at the
 /// top (its bottom corners run off the screen), with a grab bar.
 pub fn sheet(page: Page, top: u32) void {
     const h = page.height - top;
-    page.roundRect(0, top, page.width, h + style.sheet_corner, style.sheet_corner, style.black);
-    page.roundRect(0, top + 2, page.width, h + style.sheet_corner, style.sheet_corner - 1, style.white);
-    page.roundRect(page.width / 2 - 36, top + 18, 72, 8, 4, style.rule); // Grab bar
+    page.round_rect(0, top, page.width, h + style.sheet_corner, style.sheet_corner, style.black);
+    page.round_rect(0, top + 2, page.width, h + style.sheet_corner, style.sheet_corner - 1, style.white);
+    page.round_rect(page.width / 2 - 36, top + 18, 72, 8, 4, style.rule); // Grab bar
 }
 
 pub const Align = enum { left, center };
@@ -84,7 +84,7 @@ pub fn choice(fonts: Fonts, page: Page, x: f32, align_to: Align, y: i32, label: 
     const w = try font.measure(label);
     const left = if (align_to == .center) x - w / 2 else x;
     try font.draw(page, left, y, label);
-    if (chosen) page.fillRect(@intFromFloat(left), underline_y, @intFromFloat(w), style.underline, style.black);
+    if (chosen) page.fill_rect(@intFromFloat(left), underline_y, @intFromFloat(w), style.underline, style.black);
 }
 
 /// The "1 of 4" row with back and forward arrows, under a list shown a page at a time.
@@ -148,11 +148,11 @@ test "a line keeps a word that fits just before the space that overflows" {
     defer arena.deinit(); // Fonts are kept for the app's life, so nothing frees them
     var budget = memory.Budget{ .name = "test", .child = arena.allocator(), .limit = 16 << 20 };
     c_memory.use(&budget);
-    defer c_memory.useDefault();
+    defer c_memory.use_default();
     var font = try Font.init(arena.allocator(), @embedFile("../testdata/fonts/Go-Regular.ttf"), 40, 1.2);
     const s = "abc def ghi";
     // Exactly as wide as "abc def": the space after it is what overflows
     const avail = try font.measure("abc def");
-    try std.testing.expectEqualStrings("abc def", s[0..try lineEnd(&font, s, avail)]);
-    try std.testing.expectEqualStrings("abc", s[0..try lineEnd(&font, s, avail - 1)]);
+    try std.testing.expectEqualStrings("abc def", s[0..try line_end(&font, s, avail)]);
+    try std.testing.expectEqualStrings("abc", s[0..try line_end(&font, s, avail - 1)]);
 }

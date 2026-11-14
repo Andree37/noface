@@ -60,14 +60,14 @@ pub const FakeKindle = struct {
     }
 
     /// Whether anything set matched "service prop value" exactly.
-    pub fn wasSet(k: *const FakeKindle, call: []const u8) bool {
+    pub fn was_set(k: *const FakeKindle, call: []const u8) bool {
         for (k.sets.items) |s| {
             if (std.mem.eql(u8, s, call)) return true;
         }
         return false;
     }
 
-    pub fn didRun(k: *const FakeKindle, program: []const u8) bool {
+    pub fn did_run(k: *const FakeKindle, program: []const u8) bool {
         for (k.ran.items) |r| {
             if (std.mem.eql(u8, r, program)) return true;
         }
@@ -129,15 +129,15 @@ test "the fake Kindle answers and remembers lipc" {
     defer arena.deinit();
     var k = try FakeKindle.init(arena.allocator());
     var out: [32]u8 = undefined;
-    const n = answerFor(&k, &.{ "/usr/bin/lipc-get-prop", "com.lab126.cmd", "wirelessEnable" }, &out).?;
+    const n = answer_for(&k, &.{ "/usr/bin/lipc-get-prop", "com.lab126.cmd", "wirelessEnable" }, &out).?;
     try std.testing.expectEqualStrings("1", out[0..n]);
-    _ = answerFor(&k, &.{ "/usr/bin/lipc-set-prop", "com.lab126.cmd", "wirelessEnable", "0" }, &out);
-    try std.testing.expect(k.wasSet("com.lab126.cmd wirelessEnable 0"));
+    _ = answer_for(&k, &.{ "/usr/bin/lipc-set-prop", "com.lab126.cmd", "wirelessEnable", "0" }, &out);
+    try std.testing.expect(k.was_set("com.lab126.cmd wirelessEnable 0"));
     try std.testing.expectEqualStrings("0", k.get("com.lab126.cmd wirelessEnable"));
-    _ = answerFor(&k, &.{ "/bin/sh", paths.export_script }, &out);
-    try std.testing.expect(k.didRun("sh"));
+    _ = answer_for(&k, &.{ "/bin/sh", paths.export_script }, &out);
+    try std.testing.expect(k.did_run("sh"));
 }
 
-fn answerFor(k: *FakeKindle, argv: []const []const u8, out: []u8) ?usize {
+fn answer_for(k: *FakeKindle, argv: []const []const u8, out: []u8) ?usize {
     return FakeKindle.answer(k, argv, out);
 }

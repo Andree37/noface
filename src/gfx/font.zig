@@ -15,7 +15,7 @@ extern fn ft_hmetrics(f: *anyopaque, g: c_int, adv: *c_int, lsb: *c_int) void;
 extern fn ft_kern(f: *anyopaque, a: c_int, b: c_int) c_int;
 extern fn ft_bitmap(f: *anyopaque, scale: f32, g: c_int, w: *c_int, h: *c_int, xo: *c_int, yo: *c_int) ?[*]u8;
 
-fn isCombining(cp: u32) bool {
+fn is_combining(cp: u32) bool {
     return cp >= 0x300 and cp <= 0x36f;
 }
 
@@ -41,7 +41,7 @@ pub const Font = struct {
     /// can be named .ttf, and stb_truetype trusts what it's given, so its table
     /// directory is checked first: every table inside the file.
     pub fn usable(ttf: []const u8) bool {
-        if (!tablesInside(ttf)) return false;
+        if (!tables_inside(ttf)) return false;
         const handle = ft_open(ttf.ptr) orelse return false;
         defer ft_close(handle);
         return ft_index(handle, 'a') != 0 and ft_index(handle, 'A') != 0;
@@ -49,7 +49,7 @@ pub const Font = struct {
 
     /// A TrueType or OpenType font (or the first of a collection) whose tables all lie
     /// within `data`.
-    pub fn tablesInside(data: []const u8) bool {
+    pub fn tables_inside(data: []const u8) bool {
         if (data.len < 12) return false;
         var at: usize = 0;
         if (std.mem.eql(u8, data[0..4], "ttcf")) {
@@ -119,7 +119,7 @@ pub const Font = struct {
         var prev: ?Glyph = null;
         var it = (std.unicode.Utf8View.init(word) catch return 0).iterator();
         while (it.nextCodepoint()) |cp| {
-            if (isCombining(cp)) continue;
+            if (is_combining(cp)) continue;
             const g = try f.glyph(cp);
             if (prev) |p| width += f.kern(p, g);
             width += g.advance;
@@ -135,7 +135,7 @@ pub const Font = struct {
         var last: usize = 0;
         var it = (std.unicode.Utf8View.init(word) catch return word.len).iterator();
         while (it.nextCodepoint()) |cp| {
-            if (isCombining(cp)) {
+            if (is_combining(cp)) {
                 last = it.i;
                 continue;
             }
@@ -156,7 +156,7 @@ pub const Font = struct {
         var base_x = x;
         while (it.nextCodepoint()) |cp| {
             const g = try f.glyph(cp);
-            if (isCombining(cp)) {
+            if (is_combining(cp)) {
                 // Centred over the letter it belongs to.
                 const letter = if (prev) |p| p.advance else 0;
                 const mark = @as(f32, @floatFromInt(g.width));
@@ -191,12 +191,12 @@ fn blit(p: Page, g: Glyph, x: i32, y: i32) void {
 }
 
 test "files that aren't fonts are turned down before stb sees them" {
-    try std.testing.expect(!Font.tablesInside(""));
-    try std.testing.expect(!Font.tablesInside("<!doctype html><html><head><title>font</title></head>"));
+    try std.testing.expect(!Font.tables_inside(""));
+    try std.testing.expect(!Font.tables_inside("<!doctype html><html><head><title>font</title></head>"));
     var zeros: [4096]u8 = @splat(0);
-    try std.testing.expect(!Font.tablesInside(&zeros));
+    try std.testing.expect(!Font.tables_inside(&zeros));
     // A real font's directory, then the same with one table said to run past the end
     const go = @embedFile("../testdata/fonts/Go-Regular.ttf");
-    try std.testing.expect(Font.tablesInside(go));
-    try std.testing.expect(!Font.tablesInside(go[0 .. go.len / 2]));
+    try std.testing.expect(Font.tables_inside(go));
+    try std.testing.expect(!Font.tables_inside(go[0 .. go.len / 2]));
 }

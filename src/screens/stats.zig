@@ -13,12 +13,12 @@ pub fn summarize(a: *const app.App, entries: []const catalog.Entry) stats_ui.Sum
     const today = a.today();
     var s = stats_ui.Summary{
         .today = j.get(today).seconds,
-        .week = j.secondsOver(today, 7),
+        .week = j.seconds_over(today, 7),
         .streak = j.streak(today),
         .first_weekday = journal.weekday(today - 6),
     };
     for (&s.last7, 0..) |*d, i| d.* = j.get(today - 6 + @as(i32, @intCast(i))).seconds;
-    const year_start = journal.yearStart(today);
+    const year_start = journal.year_start(today);
     const year = j.since(year_start, today);
     s.year = @intCast((std.time.epoch.EpochDay{ .day = @intCast(today) }).calculateYearDay().year);
     if (a.speed.known()) s.wpm = @intFromFloat(@round(a.speed.wpm()));
@@ -29,10 +29,10 @@ pub fn summarize(a: *const app.App, entries: []const catalog.Entry) stats_ui.Sum
     var seconds_this_year: u64 = 0;
     for (entries) |e| {
         s.books += 1;
-        if (e.isRead()) s.finished += 1;
-        if (e.inProgress()) s.in_progress += 1;
-        if (e.last == 0 or journal.dayOf(e.last, a.utc_offset) < year_start) continue;
-        if (e.isRead()) finished_this_year += 1;
+        if (e.is_read()) s.finished += 1;
+        if (e.in_progress()) s.in_progress += 1;
+        if (e.last == 0 or journal.day_of(e.last, a.utc_offset) < year_start) continue;
+        if (e.is_read()) finished_this_year += 1;
         seconds_this_year += e.seconds_read;
     }
     s.year_finished = @max(year.finished, finished_this_year);
@@ -53,10 +53,10 @@ const Stats = struct {
 
     pub fn draw(s: *Stats, _: screen.Part) !void {
         try stats_ui.render(s.a.ui, s.a.page(s.a.screen.pixels), s.summary);
-        try s.a.showBand(stats_ui_top, s.a.screen.height - stats_ui_top);
+        try s.a.show_band(stats_ui_top, s.a.screen.height - stats_ui_top);
     }
 
-    pub fn onTap(_: *Stats, _: screen.Tap) !screen.Step(void) {
+    pub fn on_tap(_: *Stats, _: screen.Tap) !screen.Step(void) {
         return .close; // Any tap closes it
     }
 };

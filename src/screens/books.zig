@@ -22,10 +22,10 @@ pub const Library = struct {
         file.unmap(l.data);
     }
 
-    pub fn localCount(l: *const Library) usize {
+    pub fn local_count(l: *const Library) usize {
         var n: usize = 0;
         for (l.entries) |e| {
-            if (e.isLocal()) n += 1;
+            if (e.is_local()) n += 1;
         }
         return n;
     }
@@ -34,8 +34,8 @@ pub const Library = struct {
 /// EPUBs copied over the cable. The Kindle's catalog doesn't list them, so noface finds
 /// them itself, reading title and author from each book, and its cover once into a file
 /// beside the book's state.
-fn addEpubs(a: *app.App, alloc: std.mem.Allocator, catalog_entries: []catalog.Entry) ![]catalog.Entry {
-    const paths = dir.findFiles(alloc, a.documents, ".epub") catch return catalog_entries;
+fn add_epubs(a: *app.App, alloc: std.mem.Allocator, catalog_entries: []catalog.Entry) ![]catalog.Entry {
+    const paths = dir.find_files(alloc, a.documents, ".epub") catch return catalog_entries;
     if (paths.len == 0) return catalog_entries;
     var out: std.ArrayList(catalog.Entry) = .empty;
     try out.appendSlice(alloc, catalog_entries);
@@ -47,14 +47,14 @@ fn addEpubs(a: *app.App, alloc: std.mem.Allocator, catalog_entries: []catalog.En
         }
         const data = file.map(path) catch continue;
         defer file.unmap(data);
-        const state_path = try a.statePath(&path_buf, path);
+        const state_path = try a.state_path(&path_buf, path);
         const cover_path = try state.sibling(&cover_buf, state_path, "cover");
         const have_cover = if (file.map(cover_path)) |c| blk: {
             file.unmap(c);
             break :blk true;
         } else |_| false;
         const about = epub.info(alloc, data, !have_cover) catch continue;
-        if (about.cover) |bytes| state.writeSmall(cover_path, bytes);
+        if (about.cover) |bytes| state.write_small(cover_path, bytes);
         const saved = state.load(state_path);
         try out.append(alloc, .{
             .path = path,
@@ -67,8 +67,8 @@ fn addEpubs(a: *app.App, alloc: std.mem.Allocator, catalog_entries: []catalog.En
             .thumbnail = if (have_cover or about.cover != null) try alloc.dupeSentinel(u8, cover_path, 0) else "",
             .kind = "EPUB",
             // The book's own metadata first, else its file name, as for Kindle books
-            .series = if (about.series.len > 0) about.series else if (catalog.seriesFromFileName(path)) |f| f.name else "",
-            .series_index = if (about.series.len > 0) about.series_index else if (catalog.seriesFromFileName(path)) |f| f.index else 0,
+            .series = if (about.series.len > 0) about.series else if (catalog.series_from_file_name(path)) |f| f.name else "",
+            .series_index = if (about.series.len > 0) about.series_index else if (catalog.series_from_file_name(path)) |f| f.index else 0,
         });
     }
     return out.items;
@@ -76,14 +76,14 @@ fn addEpubs(a: *app.App, alloc: std.mem.Allocator, catalog_entries: []catalog.En
 
 /// The catalog's downloading flag can stay set long after a download ended, so
 /// the file decides: a partial book points past its own end.
-pub fn isCompleteBook(path: [:0]const u8) bool {
+pub fn is_complete_book(path: [:0]const u8) bool {
     if (path.len == 0) return false;
     const data = file.map(path) catch return false;
     defer file.unmap(data);
-    return kfx.isComplete(data);
+    return kfx.is_complete(data);
 }
 
-pub fn loadLibrary(a: *app.App) !Library {
+pub fn load_library(a: *app.App) !Library {
     var arena = std.heap.ArenaAllocator.init(std.heap.smp_allocator);
     errdefer arena.deinit();
     const alloc = arena.allocator();
@@ -91,15 +91,15 @@ pub fn loadLibrary(a: *app.App) !Library {
     const entries = try catalog_db.parse(alloc, data);
     var path_buf: [320]u8 = undefined;
     for (entries) |*e| {
-        if (e.availability == .downloading and isCompleteBook(e.path)) e.availability = .local;
-        if (!e.isLocal()) continue;
-        const saved = state.load(try a.statePath(&path_buf, e.path));
+        if (e.availability == .downloading and is_complete_book(e.path)) e.availability = .local;
+        if (!e.is_local()) continue;
+        const saved = state.load(try a.state_path(&path_buf, e.path));
         e.seconds_read = saved.seconds;
-        if (state.preferKindle(saved, e.kindle_last)) continue;
+        if (state.prefer_kindle(saved, e.kindle_last)) continue;
         if (saved.percent) |p| e.percent = @min(p, 100);
         e.last = @max(e.last, saved.opened);
     }
-    const all = try addEpubs(a, alloc, entries);
+    const all = try add_epubs(a, alloc, entries);
     series_screen.apply(alloc, a.state_dir, all); // Series set by hand win
     // Allocated before the arena is copied into the result: a block it adds after
     // would be known only to this copy, and never freed

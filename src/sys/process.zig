@@ -15,7 +15,7 @@ pub const Fake = struct {
 };
 pub var fake: ?Fake = null;
 
-fn answerFake(f: Fake, argv: [*:null]const ?[*:0]const u8, out: []u8) ?usize {
+fn answer_fake(f: Fake, argv: [*:null]const ?[*:0]const u8, out: []u8) ?usize {
     var args: [12][]const u8 = undefined;
     var n: usize = 0;
     while (argv[n]) |a| : (n += 1) {
@@ -58,17 +58,17 @@ const command_timeout_ms = 15_000;
 /// Runs a command, collecting what it prints. Null when it can't start or runs too long,
 /// in which case it is killed.
 pub fn run(argv: [*:null]const ?[*:0]const u8, out: []u8) ?usize {
-    return runUntil(argv, out, os.nowUs() + command_timeout_ms * 1000);
+    return run_until(argv, out, os.now_us() + command_timeout_ms * 1000);
 }
 
 /// Like `run`, but must be done by `deadline` (microseconds on the monotonic clock).
-pub fn runUntil(argv: [*:null]const ?[*:0]const u8, out: []u8, deadline: u64) ?usize {
-    if (fake) |f| return answerFake(f, argv, out);
-    if (os.nowUs() >= deadline) return null;
+pub fn run_until(argv: [*:null]const ?[*:0]const u8, out: []u8, deadline: u64) ?usize {
+    if (fake) |f| return answer_fake(f, argv, out);
+    if (os.now_us() >= deadline) return null;
     const child = spawn(argv) orelse return null;
     var total: usize = 0;
     while (total < out.len) {
-        const now = os.nowUs();
+        const now = os.now_us();
         if (now >= deadline) break;
         var ready = [_]linux.pollfd{.{ .fd = child.out, .events = linux.POLL.IN, .revents = 0 }};
         const waited = linux.poll(&ready, 1, @intCast((deadline - now) / 1000 + 1));
@@ -90,11 +90,11 @@ pub fn runUntil(argv: [*:null]const ?[*:0]const u8, out: []u8, deadline: u64) ?u
 /// Runs several commands at once, collecting what each prints into its own buffer:
 /// together they take about as long as the slowest, not the sum. `lens[i]` is how much
 /// command i printed, or null when it didn't start or wasn't done by `deadline`.
-pub fn runAll(argvs: []const [*:null]const ?[*:0]const u8, outs: [][]u8, lens: []?usize, deadline: u64) void {
+pub fn run_all(argvs: []const [*:null]const ?[*:0]const u8, outs: [][]u8, lens: []?usize, deadline: u64) void {
     const max = 16;
     std.debug.assert(argvs.len <= max and outs.len == argvs.len and lens.len == argvs.len);
     if (fake) |f| {
-        for (argvs, outs, lens) |argv, out, *len| len.* = answerFake(f, argv, out);
+        for (argvs, outs, lens) |argv, out, *len| len.* = answer_fake(f, argv, out);
         return;
     }
     var children: [max]?Child = @splat(null);
@@ -108,7 +108,7 @@ pub fn runAll(argvs: []const [*:null]const ?[*:0]const u8, outs: [][]u8, lens: [
         }
     }
     // Read whichever has output until all have finished printing, or time runs out
-    while (os.nowUs() < deadline) {
+    while (os.now_us() < deadline) {
         var fds: [max]linux.pollfd = undefined;
         var which: [max]usize = undefined;
         var n: usize = 0;
@@ -119,7 +119,7 @@ pub fn runAll(argvs: []const [*:null]const ?[*:0]const u8, outs: [][]u8, lens: [
             n += 1;
         }
         if (n == 0) break;
-        const waited = linux.poll(&fds, n, @intCast((deadline - os.nowUs()) / 1000 + 1));
+        const waited = linux.poll(&fds, n, @intCast((deadline - os.now_us()) / 1000 + 1));
         if (failed(waited)) continue; // Interrupted by a signal
         if (waited == 0) break;
         for (fds[0..n], which[0..n]) |f, i| {
@@ -146,8 +146,8 @@ fn reap(pid: i32, deadline: u64) bool {
     var status: i32 = 0;
     while (true) {
         if (linux.waitpid(pid, &status, linux.W.NOHANG) != 0) return true;
-        if (os.nowUs() >= deadline) break;
-        os.sleepMs(5);
+        if (os.now_us() >= deadline) break;
+        os.sleep_ms(5);
     }
     _ = linux.kill(-pid, linux.SIG.KILL);
     _ = linux.waitpid(pid, &status, 0);
@@ -180,10 +180,10 @@ pub fn survives(ctx: anytype, comptime check: fn (@TypeOf(ctx)) bool) bool {
     const pid = linux.fork();
     if (failed(pid)) return false;
     if (pid == 0) linux.exit(if (check(ctx)) 0 else 1);
-    const deadline = os.nowUs() + 5 * 1_000_000;
-    while (os.nowUs() < deadline) {
+    const deadline = os.now_us() + 5 * 1_000_000;
+    while (os.now_us() < deadline) {
         if (exited(@intCast(pid))) |ok| return ok;
-        os.sleepMs(5);
+        os.sleep_ms(5);
     }
     stop(@intCast(pid));
     return false;

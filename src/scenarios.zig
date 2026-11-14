@@ -22,8 +22,8 @@ const library_ui = @import("ui/library.zig");
 const card = @import("ui/card.zig");
 
 /// Row `i` of a card of `rows`.
-fn cardRow(rows: usize, i: usize) Step {
-    return tap(636, @intCast(card.rowCentre(rows, i)));
+fn card_row(rows: usize, i: usize) Step {
+    return tap(636, @intCast(card.row_centre(rows, i)));
 }
 const highlight_button = tap(122, 1596); // On the definition sheet
 const above_sheet = tap(636, 300);
@@ -109,7 +109,7 @@ const with_snapshots = @import("root") == @This();
 /// <name>.pgm, to make new reference images, instead of comparing.
 var write_snapshots: ?[]const u8 = null;
 
-fn referenceImage(comptime name: []const u8) []const u8 {
+fn reference_image(comptime name: []const u8) []const u8 {
     return if (with_snapshots) @embedFile("testdata/snapshots/" ++ name ++ ".png") else "";
 }
 
@@ -118,7 +118,7 @@ const Snapshot = enum { page, toolbar, @"aa-font", definition, library };
 
 /// Whether `pixels` match the reference image `name`, allowing for anti-aliasing:
 /// pixels more than a few grays apart may be at most 0.3% of the screen.
-fn matchesReference(alloc: std.mem.Allocator, which: Snapshot, pixels: []const u8) !bool {
+fn matches_reference(alloc: std.mem.Allocator, which: Snapshot, pixels: []const u8) !bool {
     const name = @tagName(which);
     if (write_snapshots) |dir| {
         var dir_buf: [256]u8 = undefined;
@@ -130,15 +130,15 @@ fn matchesReference(alloc: std.mem.Allocator, which: Snapshot, pixels: []const u
         const out = try alloc.alloc(u8, head.len + pixels.len);
         @memcpy(out[0..head.len], head);
         @memcpy(out[head.len..], pixels);
-        try writeFile(path, out);
+        try write_file(path, out);
         return true;
     }
     if (!with_snapshots) return true; // The self-test doesn't carry them
     const encoded = switch (which) {
-        inline else => |w| referenceImage(@tagName(w)),
+        inline else => |w| reference_image(@tagName(w)),
     };
     const image = @import("gfx/image.zig");
-    const want = image.decodeGray(alloc, encoded) orelse return error.BadSnapshot;
+    const want = image.decode_gray(alloc, encoded) orelse return error.BadSnapshot;
     if (want.width != width or want.height != height) return false;
     var off: usize = 0;
     for (pixels, want.pixels) |got, w| {
@@ -155,7 +155,7 @@ fn matchesReference(alloc: std.mem.Allocator, which: Snapshot, pixels: []const u
 const book_words = [_][]const u8{ "a", "bright", "chapter", "evening", "garden", "green", "house", "letter", "light", "long", "morning", "new", "old", "page", "quiet", "reader", "river", "road", "slow", "small", "the", "turns", "window" };
 
 /// A dictionary file, in the format of model/dictionary.zig, with `book_words`.
-fn writeDictionary(alloc: std.mem.Allocator, path: [*:0]const u8) !void {
+fn write_dictionary(alloc: std.mem.Allocator, path: [*:0]const u8) !void {
     var body: std.ArrayList(u8) = .empty;
     var offsets: std.ArrayList(u32) = .empty;
     for (book_words) |w| { // Already sorted, and already folded
@@ -173,16 +173,16 @@ fn writeDictionary(alloc: std.mem.Allocator, path: [*:0]const u8) !void {
         try out.appendSlice(alloc, &word);
     }
     try out.appendSlice(alloc, body.items);
-    try writeFile(path, out.items);
+    try write_file(path, out.items);
 }
 
 /// How many lines of `kind` the book's notes file holds.
-fn countNotes(state_path: []const u8, kind: []const u8) usize {
+fn count_notes(state_path: []const u8, kind: []const u8) usize {
     var path_buf: [320]u8 = undefined;
     const path = state.sibling(&path_buf, state_path, "notes") catch return 0;
     var buf: [8192]u8 = undefined;
     var n: usize = 0;
-    var lines = std.mem.tokenizeScalar(u8, state.readSmall(path, &buf), '\n');
+    var lines = std.mem.tokenizeScalar(u8, state.read_small(path, &buf), '\n');
     while (lines.next()) |l| {
         if (std.mem.startsWith(u8, l, kind)) n += 1;
     }
@@ -192,12 +192,12 @@ fn countNotes(state_path: []const u8, kind: []const u8) usize {
 var run_counter: u32 = 0;
 
 fn play(steps: []const Step) !Outcome {
-    return playOn(.{}, steps);
+    return play_on(.{}, steps);
 }
 
 /// Opens the scenario book in a fresh app on a pretend Kindle, plays `steps`, and
 /// returns what was saved and what the Kindle was asked to do.
-fn playOn(kindle: Kindle, steps: []const Step) !Outcome {
+fn play_on(kindle: Kindle, steps: []const Step) !Outcome {
     var budget = memory.Budget{ .name = "scenario", .child = std.heap.smp_allocator, .limit = 256 << 20 };
     var arena = std.heap.ArenaAllocator.init(budget.allocator());
     defer arena.deinit();
@@ -207,20 +207,20 @@ fn playOn(kindle: Kindle, steps: []const Step) !Outcome {
     var dir_buf: [96]u8 = undefined;
     const dir = try std.fmt.bufPrintSentinel(&dir_buf, "/tmp/noface-scenarios-{d}-{d}", .{ linux.getpid(), run_counter }, 0);
     _ = linux.mkdir(dir, 0o755);
-    defer cleanUp(dir);
+    defer clean_up(dir);
     var book_paths: [4][:0]const u8 = undefined;
     for (kindle.books, 0..) |name, i| {
         book_paths[i] = try std.fmt.allocPrintSentinel(alloc, "{s}/{s}", .{ dir, name }, 0);
-        if (kindle.real_book == null) try writeFile(book_paths[i], book_bytes);
+        if (kindle.real_book == null) try write_file(book_paths[i], book_bytes);
     }
     if (kindle.real_book) |p| book_paths[0] = p;
     const book_path = book_paths[0];
     var library_buf: [128]u8 = undefined;
     const library_path = try std.fmt.bufPrintSentinel(&library_buf, "{s}/library.tsv", .{dir}, 0);
-    try writeFile(library_path, "\n"); // No Kindle books: only the EPUBs in the folder
+    try write_file(library_path, "\n"); // No Kindle books: only the EPUBs in the folder
     if (kindle.dictionary) {
         var dict_buf: [128]u8 = undefined;
-        try writeDictionary(alloc, try std.fmt.bufPrintSentinel(&dict_buf, "{s}/dict-en", .{dir}, 0));
+        try write_dictionary(alloc, try std.fmt.bufPrintSentinel(&dict_buf, "{s}/dict-en", .{dir}, 0));
     }
 
     os.fake_us = 1_000_000_000;
@@ -234,8 +234,8 @@ fn playOn(kindle: Kindle, steps: []const Step) !Outcome {
     if (kindle.radio_slow) fake.busy_after_set = "com.lab126.cmd wirelessEnable";
     fake.install();
     defer fake.release();
-    wifi_saver.useDataDir(dir);
-    defer wifi_saver.useDataDir(paths.data_dir);
+    wifi_saver.use_data_dir(dir);
+    defer wifi_saver.use_data_dir(paths.data_dir);
 
     var screen = try hwtcon.Screen.fake(alloc, width, height);
     var script = input_mod.Script{ .steps = steps };
@@ -257,7 +257,7 @@ fn playOn(kindle: Kindle, steps: []const Step) !Outcome {
     // Before any font: stb allocates through it. Let go of on return, as it lives here
     var stb_budget = memory.Budget{ .name = "stb", .child = std.heap.smp_allocator, .limit = 128 << 20 };
     c_memory.use(&stb_budget);
-    defer c_memory.useDefault();
+    defer c_memory.use_default();
 
     var kit = try setup.Kit.init(alloc, .{ .book = go_regular, .book_bold = go_bold, .ui = go_regular, .ui_bold = go_bold });
     var files: setup.DataFiles = .{};
@@ -286,11 +286,11 @@ fn playOn(kindle: Kindle, steps: []const Step) !Outcome {
         family[2] = go_regular;
         family[3] = go_bold;
     };
-    try a.applySettings();
+    try a.apply_settings();
 
     if (kindle.read_before) |i| {
         var before_buf: [320]u8 = undefined;
-        state.save(try a.statePath(&before_buf, book_paths[i]), .{ .para = 0, .byte = 0, .percent = 5, .opened = 1_700_000_000, .seconds = 600 });
+        state.save(try a.state_path(&before_buf, book_paths[i]), .{ .para = 0, .byte = 0, .percent = 5, .opened = 1_700_000_000, .seconds = 600 });
     }
     const kind = if (std.mem.endsWith(u8, book_path, ".epub")) "EPUB" else "KFX";
     var entry = catalog.Entry{ .path = book_path, .title = "Scenario Book", .author = "noface tests", .percent = 0, .last = 0, .kind = kind };
@@ -307,22 +307,26 @@ fn playOn(kindle: Kindle, steps: []const Step) !Outcome {
         _ = linux.dup2(@intCast(quiet), 2);
         _ = linux.close(@intCast(quiet));
     }
-    const t0 = realMs();
-    if (kindle.library) try library_screen.runLibrary(&a) else _ = try reader.readBook(&a, &entry);
-    const ms = realMs() - t0;
+    const t0 = real_ms();
+    if (kindle.library) {
+        try library_screen.run_library(&a);
+    } else {
+        _ = try reader.read_book(&a, &entry);
+    }
+    const ms = real_ms() - t0;
 
     var state_buf: [320]u8 = undefined;
     var note_buf: [8]u8 = undefined;
-    const state_path = try a.statePath(&state_buf, book_path);
+    const state_path = try a.state_path(&state_buf, book_path);
     var opened: [2]bool = @splat(false);
     var finished: [2]bool = @splat(false);
     for (kindle.books[0..@min(2, kindle.books.len)], 0..) |_, i| {
         var b: [320]u8 = undefined;
-        const s = state.load(try a.statePath(&b, book_paths[i]));
+        const s = state.load(try a.state_path(&b, book_paths[i]));
         opened[i] = s.opened > 1_700_000_000;
         finished[i] = s.finished;
     }
-    const looks_right = if (kindle.snapshot) |name| try matchesReference(alloc, name, last_screen) else true;
+    const looks_right = if (kindle.snapshot) |name| try matches_reference(alloc, name, last_screen) else true;
     return .{
         .ms = ms,
         .looks_right = looks_right,
@@ -331,16 +335,16 @@ fn playOn(kindle: Kindle, steps: []const Step) !Outcome {
         .saved = state.load(state_path),
         .looked_up = a.dictionaries[0] != null or a.dictionaries[1] != null,
         .offers_dictionary = a.settings.offer_dictionary,
-        .highlights = countNotes(state_path, "highlight"),
-        .bookmarks = countNotes(state_path, "bookmark"),
+        .highlights = count_notes(state_path, "highlight"),
+        .bookmarks = count_notes(state_path, "bookmark"),
         .updates = screen.updates,
-        .airplane_asked_on = fake.wasSet("com.lab126.cmd wirelessEnable 0"),
+        .airplane_asked_on = fake.was_set("com.lab126.cmd wirelessEnable 0"),
         .airplane_at_end = std.mem.eql(u8, fake.get("com.lab126.cmd wirelessEnable"), "0"),
-        .wifi_note_left = state.readSmall(wifi_saver.notePath(), &note_buf).len > 0,
+        .wifi_note_left = state.read_small(wifi_saver.note_path(), &note_buf).len > 0,
     };
 }
 
-fn writeFile(path: [*:0]const u8, data: []const u8) !void {
+fn write_file(path: [*:0]const u8, data: []const u8) !void {
     const rc = linux.open(path, .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, 0o644);
     if (os.failed(rc)) return error.CantWrite;
     const fd: i32 = @intCast(rc);
@@ -349,13 +353,13 @@ fn writeFile(path: [*:0]const u8, data: []const u8) !void {
 }
 
 /// Removes a scenario's folder and what's in it (one level: it holds only files).
-fn cleanUp(dir: [*:0]const u8) void {
+fn clean_up(dir: [*:0]const u8) void {
     var out: [64]u8 = undefined;
     const argv = [_:null]?[*:0]const u8{ "/bin/rm", "-rf", dir };
     _ = @import("sys/process.zig").run(&argv, &out);
 }
 
-fn samePlace(a: state.State, b: state.State) bool {
+fn same_place(a: state.State, b: state.State) bool {
     return a.para == b.para and a.byte == b.byte;
 }
 
@@ -367,22 +371,22 @@ const scenarios = [_]Scenario{
             const there_and_back = try play(&.{ forward, forward, forward, swipe(-1) });
             const two_on = try play(&.{ forward, forward });
             const start = try play(&.{});
-            try expect(samePlace(there_and_back.saved, two_on.saved), "the places differ");
-            try expect(!samePlace(two_on.saved, start.saved), "turning didn't move the place");
+            try expect(same_place(there_and_back.saved, two_on.saved), "the places differ");
+            try expect(!same_place(two_on.saved, start.saved), "turning didn't move the place");
         }
     }.run },
     .{ .name = "going back from the first page stays there", .run = struct {
         fn run() !void {
             const start = try play(&.{});
             const tried = try play(&.{ back, swipe(-1) });
-            try expect(samePlace(start.saved, tried.saved), "moved before the first page");
+            try expect(same_place(start.saved, tried.saved), "moved before the first page");
         }
     }.run },
     .{ .name = "a swipe turns like a tap", .run = struct {
         fn run() !void {
             const tapped = try play(&.{forward});
             const swiped = try play(&.{swipe(1)});
-            try expect(samePlace(tapped.saved, swiped.saved), "a swipe went somewhere else");
+            try expect(same_place(tapped.saved, swiped.saved), "a swipe went somewhere else");
         }
     }.run },
     .{
@@ -408,7 +412,7 @@ const scenarios = [_]Scenario{
                     top, tap(1176, 118), tap(636, 200), // The menu, closed above the card
                     wait(130_000), // Past the Wi-Fi pause
                 });
-                try expect(samePlace(plain.saved, busy.saved), "the place moved");
+                try expect(same_place(plain.saved, busy.saved), "the place moved");
                 try expect(busy.updates > plain.updates, "nothing was drawn");
             }
         }.run,
@@ -417,7 +421,7 @@ const scenarios = [_]Scenario{
         fn run() !void {
             const plain = try play(&.{ forward, forward });
             const locked = try play(&.{ forward, lock_it, wait(3_000), wake, forward });
-            try expect(samePlace(plain.saved, locked.saved), "the place moved");
+            try expect(same_place(plain.saved, locked.saved), "the place moved");
             try expect(locked.updates > plain.updates, "the lock screen wasn't drawn");
         }
     }.run },
@@ -433,7 +437,7 @@ const scenarios = [_]Scenario{
         .name = "Wi-Fi comes back even when the Kindle was slow to say it went off",
         .run = struct {
             fn run() !void {
-                const r = try playOn(.{ .radio_slow = true }, &.{ wait(150_000), forward });
+                const r = try play_on(.{ .radio_slow = true }, &.{ wait(150_000), forward });
                 try expect(r.airplane_asked_on, "airplane mode wasn't turned on");
                 try expect(!r.airplane_at_end, "Wi-Fi was left off");
                 // The note may stay, as Wi-Fi coming back went unconfirmed too: noface.sh or
@@ -450,15 +454,15 @@ const scenarios = [_]Scenario{
                 const first_chapter = tap(636, 390);
                 const back_button = tap(205, 1626);
                 const jumped = try play(&.{ forward, forward, forward, top, contents, first_chapter });
-                try expect(!samePlace(read_on.saved, jumped.saved), "the chapter didn't move the place");
+                try expect(!same_place(read_on.saved, jumped.saved), "the chapter didn't move the place");
                 const returned = try play(&.{ forward, forward, forward, top, contents, first_chapter, back_button });
-                try expect(samePlace(read_on.saved, returned.saved), "Back didn't return to the page");
+                try expect(same_place(read_on.saved, returned.saved), "Back didn't return to the page");
                 // The toolbar's chapter skip is a jump too
                 const chapter_back = tap(110, 1450);
                 const moved = try play(&.{ forward, forward, forward, top, chapter_back, page_middle });
-                try expect(!samePlace(read_on.saved, moved.saved), "the chapter skip didn't move the place");
+                try expect(!same_place(read_on.saved, moved.saved), "the chapter skip didn't move the place");
                 const skipped = try play(&.{ forward, forward, forward, top, chapter_back, page_middle, back_button });
-                try expect(samePlace(read_on.saved, skipped.saved), "Back didn't follow a chapter skip");
+                try expect(same_place(read_on.saved, skipped.saved), "Back didn't follow a chapter skip");
             }
         }.run,
     },
@@ -470,20 +474,20 @@ const scenarios = [_]Scenario{
     }.run },
     .{ .name = "airplane mode the reader turned on stays on", .run = struct {
         fn run() !void {
-            const r = try playOn(.{ .airplane = true }, &.{ wait(150_000), forward });
+            const r = try play_on(.{ .airplane = true }, &.{ wait(150_000), forward });
             try expect(r.airplane_at_end, "noface turned the reader's airplane mode off");
             try expect(!r.wifi_note_left, "noface claimed the reader's airplane mode");
         }
     }.run },
     .{ .name = "with Bluetooth on, Wi-Fi is left alone", .run = struct {
         fn run() !void {
-            const r = try playOn(.{ .bluetooth = true }, &.{ wait(150_000), forward });
+            const r = try play_on(.{ .bluetooth = true }, &.{ wait(150_000), forward });
             try expect(!r.airplane_asked_on, "airplane mode could cut Bluetooth off");
         }
     }.run },
     .{ .name = "holding a word looks it up, and its Highlight button highlights it", .run = struct {
         fn run() !void {
-            const r = try playOn(.{ .dictionary = true }, &.{ hold(600, 700), lift, highlight_button, page_middle });
+            const r = try play_on(.{ .dictionary = true }, &.{ hold(600, 700), lift, highlight_button, page_middle });
             try expect(r.looked_up, "the dictionary wasn't opened");
             try expect(r.highlights == 1, "the word wasn't highlighted");
         }
@@ -493,7 +497,7 @@ const scenarios = [_]Scenario{
         .run = struct {
             fn run() !void {
                 const r = try play(&.{
-                    hold(600, 700), lift, cardRow(2, 1), above_sheet, // Asked: Not now, then the sheet closed
+                    hold(600, 700), lift, card_row(2, 1), above_sheet, // Asked: Not now, then the sheet closed
                     hold(600, 700), lift, highlight_button, page_middle, // Not asked again: straight to the sheet
                 });
                 try expect(!r.offers_dictionary, "it would ask again");
@@ -506,7 +510,7 @@ const scenarios = [_]Scenario{
         .run = struct {
             fn run() !void {
                 // The pretend Kindle starts no programs, so curl never runs
-                const r = try play(&.{ hold(600, 700), lift, cardRow(2, 0), cardRow(1, 0), highlight_button, page_middle });
+                const r = try play(&.{ hold(600, 700), lift, card_row(2, 0), card_row(1, 0), highlight_button, page_middle });
                 try expect(!r.looked_up, "a dictionary appeared from nowhere");
                 try expect(r.highlights == 1, "the word wasn't highlighted");
             }
@@ -522,7 +526,7 @@ const scenarios = [_]Scenario{
     }.run },
     .{ .name = "a book opens from the library, and Home goes back", .run = struct {
         fn run() !void {
-            const r = try playOn(.{ .library = true }, &.{ tapIn(library_ui.bookRect(0, 0)), wait(2_000), top, tap(150, 118) });
+            const r = try play_on(.{ .library = true }, &.{ tap_in(library_ui.book_rect(0, 0)), wait(2_000), top, tap(150, 118) });
             try expect(r.opened[0], "the book didn't open");
         }
     }.run },
@@ -530,12 +534,12 @@ const scenarios = [_]Scenario{
         .name = "finishing a book of a series offers the next, and it opens",
         .run = struct {
             fn run() !void {
-                const r = try playOn(.{
+                const r = try play_on(.{
                     .library = true,
                     .books = &.{ "Scenario Book -- noface tests -- Scenario Saga #1.epub", "Scenario Book -- noface tests -- Scenario Saga #2.epub" },
                     .read_before = 0,
                 }, &.{
-                    tapIn(library_ui.heroRect(width)), wait(2_000), // Continue the first
+                    tap_in(library_ui.hero_rect(width)), wait(2_000), // Continue the first
                     top, tap(1176, 118), tap(600, 1600), // ⋮, Mark as finished
                     top, tap(150, 118), // Home, where the next one is offered
                     tap(600, 1604), // Up next: Read it now
@@ -555,17 +559,17 @@ const scenarios = [_]Scenario{
                 .{ Snapshot.definition, &[_]Step{ forward, hold(600, 700), lift } },
             };
             inline for (shots) |shot| {
-                const r = try playOn(.{ .dictionary = true, .snapshot = shot[0] }, shot[1]);
+                const r = try play_on(.{ .dictionary = true, .snapshot = shot[0] }, shot[1]);
                 try expect(r.looks_right, @tagName(shot[0]) ++ " looks different");
             }
-            const lib = try playOn(.{ .library = true, .snapshot = .library }, &.{});
+            const lib = try play_on(.{ .library = true, .snapshot = .library }, &.{});
             try expect(lib.looks_right, "library looks different");
         }
     }.run },
 };
 
 /// A tap in the middle of `r`.
-fn tapIn(r: library_ui.Rect) Step {
+fn tap_in(r: library_ui.Rect) Step {
     return tap(@intCast(r.x + r.w / 2), @intCast(r.y + r.h / 2));
 }
 
@@ -580,7 +584,7 @@ fn expect(ok: bool, why: []const u8) !void {
 /// it's in place. A crash puts it back first, so its message is seen.
 var hidden_stderr: i32 = -1;
 
-pub fn showCrashes() void {
+pub fn show_crashes() void {
     if (hidden_stderr >= 0) _ = linux.dup2(hidden_stderr, 2);
 }
 
@@ -588,25 +592,25 @@ pub fn showCrashes() void {
 /// when it happens mid-scenario.
 pub const panic = std.debug.FullPanic(struct {
     fn crash(msg: []const u8, first: ?usize) noreturn {
-        showCrashes();
+        show_crashes();
         std.debug.defaultPanic(msg, first);
     }
 }.crash);
 
 /// Wall time, for how long a scenario really took: the app's own clock is the fake one.
-fn realMs() u64 {
+fn real_ms() u64 {
     var ts: linux.timespec = undefined;
     _ = linux.clock_gettime(.REALTIME, &ts);
     return @as(u64, @intCast(ts.sec)) * 1000 + @as(u64, @intCast(ts.nsec)) / 1_000_000;
 }
 
 /// Runs every scenario, printing a line for each. The number that failed.
-fn runScenarios() u32 {
+fn run_scenarios() u32 {
     var failed: u32 = 0;
     for (scenarios) |s| {
-        const t0 = realMs();
+        const t0 = real_ms();
         if (s.run()) {
-            std.debug.print("ok    {s} ({d} ms)\n", .{ s.name, realMs() - t0 });
+            std.debug.print("ok    {s} ({d} ms)\n", .{ s.name, real_ms() - t0 });
         } else |err| {
             failed += 1;
             std.debug.print("FAIL  {s}: {s}\n", .{ s.name, @errorName(err) });
@@ -618,14 +622,14 @@ fn runScenarios() u32 {
 
 pub fn main(init: std.process.Init.Minimal) !void {
     write_snapshots = init.environ.getPosix("NOFACE_WRITE_SNAPSHOTS");
-    if (runScenarios() > 0) std.process.exit(1);
+    if (run_scenarios() > 0) std.process.exit(1);
 }
 
 /// `noface selftest`, on the reader's Kindle: the scenarios, then this Kindle's own
 /// fonts, dictionaries and a few of its books, opened in memory with nothing saved
 /// where the reader's things are. True when everything passed.
 pub fn selftest() bool {
-    var ok = runScenarios() == 0;
+    var ok = run_scenarios() == 0;
     std.debug.print("\nthis Kindle\n", .{});
 
     const fonts_db = @import("kindle/fonts.zig");
@@ -655,7 +659,7 @@ pub fn selftest() bool {
     defer arena.deinit();
     const dir = @import("sys/dir.zig");
     for ([_][]const u8{ ".epub", ".kfx" }) |suffix| {
-        const found = dir.findFiles(arena.allocator(), paths.documents, suffix) catch continue;
+        const found = dir.find_files(arena.allocator(), paths.documents, suffix) catch continue;
         // Up to three that noface can open; protected ones (most bought from Amazon)
         // open in the Kindle's own reader instead, so they're passed over, not failed
         var opened: usize = 0;
@@ -663,7 +667,7 @@ pub fn selftest() bool {
             if (opened == 3) break;
             const name = std.fs.path.stem(path);
             const short = name[0..@min(name.len, 48)];
-            if (playOn(.{ .real_book = path }, &.{})) |r| {
+            if (play_on(.{ .real_book = path }, &.{})) |r| {
                 std.debug.print("ok    opened {s} ({d} ms)\n", .{ short, r.ms });
                 opened += 1;
             } else |err| switch (err) {

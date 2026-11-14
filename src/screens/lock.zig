@@ -5,7 +5,7 @@ const os = @import("../sys/os.zig");
 const cover = @import("../gfx/image.zig");
 const file = @import("../sys/file.zig");
 const kfx = @import("../kindle/kfx.zig");
-const nowUs = os.nowUs;
+const now_us = os.now_us;
 const app = @import("../app.zig");
 const picture = @import("../epub/picture.zig");
 const draw = @import("../ui/draw.zig");
@@ -25,29 +25,29 @@ pub const Options = struct { restore: bool = true };
 /// Shows the book's cover while the Kindle sleeps, then puts the screen back. A
 /// screen update that fails is logged, never fatal: the Kindle is asleep, and the
 /// reader shouldn't wake to an error.
-pub fn lockScreen(a: *app.App, entry: ?*const catalog.Entry, options: Options) Woke {
+pub fn lock_screen(a: *app.App, entry: ?*const catalog.Entry, options: Options) Woke {
     @memcpy(a.lock_saved, a.screen.pixels);
     const target = a.lock_cover;
     // The reader's own picture, if they chose it and it's there; else the book's cover
     var picture_buf: [320]u8 = undefined;
-    const own = if (a.settings.lock_picture) picturePath(a, &picture_buf) else null;
+    const own = if (a.settings.lock_picture) picture_path(a, &picture_buf) else null;
     const own_data: ?[]const u8 = if (own) |p| file.map(p) catch null else null;
     defer if (own_data) |d| file.unmap(d);
-    const book_key: u64 = if (entry) |e| keyFor(e) else 1;
-    const wanted = if (own_data) |d| pictureKey(d) else book_key;
+    const book_key: u64 = if (entry) |e| key_for(e) else 1;
+    const wanted = if (own_data) |d| picture_key(d) else book_key;
     if (a.lock_cover_key != wanted) {
         // The key kept is of what was really drawn: a picture that won't decode leaves
         // the book's cover, which mustn't be kept as if it were the picture
         var drew_picture = false;
         if (own_data) |d| if (wanted != a.lock_picture_bad) {
-            drew_picture = cover.fillScreen(a.alloc, d, target, a.screen.width, a.screen.height, a.screen.stride);
+            drew_picture = cover.fill_screen(a.alloc, d, target, a.screen.width, a.screen.height, a.screen.stride);
             if (!drew_picture) {
                 a.lock_picture_bad = wanted; // Not decoded again until the file changes
                 std.debug.print("lock screen picture can't be read\n", .{});
             }
         };
-        const drawn = drew_picture or (if (entry) |e| drawCover(a, e, target) else false);
-        if (!drawn) drawTitle(a, entry, target);
+        const drawn = drew_picture or (if (entry) |e| draw_cover(a, e, target) else false);
+        if (!drawn) draw_title(a, entry, target);
         a.lock_cover_key = if (drew_picture) wanted else book_key;
         std.debug.print("locked, cover drawn: {}\n", .{drawn});
     } else std.debug.print("locked, cover kept\n", .{});
@@ -74,19 +74,19 @@ pub fn lockScreen(a: *app.App, entry: ?*const catalog.Entry, options: Options) W
             .unlock => break,
             .computer, .stop => {
                 // Leaving: no point lighting up the old screen first
-                a.input.holdBack(action);
+                a.input.hold_back(action);
                 return .leaving;
             },
             else => {},
         }
     }
-    a.input.last_input = nowUs();
+    a.input.last_input = now_us();
     if (options.restore) a.present(a.lock_saved, .flash) catch |err| std.debug.print("screen not put back: {s}\n", .{@errorName(err)});
     return .woke;
 }
 
 /// The reader's lock screen picture, in the data folder: lockscreen.jpg or .png.
-fn picturePath(a: *const app.App, buf: []u8) ?[:0]const u8 {
+fn picture_path(a: *const app.App, buf: []u8) ?[:0]const u8 {
     for ([_][]const u8{ "jpg", "jpeg", "png" }) |ext| {
         const p = std.fmt.bufPrintSentinel(buf, "{s}/lockscreen.{s}", .{ a.state_dir, ext }, 0) catch continue;
         if (file.exists(p)) return p;
@@ -95,13 +95,13 @@ fn picturePath(a: *const app.App, buf: []u8) ?[:0]const u8 {
 }
 
 /// Whether the reader has put a lock screen picture in the data folder.
-pub fn hasPicture(a: *const app.App) bool {
+pub fn has_picture(a: *const app.App) bool {
     var buf: [320]u8 = undefined;
-    return picturePath(a, &buf) != null;
+    return picture_path(a, &buf) != null;
 }
 
 /// Tells pictures apart for the kept lock screen, so a replaced one is drawn again.
-fn pictureKey(data: []const u8) u64 {
+fn picture_key(data: []const u8) u64 {
     var h = std.hash.Wyhash.init(1);
     h.update(data[0..@min(data.len, 4096)]);
     h.update(std.mem.asBytes(&data.len));
@@ -109,7 +109,7 @@ fn pictureKey(data: []const u8) u64 {
 }
 
 /// Tells books apart for the kept lock screen: never 0 (nothing kept) or 1 (no book).
-fn keyFor(e: *const catalog.Entry) u64 {
+fn key_for(e: *const catalog.Entry) u64 {
     var h = std.hash.Wyhash.init(0);
     h.update(e.path);
     h.update(e.thumbnail);
@@ -119,26 +119,26 @@ fn keyFor(e: *const catalog.Entry) u64 {
 /// The cover, filling the screen. The catalog's thumbnail is the cover the library
 /// shows; a Kindle book's own first picture is sharper, so it's used instead when it
 /// has the thumbnail's shape, and so is the cover rather than a map or picture inside.
-fn drawCover(a: *app.App, e: *const catalog.Entry, target: []u8) bool {
+fn draw_cover(a: *app.App, e: *const catalog.Entry, target: []u8) bool {
     const thumb: ?[]const u8 = if (e.thumbnail.len > 0) file.map(e.thumbnail) catch null else null;
     defer if (thumb) |t| file.unmap(t);
-    if (e.isLocal() and !e.isEpub()) {
+    if (e.is_local() and !e.is_epub()) {
         if (file.map(e.path)) |data| {
             defer file.unmap(data);
-            if (kfx.coverImage(data)) |jpeg| {
-                if (thumb == null or sameShape(jpeg, thumb.?)) {
-                    if (cover.fillScreen(a.alloc, jpeg, target, a.screen.width, a.screen.height, a.screen.stride)) return true;
+            if (kfx.cover_image(data)) |jpeg| {
+                if (thumb == null or same_shape(jpeg, thumb.?)) {
+                    if (cover.fill_screen(a.alloc, jpeg, target, a.screen.width, a.screen.height, a.screen.stride)) return true;
                 }
             }
         } else |_| {}
     }
     const t = thumb orelse return false;
-    return cover.fillScreen(a.alloc, t, target, a.screen.width, a.screen.height, a.screen.stride);
+    return cover.fill_screen(a.alloc, t, target, a.screen.width, a.screen.height, a.screen.stride);
 }
 
 /// Whether two pictures have the same proportions, within a few percent. Unknown
 /// sizes count as the same, so nothing is turned down for want of a header.
-pub fn sameShape(x: []const u8, y: []const u8) bool {
+pub fn same_shape(x: []const u8, y: []const u8) bool {
     const p = picture.size(x) orelse return true;
     const q = picture.size(y) orelse return true;
     const lhs = @as(u64, p.width) * q.height;
@@ -148,7 +148,7 @@ pub fn sameShape(x: []const u8, y: []const u8) bool {
 }
 
 /// No cover: the title, wrapped, and the author under it, on white.
-fn drawTitle(a: *app.App, entry: ?*const catalog.Entry, target: []u8) void {
+fn draw_title(a: *app.App, entry: ?*const catalog.Entry, target: []u8) void {
     @memset(target, 0xff);
     const e = entry orelse return;
     const page = a.page(target);
@@ -173,7 +173,7 @@ test "a cover and a picture of another shape tell apart" {
     const cover_small = png(600, 800);
     const cover_big = png(1200, 1600);
     const map = png(800, 600);
-    try std.testing.expect(sameShape(&cover_big, &cover_small));
-    try std.testing.expect(!sameShape(&map, &cover_small));
-    try std.testing.expect(sameShape("not a picture", &cover_small));
+    try std.testing.expect(same_shape(&cover_big, &cover_small));
+    try std.testing.expect(!same_shape(&map, &cover_small));
+    try std.testing.expect(same_shape("not a picture", &cover_small));
 }

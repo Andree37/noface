@@ -117,7 +117,7 @@ The exact rules are at the top of `tools/check/boundaries.zig`.
 Two screens run for as long as noface does: the library (`screens/library.zig`) and a
 book (`screens/reader.zig`). Each is a struct with one loop that takes the next action
 and hands it to a handler, and each says how it takes touches (`Input.Modes`) in one
-place: the library's `touches`, the reader's `touchesFor(view)`.
+place: the library's `touches`, the reader's `touches_for(view)`.
 
 Everything opened over them (a card, a sheet, a list, the keyboard, the quick panel,
 the picture viewer) runs on `screens/screen.zig`. Such a screen is a struct that says
@@ -130,7 +130,7 @@ const Bubble = struct {
     a: *app.App,
 
     pub fn draw(b: *Bubble, part: screen.Part) !void { ... } // .all, or .changing
-    pub fn onTap(b: *Bubble, t: screen.Tap) !screen.Step(void) {
+    pub fn on_tap(b: *Bubble, t: screen.Tap) !screen.Step(void) {
         return .close; // Or .stay, .{ .redraw = .changing }, .{ .done = result }
     }
 };
@@ -142,23 +142,23 @@ _ = try screen.run(a, &bubble); // null: closed, or the Kindle locked
 `screen.run` draws it whole first, waits, and draws again as each step asks. It sets
 the touch modes and puts them back after, and when the Kindle locks or noface is told
 to leave, it closes the screen and keeps that action for the one underneath. A screen
-that changes on its own adds `tick_us` and `onTick`; holds and swipes go to `onAction`.
+that changes on its own adds `tick_us` and `on_tick`; holds and swipes go to `on_action`.
 Typing on the keyboard is `screens/typing.zig`, shared by every screen with a field, and
 a list shown a page at a time is `goto.Pages` (`ui/goto.zig`), which turns the page
 itself, so the screen only says what a tapped row does.
 
 A caller that must tell a screen closed by the reader from one cut short by the Kindle
-locking uses `screen.runToEnd`, which says which. A loop of its own (the lock screen,
+locking uses `screen.run_to_end`, which says which. A loop of its own (the lock screen,
 the picture's double tap) sets touches and its tick with `Input.enter`, and puts them
 back with `leave`.
 
 The build checks each screen: anything else made `pub` on it, a misspelled hook
-(`onTik`), or `tick_us` without `onTick` fails with a message saying what's wrong. The
+(`onTik`), or `tick_us` without `on_tick` fails with a message saying what's wrong. The
 `Example` at the end of `screens/screen.zig` is the screen to copy from.
 
 So a new screen never writes its own wait loop, redraw flags or touch settings. The
 loops left are the two above, the lock screen (which waits for the unlock, not a tap),
-and following one gesture to its end (`app.followDrag`, the picture's double tap).
+and following one gesture to its end (`app.follow_drag`, the picture's double tap).
 
 ## How the speed comparison was measured
 
@@ -229,7 +229,7 @@ it. The build or a test fails if a second place is needed and missed.
 | To add | Change | What follows by itself |
 |---|---|---|
 | A switch in Aa | a field in `Settings` (`model/settings.zig`), a line in `saved` there, a line in `switches` (`ui/aa.zig`) | its place on the tab, drawing, taps, saving; the page-break key counts it unless it's in `not_layout` |
-| A tile in the quick panel | a `Hit`, a line in `tiles` (`ui/menu.zig`), its action in `panelControl` (`screens/panel.zig`) | its place, icon, on/off look and label; the compiler wants the action |
+| A tile in the quick panel | a `Hit`, a line in `tiles` (`ui/menu.zig`), its action in `panel_control` (`screens/panel.zig`) | its place, icon, on/off look and label; the compiler wants the action |
 | A value from the Kindle in the status bar or panel | a field in `Quick` (`model/quick.zig`), a line in `readings` (`kindle/lipc.zig`) | reading it with the others, the redraw when it changes, the pretend Kindle's answer |
 | A value kept per book | a field in `State` (`sys/state.zig`) | saving and reading it by name; older files read it as its default |
 | A file noface keeps, or a place on the Kindle | `kindle/paths.zig`, and `device/data.sh` if a script needs it | the test that the two agree |

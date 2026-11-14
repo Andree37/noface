@@ -21,7 +21,7 @@ const text = core.text;
 const toolbar = core.toolbar;
 
 /// Writes a grayscale screen to stdout as a PGM image.
-fn writeImage(pixels: []const u8, w: usize, h: usize) void {
+fn write_image(pixels: []const u8, w: usize, h: usize) void {
     var head: [32]u8 = undefined;
     write(std.fmt.bufPrint(&head, "P5\n{d} {d}\n255\n", .{ w, h }) catch return);
     write(pixels);
@@ -83,11 +83,11 @@ pub fn main(init: std.process.Init.Minimal) !void {
         catalog.sort(entries, .recent);
         const visible = try alloc.alloc(usize, entries.len);
         const filter: catalog.Filter = if (argv.len > 3) .read else .all;
-        const lead = catalog.pickHero(entries);
+        const lead = catalog.pick_hero(entries);
         const count = catalog.select(entries, filter, lead, "", visible);
         const index: usize = if (argv.len > 2) try std.fmt.parseInt(usize, std.mem.sliceTo(argv[2], 0), 10) else 0;
-        try library.render(alloc, fonts, page, entries, lead, visible[0..count], index, filter, .recent, "", "", &quick, .{ .unix = core.os.unixTime(), .utc_offset = core.clock.utcOffset() });
-        writeImage(buf, w, h);
+        try library.render(alloc, fonts, page, entries, lead, visible[0..count], index, filter, .recent, "", "", &quick, .{ .unix = core.os.unix_time(), .utc_offset = core.clock.utc_offset() });
+        write_image(buf, w, h);
         return;
     }
 
@@ -99,8 +99,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
         const visible = try alloc.alloc(usize, entries.len);
         const query = if (argv.len > 2) std.mem.sliceTo(argv[2], 0) else "the";
         const count = catalog.select(entries, .all, null, query, visible);
-        try library.render(alloc, fonts, page, entries, catalog.pickHero(entries), visible[0..count], 0, .all, .recent, query, "", &quick, .{ .unix = core.os.unixTime(), .utc_offset = core.clock.utcOffset() });
-        writeImage(buf, w, h);
+        try library.render(alloc, fonts, page, entries, catalog.pick_hero(entries), visible[0..count], 0, .all, .recent, query, "", &quick, .{ .unix = core.os.unix_time(), .utc_offset = core.clock.utc_offset() });
+        write_image(buf, w, h);
         return;
     }
 
@@ -116,22 +116,22 @@ pub fn main(init: std.process.Init.Minimal) !void {
             .{ .text = sample_note, .style = 0, .note = true, .note_start = true },
             .{ .text = sample_note, .style = 0, .note = true, .note_start = true },
         };
-        _ = try text.renderPage(&body, page, &paras, .{}, .{ .margin_x = 100, .margin_top = 90, .margin_bottom = 150, .indent = 60, .reference = &mark }, null);
+        _ = try text.render_page(&body, page, &paras, .{}, .{ .margin_x = 100, .margin_top = 90, .margin_bottom = 150, .indent = 60, .reference = &mark }, null);
         const parts = [_]book_model.Paragraph{.{ .text = sample_note, .style = 0 }};
         const fitted = try notes.fit(&note_font, &parts, .{}, w, w, null);
         const top = h - fitted.height;
         try notes.render(&note_font, fonts, .{ .buf = buf[top * w ..], .width = w, .height = fitted.height, .stride = w }, &parts, .{}, false);
-        writeImage(buf, w, h);
+        write_image(buf, w, h);
         return;
     }
 
     if (std.mem.eql(u8, mode, "sheet")) {
         const entries = try catalog_db.parse(alloc, try file.map("/mnt/us/noface-data/library.tsv"));
         catalog.sort(entries, .recent);
-        const lead = catalog.pickHero(entries);
+        const lead = catalog.pick_hero(entries);
         const visible = try alloc.alloc(usize, entries.len);
         const count = catalog.select(entries, .all, lead, "", visible);
-        try library.render(alloc, fonts, page, entries, lead, visible[0..count], 0, .all, .recent, "", "", &quick, .{ .unix = core.os.unixTime(), .utc_offset = core.clock.utcOffset() });
+        try library.render(alloc, fonts, page, entries, lead, visible[0..count], 0, .all, .recent, "", "", &quick, .{ .unix = core.os.unix_time(), .utc_offset = core.clock.utc_offset() });
         var list: [4]sheet.Option = undefined;
         const confirming = argv.len > 2;
         const opts = sheet.options(&entries[visible[0]], confirming, &list);
@@ -139,16 +139,16 @@ pub fn main(init: std.process.Init.Minimal) !void {
         var subtitle_buf: [320]u8 = undefined;
         const e = &entries[visible[0]];
         try core.card.render(fonts, page, e.title, sheet.subtitle(&subtitle_buf, e, confirming), sheet.rows(opts, &row_buf));
-        writeImage(buf, w, h);
+        write_image(buf, w, h);
         return;
     }
 
     if (std.mem.eql(u8, mode, "lock")) {
         const data = try file.map(argv[2]);
-        const jpeg = kfx.coverImage(data) orelse return error.NoCover;
+        const jpeg = kfx.cover_image(data) orelse return error.NoCover;
         std.debug.print("jpeg {d} bytes\n", .{jpeg.len});
-        if (!cover.fillScreen(alloc, jpeg, buf, w, h, w)) return error.DecodeFailed;
-        writeImage(buf, w, h);
+        if (!cover.fill_screen(alloc, jpeg, buf, w, h, w)) return error.DecodeFailed;
+        write_image(buf, w, h);
         return;
     }
 
@@ -171,17 +171,17 @@ pub fn main(init: std.process.Init.Minimal) !void {
             .{ .text = body_text, .style = 0 },
         };
         const base = try PreviewFaces.pick(&faces, false, false, core.book.normal_size);
-        _ = try text.renderPage(base, page, &sample_paras, .{}, .{ .faces = .{ .ctx = &faces, .pick = PreviewFaces.pick }, .margin_x = 100, .margin_top = 90, .margin_bottom = 150, .indent = 60 }, null);
-        writeImage(buf, w, h);
+        _ = try text.render_page(base, page, &sample_paras, .{}, .{ .faces = .{ .ctx = &faces, .pick = PreviewFaces.pick }, .margin_x = 100, .margin_top = 90, .margin_bottom = 150, .indent = 60 }, null);
+        write_image(buf, w, h);
         return;
     }
 
     if (std.mem.eql(u8, mode, "search")) {
         @memset(buf, 0xe8);
         try toolbar.render(fonts, page, "A sample book title", 36, 280, &quick, null, .{}, false);
-        try core.search_sheet.renderBar(fonts, page, core.toolbar.status_row, "lighthouse", "Search this book", .search);
+        try core.search_sheet.render_bar(fonts, page, core.toolbar.status_row, "lighthouse", "Search this book", .search);
         try core.keyboard.render(fonts, page);
-        writeImage(buf, w, h);
+        write_image(buf, w, h);
         return;
     }
 
@@ -197,7 +197,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         @memset(buf, 0xe8);
         try toolbar.render(fonts, page, "A sample book title", 36, 280, &quick, null, .{}, false);
         try core.goto.render(fonts, page, if (notes_tab) .notes else .contents, &list, if (notes_tab) null else 3, 0);
-        writeImage(buf, w, h);
+        write_image(buf, w, h);
         return;
     }
 
@@ -205,11 +205,11 @@ pub fn main(init: std.process.Init.Minimal) !void {
         const tab: ?core.aa.Tab = if (argv.len > 2) @fromBackingInt(@intCast(argv[2][0] - '0')) else null;
         @memset(buf, 0xe8);
         try toolbar.render(fonts, page, "A sample book title", 36, 280, &quick, tab, .{}, tab != null and tab.? == .font);
-        writeImage(buf, w, h);
+        write_image(buf, w, h);
         return;
     }
 
     quick.brightness = 11;
     try menu.render(fonts, page, &quick);
-    writeImage(buf[0 .. w * menu.height], w, menu.height);
+    write_image(buf[0 .. w * menu.height], w, menu.height);
 }

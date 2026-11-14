@@ -30,25 +30,25 @@ const Sheet = struct {
         const a = sh.a;
         @memcpy(a.screen.pixels, sh.page_copy); // Not over a card that was just answered
         try definition.render(a.ui, a.page(a.screen.pixels), sh.found);
-        try a.showBand(0, a.screen.height);
+        try a.show_band(0, a.screen.height);
     }
 
-    pub fn onTap(sh: *Sheet, t: screen.Tap) !screen.Step(Choice) {
+    pub fn on_tap(sh: *Sheet, t: screen.Tap) !screen.Step(Choice) {
         return switch (definition.hit(t.x, t.y)) {
             .close => .close,
             .highlight => .{ .done = .highlight },
-            .get_dictionary => if (try sh.getDictionary()) .{ .redraw = .all } else .stay,
+            .get_dictionary => if (try sh.get_dictionary()) .{ .redraw = .all } else .stay,
             .none => .stay,
         };
     }
 
     /// Downloads the book's dictionary from "Get dictionary". True when the sheet
     /// needs drawing again (the download's cards were over it).
-    fn getDictionary(sh: *Sheet) !bool {
+    fn get_dictionary(sh: *Sheet) !bool {
         const l = sh.lang orelse return false;
         if (!sh.found.no_dictionary) return false;
         if (try dict_get.get(sh.a, sh.page_copy, l)) sh.found = find(sh.a, sh.s, sh.word, sh.lang);
-        if (sh.found.no_dictionary) sh.found.can_get = dict_get.languageOf(l).name;
+        if (sh.found.no_dictionary) sh.found.can_get = dict_get.language_of(l).name;
         return true;
     }
 };
@@ -57,13 +57,13 @@ const Sheet = struct {
 pub fn find(a: *app.App, s: *const sess.Session, word: book_model.Word, lang: ?hyphen.Lang) definition.Found {
     const text = dictionary.trimmed(s.paragraphs[word.para].text[word.start..word.end]);
     var found = definition.Found{ .word = text };
-    const d = a.dictionaryFor(lang) orelse {
+    const d = a.dictionary_for(lang) orelse {
         found.no_dictionary = true;
         return found;
     };
     found.entry = d.lookup(text);
     if (found.entry) |e| {
-        if (e.baseForm()) |b| found.base = d.lookup(b);
+        if (e.base_form()) |b| found.base = d.lookup(b);
     }
     return found;
 }
@@ -78,7 +78,7 @@ pub fn run(a: *app.App, s: *const sess.Session, word: book_model.Word, lang: ?hy
     const page_copy = try a.alloc.dupe(u8, a.screen.pixels);
     defer a.alloc.free(page_copy);
     if (found.no_dictionary) if (lang) |l| {
-        found.can_get = dict_get.languageOf(l).name;
+        found.can_get = dict_get.language_of(l).name;
         // The first time, ask; after "Not now", the sheet offers it instead
         if (a.settings.offer_dictionary and try dict_get.ask(a, page_copy, l) == .download) {
             if (try dict_get.get(a, page_copy, l)) found = find(a, s, word, lang);
@@ -87,6 +87,6 @@ pub fn run(a: *app.App, s: *const sess.Session, word: book_model.Word, lang: ?hy
     var sheet = Sheet{ .a = a, .s = s, .word = word, .lang = lang, .page_copy = page_copy, .found = found };
     const choice = try screen.run(a, &sheet) orelse .close; // Closed, locked or leaving
     @memcpy(a.screen.pixels, page_copy); // The cards drew into the overlay; this is the page
-    try a.showBand(0, a.screen.height);
+    try a.show_band(0, a.screen.height);
     return choice;
 }

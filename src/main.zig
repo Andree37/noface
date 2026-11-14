@@ -29,14 +29,14 @@ const battery_log = @import("kindle/battery_log.zig");
 /// own messages while they run.
 pub const panic = std.debug.FullPanic(struct {
     fn crash(msg: []const u8, first: ?usize) noreturn {
-        @import("scenarios.zig").showCrashes();
+        @import("scenarios.zig").show_crashes();
         std.debug.defaultPanic(msg, first);
     }
 }.crash);
 
 /// Whether a font of the reader's own can set text: it opens, has letters, and draws
-/// some. Run in a child process by findOwn, so a damaged one only ends that.
-fn setsText(data: []const u8) bool {
+/// some. Run in a child process by find_own, so a damaged one only ends that.
+fn sets_text(data: []const u8) bool {
     if (!Font.usable(data)) return false;
     var font = Font.init(std.heap.page_allocator, data, 30, 1.2) catch return false;
     _ = font.measure("Aa Bb Gg Qq yj 0123 .,;!?") catch return false;
@@ -83,21 +83,21 @@ pub fn main(init: std.process.Init.Minimal) !void {
     var input = try input_mod.open(screen.width, screen.height);
     defer input_mod.release(&input);
 
-    input_mod.installSignals();
-    wifi_saver.useDataDir(state_dir);
+    input_mod.install_signals();
+    wifi_saver.use_data_dir(state_dir);
     wifi_saver.restore(); // Left off by a crash or a reboot mid-book
     const saved_screen = try alloc.alloc(u8, screen.pixels.len);
     @memcpy(saved_screen, screen.pixels);
     defer {
         @memcpy(screen.pixels, saved_screen);
         if (screen.show(.flash)) |m| {
-            screen.waitComplete(m) catch {};
+            screen.wait_complete(m) catch {};
         } else |_| {}
     }
 
     var files: setup.DataFiles = .{};
     try files.init(state_dir);
-    fonts_db.findOwn(alloc, setsText); // Before the settings: a chosen typeface of the reader's is found by name
+    fonts_db.find_own(alloc, sets_text); // Before the settings: a chosen typeface of the reader's is found by name
     var shared = try setup.assemble(.{
         .alloc = alloc,
         .app_budget = &app_budget,
@@ -112,18 +112,18 @@ pub fn main(init: std.process.Init.Minimal) !void {
     // A different folder for EPUBs, for a demo or test run beside the real library
     shared.documents = if (init.environ.getPosix("NOFACE_DOCUMENTS")) |d| d else paths.documents;
     shared.dictionary_base = init.environ.getPosix("NOFACE_DICT_URL") orelse @import("kindle/dict_download.zig").default_base;
-    shared.utc_offset = clock.utcOffset();
-    shared.applySettings() catch {
+    shared.utc_offset = clock.utc_offset();
+    shared.apply_settings() catch {
         shared.settings = .{};
-        try shared.applySettings();
+        try shared.apply_settings();
     };
-    app.saveSettings(files.settings, shared.settings); // Older files come back in the current format
+    app.save_settings(files.settings, shared.settings); // Older files come back in the current format
     // On, but the system's startup file isn't this version's (an older install's points
     // somewhere that no longer reads the settings): put the current one back, as the
     // reader agreed to when they turned it on
     if (shared.settings.autostart and autostart.outdated()) {
         std.debug.print("autostart: startup file out of date, reinstalled: {}\n", .{autostart.install()});
     }
-    try library_screen.runLibrary(&shared);
+    try library_screen.run_library(&shared);
     std.debug.print("quit\n", .{});
 }

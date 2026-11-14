@@ -10,12 +10,12 @@ pub fn size(data: []const u8) ?Size {
         const h = std.mem.readInt(u32, data[20..24], .big);
         return if (w > 0 and h > 0) .{ .width = w, .height = h } else null;
     }
-    if (data.len >= 4 and data[0] == 0xff and data[1] == 0xd8) return jpegSize(data);
+    if (data.len >= 4 and data[0] == 0xff and data[1] == 0xd8) return jpeg_size(data);
     return null;
 }
 
 /// Walks JPEG segments to the frame header (SOF0 to SOF15, except DHT, JPG and DAC).
-fn jpegSize(data: []const u8) ?Size {
+fn jpeg_size(data: []const u8) ?Size {
     var at: usize = 2;
     while (at + 9 < data.len) {
         if (data[at] != 0xff) return null;

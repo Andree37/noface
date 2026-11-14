@@ -16,11 +16,11 @@ pub fn use(b: *memory.Budget) void {
 
 /// Back to the built-in budget: for a caller whose budget is about to go away (a
 /// test's, or a scenario's), so nothing is left pointing at it.
-pub fn useDefault() void {
+pub fn use_default() void {
     budget = &default_budget;
 }
 
-fn sizeOf(block: [*]u8) usize {
+fn size_of(block: [*]u8) usize {
     return std.mem.readInt(usize, block[0..@sizeOf(usize)], .little);
 }
 
@@ -33,12 +33,12 @@ export fn noface_malloc(size: usize) ?*anyopaque {
 export fn noface_free(p: ?*anyopaque) void {
     const user: [*]u8 = @ptrCast(p orelse return);
     const block: [*]align(16) u8 = @alignCast(user - header);
-    budget.allocator().free(block[0 .. header + sizeOf(block)]);
+    budget.allocator().free(block[0 .. header + size_of(block)]);
 }
 
 export fn noface_realloc(p: ?*anyopaque, size: usize) ?*anyopaque {
     const old: [*]u8 = @ptrCast(p orelse return noface_malloc(size));
-    const old_size = sizeOf(old - header);
+    const old_size = size_of(old - header);
     const fresh: [*]u8 = @ptrCast(noface_malloc(size) orelse return null);
     @memcpy(fresh[0..@min(size, old_size)], old[0..@min(size, old_size)]);
     noface_free(p);

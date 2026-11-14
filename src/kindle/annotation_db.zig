@@ -9,7 +9,7 @@ const process = @import("../sys/process.zig");
 const safe = @import("safe.zig");
 
 /// While this file exists, annotation writes are skipped. Used by device tests.
-pub fn dryRun() bool {
+pub fn dry_run() bool {
     const rc = linux.open(paths.dry_run, .{ .ACCMODE = .RDONLY }, 0);
     if (failed(rc)) return false;
     _ = linux.close(@intCast(rc));
@@ -17,10 +17,10 @@ pub fn dryRun() bool {
 }
 
 /// Fetches a book's highlights or bookmarks as "id|start|end" lines.
-pub fn readAnnotations(key: []const u8, kind: annotations.Kind, out: []u8) []const u8 {
-    if (!safe.safeId(key)) return "";
+pub fn read_annotations(key: []const u8, kind: annotations.Kind, out: []u8) []const u8 {
+    if (!safe.safe_id(key)) return "";
     var match_buf: [128]u8 = undefined;
-    const book = annotations.bookMatch(&match_buf, key) catch return "";
+    const book = annotations.book_match(&match_buf, key) catch return "";
     var buf: [1000]u8 = undefined;
     const fields = "annotation_id, json_extract(serialized_payload, '$.start_position.shortPosition'), json_extract(serialized_payload, '$.end_position.shortPosition')";
     const command = std.fmt.bufPrintSentinel(&buf,
@@ -28,12 +28,12 @@ pub fn readAnnotations(key: []const u8, kind: annotations.Kind, out: []u8) []con
     , .{ fields, kind.dataset(), book, book, fields, kind.dataset(), book }, 0) catch return "";
     const argv = [_:null]?[*:0]const u8{ "/bin/sh", "-c", command };
     const n = process.run(&argv, out) orelse return "";
-    return completeLines(out[0..n], n == out.len);
+    return complete_lines(out[0..n], n == out.len);
 }
 
 /// Output that filled its buffer may end mid-line; that last line is dropped
 /// rather than read as a highlight with a wrong end.
-pub fn completeLines(output: []const u8, filled: bool) []const u8 {
+pub fn complete_lines(output: []const u8, filled: bool) []const u8 {
     if (!filled) return output;
     if (!@import("builtin").is_test) std.debug.print("highlight list cut off at {d} bytes\n", .{output.len});
     const end = std.mem.lastIndexOfScalar(u8, output, '\n') orelse return "";
@@ -41,7 +41,7 @@ pub fn completeLines(output: []const u8, filled: bool) []const u8 {
 }
 
 /// Runs a SQL statement against the annotation database.
-pub fn runAnnotationSql(sql: []const u8) bool {
+pub fn run_annotation_sql(sql: []const u8) bool {
     const path = paths.annotation_sql;
     const rc = linux.open(path, .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, 0o600);
     if (failed(rc)) return false;
@@ -57,7 +57,10 @@ pub fn runAnnotationSql(sql: []const u8) bool {
 }
 
 test "a cut-off highlight list loses only its partial line" {
-    try std.testing.expectEqualStrings("a|1|2\nb|3|4\n", completeLines("a|1|2\nb|3|4\nc|5|", true));
-    try std.testing.expectEqualStrings("a|1|2\nc|5|6", completeLines("a|1|2\nc|5|6", false));
-    try std.testing.expectEqualStrings("", completeLines("c|5|", true));
+    try std.testing.expectEqualStrings(
+        "a|1|2\nb|3|4\n",
+        complete_lines("a|1|2\nb|3|4\nc|5|", true),
+    );
+    try std.testing.expectEqualStrings("a|1|2\nc|5|6", complete_lines("a|1|2\nc|5|6", false));
+    try std.testing.expectEqualStrings("", complete_lines("c|5|", true));
 }

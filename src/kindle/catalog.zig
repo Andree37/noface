@@ -8,13 +8,13 @@ const process = @import("../sys/process.zig");
 const read_state_finished = 2; // Kindle's own "finished" mark
 
 /// Converted filenames look like "Title -- Author -- Year -- junk".
-pub fn cleanTitle(raw: []const u8) []const u8 {
+pub fn clean_title(raw: []const u8) []const u8 {
     const end = std.mem.indexOf(u8, raw, " -- ") orelse raw.len;
     return std.mem.trim(u8, raw[0..end], " ");
 }
 
 /// Rebuilds library.tsv from the catalog.
-pub fn exportLibrary() void {
+pub fn export_library() void {
     const argv = [_:null]?[*:0]const u8{ "/bin/sh", paths.export_script };
     var out: [16]u8 = undefined;
     _ = process.run(&argv, &out);
@@ -22,8 +22,8 @@ pub fn exportLibrary() void {
 
 /// Filename conversion turned ":" into "_", and some titles carry a series prefix
 /// like "[Bobiverse 01] \u{2022} We Are Legion".
-pub fn fixTitle(alloc: std.mem.Allocator, raw: []const u8) ![]const u8 {
-    var t = cleanTitle(raw);
+pub fn fix_title(alloc: std.mem.Allocator, raw: []const u8) ![]const u8 {
+    var t = clean_title(raw);
     const bullet = "\u{2022} ";
     if (t.len > 0 and t[0] == '[') {
         if (std.mem.indexOf(u8, t, bullet)) |at| t = t[at + bullet.len ..];
@@ -46,7 +46,7 @@ pub fn fixTitle(alloc: std.mem.Allocator, raw: []const u8) ![]const u8 {
 }
 
 /// Authors can repeat as "Liu, Cixin [Liu, Cixin]".
-pub fn cleanAuthor(raw: []const u8) []const u8 {
+pub fn clean_author(raw: []const u8) []const u8 {
     const end = std.mem.indexOf(u8, raw, " [") orelse raw.len;
     return std.mem.trim(u8, raw[0..end], " ");
 }
@@ -75,8 +75,8 @@ pub fn parse(alloc: std.mem.Allocator, data: []const u8) ![]library.Entry {
         if (path.len == 0 and availability == .local) continue;
         try out.append(alloc, .{
             .path = try alloc.dupeSentinel(u8, path, 0),
-            .title = try fixTitle(alloc, title),
-            .author = cleanAuthor(author),
+            .title = try fix_title(alloc, title),
+            .author = clean_author(author),
             .percent = @intFromFloat(std.math.clamp(percent, 0, 100)),
             .last = last,
             // The Kindle's own mark, which marking as unread clears.
@@ -89,20 +89,20 @@ pub fn parse(alloc: std.mem.Allocator, data: []const u8) ![]library.Entry {
             .key = key,
             .kind = kind,
             .guid = guid,
-            .series = if (library.seriesFromFileName(path)) |s| s.name else "",
-            .series_index = if (library.seriesFromFileName(path)) |s| s.index else 0,
+            .series = if (library.series_from_file_name(path)) |s| s.name else "",
+            .series_index = if (library.series_from_file_name(path)) |s| s.index else 0,
         });
     }
     return out.toOwnedSlice(alloc);
 }
 
 test "titles lose filename junk" {
-    try std.testing.expectEqualStrings("Snow Crash", cleanTitle("Snow Crash -- Stephenson, Neal -- 2010"));
-    try std.testing.expectEqualStrings("Prisoners of Geography", cleanTitle("Prisoners of Geography"));
+    try std.testing.expectEqualStrings("Snow Crash", clean_title("Snow Crash -- Stephenson, Neal -- 2010"));
+    try std.testing.expectEqualStrings("Prisoners of Geography", clean_title("Prisoners of Geography"));
 }
 
 test "authors lose repeated names" {
-    try std.testing.expectEqualStrings("Liu, Cixin", cleanAuthor("Liu, Cixin [Liu, Cixin]"));
+    try std.testing.expectEqualStrings("Liu, Cixin", clean_author("Liu, Cixin [Liu, Cixin]"));
 }
 
 test "rows parse and library.sort newest first" {
@@ -121,13 +121,13 @@ test "finished stays read after our progress replaces the percent" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const rows = try parse(arena.allocator(), "/a\tA\tx\t99.1\t1\t1\n/b\tB\tx\t40\t1\t2\n/c\tC\tx\t40\t1\t1\n/d\tD\tx\t0\t1\t0\n");
-    try std.testing.expect(rows[0].isRead());
+    try std.testing.expect(rows[0].is_read());
     rows[0].percent = 3; // Read again from the start, or marked as unread
-    try std.testing.expect(!rows[0].isRead());
-    try std.testing.expect(rows[1].isRead());
-    try std.testing.expect(!rows[2].isRead());
-    try std.testing.expect(rows[2].inProgress());
-    try std.testing.expect(!rows[3].inProgress());
+    try std.testing.expect(!rows[0].is_read());
+    try std.testing.expect(rows[1].is_read());
+    try std.testing.expect(!rows[2].is_read());
+    try std.testing.expect(rows[2].in_progress());
+    try std.testing.expect(!rows[3].in_progress());
 }
 
 test "cloud books list without a path and never lead" {
@@ -137,5 +137,5 @@ test "cloud books list without a path and never lead" {
     try std.testing.expectEqual(@as(usize, 3), rows.len);
     try std.testing.expectEqual(library.Availability.cloud, rows[0].availability);
     try std.testing.expectEqual(library.Availability.downloading, rows[2].availability);
-    try std.testing.expectEqual(@as(usize, 1), library.pickHero(rows).?);
+    try std.testing.expectEqual(@as(usize, 1), library.pick_hero(rows).?);
 }

@@ -21,8 +21,8 @@ pub fn subtitle(buf: []u8, e: *const catalog.Entry, confirming: bool) []const u8
     if (confirming) return "It stays in your Amazon library.";
     var series_buf: [160]u8 = undefined;
     var time_buf: [32]u8 = undefined;
-    const series = catalog.seriesLabel(&series_buf, e.*);
-    const time = stats.readingTime(&time_buf, e.seconds_read);
+    const series = catalog.series_label(&series_buf, e.*);
+    const time = stats.reading_time(&time_buf, e.seconds_read);
     // The author, then the series and time read here when known, dot between each
     var w: std.Io.Writer = .fixed(buf);
     w.writeAll(e.author) catch return e.author;
@@ -54,7 +54,7 @@ pub fn options(e: *const catalog.Entry, confirming: bool, out: *[4]Option) []Opt
         },
     }
     if (e.availability != .downloading) {
-        out[n] = if (e.isRead()) .mark_unread else .mark_read;
+        out[n] = if (e.is_read()) .mark_unread else .mark_read;
         n += 1;
     }
     // A series can be set for books on the Kindle, which have a file to key it by

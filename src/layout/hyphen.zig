@@ -120,14 +120,14 @@ pub const Hyphenator = struct {
 /// A place a word may break: before byte `at`, adding a hyphen or not.
 pub const Break = struct { at: usize, hyphen: bool };
 
-fn isLetterStart(word: []const u8, i: usize) bool {
+fn is_letter_start(word: []const u8, i: usize) bool {
     const c = word[i];
     if (std.ascii.isAlphabetic(c)) return true;
     // Latin-1 letters are C3 followed by 80..BF, except × and ÷
     return c == 0xc3 and i + 1 < word.len and word[i + 1] != 0x97 and word[i + 1] != 0xb7;
 }
 
-fn isDashAt(word: []const u8, i: usize) usize {
+fn is_dash_at(word: []const u8, i: usize) usize {
     if (word[i] == '-') return 1;
     // En dash, em dash
     if (i + 2 < word.len + 0 and word[i] == 0xe2 and word[i + 1] == 0x80 and (word[i + 2] == 0x93 or word[i + 2] == 0x94)) return 3;
@@ -143,7 +143,7 @@ pub fn breaks(h: ?*const Hyphenator, word: []const u8, out: []Break) []Break {
     var has_dash = false;
     var i: usize = 0;
     while (i < word.len) {
-        const dash = isDashAt(word, i);
+        const dash = is_dash_at(word, i);
         if (dash > 0) {
             has_dash = true;
             const at = i + dash;
@@ -158,12 +158,12 @@ pub fn breaks(h: ?*const Hyphenator, word: []const u8, out: []Break) []Break {
     if (has_dash) return out[0..n];
     // The letters in the middle, between any quotes or punctuation
     var start: usize = 0;
-    while (start < word.len and !isLetterStart(word, start)) start += 1;
+    while (start < word.len and !is_letter_start(word, start)) start += 1;
     var end = word.len;
     while (end > start) {
         const last = end - 1;
         const lead = if (last > start and word[last] & 0xc0 == 0x80) last - 1 else last;
-        if (isLetterStart(word, lead)) break;
+        if (is_letter_start(word, lead)) break;
         end = lead;
     }
     const core = word[start..end];

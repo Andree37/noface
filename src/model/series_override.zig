@@ -39,7 +39,7 @@ pub fn format(alloc: std.mem.Allocator, list: []const Override, path: []const u8
 }
 
 /// "three body problem" typed on a lowercase keyboard, as a name: "Three Body Problem".
-pub fn titleCase(alloc: std.mem.Allocator, typed: []const u8) ![]const u8 {
+pub fn title_case(alloc: std.mem.Allocator, typed: []const u8) ![]const u8 {
     const out = try alloc.dupe(u8, std.mem.trim(u8, typed, " "));
     var start = true;
     for (out) |*c| {
@@ -67,5 +67,5 @@ test "overrides read back as written, the newest winning" {
 test "typed names are capitalised" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    try std.testing.expectEqualStrings("Three Body Problem", try titleCase(arena.allocator(), " three body problem "));
+    try std.testing.expectEqualStrings("Three Body Problem", try title_case(arena.allocator(), " three body problem "));
 }

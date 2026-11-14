@@ -11,22 +11,22 @@ const lipc_get: [*:0]const u8 = "/usr/bin/lipc-get-prop";
 
 const lipc_set: [*:0]const u8 = "/usr/bin/lipc-set-prop";
 
-pub fn parseInt(output: []const u8) ?u32 {
+pub fn parse_int(output: []const u8) ?u32 {
     return std.fmt.parseInt(u32, std.mem.trim(u8, output, " \n"), 10) catch null;
 }
 
 /// Settings calls answer at once when lipc is healthy; when it isn't, give up fast.
 const lipc_timeout_ms = 3000;
 
-fn lipcDeadline() u64 {
-    return os.nowUs() + lipc_timeout_ms * 1000;
+fn lipc_deadline() u64 {
+    return os.now_us() + lipc_timeout_ms * 1000;
 }
 
 fn get(service: [*:0]const u8, prop: [*:0]const u8, deadline: u64) ?u32 {
     const argv = [_:null]?[*:0]const u8{ lipc_get, service, prop };
     var buf: [32]u8 = undefined;
-    const n = process.runUntil(&argv, &buf, deadline) orelse return null;
-    return parseInt(buf[0..n]);
+    const n = process.run_until(&argv, &buf, deadline) orelse return null;
+    return parse_int(buf[0..n]);
 }
 
 fn set(service: [*:0]const u8, prop: [*:0]const u8, value: u32) void {
@@ -34,17 +34,17 @@ fn set(service: [*:0]const u8, prop: [*:0]const u8, value: u32) void {
     const arg = std.fmt.bufPrintSentinel(&text, "{d}", .{value}, 0) catch return;
     const argv = [_:null]?[*:0]const u8{ lipc_set, service, prop, arg };
     var buf: [32]u8 = undefined;
-    _ = process.runUntil(&argv, &buf, lipcDeadline());
+    _ = process.run_until(&argv, &buf, lipc_deadline());
 }
 
-fn getText(service: [*:0]const u8, prop: [*:0]const u8, buf: []u8, deadline: u64) []const u8 {
+fn get_text(service: [*:0]const u8, prop: [*:0]const u8, buf: []u8, deadline: u64) []const u8 {
     const argv = [_:null]?[*:0]const u8{ lipc_get, "-s", service, prop };
-    const n = process.runUntil(&argv, buf, deadline) orelse return "";
+    const n = process.run_until(&argv, buf, deadline) orelse return "";
     return std.mem.trim(u8, buf[0..n], " \n");
 }
 
 /// Maps wifid's "5/5" to the three arcs of the icon.
-pub fn signalBars(signal: []const u8) u32 {
+pub fn signal_bars(signal: []const u8) u32 {
     const value = std.fmt.parseInt(u32, signal[0 .. std.mem.indexOfScalar(u8, signal, '/') orelse return 0], 10) catch return 0;
     return @min((value + 1) / 2, 3);
 }
@@ -60,7 +60,7 @@ pub fn read(previous: quick_model.Quick) quick_model.Quick {
     var outs: [readings.len][]u8 = undefined;
     for (&outs, &bufs) |*o, *b| o.* = b;
     var lens: [readings.len]?usize = undefined;
-    process.runAll(&argvs, &outs, &lens, lipcDeadline());
+    process.run_all(&argvs, &outs, &lens, lipc_deadline());
 
     // In the table's order. A value that couldn't be read keeps what `previous` had
     var q = previous;
@@ -98,7 +98,7 @@ pub const Reading = struct {
 fn number(comptime field: []const u8, comptime convert: fn (u32) @FieldType(quick_model.Quick, field)) *const fn (*quick_model.Quick, []const u8) void {
     return struct {
         fn apply(q: *quick_model.Quick, text: []const u8) void {
-            if (parseInt(text)) |v| @field(q, field) = convert(v);
+            if (parse_int(text)) |v| @field(q, field) = convert(v);
         }
     }.apply;
 }
@@ -117,7 +117,7 @@ pub const readings = [_]Reading{
     }.apply },
     .{ .argv = &.{ lipc_get, "-s", "com.lab126.wifid", "signalStrength" }, .healthy = "5/5", .apply = struct {
         fn apply(q: *quick_model.Quick, text: []const u8) void {
-            q.wifi_bars = if (q.wifi_on) signalBars(text) else 0;
+            q.wifi_bars = if (q.wifi_on) signal_bars(text) else 0;
         }
     }.apply },
     .{ .argv = &.{ lipc_get, "com.lab126.powerd", "flIntensity" }, .healthy = "12", .apply = number("brightness", same) },
@@ -156,20 +156,20 @@ pub const readings = [_]Reading{
 /// Whether the Kindle is showing its lock screen. Null when powerd can't be asked.
 /// Tells powerd the reader is active, so it doesn't lock while they read. noface holds
 /// the touchscreen, so powerd never sees the touches itself.
-pub fn stillActive() void {
+pub fn still_active() void {
     set("com.lab126.powerd", "touchScreenSaverTimeout", 1);
 }
 
-pub fn inScreenSaver() ?bool {
+pub fn in_screen_saver() ?bool {
     var buf: [32]u8 = undefined;
-    const state = getText("com.lab126.powerd", "state", &buf, lipcDeadline());
+    const state = get_text("com.lab126.powerd", "state", &buf, lipc_deadline());
     if (state.len == 0) return null;
     return std.mem.eql(u8, state, "screenSaver");
 }
 
 /// Starts a child that prints the named events of one lipc publisher, one per line.
 /// Its `out` pipe is non-blocking.
-fn watchEvents(publisher: [*:0]const u8, events: [*:0]const u8) ?process.Child {
+fn watch_events(publisher: [*:0]const u8, events: [*:0]const u8) ?process.Child {
     const argv = [_:null]?[*:0]const u8{ "/usr/bin/lipc-wait-event", "-m", publisher, events };
     const child = process.spawn(&argv) orelse return null;
     const flags = linux.fcntl(child.out, linux.F.GETFL, 0);
@@ -178,91 +178,91 @@ fn watchEvents(publisher: [*:0]const u8, events: [*:0]const u8) ?process.Child {
 }
 
 /// Locking and waking, from powerd.
-pub fn watchPowerEvents() ?process.Child {
+pub fn watch_power_events() ?process.Child {
     // The charger's coming and going too, so the status bar's bolt follows at once.
     // noface.sh finds this watcher by the start of its arguments, which stays the same
-    return watchEvents("com.lab126.powerd", "goingToScreenSaver,outOfScreenSaver,charging,notCharging");
+    return watch_events("com.lab126.powerd", "goingToScreenSaver,outOfScreenSaver,charging,notCharging");
 }
 
 /// A computer setting up the USB connection, from the volume manager.
-pub fn watchUsbEvents() ?process.Child {
-    return watchEvents("com.lab126.volumd", "usbConfigured");
+pub fn watch_usb_events() ?process.Child {
+    return watch_events("com.lab126.volumd", "usbConfigured");
 }
 
 /// True while USB carries a network (as Jobman's SSH does) rather than file transfer.
-pub fn usbForNetwork() bool {
-    return (get("com.lab126.volumd", "useUsbForNetwork", lipcDeadline()) orelse 0) == 1;
+pub fn usb_for_network() bool {
+    return (get("com.lab126.volumd", "useUsbForNetwork", lipc_deadline()) orelse 0) == 1;
 }
 
 /// Same as the Sync button in the stock panel.
-pub fn syncNow() void {
+pub fn sync_now() void {
     const argv = [_:null]?[*:0]const u8{ lipc_set, "-s", "com.lab126.quickactions", "syncAndCheck", "1" };
     var out: [32]u8 = undefined;
     _ = process.run(&argv, &out);
 }
 
-pub fn openSettings() void {
+pub fn open_settings() void {
     const argv = [_:null]?[*:0]const u8{ lipc_set, "com.lab126.appmgrd", "start", "app://com.lab126.booklet.settings" };
     var buf: [32]u8 = undefined;
     _ = process.run(&argv, &buf);
 }
 
-pub fn setBrightness(level: u32) void {
+pub fn set_brightness(level: u32) void {
     set("com.lab126.powerd", "flIntensity", level);
 }
 
 /// With the schedule on, its own level has to move too or it would snap back.
-pub fn setWarmth(level: u32, scheduled: bool) void {
+pub fn set_warmth(level: u32, scheduled: bool) void {
     set("com.lab126.powerd", "currentAmberLevel", level);
     if (scheduled) set("com.lab126.powerd", "schedAmberLevel", level);
 }
 
-pub fn setSchedule(on: bool) void {
+pub fn set_schedule(on: bool) void {
     set("com.lab126.powerd", "amberSchedEnable", if (on) 1 else 0);
 }
 
-pub fn setAirplane(on: bool) void {
+pub fn set_airplane(on: bool) void {
     set("com.lab126.cmd", "wirelessEnable", if (on) 0 else 1);
 }
 
 /// Whether Wi-Fi has a connection. Null when wifid can't be asked.
-pub fn wifiConnected() ?bool {
+pub fn wifi_connected() ?bool {
     var buf: [32]u8 = undefined;
-    const state = getText("com.lab126.wifid", "cmState", &buf, lipcDeadline());
+    const state = get_text("com.lab126.wifid", "cmState", &buf, lipc_deadline());
     if (state.len == 0) return null;
     return std.mem.eql(u8, state, "CONNECTED");
 }
 
-pub fn airplaneOn() ?bool {
-    const v = get("com.lab126.cmd", "wirelessEnable", lipcDeadline()) orelse return null;
+pub fn airplane_on() ?bool {
+    const v = get("com.lab126.cmd", "wirelessEnable", lipc_deadline()) orelse return null;
     return v == 0;
 }
 
 const bt_service: [*:0]const u8 = "com.lab126.btfd";
 
 /// Null when btfd can't be asked. Its state is 0 off, 1 on, 2 connected.
-pub fn bluetoothOn() ?bool {
-    const v = get(bt_service, "BTstate", lipcDeadline()) orelse return null;
+pub fn bluetooth_on() ?bool {
+    const v = get(bt_service, "BTstate", lipc_deadline()) orelse return null;
     return v != 0;
 }
 
 /// btfd takes "<on>:<mode>". Mode 2 is the user's own switch, which btfd remembers
 /// across reboots; mode 1 belongs to VoiceView, and other modes are refused.
-pub fn setBluetooth(on: bool) void {
+pub fn set_bluetooth(on: bool) void {
     const value: [*:0]const u8 = if (on) "1:2" else "0:2";
     const argv = [_:null]?[*:0]const u8{ lipc_set, "-s", bt_service, "BTenable", value };
     var buf: [32]u8 = undefined;
-    _ = process.runUntil(&argv, &buf, lipcDeadline());
+    _ = process.run_until(&argv, &buf, lipc_deadline());
 }
 
 test "tool output parses" {
-    try std.testing.expectEqual(@as(u32, 21), parseInt("21\n").?);
-    try std.testing.expect(parseInt("failed\n") == null);
+    try std.testing.expectEqual(@as(u32, 21), parse_int("21\n").?);
+    try std.testing.expect(parse_int("failed\n") == null);
 }
 
 test "signal maps to icon arcs" {
-    try std.testing.expectEqual(@as(u32, 3), signalBars("5/5"));
-    try std.testing.expectEqual(@as(u32, 2), signalBars("3/5"));
-    try std.testing.expectEqual(@as(u32, 1), signalBars("1/5"));
-    try std.testing.expectEqual(@as(u32, 0), signalBars("none"));
+    try std.testing.expectEqual(@as(u32, 3), signal_bars("5/5"));
+    try std.testing.expectEqual(@as(u32, 2), signal_bars("3/5"));
+    try std.testing.expectEqual(@as(u32, 1), signal_bars("1/5"));
+    try std.testing.expectEqual(@as(u32, 0), signal_bars("none"));
 }

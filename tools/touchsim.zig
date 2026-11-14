@@ -3,7 +3,7 @@
 //!        touchsim drag <x0> <y0> <x1> <y1> <steps> <delay-ms> [hold-ms]
 const std = @import("std");
 const core = @import("core");
-const sleepMs = core.os.sleepMs;
+const sleep_ms = core.os.sleep_ms;
 const linux = std.os.linux;
 
 const InputEvent = extern struct { sec: u32 = 0, usec: u32 = 0, kind: u16, code: u16, value: i32 };
@@ -58,12 +58,12 @@ pub fn main(init: std.process.Init.Minimal) !void {
     if (argv.len < 4) return error.Usage;
     fd = @intCast(linux.open("/dev/input/event1", .{ .ACCMODE = .WRONLY }, 0));
     if (std.mem.eql(u8, std.mem.sliceTo(argv[1], 0), "tap")) {
-        const t_down = core.os.nowUs();
+        const t_down = core.os.now_us();
         down(arg(argv[2]), arg(argv[3]));
-        sleepMs(40);
+        sleep_ms(40);
         up();
         // When it touched and lifted, on fbrec's clock, for timing what follows
-        std.debug.print("touch {d} {d}\n", .{ t_down, core.os.nowUs() });
+        std.debug.print("touch {d} {d}\n", .{ t_down, core.os.now_us() });
         return;
     }
     const x0 = arg(argv[2]);
@@ -73,13 +73,13 @@ pub fn main(init: std.process.Init.Minimal) !void {
     const steps = arg(argv[6]);
     const delay: u64 = @intCast(arg(argv[7]));
     down(x0, y0);
-    if (argv.len > 8) sleepMs(@intCast(arg(argv[8]))); // Press before moving, to start a hold
+    if (argv.len > 8) sleep_ms(@intCast(arg(argv[8]))); // Press before moving, to start a hold
     var i: i32 = 1;
     while (i <= steps) : (i += 1) {
-        sleepMs(delay);
+        sleep_ms(delay);
         move(x0 + @divTrunc((x1 - x0) * i, steps), y0 + @divTrunc((y1 - y0) * i, steps));
     }
-    sleepMs(delay);
+    sleep_ms(delay);
     up();
-    std.debug.print("lift {d}\n", .{core.os.nowUs()});
+    std.debug.print("lift {d}\n", .{core.os.now_us()});
 }

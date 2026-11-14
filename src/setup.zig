@@ -79,7 +79,7 @@ pub const Parts = struct {
 
 /// An App with its buffers made and its saved settings, speed and journal read. The
 /// caller may change what differs (where books are, the clock's offset, fonts) and
-/// then calls `applySettings`.
+/// then calls `apply_settings`.
 pub fn assemble(p: Parts) !app.App {
     const k = p.kit;
     const pixels = p.screen.pixels.len;
@@ -105,9 +105,9 @@ pub fn assemble(p: Parts) !app.App {
         .speed_path = p.files.speed,
         .journal_path = p.files.journal,
         .battery_path = p.files.battery,
-        .settings = app.loadSettings(p.files.settings),
-        .speed = app.loadSpeed(p.files.speed),
-        .journal = app.loadJournal(p.files.journal),
+        .settings = app.load_settings(p.files.settings),
+        .speed = app.load_speed(p.files.speed),
+        .journal = app.load_journal(p.files.journal),
         .utc_offset = 0,
         .layout = .{ .margin_x = 100, .margin_top = 90, .margin_bottom = 150, .indent = 60, .reference = &k.reference },
     };

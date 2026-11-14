@@ -3,7 +3,7 @@ const std = @import("std");
 const process = @import("../sys/process.zig");
 const safe = @import("safe.zig");
 
-fn readNowAction(prop: []const u8, comptime fields: []const u8, args: anytype) void {
+fn read_now_action(prop: []const u8, comptime fields: []const u8, args: anytype) void {
     var buf: [320]u8 = undefined;
     const command = std.fmt.bufPrintSentinel(
         &buf,
@@ -17,19 +17,19 @@ fn readNowAction(prop: []const u8, comptime fields: []const u8, args: anytype) v
 }
 
 /// Queues a cloud book for download.
-pub fn downloadBook(key: []const u8, kind: []const u8) void {
-    if (!safe.safeId(key) or !safe.safeId(kind)) return;
-    readNowAction("kppDownloadAction", "kppItems = \"{s},{s}\"", .{ key, kind });
+pub fn download_book(key: []const u8, kind: []const u8) void {
+    if (!safe.safe_id(key) or !safe.safe_id(kind)) return;
+    read_now_action("kppDownloadAction", "kppItems = \"{s},{s}\"", .{ key, kind });
 }
 
 /// Removes the local copy. Never sets kppFrom: "cloud" there revokes samples.
-pub fn removeDownload(key: []const u8, kind: []const u8) void {
-    if (!safe.safeId(key) or !safe.safeId(kind)) return;
-    readNowAction("kppDeleteItemAction", "kppCdeKey = \"{s}\", kppCdeType = \"{s}\"", .{ key, kind });
+pub fn remove_download(key: []const u8, kind: []const u8) void {
+    if (!safe.safe_id(key) or !safe.safe_id(kind)) return;
+    read_now_action("kppDeleteItemAction", "kppCdeKey = \"{s}\", kppCdeType = \"{s}\"", .{ key, kind });
 }
 
-pub fn markRead(key: []const u8, kind: []const u8, read_it: bool) void {
-    if (!safe.safeId(key) or !safe.safeId(kind)) return;
+pub fn mark_read(key: []const u8, kind: []const u8, read_it: bool) void {
+    if (!safe.safe_id(key) or !safe.safe_id(kind)) return;
     const value = if (read_it) "actionRead" else "actionUnread";
-    readNowAction("kppMarkAsReadAction", "kppCdeKey = \"{s}\", kppCdeType = \"{s}\", kppMAR = \"{s}\"", .{ key, kind, value });
+    read_now_action("kppMarkAsReadAction", "kppCdeKey = \"{s}\", kppCdeType = \"{s}\", kppMAR = \"{s}\"", .{ key, kind, value });
 }

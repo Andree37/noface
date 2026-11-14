@@ -33,7 +33,7 @@ const rules = [_]Rule{
 };
 
 /// The top-level folder of a path inside src/, or "" for files at the top.
-fn folderOf(path: []const u8) []const u8 {
+fn folder_of(path: []const u8) []const u8 {
     const slash = std.mem.indexOfScalar(u8, path, '/') orelse return "";
     return path[0..slash];
 }
@@ -51,7 +51,7 @@ fn resolve(buf: []u8, file: []const u8, target: []const u8) ?[]const u8 {
 
 /// Problems in one file, as "file: imports target" lines. Returns how many.
 pub fn check(file: []const u8, source: []const u8, out: *std.ArrayList(u8), alloc: std.mem.Allocator) !usize {
-    const from = folderOf(file);
+    const from = folder_of(file);
     const rule = for (rules) |r| {
         if (std.mem.eql(u8, r.folder, from)) break r;
     } else return 0;
@@ -65,7 +65,7 @@ pub fn check(file: []const u8, source: []const u8, out: *std.ArrayList(u8), allo
         if (!std.mem.endsWith(u8, target, ".zig")) continue; // std and other modules
         var buf: [256]u8 = undefined;
         const resolved = resolve(&buf, file, target) orelse continue;
-        const to = folderOf(resolved);
+        const to = folder_of(resolved);
         const ok = std.mem.eql(u8, to, "base") or for (rule.allowed) |a| {
             if (std.mem.eql(u8, a, to)) break true;
         } else false;
@@ -78,7 +78,7 @@ pub fn check(file: []const u8, source: []const u8, out: *std.ArrayList(u8), allo
 }
 
 /// Whether a file has tests of its own.
-fn hasTests(source: []const u8) bool {
+fn has_tests(source: []const u8) bool {
     return std.mem.startsWith(u8, source, "test ") or std.mem.indexOf(u8, source, "\ntest \"") != null or
         std.mem.indexOf(u8, source, "\ntest {") != null;
 }
@@ -110,7 +110,7 @@ pub fn main(init: std.process.Init) !void {
         if (entry.kind != .file or !std.mem.endsWith(u8, entry.path, ".zig")) continue;
         const source = try dir.readFileAlloc(io, entry.path, alloc, .limited(4 << 20));
         problems += try check(entry.path, source, &out, alloc);
-        if (hasTests(source) and !std.mem.eql(u8, entry.path, "tests.zig") and !listed(tests_source, entry.path)) {
+        if (has_tests(source) and !std.mem.eql(u8, entry.path, "tests.zig") and !listed(tests_source, entry.path)) {
             unlisted += 1;
             try out.print(alloc, "{s}: has tests, but src/tests.zig doesn't list it, so they never run\n", .{entry.path});
         }
@@ -135,8 +135,8 @@ test "imports are judged by folder" {
 }
 
 test "a file with tests must be listed" {
-    try std.testing.expect(hasTests("const x = 1;\ntest \"a\" {}"));
-    try std.testing.expect(!hasTests("// a test of nothing\nconst t = 1;"));
+    try std.testing.expect(has_tests("const x = 1;\ntest \"a\" {}"));
+    try std.testing.expect(!has_tests("// a test of nothing\nconst t = 1;"));
     const list = "    _ = @import(\"model/book.zig\");\n";
     try std.testing.expect(listed(list, "model/book.zig"));
     try std.testing.expect(!listed(list, "book.zig"));

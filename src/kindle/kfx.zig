@@ -61,7 +61,7 @@ const Key = struct { id: u32, kind: u32 };
 
 const MapRow = struct { delta: u32, element: ?u32 };
 
-fn readMapRow(row: ion.Value) ?MapRow {
+fn read_map_row(row: ion.Value) ?MapRow {
     if (row.unsigned()) |delta| return .{ .delta = @intCast(delta), .element = null };
     var fields = row.items();
     const delta = (fields.next() orelse return null).unsigned() orelse return null;
@@ -97,7 +97,7 @@ const Parser = struct {
 
     /// Pairs each image resource with its bytes. Converted books list both in the
     /// same order, so the n-th resource is the n-th piece of raw media.
-    fn readImages(p: *Parser) !void {
+    fn read_images(p: *Parser) !void {
         var resources: std.ArrayList(u32) = .empty;
         var media: std.ArrayList(u32) = .empty;
         var it = p.index.iterator();
@@ -121,21 +121,21 @@ const Parser = struct {
     }
 
     /// Reads every style once, keeping what changes how text looks.
-    fn readLooks(p: *Parser) !void {
+    fn read_looks(p: *Parser) !void {
         var it = p.index.iterator();
         while (it.next()) |kv| {
             if (kv.key_ptr.kind != t_style) continue;
             const v = p.entity(kv.key_ptr.id, t_style) orelse continue;
-            try p.looks.put(p.alloc, kv.key_ptr.id, lookOf(v));
+            try p.looks.put(p.alloc, kv.key_ptr.id, look_of(v));
         }
     }
 
-    fn lookFor(p: *const Parser, style: u32) book.Look {
+    fn look_for(p: *const Parser, style: u32) book.Look {
         return p.looks.get(style) orelse .{};
     }
 
     /// Fills in each paragraph's position: section start plus offset in section.
-    fn resolvePositions(p: *Parser) !void {
+    fn resolve_positions(p: *Parser) !void {
         var starts: std.AutoHashMapUnmanaged(u32, u32) = .empty;
         var kinds = p.index.keyIterator();
         while (kinds.next()) |key| {
@@ -149,7 +149,7 @@ const Parser = struct {
                 var walker = MapWalker{ .position = @intCast(start) };
                 var rows_in_map = (map.get(f_position_rows) orelse continue).items();
                 while (rows_in_map.next()) |row_in_map| {
-                    const step = readMapRow(row_in_map) orelse continue;
+                    const step = read_map_row(row_in_map) orelse continue;
                     const at = walker.next(step);
                     if (at.element == 0) continue;
                     const slot = try starts.getOrPut(p.alloc, at.element);
@@ -162,7 +162,7 @@ const Parser = struct {
         }
     }
 
-    fn collectLinks(p: *Parser, item: ion.Value, para: u32, text: []const u8) !void {
+    fn collect_links(p: *Parser, item: ion.Value, para: u32, text: []const u8) !void {
         const events = item.get(f_style_events) orelse return;
         var runs: std.ArrayList(book.Run) = .empty;
         defer p.paragraphs.items[para].runs = runs.items;
@@ -170,12 +170,12 @@ const Parser = struct {
         while (it.next()) |event| {
             // Bold or italic over a stretch of the paragraph.
             if (event.get(f_style)) |s| {
-                const look = p.lookFor(s.symbol() orelse 0);
+                const look = p.look_for(s.symbol() orelse 0);
                 const offset = (event.get(f_event_offset) orelse continue).unsigned() orelse continue;
                 const length = (event.get(f_event_length) orelse continue).unsigned() orelse continue;
                 if (look.bold or look.italic) try runs.append(p.alloc, .{
-                    .start = @intCast(book.byteOffset(text, offset)),
-                    .end = @intCast(book.byteOffset(text, offset + length)),
+                    .start = @intCast(book.byte_offset(text, offset)),
+                    .end = @intCast(book.byte_offset(text, offset + length)),
                     .bold = look.bold,
                     .italic = look.italic,
                 });
@@ -185,15 +185,15 @@ const Parser = struct {
             const length = (event.get(f_event_length) orelse continue).unsigned() orelse continue;
             try p.raw_links.append(p.alloc, .{
                 .para = para,
-                .start = book.byteOffset(text, offset),
-                .end = book.byteOffset(text, offset + length),
+                .start = book.byte_offset(text, offset),
+                .end = book.byte_offset(text, offset + length),
                 .anchor = anchor,
             });
         }
     }
 
     /// Turns anchors into paragraph indexes, now that every position is known.
-    fn resolveLinks(p: *Parser) !void {
+    fn resolve_links(p: *Parser) !void {
         var i: usize = 0;
         while (i < p.raw_links.items.len) {
             const para = p.raw_links.items[i].para;
@@ -212,7 +212,7 @@ const Parser = struct {
 
     /// The book's table of contents, from its navigation. Entries whose target
     /// isn't in the text are skipped.
-    fn readContents(p: *Parser) ![]book.Chapter {
+    fn read_contents(p: *Parser) ![]book.Chapter {
         var out: std.ArrayList(book.Chapter) = .empty;
         var it = p.index.iterator();
         while (it.next()) |kv| {
@@ -226,7 +226,7 @@ const Parser = struct {
                     const container = if (ref.symbol()) |id| p.entity(id, t_nav_container) else if (ref.kind == .struct_) ref else null;
                     const c = container orelse continue;
                     if ((c.get(f_nav_type) orelse continue).symbol() != nav_contents) continue;
-                    try p.addChapters(&out, c, 0);
+                    try p.add_chapters(&out, c, 0);
                 }
             }
             break;
@@ -234,7 +234,7 @@ const Parser = struct {
         return out.toOwnedSlice(p.alloc);
     }
 
-    fn addChapters(p: *Parser, out: *std.ArrayList(book.Chapter), parent: ion.Value, depth: u8) !void {
+    fn add_chapters(p: *Parser, out: *std.ArrayList(book.Chapter), parent: ion.Value, depth: u8) !void {
         if (depth > 8) return;
         var entries = (parent.get(f_nav_entries) orelse return).items();
         while (entries.next()) |entry| {
@@ -248,18 +248,18 @@ const Parser = struct {
             if (title != null and para != null and para.? < p.paragraphs.items.len) {
                 try out.append(p.alloc, .{ .title = title.?, .para = para.?, .depth = depth });
             }
-            try p.addChapters(out, entry, depth + 1);
+            try p.add_chapters(out, entry, depth + 1);
         }
     }
 
     fn entity(p: *Parser, id: u32, kind: u32) ?ion.Value {
-        return entityValue(p.index.get(.{ .id = id, .kind = kind }) orelse return null);
+        return entity_value(p.index.get(.{ .id = id, .kind = kind }) orelse return null);
     }
 
     /// Resolves a text reference. False means it pointed at nothing usable.
-    fn addContent(p: *Parser, ref: ion.Value, style: u32) !bool {
+    fn add_content(p: *Parser, ref: ion.Value, style: u32) !bool {
         if (ref.text()) |txt| {
-            try p.paragraphs.append(p.alloc, .{ .text = txt, .style = style, .look = p.lookFor(style) });
+            try p.paragraphs.append(p.alloc, .{ .text = txt, .style = style, .look = p.look_for(style) });
             return true;
         }
         const name = (ref.get(f_name) orelse return false).symbol() orelse return false;
@@ -270,7 +270,7 @@ const Parser = struct {
         while (strings.next()) |s| : (i += 1) {
             if (i != wanted) continue;
             const txt = s.text() orelse return false;
-            try p.paragraphs.append(p.alloc, .{ .text = txt, .style = style, .look = p.lookFor(style) });
+            try p.paragraphs.append(p.alloc, .{ .text = txt, .style = style, .look = p.look_for(style) });
             return true;
         }
         return false;
@@ -295,15 +295,15 @@ const Parser = struct {
         if ((if (item.get(f_type)) |t| t.symbol() else null) == type_image) {
             const resource = if (item.get(f_resource)) |r| r.symbol() else null;
             if (resource) |r| {
-                if (p.images.get(r)) |img| try p.paragraphs.append(p.alloc, .{ .text = "", .style = style, .look = p.lookFor(style), .image = img, .section = p.section });
+                if (p.images.get(r)) |img| try p.paragraphs.append(p.alloc, .{ .text = "", .style = style, .look = p.look_for(style), .image = img, .section = p.section });
             }
         }
         if (item.get(f_content_ref)) |ref| {
-            if (try p.addContent(ref, style)) {
+            if (try p.add_content(ref, style)) {
                 const para: u32 = @intCast(p.paragraphs.items.len - 1);
                 p.paragraphs.items[para].section = p.section;
                 if (item.get(f_id)) |id| p.paragraphs.items[para].element = @intCast(id.int);
-                try p.collectLinks(item, para, p.paragraphs.items[para].text);
+                try p.collect_links(item, para, p.paragraphs.items[para].text);
             } else p.missing += 1;
         }
         if (item.get(f_story)) |story| {
@@ -383,12 +383,12 @@ fn tenths(lines: f64) u8 {
 }
 
 /// How a style sets text, from the fields that matter on a reader's page.
-fn lookOf(v: ion.Value) book.Look {
+fn look_of(v: ion.Value) book.Look {
     var look = book.Look{};
     if (v.get(f_font_style)) |s| look.italic = s.symbol() == style_italic;
     if (v.get(f_font_weight)) |w| look.bold = w.symbol() == weight_bold or w.symbol() == weight_semibold;
     if (v.get(f_font_size)) |s| {
-        if (amount(s, unit_rem)) |rem| look.size = book.sizeClass(rem);
+        if (amount(s, unit_rem)) |rem| look.size = book.size_class(rem);
     }
     if (v.get(f_text_align)) |a| look.alignment = switch (a.symbol() orelse 0) {
         align_center => .center,
@@ -434,7 +434,7 @@ const f_section_start = 184;
 /// body the index points into.
 const Container = struct { info: ion.Value, index: []const u8, body: []const u8 };
 
-fn openContainer(data: []const u8) !Container {
+fn open_container(data: []const u8) !Container {
     if (data.len < 18 or !std.mem.eql(u8, data[0..4], "CONT")) return error.NotKfx;
     const header_len = std.mem.readInt(u32, data[6..10], .little);
     const info_off = std.mem.readInt(u32, data[10..14], .little);
@@ -450,7 +450,7 @@ fn openContainer(data: []const u8) !Container {
 /// An index row: entity id, type, and where its bytes sit in the body.
 const Row = struct { id: u32, kind: u32, off: u64, len: u64 };
 
-fn readRow(row: *const [24]u8) Row {
+fn read_row(row: *const [24]u8) Row {
     return .{
         .id = std.mem.readInt(u32, row[0..4], .little),
         .kind = std.mem.readInt(u32, row[4..8], .little),
@@ -460,7 +460,7 @@ fn readRow(row: *const [24]u8) Row {
 }
 
 /// An entity's value, past its "ENTY" header.
-pub fn entityValue(raw: []const u8) ?ion.Value {
+pub fn entity_value(raw: []const u8) ?ion.Value {
     if (raw.len < 10 or !std.mem.eql(u8, raw[0..4], "ENTY")) return null;
     const hdr = std.mem.readInt(u32, raw[6..10], .little);
     if (hdr > raw.len) return null;
@@ -476,7 +476,7 @@ pub const Entities = struct {
 
     pub fn next(it: *Entities) ?Entity {
         while (it.at + 24 <= it.c.index.len) {
-            const r = readRow(it.c.index[it.at..][0..24]);
+            const r = read_row(it.c.index[it.at..][0..24]);
             it.at += 24;
             if (r.off > it.c.body.len or r.len > it.c.body.len - r.off) continue;
             return .{ .id = r.id, .kind = r.kind, .raw = it.c.body[@intCast(r.off)..][0..@intCast(r.len)] };
@@ -486,25 +486,25 @@ pub const Entities = struct {
 };
 
 pub fn entities(data: []const u8) !Entities {
-    return .{ .c = try openContainer(data) };
+    return .{ .c = try open_container(data) };
 }
 
 /// True when every entity the index lists is inside the file. A download still in
 /// progress fails this, and checking it is far cheaper than parsing the book.
-pub fn isComplete(data: []const u8) bool {
-    const c = openContainer(data) catch return false;
+pub fn is_complete(data: []const u8) bool {
+    const c = open_container(data) catch return false;
     if (c.index.len < 24) return false;
     var at: usize = 0;
     while (at + 24 <= c.index.len) : (at += 24) {
-        const r = readRow(c.index[at..][0..24]);
+        const r = read_row(c.index[at..][0..24]);
         if (r.off > c.body.len or r.len > c.body.len - r.off) return false;
     }
     return true;
 }
 
 /// The book's first embedded JPEG, which is its cover in converted books.
-pub fn coverImage(data: []const u8) ?[]const u8 {
-    const c = openContainer(data) catch return null;
+pub fn cover_image(data: []const u8) ?[]const u8 {
+    const c = open_container(data) catch return null;
     const body = c.body;
     var at: usize = 0;
     while (at + 24 <= c.index.len) : (at += 24) {
@@ -523,21 +523,21 @@ pub fn coverImage(data: []const u8) ?[]const u8 {
 }
 
 pub fn parse(alloc: std.mem.Allocator, data: []const u8) !book.Book {
-    const c = try openContainer(data);
+    const c = try open_container(data);
     if ((c.info.get(f_compression) orelse return error.BadHeader).int != 0) return error.Compressed;
     if ((c.info.get(f_drm) orelse return error.BadHeader).int != 0) return error.Encrypted;
 
     var p = Parser{ .alloc = alloc };
     var at: usize = 0;
     while (at + 24 <= c.index.len) : (at += 24) {
-        const r = readRow(c.index[at..][0..24]);
+        const r = read_row(c.index[at..][0..24]);
         if (r.off > c.body.len or r.len > c.body.len - r.off) return error.Truncated;
         try p.index.put(alloc, .{ .id = r.id, .kind = r.kind }, c.body[@intCast(r.off)..][0..@intCast(r.len)]);
     }
-    try p.readLooks();
-    try p.readImages();
+    try p.read_looks();
+    try p.read_images();
 
-    const doc = findDocument(&p) orelse return error.NoReadingOrder;
+    const doc = find_document(&p) orelse return error.NoReadingOrder;
     var orders = (doc.get(f_reading_orders) orelse return error.NoReadingOrder).items();
     const order = orders.next() orelse return error.NoReadingOrder;
     var sections = (order.get(f_sections) orelse return error.NoReadingOrder).items();
@@ -554,14 +554,14 @@ pub fn parse(alloc: std.mem.Allocator, data: []const u8) !book.Book {
         // Later templates are conditional alternatives of the first.
         if (templates.next()) |first| try p.walk(first, 0);
     }
-    try p.resolveLinks();
-    try p.resolvePositions();
-    notes.markNotes(p.paragraphs.items);
-    const chapters = try p.readContents();
+    try p.resolve_links();
+    try p.resolve_positions();
+    notes.mark_notes(p.paragraphs.items);
+    const chapters = try p.read_contents();
     return .{ .paragraphs = try p.paragraphs.toOwnedSlice(alloc), .chapters = chapters, .sections = count, .missing_refs = p.missing };
 }
 
-fn findDocument(p: *Parser) ?ion.Value {
+fn find_document(p: *Parser) ?ion.Value {
     var it = p.index.iterator();
     while (it.next()) |kv| {
         if (kv.key_ptr.kind != t_document and kv.key_ptr.kind != t_book_nav) continue;
@@ -581,11 +581,11 @@ test "offsets that would wrap are rejected" {
 }
 
 test "cover lookup refuses files that aren't books" {
-    try std.testing.expect(coverImage("short") == null);
+    try std.testing.expect(cover_image("short") == null);
     var d = std.mem.zeroes([18]u8);
     @memcpy(d[0..4], "CONT");
     std.mem.writeInt(u32, d[10..14], 0xFFFFFFF0, .little);
-    try std.testing.expect(coverImage(&d) == null);
+    try std.testing.expect(cover_image(&d) == null);
 }
 
 test "position map finds element 80 where the Kindle stored it" {
@@ -609,10 +609,10 @@ test "position map finds element 80 where the Kindle stored it" {
 
 test "a book cut short is not complete" {
     var d = std.mem.zeroes([32]u8);
-    try std.testing.expect(!isComplete(&d));
+    try std.testing.expect(!is_complete(&d));
     @memcpy(d[0..4], "CONT");
     std.mem.writeInt(u32, d[6..10], 40, .little); // Header longer than the file
-    try std.testing.expect(!isComplete(&d));
+    try std.testing.expect(!is_complete(&d));
 }
 
 test "random and broken books are refused, never crash" {
@@ -632,11 +632,11 @@ test "random and broken books are refused, never crash" {
             std.mem.writeInt(u32, buf[14..18], random.uintLessThan(u32, @intCast(len + 8)), .little);
         }
         const data = buf[0..len];
-        _ = isComplete(data);
-        _ = coverImage(data);
+        _ = is_complete(data);
+        _ = cover_image(data);
         if (entities(data)) |it| {
             var all = it;
-            while (all.next()) |e| _ = entityValue(e.raw);
+            while (all.next()) |e| _ = entity_value(e.raw);
         } else |_| {}
         _ = parse(arena.allocator(), data) catch {};
         _ = arena.reset(.retain_capacity);

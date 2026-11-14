@@ -50,7 +50,7 @@ pub fn key(a: *const app.App, book_bytes: usize) u64 {
     h.update(std.mem.sliceAsBytes(&parts));
     // Every setting that moves breaks, so a new one can't be left out by mistake
     inline for (@typeInfo(settings_model.Settings).@"struct".field_names) |name| {
-        if (comptime settings_model.movesBreaks(name)) {
+        if (comptime settings_model.moves_breaks(name)) {
             const value: u64 = switch (@TypeOf(@field(s, name))) {
                 bool => @intFromBool(@field(s, name)),
                 usize => @field(s, name),
@@ -66,7 +66,7 @@ pub fn key(a: *const app.App, book_bytes: usize) u64 {
 }
 
 /// "<dir>/pages-<book>", beside the book's state file "<dir>/state-<book>".
-pub fn pathFor(buf: []u8, state_path: []const u8) ![:0]u8 {
+pub fn path_for(buf: []u8, state_path: []const u8) ![:0]u8 {
     return state.sibling(buf, state_path, "pages");
 }
 
@@ -82,7 +82,7 @@ pub fn load(alloc: std.mem.Allocator, path: [*:0]const u8, want: u64, paragraphs
 pub fn save(alloc: std.mem.Allocator, path: [*:0]const u8, k: u64, pages: []const book_model.Pos) void {
     const bytes = encode(alloc, k, pages) catch return;
     defer alloc.free(bytes);
-    state.writeSmall(path, bytes);
+    state.write_small(path, bytes);
 }
 
 pub fn encode(alloc: std.mem.Allocator, k: u64, pages: []const book_model.Pos) ![]u8 {
@@ -149,5 +149,5 @@ test "damaged files read as not saved" {
 
 test "pages files sit beside state files" {
     var buf: [128]u8 = undefined;
-    try std.testing.expectEqualStrings("/d/pages-0bee89b07a248e27", try pathFor(&buf, "/d/state-0bee89b07a248e27"));
+    try std.testing.expectEqualStrings("/d/pages-0bee89b07a248e27", try path_for(&buf, "/d/state-0bee89b07a248e27"));
 }

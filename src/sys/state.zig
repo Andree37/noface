@@ -15,7 +15,7 @@ const failed = @import("os.zig").failed;
 
 /// `<dir>/state-<first 16 hex of md5 of "basename\n">`, matching earlier versions
 /// that named these files with `basename | md5sum`.
-pub fn pathFor(buf: []u8, dir: []const u8, book_path: []const u8) ![:0]u8 {
+pub fn path_for(buf: []u8, dir: []const u8, book_path: []const u8) ![:0]u8 {
     const name = std.fs.path.basename(book_path);
     var md5 = std.crypto.hash.Md5.init(.{});
     md5.update(name);
@@ -28,7 +28,7 @@ pub fn pathFor(buf: []u8, dir: []const u8, book_path: []const u8) ![:0]u8 {
 
 /// True when the Kindle's own position should win over ours: we have nothing
 /// saved, or the stock reader had the book open more recently.
-pub fn preferKindle(saved: State, kindle_last: u64) bool {
+pub fn prefer_kindle(saved: State, kindle_last: u64) bool {
     // Older files have no time, so only an empty one gives way.
     if (saved.opened == 0) return saved.para == 0 and saved.byte == 0;
     return kindle_last > saved.opened;
@@ -48,7 +48,7 @@ pub fn sibling(buf: []u8, state_path: []const u8, kind: []const u8) ![:0]u8 {
 /// Files from before that are numbers in a row, in the order of `old_order`.
 pub fn parse(content: []const u8) State {
     const first = std.mem.trimStart(u8, content, " \n");
-    if (first.len > 0 and std.ascii.isDigit(first[0])) return parseOld(content);
+    if (first.len > 0 and std.ascii.isDigit(first[0])) return parse_old(content);
     var s = State{};
     var lines = std.mem.tokenizeScalar(u8, content, '\n');
     while (lines.next()) |line| {
@@ -56,13 +56,13 @@ pub fn parse(content: []const u8) State {
         const name = words.next() orelse continue;
         const value = words.next() orelse continue;
         inline for (@typeInfo(State).@"struct".field_names) |field| {
-            if (std.mem.eql(u8, name, field)) @field(s, field) = readValue(@TypeOf(@field(s, field)), value) orelse @field(s, field);
+            if (std.mem.eql(u8, name, field)) @field(s, field) = read_value(@TypeOf(@field(s, field)), value) orelse @field(s, field);
         }
     }
     return s;
 }
 
-fn readValue(comptime T: type, text: []const u8) ?T {
+fn read_value(comptime T: type, text: []const u8) ?T {
     return switch (T) {
         bool => std.mem.eql(u8, text, "1"),
         ?u32 => std.fmt.parseInt(u32, text, 10) catch null,
@@ -73,12 +73,12 @@ fn readValue(comptime T: type, text: []const u8) ?T {
 /// The order of the values in files from before they were named.
 const old_order = [_][]const u8{ "para", "byte", "percent", "opened", "seconds", "finished" };
 
-fn parseOld(content: []const u8) State {
+fn parse_old(content: []const u8) State {
     var it = std.mem.tokenizeAny(u8, content, " \n");
     var s = State{};
     inline for (old_order, 0..) |field, i| {
         const word = it.next() orelse return if (i < 2) .{} else s;
-        const value = readValue(@TypeOf(@field(s, field)), word);
+        const value = read_value(@TypeOf(@field(s, field)), word);
         // Place and byte are the least a file holds: without them it's not one
         if (value == null and i < 2) return .{};
         if (value) |v| @field(s, field) = v;
@@ -88,11 +88,11 @@ fn parseOld(content: []const u8) State {
 
 pub fn load(path: [*:0]const u8) State {
     var buf: [256]u8 = undefined;
-    return parse(readSmall(path, &buf));
+    return parse(read_small(path, &buf));
 }
 
 /// A small file's contents, or nothing if it can't be read.
-pub fn readSmall(path: [*:0]const u8, buf: []u8) []const u8 {
+pub fn read_small(path: [*:0]const u8, buf: []u8) []const u8 {
     const rc = linux.open(path, .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0);
     if (failed(rc)) return "";
     const fd: i32 = @intCast(rc);
@@ -102,7 +102,7 @@ pub fn readSmall(path: [*:0]const u8, buf: []u8) []const u8 {
 }
 
 /// Writes beside the real file and renames, so a crash can't lose the old contents.
-pub fn writeSmall(path: [*:0]const u8, data: []const u8) void {
+pub fn write_small(path: [*:0]const u8, data: []const u8) void {
     var tmp: [320]u8 = undefined;
     const name = std.mem.sliceTo(path, 0);
     const tmp_path = std.fmt.bufPrintSentinel(&tmp, "{s}.tmp", .{name}, 0) catch return;
@@ -127,13 +127,13 @@ pub fn save(path: [*:0]const u8, s: State) void {
             else => w.print(field ++ " {d}\n", .{value}) catch return,
         }
     }
-    writeSmall(path, w.buffered());
+    write_small(path, w.buffered());
 }
 
 test "state file name matches basename piped to md5sum" {
     var buf: [128]u8 = undefined;
     // printf 'abc\n' | md5sum starts 0bee89b07a248e27
-    const p = try pathFor(&buf, "/d", "/books/abc");
+    const p = try path_for(&buf, "/d", "/books/abc");
     try std.testing.expectEqualStrings("/d/state-0bee89b07a248e27", p);
 }
 
@@ -151,10 +151,10 @@ test "new files keep percent and time" {
 }
 
 test "kindle position wins until we have our own" {
-    try std.testing.expect(preferKindle(.{}, 100));
-    try std.testing.expect(preferKindle(.{ .para = 5, .opened = 100 }, 200));
-    try std.testing.expect(!preferKindle(.{ .para = 5, .opened = 300 }, 200));
-    try std.testing.expect(!preferKindle(.{ .para = 5 }, 200));
+    try std.testing.expect(prefer_kindle(.{}, 100));
+    try std.testing.expect(prefer_kindle(.{ .para = 5, .opened = 100 }, 200));
+    try std.testing.expect(!prefer_kindle(.{ .para = 5, .opened = 300 }, 200));
+    try std.testing.expect(!prefer_kindle(.{ .para = 5 }, 200));
 }
 
 test "reading time is kept, and older files read as none" {

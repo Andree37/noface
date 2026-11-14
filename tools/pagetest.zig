@@ -5,8 +5,8 @@ const book_model = core.book;
 const Page = core.page.Page;
 const Font = core.font.Font;
 const core = @import("core");
-const nowUs = core.os.nowUs;
-const sleepMs = core.os.sleepMs;
+const now_us = core.os.now_us;
+const sleep_ms = core.os.sleep_ms;
 const linux = std.os.linux;
 const file = core.file;
 const hwtcon = core.hwtcon;
@@ -27,22 +27,22 @@ const cases = [_]Case{
 
 var stop_requested = std.atomic.Value(bool).init(false);
 
-fn onSignal(_: linux.SIG) callconv(.c) void {
+fn on_signal(_: linux.SIG) callconv(.c) void {
     stop_requested.store(true, .release);
 }
 
 /// Stop cleanly on TERM, INT or HUP so the screen still gets restored.
-fn installSignals() void {
+fn install_signals() void {
     var act = std.mem.zeroes(linux.Sigaction);
-    act.handler = .{ .handler = onSignal };
+    act.handler = .{ .handler = on_signal };
     for ([_]linux.SIG{ .TERM, .INT, .HUP }) |sig| _ = linux.sigaction(sig, &act, null);
 }
 
 fn show(screen: *hwtcon.Screen, src: []const u8, wf: hwtcon.Waveform, mode: hwtcon.UpdateMode) !u64 {
     @memcpy(screen.pixels, src);
-    const t0 = nowUs();
-    try screen.waitComplete(try screen.update(wf, mode));
-    return nowUs() - t0;
+    const t0 = now_us();
+    try screen.wait_complete(try screen.update(wf, mode));
+    return now_us() - t0;
 }
 
 pub fn main(init: std.process.Init.Minimal) !void {
@@ -77,20 +77,20 @@ pub fn main(init: std.process.Init.Minimal) !void {
         }
     }
 
-    const r0 = nowUs();
-    const next = try text.renderPage(&font, page, book.paragraphs, start, layout, null);
-    const r1 = nowUs();
-    _ = try text.renderPage(&font, page_b, book.paragraphs, next, layout, null);
-    const r2 = nowUs();
+    const r0 = now_us();
+    const next = try text.render_page(&font, page, book.paragraphs, start, layout, null);
+    const r1 = now_us();
+    _ = try text.render_page(&font, page_b, book.paragraphs, next, layout, null);
+    const r2 = now_us();
     std.debug.print("render cold {d} us, warm {d} us\n", .{ r1 - r0, r2 - r1 });
 
-    installSignals();
+    install_signals();
     const saved = try alloc.alloc(u8, size);
     @memcpy(saved, screen.pixels);
     defer {
         @memcpy(screen.pixels, saved);
         if (screen.update(.gc16, .full)) |m| {
-            screen.waitComplete(m) catch {};
+            screen.wait_complete(m) catch {};
         } else |_| {}
     }
 
@@ -103,10 +103,10 @@ pub fn main(init: std.process.Init.Minimal) !void {
         }
         // Clean start, so any ghosting comes from this mode alone.
         _ = try show(&screen, shown, .gc16, .full);
-        sleepMs(1000);
+        sleep_ms(1000);
         const flip = try show(&screen, shown_b, c.wf, c.mode);
         std.debug.print("{s}: {d} ms\n", .{ c.name, flip / 1000 });
-        sleepMs(4000);
+        sleep_ms(4000);
     }
     std.debug.print("finished, restoring\n", .{});
 }

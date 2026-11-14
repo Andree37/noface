@@ -15,8 +15,8 @@ const installed_path = "/etc/upstart/noface-autostart.conf";
 pub fn installed() bool {
     var a: [2048]u8 = undefined;
     var b: [2048]u8 = undefined;
-    const want = state.readSmall(shipped, &a);
-    const have = state.readSmall(installed_path, &b);
+    const want = state.read_small(shipped, &a);
+    const have = state.read_small(installed_path, &b);
     return want.len > 0 and std.mem.eql(u8, want, have);
 }
 
@@ -26,8 +26,8 @@ pub fn installed() bool {
 pub fn outdated() bool {
     var a: [2048]u8 = undefined;
     var b: [2048]u8 = undefined;
-    const want = state.readSmall(shipped, &a);
-    const have = state.readSmall(installed_path, &b);
+    const want = state.read_small(shipped, &a);
+    const have = state.read_small(installed_path, &b);
     return want.len > 0 and have.len > 0 and !std.mem.eql(u8, want, have);
 }
 

@@ -44,14 +44,14 @@ fn shape(v: ion.Value, depth: usize, max_items: usize) void {
 
 /// For every style field, how often each value shows up. Numbers are printed with
 /// their unit symbol, so "1.5 $505" is 1.5 of unit $505.
-fn styleSummary(data: []const u8) !void {
+fn style_summary(data: []const u8) !void {
     var seen: [256][64]u8 = undefined;
     var counts: [256]u32 = @splat(0);
     var used: usize = 0;
     var it = try core.kfx.entities(data);
     while (it.next()) |e| {
         if (e.kind != 157) continue;
-        const v = core.kfx.entityValue(e.raw) orelse continue;
+        const v = core.kfx.entity_value(e.raw) orelse continue;
         var fields = v.fields();
         while (fields.next()) |f| {
             if (f.key == 173) continue; // The style's own name
@@ -89,7 +89,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     const argv = init.args.vector;
     if (argv.len < 2) return error.Usage;
     const data = try core.file.map(argv[1]);
-    if (argv.len > 2 and std.mem.eql(u8, std.mem.sliceTo(argv[2], 0), "styles")) return styleSummary(data);
+    if (argv.len > 2 and std.mem.eql(u8, std.mem.sliceTo(argv[2], 0), "styles")) return style_summary(data);
     if (argv.len > 3 and std.mem.eql(u8, std.mem.sliceTo(argv[2], 0), "dump")) {
         // Writes one raw media entity's bytes to stdout, for testing decoders.
         const want_id = try std.fmt.parseInt(u32, std.mem.sliceTo(argv[3], 0), 10);
@@ -111,7 +111,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                 print("media ${d}: {d} bytes, header {d}, starts {x}\n", .{ e.id, e.raw.len, hdr, body[0..@min(8, body.len)] });
             }
             if (e.kind == 164) {
-                const v = core.kfx.entityValue(e.raw) orelse continue;
+                const v = core.kfx.entity_value(e.raw) orelse continue;
                 const fmt = if (v.get(161)) |f| f.symbol() orelse 0 else 0;
                 const loc = if (v.get(165)) |l| l.text() orelse "" else "";
                 print("resource ${d}: format ${d}, {d}x{d}, location {d} chars\n", .{ e.id, fmt, if (v.get(422)) |x| x.int else 0, if (v.get(423)) |x| x.int else 0, loc.len });
@@ -129,7 +129,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         if (want != null and e.kind == want.? and shown < max) {
             shown += 1;
             print("entity ${d} type ${d}: ", .{ e.id, e.kind });
-            if (core.kfx.entityValue(e.raw)) |v| shape(v, 0, 4) else print("(not ion, {d} bytes)\n", .{e.raw.len});
+            if (core.kfx.entity_value(e.raw)) |v| shape(v, 0, 4) else print("(not ion, {d} bytes)\n", .{e.raw.len});
         }
     }
     if (want == null) {

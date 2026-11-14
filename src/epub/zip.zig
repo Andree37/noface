@@ -15,7 +15,7 @@ const max_size = 64 << 20; // Larger than any file a book should carry
 
 /// The end-of-archive record: 22 bytes, maybe followed by a comment of up to 64 KB,
 /// so it's searched for from the end. (Zig 0.17's own std.zip.findBuffer doesn't compile.)
-fn endRecord(data: []const u8) ?*const [22]u8 {
+fn end_record(data: []const u8) ?*const [22]u8 {
     if (data.len < 22) return null;
     var at = data.len - 22;
     const lowest = data.len -| (22 + 0xffff);
@@ -27,7 +27,7 @@ fn endRecord(data: []const u8) ?*const [22]u8 {
 
 /// Every file in the archive, from its central directory.
 pub fn entries(alloc: std.mem.Allocator, data: []const u8) ![]Entry {
-    const end = endRecord(data) orelse return error.NotZip;
+    const end = end_record(data) orelse return error.NotZip;
     const count: usize = std.mem.readInt(u16, end[10..12], .little);
     const dir_size: usize = std.mem.readInt(u32, end[12..16], .little);
     const dir_start: usize = std.mem.readInt(u32, end[16..20], .little);

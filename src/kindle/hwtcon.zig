@@ -27,7 +27,7 @@ pub const Refresh = enum {
     clock, // Small text such as the clock, without a flash
     clean, // Settling an area after a drag, its smooth edges back
 
-    pub fn onThisPanel(r: Refresh) struct { waveform: Waveform, mode: UpdateMode } {
+    pub fn on_this_panel(r: Refresh) struct { waveform: Waveform, mode: UpdateMode } {
         return switch (r) {
             .page, .clean => .{ .waveform = .reagl, .mode = .partial },
             .screen => .{ .waveform = .gc16, .mode = .partial },
@@ -74,7 +74,7 @@ comptime {
 
 const temp_use_ambient = 0x1000;
 const send_update: u32 = 0x4060462E; // _IOW('F', 0x2E, 96 bytes)
-const wait_complete: u32 = 0xC008462F; // _IOWR('F', 0x2F, 8 bytes)
+const ioctl_wait_complete: u32 = 0xC008462F; // _IOWR('F', 0x2F, 8 bytes)
 const fbioget_vscreeninfo: u32 = 0x4600;
 const fbioget_fscreeninfo: u32 = 0x4602;
 
@@ -98,7 +98,7 @@ pub const Screen = struct {
     pub fn open() !Screen {
         // Only MediaTek's driver understands the updates sent below
         var name_buf: [64]u8 = undefined;
-        const name = std.mem.trim(u8, state.readSmall("/sys/class/graphics/fb0/name", &name_buf), " \n");
+        const name = std.mem.trim(u8, state.read_small("/sys/class/graphics/fb0/name", &name_buf), " \n");
         if (!std.mem.startsWith(u8, name, "hwtcon")) return error.UnsupportedDisplay;
         const rc = linux.open("/dev/fb0", .{ .ACCMODE = .RDWR, .CLOEXEC = true }, 0);
         if (failed(rc)) return error.OpenFailed;
@@ -134,23 +134,23 @@ pub const Screen = struct {
 
     /// Queue a whole-screen refresh of the kind asked for, and return its marker.
     pub fn show(s: *Screen, r: Refresh) !u32 {
-        return s.showRegion(0, 0, s.width, s.height, r);
+        return s.show_region(0, 0, s.width, s.height, r);
     }
 
     /// Queue a refresh of part of the screen, and return its marker.
-    pub fn showRegion(s: *Screen, left: u32, top: u32, width: u32, height: u32, r: Refresh) !u32 {
-        const how = r.onThisPanel();
-        return s.updateRegion(left, top, width, height, how.waveform, how.mode);
+    pub fn show_region(s: *Screen, left: u32, top: u32, width: u32, height: u32, r: Refresh) !u32 {
+        const how = r.on_this_panel();
+        return s.update_region(left, top, width, height, how.waveform, how.mode);
     }
 
     /// Queue a whole-screen update with a waveform named, and return its marker. For
     /// tools that measure the waveforms themselves; screens ask with `show`.
     pub fn update(s: *Screen, waveform: Waveform, mode: UpdateMode) !u32 {
-        return s.updateRegion(0, 0, s.width, s.height, waveform, mode);
+        return s.update_region(0, 0, s.width, s.height, waveform, mode);
     }
 
     /// Queue an update for part of the screen and return its marker.
-    pub fn updateRegion(s: *Screen, left: u32, top: u32, width: u32, height: u32, waveform: Waveform, mode: UpdateMode) !u32 {
+    pub fn update_region(s: *Screen, left: u32, top: u32, width: u32, height: u32, waveform: Waveform, mode: UpdateMode) !u32 {
         check.thatf(left + width <= s.width and top + height <= s.height and width > 0 and height > 0, "screen update {d},{d} {d}x{d} inside the screen", .{ left, top, width, height });
         const marker = s.next_marker;
         s.next_marker += 1;
@@ -166,10 +166,11 @@ pub const Screen = struct {
         return marker;
     }
 
-    pub fn waitComplete(s: *Screen, marker: u32) !void {
+    pub fn wait_complete(s: *Screen, marker: u32) !void {
         if (s.fd < 0) return;
         var data = MarkerData{ .marker = marker };
-        if (failed(linux.ioctl(s.fd, wait_complete, @intFromPtr(&data)))) return error.WaitComplete;
+        const rc = linux.ioctl(s.fd, ioctl_wait_complete, @intFromPtr(&data));
+        if (failed(rc)) return error.WaitComplete;
     }
 };
 

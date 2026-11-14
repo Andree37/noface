@@ -9,26 +9,26 @@ const devices = @import("devices.zig");
 const touch_zones = @import("touch.zig");
 
 const failed = os.failed;
-const nowUs = os.nowUs;
+const now_us = os.now_us;
 
 const evdev = @import("input/evdev.zig");
 const gestures = @import("input/gestures.zig");
 const watchers = @import("input/watchers.zig");
 pub const eviocgrab = evdev.eviocgrab;
-pub const shouldTellPowerd = watchers.shouldTellPowerd;
-pub const powerPressed = watchers.powerPressed;
-pub const turnDirection = gestures.turnDirection;
+pub const should_tell_powerd = watchers.should_tell_powerd;
+pub const power_pressed = watchers.power_pressed;
+pub const turn_direction = gestures.turn_direction;
 const InputEvent = evdev.InputEvent;
 
 var stop_requested = std.atomic.Value(bool).init(false);
 
-fn onSignal(_: linux.SIG) callconv(.c) void {
+fn on_signal(_: linux.SIG) callconv(.c) void {
     stop_requested.store(true, .release);
 }
 
-pub fn installSignals() void {
+pub fn install_signals() void {
     var act = std.mem.zeroes(linux.Sigaction);
-    act.handler = .{ .handler = onSignal };
+    act.handler = .{ .handler = on_signal };
     for ([_]linux.SIG{ .TERM, .INT, .HUP }) |sig| _ = linux.sigaction(sig, &act, null);
 }
 
@@ -68,13 +68,13 @@ pub const Script = struct {
     fn next(sc: *Script, in: *Input) Action {
         while (true) {
             if (sc.waiting_us > 0) {
-                const now = nowUs();
+                const now = now_us();
                 const tick_at = if (in.tick_us != 0) in.last_tick + in.tick_us else std.math.maxInt(u64);
                 if (tick_at <= now + sc.waiting_us) {
                     const step = tick_at -| now;
                     os.fake_us = now + step;
                     sc.waiting_us -= step;
-                    in.last_tick = nowUs();
+                    in.last_tick = now_us();
                     return .tick;
                 }
                 os.fake_us = now + sc.waiting_us;
@@ -89,7 +89,7 @@ pub const Script = struct {
             sc.at += 1;
             switch (step) {
                 .act => |a| {
-                    os.fake_us = nowUs() + 1000; // A touch takes a moment
+                    os.fake_us = now_us() + 1000; // A touch takes a moment
                     // Through the same grip zones as a finger, so a test can't tap what
                     // a reader couldn't
                     switch (a) {
@@ -97,7 +97,7 @@ pub const Script = struct {
                         .hold => |h| if (in.ignores(h.x, h.y)) continue,
                         else => {},
                     }
-                    in.last_input = nowUs();
+                    in.last_input = now_us();
                     return a;
                 },
                 .wait_ms => |ms| sc.waiting_us = ms * 1000,
@@ -197,7 +197,7 @@ pub const Input = struct {
         const was = Scope{ .modes = in.modes(), .tick_us = in.tick_us, .grip_exempt = in.grip_exempt };
         in.take(m);
         in.tick_us = tick_us;
-        in.last_tick = nowUs();
+        in.last_tick = now_us();
         in.grip_exempt = null;
         return was;
     }
@@ -211,20 +211,20 @@ pub const Input = struct {
 
     /// Keeps `action` back, for the next call to `next`: for a screen that ends because
     /// of it, so the one underneath acts on it in turn.
-    pub fn holdBack(in: *Input, action: Action) void {
+    pub fn hold_back(in: *Input, action: Action) void {
         in.stashed = action;
     }
 
     /// An action kept back for the next call to `next`, if any: a lock or a stop that
     /// closed a screen, or something that turned up while a drag was being followed.
-    pub fn heldBack(in: *const Input) ?Action {
+    pub fn held_back(in: *const Input) ?Action {
         return in.stashed;
     }
 
     /// For a screen of its own (a sheet, a list, a card): the next action, or null when
     /// the Kindle locks or noface is told to leave. That action is kept for the loop
     /// underneath, and the screen should close.
-    pub fn nextFor(in: *Input) ?Action {
+    pub fn next_for(in: *Input) ?Action {
         const action = in.next();
         switch (action) {
             .lock, .power, .computer, .stop => {
@@ -235,9 +235,9 @@ pub const Input = struct {
         }
     }
 
-    /// The next tap, anything else passed over; null as with `nextFor`.
-    pub fn nextTap(in: *Input) ?Tap {
-        while (in.nextFor()) |action| {
+    /// The next tap, anything else passed over; null as with `next_for`.
+    pub fn next_tap(in: *Input) ?Tap {
+        while (in.next_for()) |action| {
             switch (action) {
                 .tap => |t| return t,
                 else => {},
@@ -249,9 +249,9 @@ pub const Input = struct {
     pub const ignores = gestures.ignores;
 
     /// The next action from the simulator's pipe, or a tick when one is due first.
-    fn fromRemote(in: *Input) Action {
+    fn from_remote(in: *Input) Action {
         while (true) {
-            const now = nowUs();
+            const now = now_us();
             if (in.tick_us != 0 and now - in.last_tick >= in.tick_us) {
                 in.last_tick = now;
                 return .tick;
@@ -265,20 +265,20 @@ pub const Input = struct {
             const got = linux.read(in.remote, @ptrCast(&action), @sizeOf(Action));
             if (got == 0) return .stop; // The simulator closed it
             if (got != @sizeOf(Action)) continue;
-            in.last_input = nowUs();
+            in.last_input = now_us();
             return action;
         }
     }
 
-    const newsWaiting = watchers.newsWaiting;
+    const news_waiting = watchers.news_waiting;
 
     const beat = watchers.beat;
 
     const unlocked = watchers.unlocked;
 
-    const startUsbWatcher = watchers.startUsbWatcher;
+    const start_usb_watcher = watchers.start_usb_watcher;
 
-    const startWatcher = watchers.startWatcher;
+    const start_watcher = watchers.start_watcher;
 
     /// The next action from touch events already waiting, reading more only when the
     /// panel has them ready. Null once nothing more is waiting.
@@ -293,18 +293,18 @@ pub const Input = struct {
             if (failed(n) or n < @sizeOf(InputEvent)) return null;
             in.event_count = n / @sizeOf(InputEvent);
             in.event_next = 0;
-            in.last_input = nowUs();
+            in.last_input = now_us();
         }
     }
 
     /// Follows the finger of the last tap until it lifts.
-    pub fn beginDrag(in: *Input) void {
+    pub fn begin_drag(in: *Input) void {
         in.drag_slot = in.last_touched;
     }
 
     /// Skips to the newest finger position already waiting, if any.
     /// Anything else that turns up is kept for the next call to `next`.
-    pub fn latestDrag(in: *Input) ?i32 {
+    pub fn latest_drag(in: *Input) ?i32 {
         var latest: ?i32 = null;
         while (in.stashed == null) {
             const action = in.waiting() orelse return latest;
@@ -318,7 +318,7 @@ pub const Input = struct {
 
     /// Sums page-turn taps already waiting, so fast tapping jumps instead of lagging.
     /// Anything else that turns up is kept for the next call to `next`.
-    pub fn takeTurns(in: *Input) i32 {
+    pub fn take_turns(in: *Input) i32 {
         var delta: i32 = 0;
         while (in.stashed == null) {
             const action = in.waiting() orelse return delta;
@@ -327,7 +327,7 @@ pub const Input = struct {
                     if (t.y < touch_zones.top_zone) {
                         in.stashed = action;
                     } else {
-                        delta += turnDirection(t.x, in.width);
+                        delta += turn_direction(t.x, in.width);
                     }
                 },
                 else => in.stashed = action,
@@ -341,12 +341,12 @@ pub const Input = struct {
     pub fn next(in: *Input) Action {
         while (true) {
             if (in.ready()) |action| return action;
-            in.keepAlive();
-            in.waitForEvents();
-            if (in.fromPowerKey()) |action| return action;
-            if (in.restartWatcherIfDead()) |action| return action;
-            if (in.fromUsbWatcher()) |action| return action;
-            if (in.fromPowerWatcher()) |action| return action;
+            in.keep_alive();
+            in.wait_for_events();
+            if (in.from_power_key()) |action| return action;
+            if (in.restart_watcher_if_dead()) |action| return action;
+            if (in.from_usb_watcher()) |action| return action;
+            if (in.from_power_watcher()) |action| return action;
         }
     }
 
@@ -360,27 +360,29 @@ pub const Input = struct {
             return action;
         }
         if (in.script) |sc| return sc.next(in);
-        if (in.remote >= 0) return in.fromRemote();
+        if (in.remote >= 0) return in.from_remote();
         if (in.waiting()) |action| return action;
-        if (in.heldLongEnough()) |action| return action;
-        return in.tickDue();
+        if (in.held_long_enough()) |action| return action;
+        return in.tick_due();
     }
 
-    const heldLongEnough = gestures.heldLongEnough;
+    const held_long_enough = gestures.held_long_enough;
 
     /// A tick, if one is due. It waits for powerd and USB news already in: with short
     /// ticks (a book laid out in idle moments) they'd otherwise go unread for seconds.
-    fn tickDue(in: *Input) ?Action {
-        if (in.tick_us == 0 or nowUs() - in.last_tick < in.tick_us or in.newsWaiting()) return null;
-        in.last_tick = nowUs();
+    fn tick_due(in: *Input) ?Action {
+        if (in.tick_us == 0) return null;
+        if (now_us() - in.last_tick < in.tick_us) return null;
+        if (in.news_waiting()) return null;
+        in.last_tick = now_us();
         return .tick;
     }
 
-    const keepAlive = watchers.keepAlive;
+    const keep_alive = watchers.keep_alive;
 
     /// Sleeps until a touch or a watcher has something, or the next tick is due. Locked,
     /// with nothing to tick, it sleeps on (waking now and then to restart a dead watcher).
-    fn waitForEvents(in: *Input) void {
+    fn wait_for_events(in: *Input) void {
         // The power key matters only while locked with no watcher, as the way to unlock
         const key_fd = if (in.locked and in.power_events < 0) in.power else -1;
         var fds = [_]linux.pollfd{
@@ -389,57 +391,57 @@ pub const Input = struct {
             .{ .fd = in.usb_events, .events = linux.POLL.IN, .revents = 0 },
             .{ .fd = key_fd, .events = linux.POLL.IN, .revents = 0 },
         };
-        _ = linux.poll(&fds, fds.len, in.waitMs());
+        _ = linux.poll(&fds, fds.len, in.wait_ms());
     }
 
-    fn waitMs(in: *const Input) i32 {
+    fn wait_ms(in: *const Input) i32 {
         if (in.top_slot != null) return 30; // A press that may become a hold
         if (in.locked and in.tick_us == 0) return if (in.power_events < 0) watchers.watcher_retry_ms else -1;
         // No longer than until the next tick, so a short one (a double tap's window)
         // isn't stretched to the full second
         if (in.tick_us == 0) return 1000;
-        return @intCast(@max(1, @min(1000, (in.last_tick + in.tick_us -| nowUs()) / 1000)));
+        return @intCast(@max(1, @min(1000, (in.last_tick + in.tick_us -| now_us()) / 1000)));
     }
 
-    const fromPowerKey = watchers.fromPowerKey;
+    const from_power_key = watchers.from_power_key;
 
-    const restartWatcherIfDead = watchers.restartWatcherIfDead;
+    const restart_watcher_if_dead = watchers.restart_watcher_if_dead;
 
-    const fromUsbWatcher = watchers.fromUsbWatcher;
+    const from_usb_watcher = watchers.from_usb_watcher;
 
-    const fromPowerWatcher = watchers.fromPowerWatcher;
+    const from_power_watcher = watchers.from_power_watcher;
 
-    const powerWatcherDied = watchers.powerWatcherDied;
+    const power_watcher_died = watchers.power_watcher_died;
 
     pub const handle = gestures.handle;
 
-    const screenX = gestures.screenX;
+    const screen_x = gestures.screen_x;
 
-    const screenY = gestures.screenY;
+    const screen_y = gestures.screen_y;
 
-    const onAxis = gestures.onAxis;
+    const on_axis = gestures.on_axis;
 
-    const fingerUp = gestures.fingerUp;
+    const finger_up = gestures.finger_up;
 
     const lifted = gestures.lifted;
 
-    const onPacketEnd = gestures.onPacketEnd;
+    const on_packet_end = gestures.on_packet_end;
 
-    const touchedDown = gestures.touchedDown;
+    const touched_down = gestures.touched_down;
 };
 
 /// Opens touch and power, and takes the touchscreen from the stock UI.
 pub fn open(width: u32, height: u32) !Input {
     // Found by what they report, as Kindles number them differently; this model's
     // numbers if nothing answers
-    const found = devices.findInputs();
+    const found = devices.find_inputs();
     var touch_buf: [24]u8 = undefined;
     var power_buf: [24]u8 = undefined;
     const touch_path = if (found.touch) |n| std.fmt.bufPrintSentinel(&touch_buf, "/dev/input/event{d}", .{n}, 0) catch evdev.touch_device else evdev.touch_device;
     const power_path = if (found.power) |n| std.fmt.bufPrintSentinel(&power_buf, "/dev/input/event{d}", .{n}, 0) catch evdev.power_device else evdev.power_device;
     std.debug.print("input: touch {s}, power {s}\n", .{ touch_path, power_path });
-    const touch = try evdev.openInput(touch_path);
-    const power = try evdev.openInput(power_path);
+    const touch = try evdev.open_input(touch_path);
+    const power = try evdev.open_input(power_path);
     if (failed(linux.ioctl(touch, eviocgrab, 1))) return error.GrabFailed;
     // The kernel only reports coordinates that change, so start from the current ones.
     var in = Input{
@@ -447,14 +449,14 @@ pub fn open(width: u32, height: u32) !Input {
         .power = power,
         .width = @intCast(width),
         .height = @intCast(height),
-        .x_max = evdev.axisMax(touch, evdev.eviocgabs_x),
-        .y_max = evdev.axisMax(touch, evdev.eviocgabs_y),
-        .xs = evdev.slotValues(touch, evdev.abs_mt_x),
-        .ys = evdev.slotValues(touch, evdev.abs_mt_y),
-        .last_input = nowUs(),
+        .x_max = evdev.axis_max(touch, evdev.eviocgabs_x),
+        .y_max = evdev.axis_max(touch, evdev.eviocgabs_y),
+        .xs = evdev.slot_values(touch, evdev.abs_mt_x),
+        .ys = evdev.slot_values(touch, evdev.abs_mt_y),
+        .last_input = now_us(),
     };
-    in.startWatcher();
-    in.startUsbWatcher();
+    in.start_watcher();
+    in.start_usb_watcher();
     return in;
 }
 

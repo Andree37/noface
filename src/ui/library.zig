@@ -60,32 +60,32 @@ const search_reach = 56; // Taps this far either side of its centre: a fingertip
 // The round stats button, beside search, their taps just short of meeting
 const stats_cx = search_cx + 2 * search_reach + 4;
 
-fn gridSize(hero: bool) usize {
+fn grid_size(hero: bool) usize {
     return (if (hero) @as(usize, hero_rows) else plain_rows) * columns;
 }
 
 /// Index of the first grid book on a page.
-fn firstBook(page: usize) usize {
+fn first_book(page: usize) usize {
     if (page == 0) return 0;
-    return gridSize(true) + (page - 1) * gridSize(false);
+    return grid_size(true) + (page - 1) * grid_size(false);
 }
 
 /// Range of grid books on a page, for logging what's shown.
-pub fn pageRange(page: usize, books: usize) struct { first: usize, end: usize } {
-    const first = @min(firstBook(page), books);
-    return .{ .first = first, .end = @min(first + gridSize(page == 0), books) };
+pub fn page_range(page: usize, books: usize) struct { first: usize, end: usize } {
+    const first = @min(first_book(page), books);
+    return .{ .first = first, .end = @min(first + grid_size(page == 0), books) };
 }
 
-pub fn pageCount(books: usize) usize {
-    if (books <= gridSize(true)) return 1;
-    return 1 + (books - gridSize(true) + gridSize(false) - 1) / gridSize(false);
+pub fn page_count(books: usize) usize {
+    if (books <= grid_size(true)) return 1;
+    return 1 + (books - grid_size(true) + grid_size(false) - 1) / grid_size(false);
 }
 
-fn tabsTop(hero: bool) i32 {
+fn tabs_top(hero: bool) i32 {
     return if (hero) hero_tabs_top else plain_tabs_top;
 }
 
-fn gridTop(hero: bool) i32 {
+fn grid_top(hero: bool) i32 {
     return if (hero) hero_grid_top else plain_grid_top;
 }
 
@@ -105,8 +105,8 @@ pub fn hit(x: i32, y: i32, page: usize, books: usize, searching: bool) Hit {
         return .hero;
     }
 
-    const tabs_top = tabsTop(hero);
-    if (y >= tabs_top and y < tabs_top + tabs_height) {
+    const tabs_y = tabs_top(hero);
+    if (y >= tabs_y and y < tabs_y + tabs_height) {
         if (x >= sort_left) return .sort;
         if (@abs(x - search_cx) <= search_reach) return .search;
         if (@abs(x - stats_cx) <= search_reach) return .stats;
@@ -120,12 +120,12 @@ pub fn hit(x: i32, y: i32, page: usize, books: usize, searching: bool) Hit {
         .next => .next,
     };
     if (y >= footer.top and y < footer.bottom) return .none;
-    const top = gridTop(hero);
+    const top = grid_top(hero);
     if (y < top or x < margin) return .none;
     const column: usize = @intCast(@divTrunc(x - margin, cell_step));
     const row: usize = @intCast(@divTrunc(y - top, row_height));
-    if (column >= columns or row >= gridSize(hero) / columns) return .none;
-    const index = firstBook(page) + row * columns + column;
+    if (column >= columns or row >= grid_size(hero) / columns) return .none;
+    const index = first_book(page) + row * columns + column;
     if (index >= books) return .none;
     // A book's actions come from pressing and holding it, so the whole cell is the book
     return .{ .book = index };
@@ -134,26 +134,26 @@ pub fn hit(x: i32, y: i32, page: usize, books: usize, searching: bool) Hit {
 pub const Rect = struct { x: u32, y: u32, w: u32, h: u32 };
 
 /// Screen area of the hero, for tap feedback.
-pub fn heroRect(width: u32) Rect {
+pub fn hero_rect(width: u32) Rect {
     return .{ .x = margin, .y = hero_top, .w = width - 2 * margin, .h = cover.hero_height };
 }
 
 /// Where the `slot`th cover on a page of the grid sits (counting along rows).
-fn cellOrigin(slot: usize, with_hero: bool) struct { x: u32, y: u32 } {
-    const top: u32 = @intCast(gridTop(with_hero));
+fn cell_origin(slot: usize, with_hero: bool) struct { x: u32, y: u32 } {
+    const top: u32 = @intCast(grid_top(with_hero));
     return .{ .x = margin + @as(u32, @intCast(slot % columns)) * cell_step, .y = top + @as(u32, @intCast(slot / columns)) * row_height };
 }
 
 /// Screen area of a grid book, for tap feedback.
-pub fn bookRect(index: usize, page: usize) Rect {
-    const at = cellOrigin(index - firstBook(page), page == 0);
+pub fn book_rect(index: usize, page: usize) Rect {
+    const at = cell_origin(index - first_book(page), page == 0);
     return .{ .x = at.x, .y = at.y, .w = cover.width, .h = cover.height };
 }
 
 /// Bytes of `s` that fit on one line, breaking at a space when possible.
 /// A thin gray track with a thick rounded black fill. Any progress at all shows as
 /// at least a dot.
-fn progressBar(page: Page, x: u32, y: u32, w: u32, percent: u32, thick: f32) void {
+fn progress_bar(page: Page, x: u32, y: u32, w: u32, percent: u32, thick: f32) void {
     const left: f32 = @floatFromInt(x);
     const cy: f32 = @floatFromInt(y);
     const r = thick / 2;
@@ -164,7 +164,7 @@ fn progressBar(page: Page, x: u32, y: u32, w: u32, percent: u32, thick: f32) voi
 }
 
 /// "32%" in a small white pill over a cover's bottom left corner.
-fn percentBadge(font: *Font, page: Page, x: u32, y: u32, percent: u32) !void {
+fn percent_badge(font: *Font, page: Page, x: u32, y: u32, percent: u32) !void {
     var label: [8]u8 = undefined;
     const s = std.fmt.bufPrint(&label, "{d}%", .{@min(percent, 100)}) catch return;
     const r: f32 = 19;
@@ -178,7 +178,7 @@ fn percentBadge(font: *Font, page: Page, x: u32, y: u32, percent: u32) !void {
 }
 
 /// "#2" in a small white pill over a cover's top left corner, for a book in a series.
-fn seriesBadge(font: *Font, page: Page, x: u32, y: u32, index: f32) !void {
+fn series_badge(font: *Font, page: Page, x: u32, y: u32, index: f32) !void {
     var label: [12]u8 = undefined;
     const s = if (@floor(index) == index)
         std.fmt.bufPrint(&label, "#{d}", .{@as(u32, @intFromFloat(@min(@max(index, 0), catalog.max_index)))}) catch return
@@ -195,7 +195,7 @@ fn seriesBadge(font: *Font, page: Page, x: u32, y: u32, index: f32) !void {
 }
 
 /// A rounded outline around a control, so it reads as something to press.
-fn buttonOutline(page: Page, left: f32, right: f32, top: i32) void {
+fn button_outline(page: Page, left: f32, right: f32, top: i32) void {
     const r: f32 = button_height / 2;
     const cy: f32 = @floatFromInt(top + button_top + button_height / 2);
     page.pill(left + r, right - r, cy, r, 0x00);
@@ -203,22 +203,22 @@ fn buttonOutline(page: Page, left: f32, right: f32, top: i32) void {
 }
 
 /// A book with no thumbnail still gets a real cover: its title set in type.
-fn typeCover(fonts: Fonts, page: Page, x: u32, y: u32, w: u32, h: u32, e: *const catalog.Entry) !void {
-    page.fillRect(x, y, w, h, 0xf0);
-    page.fillRect(x, y, w, 2, 0x00);
-    page.fillRect(x, y + h - 2, w, 2, 0x00);
-    page.fillRect(x, y, 2, h, 0x00);
-    page.fillRect(x + w - 2, y, 2, h, 0x00);
+fn type_cover(fonts: Fonts, page: Page, x: u32, y: u32, w: u32, h: u32, e: *const catalog.Entry) !void {
+    page.fill_rect(x, y, w, h, 0xf0);
+    page.fill_rect(x, y, w, 2, 0x00);
+    page.fill_rect(x, y + h - 2, w, 2, 0x00);
+    page.fill_rect(x, y, 2, h, 0x00);
+    page.fill_rect(x + w - 2, y, 2, h, 0x00);
     const left: f32 = @floatFromInt(x + 28);
     const avail: f32 = @floatFromInt(w - 56);
     const top: i32 = @intCast(y + 72);
     const used = try draw.wrapped(fonts.cover, page, left, top, 44, e.title, avail, 5);
-    page.fillRect(x + 28, y + 72 + used * 44, 48, 3, 0x00);
+    page.fill_rect(x + 28, y + 72 + used * 44, 48, 3, 0x00);
     try draw.clipped(fonts.caption, page, left, @intCast(y + h - 34), e.author, avail);
 }
 
 /// Decodes and scales a book's cover the first time it's needed, then keeps it.
-fn loadCover(alloc: std.mem.Allocator, e: *catalog.Entry) void {
+fn load_cover(alloc: std.mem.Allocator, e: *catalog.Entry) void {
     if (e.cover_tried) return;
     e.cover_tried = true;
     if (e.thumbnail.len > 0) e.cover = cover.load(alloc, e.thumbnail, cover.width, cover.height);
@@ -226,30 +226,30 @@ fn loadCover(alloc: std.mem.Allocator, e: *catalog.Entry) void {
 
 /// Gets the covers of library page `index` ready, so turning to it doesn't wait on
 /// decoding them (about 10 ms each). For idle moments, like a screen refresh.
-pub fn prepareCovers(alloc: std.mem.Allocator, entries: []catalog.Entry, visible: []const usize, index: usize) void {
-    if (index >= pageCount(visible.len)) return;
-    const range = pageRange(index, visible.len);
-    for (visible[range.first..range.end]) |i| loadCover(alloc, &entries[i]);
+pub fn prepare_covers(alloc: std.mem.Allocator, entries: []catalog.Entry, visible: []const usize, index: usize) void {
+    if (index >= page_count(visible.len)) return;
+    const range = page_range(index, visible.len);
+    for (visible[range.first..range.end]) |i| load_cover(alloc, &entries[i]);
 }
 
-fn drawCover(alloc: std.mem.Allocator, fonts: Fonts, page: Page, e: *catalog.Entry, x: u32, y: u32) !void {
-    loadCover(alloc, e);
+fn draw_cover(alloc: std.mem.Allocator, fonts: Fonts, page: Page, e: *catalog.Entry, x: u32, y: u32) !void {
+    load_cover(alloc, e);
     if (e.cover) |c| {
-        page.copyImage(x, y, c, cover.width, cover.height);
+        page.copy_image(x, y, c, cover.width, cover.height);
     } else {
-        try typeCover(fonts, page, x, y, cover.width, cover.height, e);
+        try type_cover(fonts, page, x, y, cover.width, cover.height, e);
     }
 }
 
-fn drawHero(alloc: std.mem.Allocator, fonts: Fonts, page: Page, e: *catalog.Entry, now: Moment) !void {
+fn draw_hero(alloc: std.mem.Allocator, fonts: Fonts, page: Page, e: *catalog.Entry, now: Moment) !void {
     if (!e.hero_tried) {
         e.hero_tried = true;
         if (e.thumbnail.len > 0) e.hero = cover.load(alloc, e.thumbnail, cover.hero_width, cover.hero_height);
     }
     if (e.hero) |c| {
-        page.copyImage(margin, hero_top, c, cover.hero_width, cover.hero_height);
+        page.copy_image(margin, hero_top, c, cover.hero_width, cover.hero_height);
     } else {
-        try typeCover(fonts, page, margin, hero_top, cover.hero_width, cover.hero_height, e);
+        try type_cover(fonts, page, margin, hero_top, cover.hero_width, cover.hero_height, e);
     }
 
     const left_px: u32 = margin + cover.hero_width + 48;
@@ -264,7 +264,7 @@ fn drawHero(alloc: std.mem.Allocator, fonts: Fonts, page: Page, e: *catalog.Entr
     // The author, and the series when there is one: "Liu, Cixin  ·  Three-Body #2"
     var byline_buf: [256]u8 = undefined;
     var series_buf: [160]u8 = undefined;
-    const series = catalog.seriesLabel(&series_buf, e.*);
+    const series = catalog.series_label(&series_buf, e.*);
     const byline = if (series.len == 0) e.author else if (e.author.len == 0) series else std.fmt.bufPrint(&byline_buf, "{s}  \u{b7}  {s}", .{ e.author, series }) catch e.author;
     try draw.clipped(fonts.small, page, left, author_y, byline, avail);
     page.tint(left_px, @intCast(author_y - 30), @intFromFloat(avail), 44, style.faded);
@@ -273,12 +273,12 @@ fn drawHero(alloc: std.mem.Allocator, fonts: Fonts, page: Page, e: *catalog.Entr
     // and how long in noface, so the card says more than the cover does. Only for a
     // book really opened, as stock also dates downloads, and only clear of the bar.
     const line_y = if (byline.len > 0) author_y + 56 else author_y;
-    if (e.wasOpened() and line_y < bar_y - 22) {
+    if (e.was_opened() and line_y < bar_y - 22) {
         var when_buf: [24]u8 = undefined;
         var time_buf: [32]u8 = undefined;
         var line_buf: [96]u8 = undefined;
         if (stats.ago(&when_buf, e.last, now.unix, now.utc_offset)) |when| {
-            const line = if (stats.readingTime(&time_buf, e.seconds_read)) |time|
+            const line = if (stats.reading_time(&time_buf, e.seconds_read)) |time|
                 std.fmt.bufPrint(&line_buf, "Last read {s}  \u{b7}  read here for {s}", .{ when, time }) catch ""
             else
                 std.fmt.bufPrint(&line_buf, "Last read {s}", .{when}) catch "";
@@ -287,48 +287,48 @@ fn drawHero(alloc: std.mem.Allocator, fonts: Fonts, page: Page, e: *catalog.Entr
         }
     }
 
-    progressBar(page, left_px, bar_y, @intFromFloat(avail), e.percent, 12);
+    progress_bar(page, left_px, bar_y, @intFromFloat(avail), e.percent, 12);
     var label: [24]u8 = undefined;
     const pct = std.fmt.bufPrint(&label, "{d}% read", .{e.percent}) catch "";
     try fonts.caption.draw(page, left, bar_y + 42, pct);
     page.tint(left_px, bar_y + 16, @intFromFloat(avail), 34, style.faded);
 }
 
-fn drawCell(alloc: std.mem.Allocator, fonts: Fonts, page: Page, e: *catalog.Entry, x: u32, y: u32) !void {
-    try drawCover(alloc, fonts, page, e, x, y);
+fn draw_cell(alloc: std.mem.Allocator, fonts: Fonts, page: Page, e: *catalog.Entry, x: u32, y: u32) !void {
+    try draw_cover(alloc, fonts, page, e, x, y);
     const bar_y = y + cover.height + 8;
     const title_width: f32 = cover.width;
-    if (!e.isLocal()) {
+    if (!e.is_local()) {
         page.tint(x, y, cover.width, cover.height, style.finished_cover);
         icons.cloud(page, @floatFromInt(x + cover.width - 38), @floatFromInt(y + cover.height - 38));
         const label = if (e.availability == .downloading) "Downloading" else e.title;
         _ = try draw.wrapped(fonts.caption, page, @floatFromInt(x), @intCast(bar_y + 34), 30, label, title_width, 1);
         return;
     }
-    if (e.inProgress()) {
-        progressBar(page, x, bar_y + 2, cover.width, e.percent, 10);
-        try percentBadge(fonts.caption, page, x, y + cover.height, e.percent);
+    if (e.in_progress()) {
+        progress_bar(page, x, bar_y + 2, cover.width, e.percent, 10);
+        try percent_badge(fonts.caption, page, x, y + cover.height, e.percent);
     }
-    if (e.isRead()) icons.check(page, @floatFromInt(x + cover.width - 32), @floatFromInt(y + 32));
-    if (e.series.len > 0) try seriesBadge(fonts.caption, page, x, y, e.series_index);
+    if (e.is_read()) icons.check(page, @floatFromInt(x + cover.width - 32), @floatFromInt(y + 32));
+    if (e.series.len > 0) try series_badge(fonts.caption, page, x, y, e.series_index);
     _ = try draw.wrapped(fonts.caption, page, @floatFromInt(x), @intCast(bar_y + 34), 30, e.title, title_width, 1);
 }
 
-fn drawStatus(fonts: Fonts, page: Page, quick: *const quick_model.Quick) !void {
+fn draw_status(fonts: Fonts, page: Page, quick: *const quick_model.Quick) !void {
     const w: f32 = @floatFromInt(page.width);
     // One centre line for everything in the strip.
     const centre = 48;
     const baseline = centre + 9;
     icons.menu(page, margin, centre - 14);
-    const clock = quick.clockText();
+    const clock = quick.clock_text();
     const time = clock[0 .. std.mem.indexOfScalar(u8, clock, ' ') orelse clock.len];
     try draw.centered(fonts.caption, page, w / 2, baseline, time);
-    try icons.statusCluster(page, fonts.caption, w - margin, centre, baseline, quick, false);
+    try icons.status_cluster(page, fonts.caption, w - margin, centre, baseline, quick, false);
 }
 
 /// In the hero's place while searching: what was searched for, how many books have
 /// it, and a button to clear it.
-fn drawSearchHeader(fonts: Fonts, page: Page, query: []const u8, found: usize) !void {
+fn draw_search_header(fonts: Fonts, page: Page, query: []const u8, found: usize) !void {
     const left: f32 = margin;
     const avail: f32 = @floatFromInt(page.width - 2 * margin);
     try fonts.caption.draw(page, left, hero_top + 34, "Search results");
@@ -342,25 +342,25 @@ fn drawSearchHeader(fonts: Fonts, page: Page, query: []const u8, found: usize) !
     const label = "Clear search";
     const w = try fonts.small.measure(label);
     const top: i32 = hero_top + 236 - button_top;
-    buttonOutline(page, left, left + w + 60, top);
+    button_outline(page, left, left + w + 60, top);
     try fonts.small.draw(page, left + 30, top + 55, label);
 }
 
-fn drawTabs(fonts: Fonts, page: Page, top: i32, filter: catalog.Filter, order: catalog.Order, searching: bool) !void {
+fn draw_tabs(fonts: Fonts, page: Page, top: i32, filter: catalog.Filter, order: catalog.Order, searching: bool) !void {
     const y = top + 54;
     const cy: f32 = @floatFromInt(top + button_top + button_height / 2);
     const r: f32 = button_height / 2;
     if (searching) {
         // Filled while a search is showing, like a toggle that's on
         page.pill(search_cx, search_cx, cy, r, 0x00);
-        try icons.drawWhite(page, button_height, button_height, search_cx, @intFromFloat(cy), icons.Magnifier{ .scale = 0.8 });
+        try icons.draw_white(page, button_height, button_height, search_cx, @intFromFloat(cy), icons.Magnifier{ .scale = 0.8 });
     } else {
-        buttonOutline(page, search_cx - r, search_cx + r, top);
-        icons.searchScaled(page, search_cx, cy, 0.8);
+        button_outline(page, search_cx - r, search_cx + r, top);
+        icons.search_scaled(page, search_cx, cy, 0.8);
     }
-    buttonOutline(page, stats_cx - r, stats_cx + r, top);
-    icons.barChart(page, stats_cx, cy);
-    buttonOutline(page, margin, @floatFromInt(tabs[tabs.len - 1].right), top);
+    button_outline(page, stats_cx - r, stats_cx + r, top);
+    icons.bar_chart(page, stats_cx, cy);
+    button_outline(page, margin, @floatFromInt(tabs[tabs.len - 1].right), top);
     icons.funnel(page, margin + icon_inset, cy);
     for (tabs) |t| {
         const left: u32 = @intCast(t.left + tab_pad);
@@ -374,38 +374,39 @@ fn drawTabs(fonts: Fonts, page: Page, top: i32, filter: catalog.Filter, order: c
     var widest: f32 = 0;
     for (std.enums.values(catalog.Order)) |o| widest = @max(widest, try fonts.small.measure(o.label()));
     const button_left = right - 32 - widest - 18 - icon_inset - 14;
-    buttonOutline(page, button_left, right, top);
-    icons.sortArrows(page, button_left + icon_inset, cy);
+    button_outline(page, button_left, right, top);
+    icons.sort_arrows(page, button_left + icon_inset, cy);
     const label_left = button_left + icon_inset + 18 + 14;
     const label_w = try fonts.small.measure(order.label());
     try fonts.small.draw(page, label_left + (right - 32 - label_left - label_w) / 2, y, order.label());
 }
 
-fn drawFooter(fonts: Fonts, page: Page, index: usize, pages: usize) !void {
+fn draw_footer(fonts: Fonts, page: Page, index: usize, pages: usize) !void {
     try footer.render(fonts, page, index, pages);
 }
 
 pub fn render(alloc: std.mem.Allocator, fonts: Fonts, page: Page, entries: []catalog.Entry, hero: ?usize, visible: []const usize, index: usize, filter: catalog.Filter, order: catalog.Order, query: []const u8, message: []const u8, quick: *const quick_model.Quick, now: Moment) !void {
     @memset(page.buf, 0xff);
-    try drawStatus(fonts, page, quick);
+    try draw_status(fonts, page, quick);
 
     const with_hero = index == 0;
     if (with_hero) {
         if (query.len > 0) {
-            try drawSearchHeader(fonts, page, query, visible.len);
-        } else if (hero) |h| try drawHero(alloc, fonts, page, &entries[h], now);
+            try draw_search_header(fonts, page, query, visible.len);
+        } else if (hero) |h| try draw_hero(alloc, fonts, page, &entries[h], now);
     }
-    try drawTabs(fonts, page, tabsTop(with_hero), filter, order, query.len > 0);
+    try draw_tabs(fonts, page, tabs_top(with_hero), filter, order, query.len > 0);
 
-    const first = firstBook(index);
-    const shown = visible[@min(first, visible.len)..@min(first + gridSize(with_hero), visible.len)];
-    const top: u32 = @intCast(gridTop(with_hero));
+    const first = first_book(index);
+    const end = @min(first + grid_size(with_hero), visible.len);
+    const shown = visible[@min(first, visible.len)..end];
+    const top: u32 = @intCast(grid_top(with_hero));
     for (shown, 0..) |entry_index, i| {
-        const at = cellOrigin(i, with_hero);
-        try drawCell(alloc, fonts, page, &entries[entry_index], at.x, at.y);
+        const at = cell_origin(i, with_hero);
+        try draw_cell(alloc, fonts, page, &entries[entry_index], at.x, at.y);
     }
     if (visible.len == 0) try fonts.small.draw(page, margin, @intCast(top + 60), if (query.len > 0) "No books match." else "No books here yet.");
-    try drawFooter(fonts, page, index, pageCount(visible.len));
+    try draw_footer(fonts, page, index, page_count(visible.len));
     if (message.len > 0) try fonts.caption.draw(page, margin, 1500, message); // Between grid and pager
 }
 
@@ -437,10 +438,10 @@ test "tapping past the last book does nothing" {
 }
 
 test "page count follows the layout" {
-    try std.testing.expectEqual(@as(usize, 1), pageCount(0));
-    try std.testing.expectEqual(@as(usize, 1), pageCount(8));
-    try std.testing.expectEqual(@as(usize, 2), pageCount(9));
-    try std.testing.expectEqual(@as(usize, 7), pageCount(78));
+    try std.testing.expectEqual(@as(usize, 1), page_count(0));
+    try std.testing.expectEqual(@as(usize, 1), page_count(8));
+    try std.testing.expectEqual(@as(usize, 2), page_count(9));
+    try std.testing.expectEqual(@as(usize, 7), page_count(78));
 }
 
 test "search button sits beside the filter, and the search takes the hero's place" {

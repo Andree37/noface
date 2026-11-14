@@ -55,7 +55,7 @@ pub const Speed = struct {
     }
 
     /// Minutes to read `words` more, rounded up. Null while still learning.
-    pub fn minutesFor(s: Speed, words: u64) ?u64 {
+    pub fn minutes_for(s: Speed, words: u64) ?u64 {
         if (!s.known()) return null;
         // Less a hair, so 1000 words at 250 a minute is 4 minutes, not 5 by rounding error.
         const minutes = @ceil(@as(f64, @floatFromInt(words)) / s.wpm() - 1e-9);
@@ -65,7 +65,7 @@ pub const Speed = struct {
 
 /// Words in some text: runs of anything but spaces, tabs and newlines. Whole books
 /// are counted when opened, so this goes 32 bytes at a time.
-pub fn countWords(text: []const u8) u64 {
+pub fn count_words(text: []const u8) u64 {
     const lanes = 32;
     const Bytes = @Vector(lanes, u8);
     var n: u64 = 0;
@@ -90,12 +90,12 @@ pub fn countWords(text: []const u8) u64 {
 }
 
 /// Time counted toward a book: the time on a page, unless it was left open.
-pub fn countedSeconds(seconds: u64) u64 {
+pub fn counted_seconds(seconds: u64) u64 {
     return if (seconds > max_page_seconds) 0 else seconds;
 }
 
 /// "12 min", "1 h 5 min", "3 h".
-pub fn formatMinutes(buf: []u8, minutes: u64) []const u8 {
+pub fn format_minutes(buf: []u8, minutes: u64) []const u8 {
     if (minutes < 60) return std.fmt.bufPrint(buf, "{d} min", .{@max(minutes, 1)}) catch "";
     const h = minutes / 60;
     const m = minutes % 60;
@@ -105,9 +105,9 @@ pub fn formatMinutes(buf: []u8, minutes: u64) []const u8 {
 
 /// How long a book has been read, for a line about it: "3 h 12 min", or null under a
 /// minute, when there's nothing worth saying. Callers add their own words around it.
-pub fn readingTime(buf: []u8, seconds: u64) ?[]const u8 {
+pub fn reading_time(buf: []u8, seconds: u64) ?[]const u8 {
     if (seconds < 60) return null;
-    return formatMinutes(buf, seconds / 60);
+    return format_minutes(buf, seconds / 60);
 }
 
 /// Timestamps before this (2001) can't be a real reading: a clock reset to 1970, or
@@ -174,8 +174,8 @@ test "impossible times say nothing" {
 
 test "reading time is only worth saying past a minute" {
     var buf: [24]u8 = undefined;
-    try std.testing.expect(readingTime(&buf, 59) == null);
-    try std.testing.expectEqualStrings("3 h 12 min", readingTime(&buf, 3 * 3600 + 12 * 60).?);
+    try std.testing.expect(reading_time(&buf, 59) == null);
+    try std.testing.expectEqualStrings("3 h 12 min", reading_time(&buf, 3 * 3600 + 12 * 60).?);
 }
 
 const format_tag = "speed";
@@ -214,12 +214,12 @@ test "speed is learned from a few minutes of real reading" {
     var s = Speed{};
     for (0..4) |_| page(&s, 250, 60);
     try std.testing.expect(!s.known());
-    try std.testing.expect(s.minutesFor(1000) == null);
+    try std.testing.expect(s.minutes_for(1000) == null);
     page(&s, 250, 60);
     try std.testing.expect(s.known());
     // 250 words a minute: 1000 more words is 4 minutes, 1001 rounds up to 5.
-    try std.testing.expectEqual(@as(u64, 4), s.minutesFor(1000).?);
-    try std.testing.expectEqual(@as(u64, 5), s.minutesFor(1001).?);
+    try std.testing.expectEqual(@as(u64, 4), s.minutes_for(1000).?);
+    try std.testing.expectEqual(@as(u64, 5), s.minutes_for(1001).?);
 }
 
 test "five quick pages aren't enough to learn from" {
@@ -270,14 +270,14 @@ test "uneven pages don't make the estimate short" {
     for (0..20) |i| page(&s, 250, if (i % 2 == 0) 30 else 90);
     // 250 words a minute over the time actually spent: 240 minutes, give or take the
     // fading (an average of page speeds would say 180).
-    const minutes = s.minutesFor(60000).?;
+    const minutes = s.minutes_for(60000).?;
     try std.testing.expect(minutes >= 238 and minutes <= 246);
 }
 
 test "words are runs of non-spaces" {
-    try std.testing.expectEqual(@as(u64, 0), countWords("  "));
-    try std.testing.expectEqual(@as(u64, 4), countWords("Café — done, really"));
-    try std.testing.expectEqual(@as(u64, 2), countWords(" two\nwords "));
+    try std.testing.expectEqual(@as(u64, 0), count_words("  "));
+    try std.testing.expectEqual(@as(u64, 4), count_words("Café — done, really"));
+    try std.testing.expectEqual(@as(u64, 2), count_words(" two\nwords "));
 }
 
 test "counting 32 bytes at a time matches counting one by one" {
@@ -298,21 +298,21 @@ test "counting 32 bytes at a time matches counting one by one" {
             if (!space and prev_space) slow += 1;
             prev_space = space;
         }
-        try std.testing.expectEqual(slow, countWords(buf[0..len]));
+        try std.testing.expectEqual(slow, count_words(buf[0..len]));
     }
 }
 
 test "time on a page left open isn't counted" {
-    try std.testing.expectEqual(@as(u64, 0), countedSeconds(9999));
-    try std.testing.expectEqual(@as(u64, 40), countedSeconds(40));
+    try std.testing.expectEqual(@as(u64, 0), counted_seconds(9999));
+    try std.testing.expectEqual(@as(u64, 40), counted_seconds(40));
 }
 
 test "durations read naturally" {
     var buf: [32]u8 = undefined;
-    try std.testing.expectEqualStrings("12 min", formatMinutes(&buf, 12));
-    try std.testing.expectEqualStrings("1 min", formatMinutes(&buf, 0));
-    try std.testing.expectEqualStrings("1 h 5 min", formatMinutes(&buf, 65));
-    try std.testing.expectEqualStrings("3 h", formatMinutes(&buf, 180));
+    try std.testing.expectEqualStrings("12 min", format_minutes(&buf, 12));
+    try std.testing.expectEqualStrings("1 min", format_minutes(&buf, 0));
+    try std.testing.expectEqualStrings("1 h 5 min", format_minutes(&buf, 65));
+    try std.testing.expectEqualStrings("3 h", format_minutes(&buf, 180));
 }
 
 test "speed survives a save" {

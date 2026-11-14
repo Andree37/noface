@@ -20,31 +20,31 @@ pub fn parse(alloc: std.mem.Allocator, paragraphs: []const book_model.Paragraph,
     return out.toOwnedSlice(alloc);
 }
 
-fn atOrAfter(b: Bookmark, pos: book_model.Pos) bool {
+fn at_or_after(b: Bookmark, pos: book_model.Pos) bool {
     return b.para > pos.para or (b.para == pos.para and b.byte >= pos.byte);
 }
 
 /// True when bookmark `b` falls on the page from `from` up to `to` (the next page's start).
-pub fn isOnPage(b: Bookmark, from: book_model.Pos, to: ?book_model.Pos) bool {
-    if (!atOrAfter(b, from)) return false;
+pub fn is_on_page(b: Bookmark, from: book_model.Pos, to: ?book_model.Pos) bool {
+    if (!at_or_after(b, from)) return false;
     const end = to orelse return true;
-    return !atOrAfter(b, end);
+    return !at_or_after(b, end);
 }
 
-pub fn anyOnPage(list: []const Bookmark, from: book_model.Pos, to: ?book_model.Pos) bool {
+pub fn any_on_page(list: []const Bookmark, from: book_model.Pos, to: ?book_model.Pos) bool {
     for (list) |b| {
-        if (isOnPage(b, from, to)) return true;
+        if (is_on_page(b, from, to)) return true;
     }
     return false;
 }
 
 test "a bookmark belongs to the page it falls on" {
     const b = Bookmark{ .id = "x", .para = 4, .byte = 20 };
-    try std.testing.expect(isOnPage(b, .{ .para = 4, .byte = 0 }, .{ .para = 5, .byte = 0 }));
-    try std.testing.expect(isOnPage(b, .{ .para = 4, .byte = 20 }, .{ .para = 4, .byte = 21 }));
-    try std.testing.expect(!isOnPage(b, .{ .para = 4, .byte = 21 }, null));
-    try std.testing.expect(!isOnPage(b, .{ .para = 3, .byte = 0 }, .{ .para = 4, .byte = 20 }));
-    try std.testing.expect(isOnPage(b, .{ .para = 2, .byte = 0 }, null)); // Last page
+    try std.testing.expect(is_on_page(b, .{ .para = 4, .byte = 0 }, .{ .para = 5, .byte = 0 }));
+    try std.testing.expect(is_on_page(b, .{ .para = 4, .byte = 20 }, .{ .para = 4, .byte = 21 }));
+    try std.testing.expect(!is_on_page(b, .{ .para = 4, .byte = 21 }, null));
+    try std.testing.expect(!is_on_page(b, .{ .para = 3, .byte = 0 }, .{ .para = 4, .byte = 20 }));
+    try std.testing.expect(is_on_page(b, .{ .para = 2, .byte = 0 }, null)); // Last page
 }
 
 test "bookmark lines become positions" {

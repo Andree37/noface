@@ -12,7 +12,7 @@ pub fn failed(rc: usize) bool {
 pub var fake_us: ?u64 = null;
 
 /// Microseconds on the monotonic clock, which stops while the Kindle sleeps.
-pub fn nowUs() u64 {
+pub fn now_us() u64 {
     if (fake_us) |t| return t;
     var ts: linux.timespec = undefined;
     _ = linux.clock_gettime(.MONOTONIC, &ts);
@@ -20,7 +20,7 @@ pub fn nowUs() u64 {
 }
 
 /// Seconds since 1970, for dates people see and that survive a restart.
-pub fn unixTime() u64 {
+pub fn unix_time() u64 {
     // On the test clock, a fixed day (14 Nov 2026) moving with it, so dates are the same every run
     if (fake_us) |t| return 1_794_700_800 + t / 1_000_000;
     var ts: linux.timespec = undefined;
@@ -28,7 +28,7 @@ pub fn unixTime() u64 {
     return @intCast(ts.sec);
 }
 
-pub fn sleepMs(ms: u64) void {
+pub fn sleep_ms(ms: u64) void {
     if (fake_us) |*t| {
         t.* += ms * 1000;
         return;

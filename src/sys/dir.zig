@@ -6,7 +6,7 @@ const max_depth = 6;
 
 /// Paths of the files under `root` whose names end with `suffix`. Hidden folders
 /// and the Kindle's ".sdr" sidecar folders are skipped.
-pub fn findFiles(alloc: std.mem.Allocator, root: []const u8, suffix: []const u8) ![][:0]u8 {
+pub fn find_files(alloc: std.mem.Allocator, root: []const u8, suffix: []const u8) ![][:0]u8 {
     var out: std.ArrayList([:0]u8) = .empty;
     try walk(alloc, root, suffix, 0, &out);
     return out.toOwnedSlice(alloc);
@@ -39,7 +39,7 @@ fn walk(alloc: std.mem.Allocator, dir: []const u8, suffix: []const u8, depth: u3
         entries.deinit(alloc);
     }
     var c = Collect{ .alloc = alloc, .list = &entries };
-    sys.eachEntry(path, &c, collect);
+    sys.each_entry(path, &c, collect);
     if (c.failed) return error.OutOfMemory;
     for (entries.items) |e| {
         if (e.name[0] == '.') continue;

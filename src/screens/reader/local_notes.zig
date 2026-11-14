@@ -6,7 +6,7 @@ const annotations = @import("../../kindle/annotations.zig");
 const file = @import("../../sys/file.zig");
 const state = @import("../../sys/state.zig");
 
-fn kindName(kind: annotations.Kind) []const u8 {
+fn kind_name(kind: annotations.Kind) []const u8 {
     return switch (kind) {
         .highlight => "highlight",
         .bookmark => "bookmark",
@@ -26,7 +26,7 @@ pub fn select(alloc: std.mem.Allocator, data: []const u8, kind: annotations.Kind
     var lines = std.mem.tokenizeScalar(u8, data, '\n');
     while (lines.next()) |line| {
         var words = std.mem.tokenizeScalar(u8, line, ' ');
-        if (!std.mem.eql(u8, words.next() orelse continue, kindName(kind))) continue;
+        if (!std.mem.eql(u8, words.next() orelse continue, kind_name(kind))) continue;
         const id = words.next() orelse continue;
         const start = words.next() orelse continue;
         const end = words.next() orelse continue;
@@ -39,9 +39,9 @@ pub fn select(alloc: std.mem.Allocator, data: []const u8, kind: annotations.Kind
 pub fn put(alloc: std.mem.Allocator, path: [*:0]const u8, kind: annotations.Kind, id: []const u8, start: u32, end: u32) bool {
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(alloc);
-    keepOthers(alloc, path, id, &out) catch return false;
-    out.print(alloc, "{s} {s} {d} {d}\n", .{ kindName(kind), id, start, end }) catch return false;
-    state.writeSmall(path, out.items);
+    keep_others(alloc, path, id, &out) catch return false;
+    out.print(alloc, "{s} {s} {d} {d}\n", .{ kind_name(kind), id, start, end }) catch return false;
+    state.write_small(path, out.items);
     return true;
 }
 
@@ -49,13 +49,13 @@ pub fn put(alloc: std.mem.Allocator, path: [*:0]const u8, kind: annotations.Kind
 pub fn remove(alloc: std.mem.Allocator, path: [*:0]const u8, id: []const u8) bool {
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(alloc);
-    keepOthers(alloc, path, id, &out) catch return false;
+    keep_others(alloc, path, id, &out) catch return false;
     if (out.items.len == 0) out.appendSlice(alloc, "\n") catch return false; // An empty file can't be written atomically
-    state.writeSmall(path, out.items);
+    state.write_small(path, out.items);
     return true;
 }
 
-fn keepOthers(alloc: std.mem.Allocator, path: [*:0]const u8, id: []const u8, out: *std.ArrayList(u8)) !void {
+fn keep_others(alloc: std.mem.Allocator, path: [*:0]const u8, id: []const u8, out: *std.ArrayList(u8)) !void {
     const data = file.map(path) catch return;
     defer file.unmap(data);
     try others(alloc, data, id, out);

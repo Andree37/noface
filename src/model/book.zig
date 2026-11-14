@@ -25,7 +25,7 @@ pub const size_scales = [_]f32{ 0.8, 1.0, 1.2, 1.45, 1.75 };
 pub const normal_size = 1;
 
 /// Snaps a book's size (1.0 is body text) to the nearest step in `size_scales`.
-pub fn sizeClass(rem: f64) u8 {
+pub fn size_class(rem: f64) u8 {
     if (rem < 0.9) return 0;
     if (rem < 1.1) return 1;
     if (rem < 1.33) return 2;
@@ -55,7 +55,7 @@ pub const Paragraph = struct {
 
 /// A paragraph's number counting text only. Saved reading positions use this, so
 /// they stay put whether or not pictures are shown.
-pub fn textIndex(paragraphs: []const Paragraph, para: usize) usize {
+pub fn text_index(paragraphs: []const Paragraph, para: usize) usize {
     var n: usize = 0;
     for (paragraphs[0..@min(para, paragraphs.len)]) |p| {
         if (p.image == null) n += 1;
@@ -63,8 +63,8 @@ pub fn textIndex(paragraphs: []const Paragraph, para: usize) usize {
     return n;
 }
 
-/// The paragraph for a number from `textIndex`.
-pub fn fromTextIndex(paragraphs: []const Paragraph, index: usize) usize {
+/// The paragraph for a number from `text_index`.
+pub fn from_text_index(paragraphs: []const Paragraph, index: usize) usize {
     var n: usize = 0;
     for (paragraphs, 0..) |p, i| {
         if (p.image != null) continue;
@@ -75,7 +75,7 @@ pub fn fromTextIndex(paragraphs: []const Paragraph, index: usize) usize {
 }
 
 /// Characters before a byte offset, which is how Amazon counts positions.
-pub fn charOffset(text: []const u8, byte: usize) u32 {
+pub fn char_offset(text: []const u8, byte: usize) u32 {
     var bytes: usize = 0;
     var chars: u32 = 0;
     while (bytes < byte and bytes < text.len) : (chars += 1) {
@@ -85,7 +85,7 @@ pub fn charOffset(text: []const u8, byte: usize) u32 {
 }
 
 /// Byte offset of the `count`th code point, as KFX offsets count characters.
-pub fn byteOffset(text: []const u8, count: u64) usize {
+pub fn byte_offset(text: []const u8, count: u64) usize {
     var bytes: usize = 0;
     var seen: u64 = 0;
     while (bytes < text.len and seen < count) : (seen += 1) {
@@ -107,7 +107,7 @@ pub const Book = struct {
 /// Some books style every paragraph bold, so the reader's Bold switch could never
 /// make them regular. When most text paragraphs are bold, bold is that book's normal
 /// weight: show it regular. Bold words inside paragraphs stay bold.
-pub fn plainBody(paragraphs: []Paragraph) void {
+pub fn plain_body(paragraphs: []Paragraph) void {
     var text: usize = 0;
     var bold: usize = 0;
     for (paragraphs) |p| {
@@ -125,7 +125,7 @@ test "a book that is bold throughout reads as regular" {
         .{ .text = "b", .style = 0, .look = .{ .bold = true } },
         .{ .text = "c", .style = 0 },
     };
-    plainBody(&ps);
+    plain_body(&ps);
     for (ps) |p| try std.testing.expect(!p.look.bold);
 }
 
@@ -136,35 +136,35 @@ test "a few bold headings stay bold" {
         .{ .text = "b", .style = 0, .runs = &runs },
         .{ .text = "c", .style = 0 },
     };
-    plainBody(&ps);
+    plain_body(&ps);
     try std.testing.expect(ps[0].look.bold);
     try std.testing.expect(ps[1].runs[0].bold);
 }
 
 test "offsets count characters, not bytes" {
-    try std.testing.expectEqual(@as(usize, 3), byteOffset("\u{e1}bc", 2));
-    try std.testing.expectEqual(@as(usize, 4), byteOffset("\u{e1}bc", 99));
+    try std.testing.expectEqual(@as(usize, 3), byte_offset("\u{e1}bc", 2));
+    try std.testing.expectEqual(@as(usize, 4), byte_offset("\u{e1}bc", 99));
 }
 
 test "byte and character offsets agree" {
-    try std.testing.expectEqual(@as(u32, 2), charOffset("\u{e1}bc", 3));
-    try std.testing.expectEqual(@as(u32, 0), charOffset("abc", 0));
+    try std.testing.expectEqual(@as(u32, 2), char_offset("\u{e1}bc", 3));
+    try std.testing.expectEqual(@as(u32, 0), char_offset("abc", 0));
 }
 
 test "book sizes snap to the reader's steps" {
-    try std.testing.expectEqual(@as(u8, 0), sizeClass(0.8));
-    try std.testing.expectEqual(@as(u8, 1), sizeClass(1.0));
-    try std.testing.expectEqual(@as(u8, 2), sizeClass(1.125));
-    try std.testing.expectEqual(@as(u8, 3), sizeClass(1.5));
-    try std.testing.expectEqual(@as(u8, 4), sizeClass(2.0));
+    try std.testing.expectEqual(@as(u8, 0), size_class(0.8));
+    try std.testing.expectEqual(@as(u8, 1), size_class(1.0));
+    try std.testing.expectEqual(@as(u8, 2), size_class(1.125));
+    try std.testing.expectEqual(@as(u8, 3), size_class(1.5));
+    try std.testing.expectEqual(@as(u8, 4), size_class(2.0));
 }
 
 test "saved positions count text paragraphs only" {
     const img = Image{ .data = "", .width = 1, .height = 1 };
     const paras = [_]Paragraph{ .{ .text = "a", .style = 0 }, .{ .text = "", .style = 0, .image = img }, .{ .text = "b", .style = 0 } };
-    try std.testing.expectEqual(@as(usize, 1), textIndex(&paras, 2));
-    try std.testing.expectEqual(@as(usize, 2), fromTextIndex(&paras, 1));
-    try std.testing.expectEqual(@as(usize, 0), fromTextIndex(&paras, 0));
+    try std.testing.expectEqual(@as(usize, 1), text_index(&paras, 2));
+    try std.testing.expectEqual(@as(usize, 2), from_text_index(&paras, 1));
+    try std.testing.expectEqual(@as(usize, 0), from_text_index(&paras, 0));
 }
 
 /// A place in a book: a paragraph, and a byte within its text.

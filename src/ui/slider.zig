@@ -10,14 +10,14 @@ const knob_outer = 27;
 const knob_inner = 21;
 
 /// Knob position for `value` out of `max`.
-pub fn knobAt(s: Slider, value: u32, max: u32) u32 {
+pub fn knob_at(s: Slider, value: u32, max: u32) u32 {
     if (max == 0) return s.left;
     const span = s.right - s.left;
     return s.left + @min(value, max) * span / max;
 }
 
 /// Nearest value out of `max` for a finger at `x`.
-pub fn valueAt(s: Slider, x: i32, max: u32) u32 {
+pub fn value_at(s: Slider, x: i32, max: u32) u32 {
     const left: i32 = @intCast(s.left);
     const span: i32 = @intCast(s.right - s.left);
     const at: u32 = @intCast(std.math.clamp(x - left, 0, span));
@@ -26,11 +26,11 @@ pub fn valueAt(s: Slider, x: i32, max: u32) u32 {
 
 /// Marks each step with a dot inside the bar, for sliders with only a few positions:
 /// white on the filled part, before `knob`, and black after it. Call after `draw`.
-pub fn drawTicks(page: Page, s: Slider, max: u32, knob: u32) void {
+pub fn draw_ticks(page: Page, s: Slider, max: u32, knob: u32) void {
     const y: f32 = @floatFromInt(s.y);
     var i: u32 = 1;
     while (i < max) : (i += 1) {
-        const x = knobAt(s, i, max);
+        const x = knob_at(s, i, max);
         if (@abs(@as(i32, @intCast(x)) - @as(i32, @intCast(knob))) < knob_outer + 6) continue; // Under the knob
         page.pill(@floatFromInt(x), @floatFromInt(x), y, 3, if (x < knob) 0xff else 0x00);
     }
@@ -54,16 +54,16 @@ pub fn draw(page: Page, s: Slider, knob: u32) void {
 
 test "value and knob agree" {
     const s = Slider{ .left = 100, .right = 1100, .y = 50 };
-    try std.testing.expectEqual(@as(u32, 100), knobAt(s, 0, 24));
-    try std.testing.expectEqual(@as(u32, 1100), knobAt(s, 24, 24));
-    try std.testing.expectEqual(@as(u32, 600), knobAt(s, 12, 24));
-    try std.testing.expectEqual(@as(u32, 0), valueAt(s, 0, 24));
-    try std.testing.expectEqual(@as(u32, 24), valueAt(s, 2000, 24));
-    try std.testing.expectEqual(@as(u32, 12), valueAt(s, 600, 24));
+    try std.testing.expectEqual(@as(u32, 100), knob_at(s, 0, 24));
+    try std.testing.expectEqual(@as(u32, 1100), knob_at(s, 24, 24));
+    try std.testing.expectEqual(@as(u32, 600), knob_at(s, 12, 24));
+    try std.testing.expectEqual(@as(u32, 0), value_at(s, 0, 24));
+    try std.testing.expectEqual(@as(u32, 24), value_at(s, 2000, 24));
+    try std.testing.expectEqual(@as(u32, 12), value_at(s, 600, 24));
 }
 
 test "small ranges snap to the nearest step" {
     const s = Slider{ .left = 0, .right = 900, .y = 50 };
-    try std.testing.expectEqual(@as(u32, 1), valueAt(s, 260, 3));
-    try std.testing.expectEqual(@as(u32, 2), valueAt(s, 500, 3));
+    try std.testing.expectEqual(@as(u32, 1), value_at(s, 260, 3));
+    try std.testing.expectEqual(@as(u32, 2), value_at(s, 500, 3));
 }

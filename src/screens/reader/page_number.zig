@@ -11,7 +11,7 @@ const typing = @import("../typing.zig");
 const Query = @import("../../model/search.zig").Query;
 
 /// A typed page number as a page index, or null when it isn't a page of this book.
-pub fn pageIndex(typed: []const u8, pages: usize) ?usize {
+pub fn page_index(typed: []const u8, pages: usize) ?usize {
     const n = std.fmt.parseInt(usize, typed, 10) catch return null;
     return if (n >= 1 and n <= pages) n - 1 else null;
 }
@@ -34,20 +34,20 @@ const PageEntry = struct {
         const page = a.page(a.screen.pixels);
         var placeholder_buf: [48]u8 = undefined;
         const placeholder = std.fmt.bufPrint(&placeholder_buf, "Page, from 1 to {d}", .{e.pages}) catch "Page";
-        try search_sheet.renderBar(a.ui, page, toolbar.status_row, e.typed.slice(), placeholder, .none);
-        page.fillRect(0, search_sheet.content_top, page.width, keyboard.top - search_sheet.content_top, 0xff);
+        try search_sheet.render_bar(a.ui, page, toolbar.status_row, e.typed.slice(), placeholder, .none);
+        page.fill_rect(0, search_sheet.content_top, page.width, keyboard.top - search_sheet.content_top, 0xff);
         if (e.note.len > 0) try a.ui.small.draw(page, style.margin, search_sheet.content_top + 56, e.note);
         if (part == .all) try keyboard.render(a.ui, page);
         const bottom: u32 = if (part == .all) a.screen.height else keyboard.top;
-        try a.showBand(toolbar.status_row, bottom - toolbar.status_row);
+        try a.show_band(toolbar.status_row, bottom - toolbar.status_row);
     }
 
-    pub fn onTap(e: *PageEntry, t: screen.Tap) !screen.Step(usize) {
-        if (search_sheet.barHit(t.x, t.y)) |h| return if (h == .cancel) .close else .stay;
+    pub fn on_tap(e: *PageEntry, t: screen.Tap) !screen.Step(usize) {
+        if (search_sheet.bar_hit(t.x, t.y)) |h| return if (h == .cancel) .close else .stay;
         if (t.y < search_sheet.top) return .close; // Above the sheet
         e.note = "";
         if (typing.key(&e.typed, t, typing.digits) == .enter) {
-            if (pageIndex(e.typed.slice(), e.pages)) |index| return .{ .done = index };
+            if (page_index(e.typed.slice(), e.pages)) |index| return .{ .done = index };
             e.note = "There's no such page in this book.";
         }
         return .{ .redraw = .changing };
@@ -55,9 +55,9 @@ const PageEntry = struct {
 };
 
 test "typed numbers become pages of this book" {
-    try std.testing.expectEqual(@as(usize, 0), pageIndex("1", 760).?);
-    try std.testing.expectEqual(@as(usize, 759), pageIndex("760", 760).?);
-    try std.testing.expect(pageIndex("761", 760) == null);
-    try std.testing.expect(pageIndex("0", 760) == null);
-    try std.testing.expect(pageIndex("", 760) == null);
+    try std.testing.expectEqual(@as(usize, 0), page_index("1", 760).?);
+    try std.testing.expectEqual(@as(usize, 759), page_index("760", 760).?);
+    try std.testing.expect(page_index("761", 760) == null);
+    try std.testing.expect(page_index("0", 760) == null);
+    try std.testing.expect(page_index("", 760) == null);
 }

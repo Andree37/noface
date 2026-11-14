@@ -2,7 +2,7 @@
 //! Saves the current screen first and restores it when done.
 const std = @import("std");
 const core = @import("core");
-const nowUs = core.os.nowUs;
+const now_us = core.os.now_us;
 const linux = std.os.linux;
 const hwtcon = core.hwtcon;
 
@@ -21,7 +21,7 @@ const cases = [_]Case{
 const flips = 4;
 
 /// Fake page of text: rows of black word-sized blocks on white. `seed` shifts the words.
-fn drawPage(buf: []u8, width: u32, height: u32, stride: u32, seed: u32) void {
+fn draw_page(buf: []u8, width: u32, height: u32, stride: u32, seed: u32) void {
     @memset(buf, 0xff);
     var y: u32 = 80;
     var line: u32 = seed;
@@ -49,21 +49,21 @@ pub fn main() !void {
     const page_a = try alloc.alloc(u8, screen.pixels.len);
     const page_b = try alloc.alloc(u8, screen.pixels.len);
     @memcpy(saved, screen.pixels);
-    drawPage(page_a, screen.width, screen.height, screen.stride, 1);
-    drawPage(page_b, screen.width, screen.height, screen.stride, 2);
+    draw_page(page_a, screen.width, screen.height, screen.stride, 1);
+    draw_page(page_b, screen.width, screen.height, screen.stride, 2);
 
     defer {
         @memcpy(screen.pixels, saved);
         if (screen.update(.gc16, .full)) |m| {
-            screen.waitComplete(m) catch {};
+            screen.wait_complete(m) catch {};
         } else |_| {}
     }
 
     // Blit cost: what a pre-rendered page costs the CPU.
-    const b0 = nowUs();
+    const b0 = now_us();
     @memcpy(screen.pixels, page_a);
-    std.debug.print("blit {d} us\n", .{nowUs() - b0});
-    try screen.waitComplete(try screen.update(.gc16, .full));
+    std.debug.print("blit {d} us\n", .{now_us() - b0});
+    try screen.wait_complete(try screen.update(.gc16, .full));
 
     for (cases) |c| {
         var total: u64 = 0;
@@ -71,11 +71,11 @@ pub fn main() !void {
         var i: u32 = 0;
         while (i < flips) : (i += 1) {
             @memcpy(screen.pixels, if (i % 2 == 0) page_b else page_a);
-            const t0 = nowUs();
+            const t0 = now_us();
             const marker = try screen.update(c.wf, c.mode);
-            const queued = nowUs() - t0;
-            try screen.waitComplete(marker);
-            const dt = nowUs() - t0;
+            const queued = now_us() - t0;
+            try screen.wait_complete(marker);
+            const dt = now_us() - t0;
             total += dt;
             worst = @max(worst, dt);
             if (i == 0) std.debug.print("  {s}: queue {d} us\n", .{ c.name, queued });

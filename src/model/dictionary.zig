@@ -19,7 +19,7 @@ pub const Entry = struct {
     text: []const u8, // Its definition lines
 
     /// The word this one is a form of, from a "=run" line, if any.
-    pub fn baseForm(e: Entry) ?[]const u8 {
+    pub fn base_form(e: Entry) ?[]const u8 {
         var lines = std.mem.tokenizeScalar(u8, e.text, '\n');
         while (lines.next()) |l| {
             if (l.len > 1 and l[0] == '=') return l[1..];
@@ -47,7 +47,7 @@ pub const Dictionary = struct {
         return std.mem.readInt(u32, d.data[magic.len + 4 + @as(usize, i) * 4 ..][0..4], .little);
     }
 
-    fn entryBytes(d: Dictionary, i: u32) []const u8 {
+    fn entry_bytes(d: Dictionary, i: u32) []const u8 {
         const body = magic.len + 4 + (@as(usize, d.count) + 1) * 4;
         const from = d.offset(i);
         const to = d.offset(i + 1);
@@ -56,12 +56,12 @@ pub const Dictionary = struct {
     }
 
     fn key(d: Dictionary, i: u32) []const u8 {
-        const bytes = d.entryBytes(i);
+        const bytes = d.entry_bytes(i);
         return bytes[0 .. std.mem.indexOfScalar(u8, bytes, 0) orelse bytes.len];
     }
 
     fn entry(d: Dictionary, i: u32) Entry {
-        const bytes = d.entryBytes(i);
+        const bytes = d.entry_bytes(i);
         const k = std.mem.indexOfScalar(u8, bytes, 0) orelse return .{ .word = "", .text = "" };
         const rest = bytes[k + 1 ..];
         const w = std.mem.indexOfScalar(u8, rest, 0) orelse return .{ .word = rest, .text = "" };
@@ -69,7 +69,7 @@ pub const Dictionary = struct {
     }
 
     /// The entry for a key already folded with `fold`, if there is one.
-    pub fn findKey(d: Dictionary, wanted: []const u8) ?Entry {
+    pub fn find_key(d: Dictionary, wanted: []const u8) ?Entry {
         var lo: u32 = 0;
         var hi: u32 = d.count;
         while (lo < hi) {
@@ -88,8 +88,8 @@ pub const Dictionary = struct {
     pub fn lookup(d: Dictionary, word: []const u8) ?Entry {
         var buf: [max_key]u8 = undefined;
         const k = fold(&buf, trimmed(word)) orelse return null;
-        if (d.findKey(k)) |e| return e;
-        if (std.mem.endsWith(u8, k, "'s")) return d.findKey(k[0 .. k.len - 2]);
+        if (d.find_key(k)) |e| return e;
+        if (std.mem.endsWith(u8, k, "'s")) return d.find_key(k[0 .. k.len - 2]);
         return null;
     }
 };
@@ -100,18 +100,18 @@ pub const max_key = 64;
 pub fn trimmed(word: []const u8) []const u8 {
     var start: usize = 0;
     var end = word.len;
-    while (start < end and !isWordByte(word, start)) start += 1;
-    while (end > start and !isWordByte(word, lastStart(word, end))) end = lastStart(word, end);
+    while (start < end and !is_word_byte(word, start)) start += 1;
+    while (end > start and !is_word_byte(word, last_start(word, end))) end = last_start(word, end);
     return word[start..end];
 }
 
-fn lastStart(word: []const u8, end: usize) usize {
+fn last_start(word: []const u8, end: usize) usize {
     var i = end - 1;
     while (i > 0 and word[i] & 0xc0 == 0x80) i -= 1;
     return i;
 }
 
-fn isWordByte(word: []const u8, i: usize) bool {
+fn is_word_byte(word: []const u8, i: usize) bool {
     const c = word[i];
     if (std.ascii.isAlphanumeric(c)) return true;
     // Letters beyond ASCII start with C3..C5 (Latin-1 and Extended-A)
@@ -180,9 +180,9 @@ test "words are found however the book writes them" {
     try std.testing.expectEqualStrings("Polish", d.lookup("Polish,").?.word);
     try std.testing.expectEqualStrings("ação", d.lookup("\u{201c}Ação").?.word);
     try std.testing.expectEqualStrings("run", d.lookup("Run\u{2019}s").?.word);
-    try std.testing.expectEqualStrings("run", d.lookup("ran").?.baseForm().?);
-    try std.testing.expect(d.lookup("ran").?.baseForm() != null);
-    try std.testing.expect(d.lookup("run").?.baseForm() == null);
+    try std.testing.expectEqualStrings("run", d.lookup("ran").?.base_form().?);
+    try std.testing.expect(d.lookup("ran").?.base_form() != null);
+    try std.testing.expect(d.lookup("run").?.base_form() == null);
     try std.testing.expect(d.lookup("walk") == null);
     try std.testing.expect(d.lookup("\u{2014}") == null);
 }

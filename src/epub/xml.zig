@@ -29,7 +29,7 @@ pub const Tokenizer = struct {
                 return .{ .text = text };
             }
             if (std.mem.startsWith(u8, d[t.pos..], "<!--")) {
-                t.pos = skipPast(d, t.pos, "-->");
+                t.pos = skip_past(d, t.pos, "-->");
                 continue;
             }
             if (std.mem.startsWith(u8, d[t.pos..], "<![CDATA[")) {
@@ -39,7 +39,7 @@ pub const Tokenizer = struct {
                 return .{ .text = d[start..end] };
             }
             if (std.mem.startsWith(u8, d[t.pos..], "<?") or std.mem.startsWith(u8, d[t.pos..], "<!")) {
-                t.pos = skipPast(d, t.pos, ">");
+                t.pos = skip_past(d, t.pos, ">");
                 continue;
             }
             const end = std.mem.indexOfScalarPos(u8, d, t.pos, '>') orelse {
@@ -48,23 +48,23 @@ pub const Tokenizer = struct {
             };
             const inside = d[t.pos + 1 .. end];
             t.pos = end + 1;
-            if (inside.len > 0 and inside[0] == '/') return .{ .close = localName(std.mem.trim(u8, inside[1..], " \t\r\n")) };
+            if (inside.len > 0 and inside[0] == '/') return .{ .close = local_name(std.mem.trim(u8, inside[1..], " \t\r\n")) };
             const self_closing = inside.len > 0 and inside[inside.len - 1] == '/';
             const body = if (self_closing) inside[0 .. inside.len - 1] else inside;
             const name_end = std.mem.indexOfAny(u8, body, " \t\r\n") orelse body.len;
-            return .{ .open = .{ .name = localName(body[0..name_end]), .attrs = body[name_end..], .self_closing = self_closing } };
+            return .{ .open = .{ .name = local_name(body[0..name_end]), .attrs = body[name_end..], .self_closing = self_closing } };
         }
         return null;
     }
 };
 
-fn skipPast(d: []const u8, from: usize, marker: []const u8) usize {
+fn skip_past(d: []const u8, from: usize, marker: []const u8) usize {
     const at = std.mem.indexOfPos(u8, d, from, marker) orelse return d.len;
     return at + marker.len;
 }
 
 /// "dc:title" -> "title".
-pub fn localName(name: []const u8) []const u8 {
+pub fn local_name(name: []const u8) []const u8 {
     const colon = std.mem.lastIndexOfScalar(u8, name, ':') orelse return name;
     return name[colon + 1 ..];
 }
@@ -76,7 +76,7 @@ pub fn attr(attrs: []const u8, name: []const u8) ?[]const u8 {
         while (at < attrs.len and std.ascii.isWhitespace(attrs[at])) at += 1;
         const name_start = at;
         while (at < attrs.len and attrs[at] != '=' and !std.ascii.isWhitespace(attrs[at])) at += 1;
-        const this = localName(attrs[name_start..at]);
+        const this = local_name(attrs[name_start..at]);
         while (at < attrs.len and std.ascii.isWhitespace(attrs[at])) at += 1;
         if (at >= attrs.len or attrs[at] != '=') {
             if (at == name_start) at += 1; // Never stall on a stray character

@@ -79,7 +79,7 @@ pub fn fitted(sw: usize, sh: usize, dw: usize, dh: usize) struct { w: usize, h: 
 
 /// Decodes a cover and shows all of it, as large as fits, centred on black.
 /// `stride` is bytes per row in `buf`, which can be more than the visible width.
-pub fn fillScreen(alloc: std.mem.Allocator, jpeg: []const u8, buf: []u8, width_px: usize, height_px: usize, stride: usize) bool {
+pub fn fill_screen(alloc: std.mem.Allocator, jpeg: []const u8, buf: []u8, width_px: usize, height_px: usize, stride: usize) bool {
     var w: c_int = 0;
     var h: c_int = 0;
     const pixels = img_gray(jpeg.ptr, @intCast(jpeg.len), &w, &h) orelse return false;
@@ -111,7 +111,7 @@ pub fn prepare(alloc: std.mem.Allocator, pixels: []const u8, sw: usize, sh: usiz
 }
 
 /// Decodes a JPEG or PNG, then prepares it at `w` x `h`.
-pub fn decodeAndPrepare(alloc: std.mem.Allocator, encoded: []const u8, w: usize, h: usize) ?[]u8 {
+pub fn decode_and_prepare(alloc: std.mem.Allocator, encoded: []const u8, w: usize, h: usize) ?[]u8 {
     var sw: c_int = 0;
     var sh: c_int = 0;
     const pixels = img_gray(encoded.ptr, @intCast(encoded.len), &sw, &sh) orelse return null;
@@ -193,7 +193,7 @@ test "covers keep their shape on screen" {
 pub const Gray = struct { pixels: []u8, width: usize, height: usize };
 
 /// Decodes a JPEG or PNG at full size. The caller owns the pixels.
-pub fn decodeGray(alloc: std.mem.Allocator, encoded: []const u8) ?Gray {
+pub fn decode_gray(alloc: std.mem.Allocator, encoded: []const u8) ?Gray {
     var w: c_int = 0;
     var h: c_int = 0;
     const pixels = img_gray(encoded.ptr, @intCast(encoded.len), &w, &h) orelse return null;
@@ -326,7 +326,7 @@ fn blended(src: Gray, cx: f32, cy: f32, zoom: f32, page: Page, dw: u32, dh: u32)
 
 /// Where the middle of a view can sit so the picture covers it where it can: centred
 /// on an axis where the picture is smaller than the view.
-pub fn clampCentre(c: f32, picture: f32, view: f32, zoom: f32) f32 {
+pub fn clamp_centre(c: f32, picture: f32, view: f32, zoom: f32) f32 {
     const half = view / zoom / 2;
     if (picture <= 2 * half) return picture / 2;
     return std.math.clamp(c, half, picture - half);
@@ -334,11 +334,11 @@ pub fn clampCentre(c: f32, picture: f32, view: f32, zoom: f32) f32 {
 
 test "a view keeps inside the picture" {
     // 1000 px picture, 500 px view at 1x: the middle stays 250..750
-    try std.testing.expectEqual(@as(f32, 250), clampCentre(0, 1000, 500, 1));
-    try std.testing.expectEqual(@as(f32, 750), clampCentre(990, 1000, 500, 1));
-    try std.testing.expectEqual(@as(f32, 600), clampCentre(600, 1000, 500, 1));
+    try std.testing.expectEqual(@as(f32, 250), clamp_centre(0, 1000, 500, 1));
+    try std.testing.expectEqual(@as(f32, 750), clamp_centre(990, 1000, 500, 1));
+    try std.testing.expectEqual(@as(f32, 600), clamp_centre(600, 1000, 500, 1));
     // Smaller than the view: centred
-    try std.testing.expectEqual(@as(f32, 50), clampCentre(10, 100, 500, 1));
+    try std.testing.expectEqual(@as(f32, 50), clamp_centre(10, 100, 500, 1));
 }
 
 test "zoomed views sample the nearest pixel, white outside" {

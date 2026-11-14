@@ -14,15 +14,15 @@ var family_storage: [max_families][]const u8 = builtin_families ++ @as([max_own]
 pub var families: []const []const u8 = family_storage[0..builtin_families.len];
 
 /// Offers one of the reader's own typefaces. False when there's no room or the name is taken.
-pub fn addFamily(name: []const u8) bool {
-    if (families.len == max_families or name.len == 0 or familyNamed(name) != null) return false;
+pub fn add_family(name: []const u8) bool {
+    if (families.len == max_families or name.len == 0 or family_named(name) != null) return false;
     family_storage[families.len] = name;
     families = family_storage[0 .. families.len + 1];
     return true;
 }
 
 /// Back to the Kindle's typefaces only (for tests).
-pub fn resetFamilies() void {
+pub fn reset_families() void {
     families = family_storage[0..builtin_families.len];
 }
 
@@ -38,7 +38,7 @@ pub const margins = [_]i32{ 60, 100, 150, 210 };
 pub const not_layout = [_][]const u8{ "font", "clock", "refresh", "time_left", "autostart", "offer_dictionary", "lock_picture" };
 
 /// Whether a field of Settings changes where pages break.
-pub fn movesBreaks(comptime field: []const u8) bool {
+pub fn moves_breaks(comptime field: []const u8) bool {
     inline for (not_layout) |name| {
         if (comptime std.mem.eql(u8, name, field)) return false;
     }
@@ -61,17 +61,17 @@ pub const Settings = struct {
     lock_picture: bool = false, // The reader's own picture when locked, instead of the book's cover
 
     pub fn px(s: Settings) f32 {
-        s.checkSteps();
+        s.check_steps();
         return sizes[s.size];
     }
 
-    pub fn lineHeight(s: Settings) i32 {
-        s.checkSteps();
+    pub fn line_height(s: Settings) i32 {
+        s.check_steps();
         return @intFromFloat(sizes[s.size] * spacings[s.spacing]);
     }
 
     /// Parsing clamps every value, so an index out of range is a bug of ours.
-    fn checkSteps(s: Settings) void {
+    fn check_steps(s: Settings) void {
         check.that(s.size < sizes.len and s.spacing < spacings.len and s.margin < margins.len and s.font < max_families, "settings are within their steps");
     }
 };
@@ -107,7 +107,7 @@ comptime {
 }
 
 /// How many steps a setting chosen from a list has.
-fn stepsOf(comptime field: []const u8) usize {
+fn steps_of(comptime field: []const u8) usize {
     if (comptime std.mem.eql(u8, field, "size")) return sizes.len;
     if (comptime std.mem.eql(u8, field, "spacing")) return spacings.len;
     if (comptime std.mem.eql(u8, field, "margin")) return margins.len;
@@ -115,7 +115,7 @@ fn stepsOf(comptime field: []const u8) usize {
 }
 
 pub fn parse(content: []const u8) Settings {
-    if (looksOld(content)) return fromOldFile(content);
+    if (looks_old(content)) return from_old_file(content);
     var s = Settings{};
     var lines = std.mem.tokenizeScalar(u8, content, '\n');
     while (lines.next()) |line| {
@@ -127,10 +127,10 @@ pub fn parse(content: []const u8) Settings {
                 const now = &@field(s, f.field);
                 if (comptime std.mem.eql(u8, f.field, "font")) {
                     // A name can have spaces ("Open Sans"): the rest of the line
-                    now.* = familyNamed(std.mem.trim(u8, line[value.ptr - line.ptr ..], " ")) orelse now.*;
+                    now.* = family_named(std.mem.trim(u8, line[value.ptr - line.ptr ..], " ")) orelse now.*;
                 } else switch (@TypeOf(now.*)) {
-                    bool => now.* = isOn(value, now.* != f.inverted) != f.inverted,
-                    usize => now.* = step(value, stepsOf(f.field), now.*),
+                    bool => now.* = is_on(value, now.* != f.inverted) != f.inverted,
+                    usize => now.* = step(value, steps_of(f.field), now.*),
                     else => @compileError("settings: how is " ++ f.field ++ " read"),
                 }
             }
@@ -146,7 +146,7 @@ pub fn format(buf: []u8, s: Settings) []const u8 {
         if (comptime std.mem.eql(u8, f.field, "font")) {
             w.print(f.name ++ " {s}\n", .{families[value]}) catch return "";
         } else switch (@TypeOf(value)) {
-            bool => w.print(f.name ++ " {s}\n", .{onOff(value != f.inverted)}) catch return "",
+            bool => w.print(f.name ++ " {s}\n", .{on_off(value != f.inverted)}) catch return "",
             usize => w.print(f.name ++ " {d}\n", .{value}) catch return "",
             else => @compileError("settings: how is " ++ f.field ++ " written"),
         }
@@ -159,31 +159,31 @@ fn step(value: []const u8, count: usize, fallback: usize) usize {
     return if (n < count) n else fallback;
 }
 
-fn familyNamed(name: []const u8) ?usize {
+fn family_named(name: []const u8) ?usize {
     for (families, 0..) |f, i| {
         if (std.mem.eql(u8, f, name)) return i;
     }
     return null;
 }
 
-fn isOn(value: []const u8, fallback: bool) bool {
+fn is_on(value: []const u8, fallback: bool) bool {
     if (std.mem.eql(u8, value, "on")) return true;
     if (std.mem.eql(u8, value, "off")) return false;
     return fallback;
 }
 
-fn onOff(on: bool) []const u8 {
+fn on_off(on: bool) []const u8 {
     return if (on) "on" else "off";
 }
 
 /// Earlier versions saved settings as numbers in the reading-position file's shape:
 /// "a b c d". They're read once, then saved again in the format above.
-fn looksOld(content: []const u8) bool {
+fn looks_old(content: []const u8) bool {
     const first = std.mem.trimStart(u8, content, " \n");
     return first.len > 0 and std.ascii.isDigit(first[0]);
 }
 
-fn fromOldFile(content: []const u8) Settings {
+fn from_old_file(content: []const u8) Settings {
     var numbers: [4]usize = @splat(0);
     var words = std.mem.tokenizeAny(u8, content, " \n");
     for (&numbers) |*n| n.* = std.fmt.parseInt(usize, words.next() orelse break, 10) catch 0;
@@ -239,22 +239,22 @@ test "settings saved by older versions still load" {
 test "defaults match the original reader" {
     const s = Settings{};
     try std.testing.expectEqual(@as(f32, 46), s.px());
-    try std.testing.expectEqual(@as(i32, 62), s.lineHeight());
+    try std.testing.expectEqual(@as(i32, 62), s.line_height());
 }
 
 test "the reader's own typefaces are offered after the Kindle's, by name" {
-    defer resetFamilies();
-    try std.testing.expect(addFamily("Open Sans"));
-    try std.testing.expect(!addFamily("Bookerly")); // Taken
+    defer reset_families();
+    try std.testing.expect(add_family("Open Sans"));
+    try std.testing.expect(!add_family("Bookerly")); // Taken
     const s = parse("font Open Sans\n");
     try std.testing.expectEqual(builtin_families.len, s.font);
     var buf: [256]u8 = undefined;
     try std.testing.expectEqual(s.font, parse(format(&buf, s)).font);
-    resetFamilies();
+    reset_families();
     try std.testing.expectEqual(@as(usize, 0), parse("font Open Sans\n").font); // Removed since: the default
 }
 
 test "every name kept out of the page-break key is a setting" {
     inline for (not_layout) |name| try std.testing.expect(@hasField(Settings, name));
-    try std.testing.expect(movesBreaks("size") and movesBreaks("bold_starts") and !movesBreaks("clock"));
+    try std.testing.expect(moves_breaks("size") and moves_breaks("bold_starts") and !moves_breaks("clock"));
 }

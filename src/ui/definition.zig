@@ -69,7 +69,7 @@ const Writer = struct {
         while (rest.len > 0) {
             if (!w.room()) return w.stop();
             if (first) try w.fonts.small.draw(w.page, style.margin, w.y, number);
-            const n = try draw.lineEnd(w.fonts.small, rest, avail);
+            const n = try draw.line_end(w.fonts.small, rest, avail);
             try w.fonts.small.draw(w.page, left, w.y, rest[0..n]);
             rest = std.mem.trimStart(u8, rest[n..], " ");
             w.y += line_step;
@@ -125,7 +125,7 @@ pub fn render(fonts: Fonts, page: Page, found: Found) !void {
     }
 
     // Actions along the bottom: Highlight, and where the words come from
-    page.fillRect(style.margin, actions_top - 12, page.width - 2 * style.margin, 1, style.rule);
+    page.fill_rect(style.margin, actions_top - 12, page.width - 2 * style.margin, 1, style.rule);
     draw.box(page, style.margin, actions_top + 4, button_width, button_height);
     try draw.centered(fonts.small, page, style.margin + button_width / 2, actions_top + 4 + button_height / 2 + 12, "Highlight");
     if (found.no_dictionary and found.can_get != null) {

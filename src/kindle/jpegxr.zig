@@ -1,5 +1,6 @@
 //! Pictures in JPEG XR, decoded by the Kindle's own library through the jxr2pgm helper.
 const std = @import("std");
+const assert = std.debug.assert;
 const paths = @import("paths.zig");
 const linux = @import("../sys/calls.zig");
 const os = @import("../sys/os.zig");
@@ -10,57 +11,93 @@ const jxr_helper = paths.jxr_helper;
 
 const jxr_input = paths.jxr_input;
 
-/// True for JPEG XR data, which most pictures in Kindle books are.
-pub fn is_jpeg_xr(data: []const u8) bool {
-    return data.len > 4 and data[0] == 'I' and data[1] == 'I' and data[2] == 0xbc and data[3] == 0x01;
+/// The bytes that start a JPEG XR file: "II", then the format's number.
+const jpeg_xr_magic = "II\xbc\x01";
+
+/// Room past the pixels for the PGM header the helper writes first.
+const pgm_header_size_max = 64;
+
+comptime {
+    assert(jpeg_xr_magic.len == 4);
+    // "P5\n", two numbers of at most ten digits with their separators, and "255\n".
+    assert(pgm_header_size_max >= 3 + 2 * 11 + 4);
 }
 
-pub const Gray = struct { pixels: []u8, width: usize, height: usize };
+/// True for JPEG XR data, which most pictures in Kindle books are.
+pub fn is_jpeg_xr(data: []const u8) bool {
+    if (data.len <= jpeg_xr_magic.len) return false;
+    return std.mem.eql(u8, data[0..jpeg_xr_magic.len], jpeg_xr_magic);
+}
+
+pub const Gray = struct { pixels: []u8, width: u32, height: u32 };
 
 /// Decodes a JPEG XR picture with the Kindle's own decoder, through the helper,
 /// which scales it to exactly `width` x `height`: the size it will be drawn.
 pub fn decode_jpeg_xr(
     alloc: std.mem.Allocator,
     data: []const u8,
-    width: usize,
-    height: usize,
+    width: u32,
+    height: u32,
 ) ?Gray {
-    const rc = linux.open(jxr_input, .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true, .CLOEXEC = true }, 0o600);
-    if (failed(rc)) return null;
-    const written = linux.write(@intCast(rc), data.ptr, data.len);
-    _ = linux.close(@intCast(rc));
+    const result = linux.open(
+        jxr_input,
+        .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true, .CLOEXEC = true },
+        0o600,
+    );
+    if (failed(result)) return null;
+    const written = linux.write(@intCast(result), data.ptr, data.len);
+    // Ignored: the bytes are written; a close that fails loses nothing of them.
+    _ = linux.close(@intCast(result));
     if (failed(written) or written != data.len) return null;
-    const out = alloc.alloc(u8, width * height + 64) catch return null;
-    var command_buf: [160]u8 = undefined;
-    const command = std.fmt.bufPrintSentinel(&command_buf, jxr_helper ++ " {d} {d} < " ++ jxr_input, .{ width, height }, 0) catch return null;
+    const pixel_count = std.math.mul(u32, width, height) catch return null;
+    const out_size = std.math.add(u32, pixel_count, pgm_header_size_max) catch return null;
+    const out = alloc.alloc(u8, out_size) catch return null;
+    var command_buffer: [160]u8 = undefined;
+    const command_format = jxr_helper ++ " {d} {d} < " ++ jxr_input;
+    const command = std.fmt.bufPrintSentinel(
+        &command_buffer,
+        command_format,
+        .{ width, height },
+        0,
+    ) catch return null;
+    assert(command.len < command_buffer.len); // Room for the sentinel
     const argv = [_:null]?[*:0]const u8{ "/bin/sh", "-c", command };
-    const n = process.run(&argv, out) orelse return null;
-    return parse_pgm(out[0..n]);
+    const output_size = process.run(&argv, out) orelse return null;
+    assert(output_size <= out.len);
+    const gray = parse_pgm(out[0..output_size]) orelse return null;
+    // Paired with parse_pgm: the pixels are exactly the picture.
+    assert(gray.pixels.len == @as(u64, gray.width) * gray.height);
+    return gray;
 }
 
 /// Reads "P5\n<w> <h>\n255\n<pixels>".
 pub fn parse_pgm(data: []u8) ?Gray {
-    var at: usize = 0;
+    var at: u32 = 0;
     var fields: [4][]const u8 = undefined;
+    // Helper output never comes near 4 GB; past that, the header can't be read.
+    if (data.len > std.math.maxInt(u32)) return null;
     for (&fields) |*f| {
         while (at < data.len and (data[at] == ' ' or data[at] == '\n')) at += 1;
         const start = at;
         while (at < data.len and data[at] != ' ' and data[at] != '\n') at += 1;
         f.* = data[start..at];
     }
+    assert(at <= data.len);
     at += 1; // The one whitespace byte before the pixels
     if (!std.mem.eql(u8, fields[0], "P5")) return null;
-    const w = std.fmt.parseInt(usize, fields[1], 10) catch return null;
-    const h = std.fmt.parseInt(usize, fields[2], 10) catch return null;
-    const size = std.math.mul(@TypeOf(w), w, h) catch return null;
+    const width = std.fmt.parseInt(u32, fields[1], 10) catch return null;
+    const height = std.fmt.parseInt(u32, fields[2], 10) catch return null;
+    const size = std.math.mul(u32, width, height) catch return null;
     if (at > data.len or data.len - at < size) return null;
-    return .{ .pixels = data[at..][0..size], .width = w, .height = h };
+    const gray = Gray{ .pixels = data[at..][0..size], .width = width, .height = height };
+    assert(gray.pixels.len == size);
+    return gray;
 }
 
 test "helper output is read as a grayscale image" {
     var data = "P5\n2 2\n255\n\x00\x40\x80\xff".*;
     const g = parse_pgm(&data).?;
-    try std.testing.expectEqual(@as(usize, 2), g.width);
+    try std.testing.expectEqual(@as(u32, 2), g.width);
     try std.testing.expectEqual(@as(u8, 0x80), g.pixels[2]);
     var short = "P5\n4 4\n255\nab".*;
     try std.testing.expect(parse_pgm(&short) == null);

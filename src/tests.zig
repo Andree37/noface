@@ -33,6 +33,8 @@ test {
     _ = @import("setup.zig");
     _ = @import("kindle/input/gestures.zig");
     _ = @import("kindle/input/watchers.zig");
+    _ = @import("screens/books.zig");
+    _ = @import("screens/book_actions.zig");
     _ = @import("model/stats.zig");
     _ = @import("model/search.zig");
     _ = @import("model/battery.zig");
@@ -66,7 +68,7 @@ test {
     _ = @import("ui/menu.zig");
     _ = @import("ui/notes.zig");
     _ = @import("ui/selection.zig");
-    _ = @import("ui/sheet.zig");
+    _ = @import("ui/book_actions.zig");
     _ = @import("ui/slider.zig");
     _ = @import("sys/state.zig");
     _ = @import("layout/text.zig");

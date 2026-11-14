@@ -6,7 +6,7 @@ const catalog = @import("../../model/catalog.zig");
 const stats = @import("../../model/stats.zig");
 const store = @import("../../kindle/store.zig");
 const app = @import("../../app.zig");
-const library_screen = @import("../library.zig");
+const book_actions = @import("../book_actions.zig");
 const page_number = @import("page_number.zig");
 const sess = @import("session.zig");
 const highlights_model = @import("../../model/highlights.zig");
@@ -49,7 +49,7 @@ pub fn run(a: *app.App, s: *sess.Session, entry: *catalog.Entry) !Result {
             return .stay;
         },
         .finished, .unread => |choice| {
-            library_screen.markRead(a, entry, choice == .finished);
+            book_actions.markRead(a, entry, choice == .finished);
             return .stay;
         },
     }

@@ -37,5 +37,5 @@ pub const library = @import("ui/library.zig");
 pub const menu = @import("ui/menu.zig");
 pub const notes = @import("ui/notes.zig");
 pub const search_sheet = @import("ui/search_sheet.zig");
-pub const sheet = @import("ui/sheet.zig");
+pub const book_actions = @import("ui/book_actions.zig");
 pub const toolbar = @import("ui/toolbar.zig");

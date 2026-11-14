@@ -1,24 +1,17 @@
-//! The home screen: the library, a book's actions, and opening books.
+//! The home screen: browsing the library, searching it, and opening books. The books
+//! are loaded in books.zig, and what a book's sheet does is in book_actions.zig.
 const std = @import("std");
-const dir = @import("../sys/dir.zig");
-const epub = @import("../epub/epub.zig");
-const card = @import("../ui/card.zig");
 const catalog = @import("../model/catalog.zig");
 const os = @import("../sys/os.zig");
 const file = @import("../sys/file.zig");
-const kfx = @import("../kindle/kfx.zig");
 const library = @import("../ui/library.zig");
-const book_actions = @import("../ui/sheet.zig");
-const state = @import("../sys/state.zig");
+const book_actions = @import("../ui/book_actions.zig");
 const catalog_db = @import("../kindle/catalog.zig");
 const lipc = @import("../kindle/lipc.zig");
-const store = @import("../kindle/store.zig");
 const nowUs = os.nowUs;
 const app = @import("../app.zig");
 const hwtcon = @import("../kindle/hwtcon.zig");
 const battery_screen = @import("battery.zig");
-const series_screen = @import("series.zig");
-const cover_image = @import("../gfx/image.zig");
 const panel = @import("panel.zig");
 const lock = @import("lock.zig");
 const input_mod = @import("../kindle/input.zig");
@@ -29,6 +22,10 @@ const keyboard = @import("../ui/keyboard.zig");
 const search_sheet = @import("../ui/search_sheet.zig");
 const stats_screen = @import("stats.zig");
 const search = @import("../model/search.zig");
+const books = @import("books.zig");
+const actions = @import("book_actions.zig");
+const Library = books.Library;
+const loadLibrary = books.loadLibrary;
 
 pub const download_poll_us = 5 * 1000 * 1000;
 
@@ -46,175 +43,6 @@ pub fn loggedHit(x: i32, y: i32, index: usize, count: usize, searching: bool) li
     return h;
 }
 
-pub const Library = struct {
-    arena: std.heap.ArenaAllocator,
-    data: []const u8,
-    entries: []catalog.Entry,
-    visible: []usize,
-
-    fn deinit(l: *Library) void {
-        l.arena.deinit();
-        file.unmap(l.data);
-    }
-
-    fn localCount(l: *const Library) usize {
-        var n: usize = 0;
-        for (l.entries) |e| {
-            if (e.isLocal()) n += 1;
-        }
-        return n;
-    }
-};
-
-
-/// EPUBs copied over the cable. The Kindle's catalog doesn't list them, so noface finds
-/// them itself, reading title and author from each book, and its cover once into a file
-/// beside the book's state.
-fn addEpubs(a: *app.App, alloc: std.mem.Allocator, catalog_entries: []catalog.Entry) ![]catalog.Entry {
-    const paths = dir.findFiles(alloc, a.documents, ".epub") catch return catalog_entries;
-    if (paths.len == 0) return catalog_entries;
-    var out: std.ArrayList(catalog.Entry) = .empty;
-    try out.appendSlice(alloc, catalog_entries);
-    var path_buf: [320]u8 = undefined;
-    var cover_buf: [320]u8 = undefined;
-    next: for (paths) |path| {
-        for (catalog_entries) |e| {
-            if (std.mem.eql(u8, e.path, path)) continue :next;
-        }
-        const data = file.map(path) catch continue;
-        defer file.unmap(data);
-        const state_path = try a.statePath(&path_buf, path);
-        const cover_path = try state.sibling(&cover_buf, state_path, "cover");
-        const have_cover = if (file.map(cover_path)) |c| blk: {
-            file.unmap(c);
-            break :blk true;
-        } else |_| false;
-        const about = epub.info(alloc, data, !have_cover) catch continue;
-        if (about.cover) |bytes| state.writeSmall(cover_path, bytes);
-        const saved = state.load(state_path);
-        try out.append(alloc, .{
-            .path = path,
-            .title = if (about.title.len > 0) about.title else std.fs.path.stem(path),
-            .author = about.author,
-            .percent = @min(saved.percent orelse 0, 100),
-            .finished = saved.finished,
-            .last = saved.opened,
-            .seconds_read = saved.seconds,
-            .thumbnail = if (have_cover or about.cover != null) try alloc.dupeSentinel(u8, cover_path, 0) else "",
-            .kind = "EPUB",
-            // The book's own metadata first, else its file name, as for Kindle books
-            .series = if (about.series.len > 0) about.series else if (catalog.seriesFromFileName(path)) |f| f.name else "",
-            .series_index = if (about.series.len > 0) about.series_index else if (catalog.seriesFromFileName(path)) |f| f.index else 0,
-        });
-    }
-    return out.items;
-}
-
-/// The catalog's downloading flag can stay set long after a download ended, so
-/// the file decides: a partial book points past its own end.
-pub fn isCompleteBook(path: [:0]const u8) bool {
-    if (path.len == 0) return false;
-    const data = file.map(path) catch return false;
-    defer file.unmap(data);
-    return kfx.isComplete(data);
-}
-
-pub fn loadLibrary(a: *app.App) !Library {
-    var arena = std.heap.ArenaAllocator.init(std.heap.smp_allocator);
-    errdefer arena.deinit();
-    const alloc = arena.allocator();
-    const data = try file.map(a.library_path);
-    const entries = try catalog_db.parse(alloc, data);
-    var path_buf: [320]u8 = undefined;
-    for (entries) |*e| {
-        if (e.availability == .downloading and isCompleteBook(e.path)) e.availability = .local;
-        if (!e.isLocal()) continue;
-        const saved = state.load(try a.statePath(&path_buf, e.path));
-        e.seconds_read = saved.seconds;
-        if (state.preferKindle(saved, e.kindle_last)) continue;
-        if (saved.percent) |p| e.percent = @min(p, 100);
-        e.last = @max(e.last, saved.opened);
-    }
-    const all = try addEpubs(a, alloc, entries);
-    series_screen.apply(alloc, a.state_dir, all); // Series set by hand win
-    // Allocated before the arena is copied into the result: a block it adds after
-    // would be known only to this copy, and never freed
-    const visible = try alloc.alloc(usize, all.len);
-    return .{ .arena = arena, .data = data, .entries = all, .visible = visible };
-}
-
-/// Saves the book as unread, so the reload that follows doesn't bring back 100%.
-/// Dated just after the last time it was opened anywhere: newer than stock's
-/// percent, so it wins, without moving the book up in recent order.
-pub fn forgetFinished(a: *app.App, e: *const catalog.Entry) !void {
-    var path_buf: [320]u8 = undefined;
-    const path = try a.statePath(&path_buf, e.path);
-    var saved = state.load(path);
-    saved.percent = 0;
-    saved.opened = @max(saved.opened, e.kindle_last) + 1;
-    state.save(path, saved);
-}
-
-/// Marks a book read or unread, from its sheet here or the reader's menu. The Kindle
-/// keeps this for its own books; an EPUB's is kept with its place. Marked unread, it
-/// also starts again from the beginning.
-pub fn markRead(a: *app.App, e: *catalog.Entry, done: bool) void {
-    store.markRead(e.key, e.kind, done);
-    e.finished = done;
-    if (e.isEpub()) {
-        var path_buf: [320]u8 = undefined;
-        if (a.statePath(&path_buf, e.path)) |p| {
-            var saved = state.load(p);
-            saved.finished = done;
-            state.save(p, saved);
-        } else |_| {}
-    }
-    if (done) {
-        a.journal.finish(a.today());
-        app.saveJournal(a);
-    }
-    if (!done and e.isLocal()) forgetFinished(a, e) catch {};
-    std.debug.print("marked {s}\n", .{if (done) "read" else "unread"});
-}
-
-/// What a book's actions changed, which decides what the library does next.
-/// What a book's sheet changed: `reload` re-reads the library (a series set by hand),
-/// `redraw` only repaints it (a screen of its own was shown and nothing changed).
-pub const Change = enum { none, downloading, other, reload, redraw };
-
-/// Shows a book's actions.
-pub fn bookSheet(a: *app.App, e: *catalog.Entry, entries: []const catalog.Entry, background: []const u8) !Change {
-    std.debug.print("sheet: {s}\n", .{e.title});
-    var confirming = false;
-    while (true) {
-        var list_buf: [4]book_actions.Option = undefined;
-        var row_buf: [4]card.Row = undefined;
-        var subtitle_buf: [320]u8 = undefined;
-        const list = book_actions.options(e, confirming, &list_buf);
-        const subtitle = book_actions.subtitle(&subtitle_buf, e, confirming);
-        const picked = try app.chooseFromCard(a, background, e.title, subtitle, book_actions.rows(list, &row_buf)) orelse return .none;
-        switch (list[picked]) {
-            .cancel => return .none,
-            .remove => confirming = true,
-            .series => return if (try series_screen.choose(a, entries, e)) .reload else .redraw,
-            .confirm_remove => {
-                store.removeDownload(e.key, e.kind);
-                std.debug.print("removed download: {s}\n", .{e.title});
-                return .other;
-            },
-            .download => {
-                store.downloadBook(e.key, e.kind);
-                std.debug.print("download requested: {s}\n", .{e.title});
-                return .downloading;
-            },
-            .mark_read, .mark_unread => |choice| {
-                markRead(a, e, choice == .mark_read);
-                return .other;
-            },
-        }
-    }
-}
-
 /// After finishing a book of a series: the next one, to read now. Only books on the
 /// Kindle can offer it: a series is read from a book's file name, and books in the
 /// cloud have none yet.
@@ -222,23 +50,6 @@ pub fn bookSheet(a: *app.App, e: *catalog.Entry, entries: []const catalog.Entry,
 /// a resting thumb (the pager and keyboard are there), and taps act on lift so pressing
 /// and holding a book can bring up its actions.
 const touches = input_mod.Input.Modes{ .grips = false, .deferred = true, .edge_zones = true };
-
-fn upNext(a: *app.App, next: *const catalog.Entry, background: []u8) !bool {
-    if (next.availability != .local) return false;
-    var label_buf: [160]u8 = undefined;
-    var subtitle_buf: [200]u8 = undefined;
-    const subtitle = std.fmt.bufPrint(&subtitle_buf, "Up next in {s}", .{catalog.seriesLabel(&label_buf, next.*)}) catch "Up next";
-    std.debug.print("up next: {s}\n", .{next.title});
-    // Over the page just left, not whatever the reader last kept in this buffer
-    @memcpy(background, a.screen.pixels);
-    // Its cover beside the title, half the grid's size, when it has one
-    const w = cover_image.width / 2;
-    const h = cover_image.height / 2;
-    const small = if (next.thumbnail.len > 0) cover_image.load(a.alloc, next.thumbnail, w, h) else null;
-    defer if (small) |px| a.alloc.free(px);
-    const book_cover: ?card.Cover = if (small) |px| .{ .pixels = px, .width = w, .height = h } else null;
-    return try app.chooseFromCardWith(a, background, next.title, subtitle, &.{.{ .label = "Read it now" }}, book_cover) != null;
-}
 
 pub fn logPage(lib: *const Library, index: usize, count: usize) void {
     const range = library.pageRange(index, count);
@@ -574,7 +385,7 @@ const Browser = struct {
             b.status_until = nowUs() + status_watch_us; // Wi-Fi coming back, and the like
             if (was_read or !entry.isRead()) break;
             const next = &b.lib.entries[catalog.nextInSeries(b.lib.entries, entry) orelse break];
-            if (!try upNext(a, next, b.buf)) break;
+            if (!try actions.upNext(a, next, b.buf)) break;
             entry = next;
         }
         return .everything;
@@ -582,7 +393,7 @@ const Browser = struct {
 
     /// A book's actions sheet, and the library read again if they changed it.
     fn actOn(b: *Browser, entry: *catalog.Entry) !Next {
-        switch (try bookSheet(b.a, entry, b.lib.entries, b.buf)) {
+        switch (try actions.bookSheet(b.a, entry, b.lib.entries, b.buf)) {
             .none => return .nothing,
             .redraw => return .everything,
             .reload => _ = b.reload(.as_is),

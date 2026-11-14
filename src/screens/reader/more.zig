@@ -9,6 +9,7 @@ const app = @import("../../app.zig");
 const library_screen = @import("../library.zig");
 const page_number = @import("page_number.zig");
 const sess = @import("session.zig");
+const highlights_model = @import("../../model/highlights.zig");
 
 /// What the reader does after the menu.
 pub const Result = union(enum) {
@@ -48,15 +49,7 @@ pub fn run(a: *app.App, s: *sess.Session, entry: *catalog.Entry) !Result {
             return .stay;
         },
         .finished, .unread => |choice| {
-            const done = choice == .finished;
-            store.markRead(entry.key, entry.kind, done);
-            entry.finished = done;
-            if (done) {
-                a.journal.finish(a.today());
-                app.saveJournal(a);
-            }
-            if (!done) library_screen.forgetFinished(a, entry) catch {};
-            std.debug.print("marked {s}\n", .{if (done) "finished" else "unread"});
+            library_screen.markRead(a, entry, choice == .finished);
             return .stay;
         },
     }
@@ -71,7 +64,7 @@ fn details(a: *app.App, s: *sess.Session, entry: *const catalog.Entry, backgroun
     var t1: [32]u8 = undefined;
     var t2: [32]u8 = undefined;
     const percent = (s.current + 1) * 100 / s.pages.len;
-    const highlights = countIds(s);
+    const highlights = highlights_model.count(s.highlights.items);
     const rows = [_]card.Row{
         .{ .quiet = true, .label = std.fmt.bufPrint(&progress_buf, "Page {d} of {d}, {d}%", .{ s.current + 1, s.pages.len, percent }) catch "" },
         .{ .quiet = true, .label = if (stats.readingTime(&t1, s.secondsRead())) |time| std.fmt.bufPrint(&read_buf, "Read here for {s}", .{time}) catch "" else "Not read here yet" },
@@ -81,13 +74,4 @@ fn details(a: *app.App, s: *sess.Session, entry: *const catalog.Entry, backgroun
     _ = try app.chooseFromCard(a, background, entry.title, entry.author, &rows);
 }
 
-/// Highlights, counted once each though they're kept as a mark per paragraph.
-fn countIds(s: *const sess.Session) usize {
-    var n: usize = 0;
-    for (s.highlights.items, 0..) |h, i| {
-        var seen = false;
-        for (s.highlights.items[0..i]) |earlier| seen = seen or std.mem.eql(u8, earlier.id, h.id);
-        if (!seen) n += 1;
-    }
-    return n;
-}
+

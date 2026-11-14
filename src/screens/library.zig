@@ -155,6 +155,28 @@ pub fn forgetFinished(a: *app.App, e: *const catalog.Entry) !void {
     state.save(path, saved);
 }
 
+/// Marks a book read or unread, from its sheet here or the reader's menu. The Kindle
+/// keeps this for its own books; an EPUB's is kept with its place. Marked unread, it
+/// also starts again from the beginning.
+pub fn markRead(a: *app.App, e: *catalog.Entry, done: bool) void {
+    store.markRead(e.key, e.kind, done);
+    e.finished = done;
+    if (e.isEpub()) {
+        var path_buf: [320]u8 = undefined;
+        if (a.statePath(&path_buf, e.path)) |p| {
+            var saved = state.load(p);
+            saved.finished = done;
+            state.save(p, saved);
+        } else |_| {}
+    }
+    if (done) {
+        a.journal.finish(a.today());
+        app.saveJournal(a);
+    }
+    if (!done and e.isLocal()) forgetFinished(a, e) catch {};
+    std.debug.print("marked {s}\n", .{if (done) "read" else "unread"});
+}
+
 /// What a book's actions changed, which decides what the library does next.
 /// What a book's sheet changed: `reload` re-reads the library (a series set by hand),
 /// `redraw` only repaints it (a screen of its own was shown and nothing changed).
@@ -186,23 +208,7 @@ pub fn bookSheet(a: *app.App, e: *catalog.Entry, entries: []const catalog.Entry,
                 return .downloading;
             },
             .mark_read, .mark_unread => |choice| {
-                const done = choice == .mark_read;
-                store.markRead(e.key, e.kind, done);
-                e.finished = done;
-                // The Kindle keeps this for its own books; an EPUB's is kept with its place
-                if (e.isEpub()) {
-                    var path_buf: [320]u8 = undefined;
-                    if (a.statePath(&path_buf, e.path)) |p| {
-                        var saved = state.load(p);
-                        saved.finished = done;
-                        state.save(p, saved);
-                    } else |_| {}
-                }
-                if (done) {
-                    a.journal.finish(a.today());
-                    app.saveJournal(a);
-                }
-                if (!done and e.isLocal()) forgetFinished(a, e) catch {};
+                markRead(a, e, choice == .mark_read);
                 return .other;
             },
         }

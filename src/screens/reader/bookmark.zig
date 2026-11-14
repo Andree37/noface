@@ -34,7 +34,7 @@ pub fn toggle(a: *app.App, s: *sess.Session, alloc: std.mem.Allocator, entry: *c
         try s.bookmarks.append(alloc, .{ .id = id, .para = at.para, .byte = at.byte });
         std.debug.print("bookmark added\n", .{});
     }
-    if (!annotation_db.dryRun()) lipc.syncNow();
+    records.sync();
 }
 
 /// The first place on a page that Amazon numbers. Pages can open on a heading

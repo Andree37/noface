@@ -9,6 +9,7 @@ const annotation_db = @import("../../kindle/annotation_db.zig");
 const safe = @import("../../kindle/safe.zig");
 const sess = @import("session.zig");
 const local_notes = @import("local_notes.zig");
+const lipc = @import("../../kindle/lipc.zig");
 
 /// Amazon's position for a place in the text. Null for paragraphs it doesn't number.
 pub fn pointFor(s: *sess.Session, para: u32, byte: u32) ?annotations.Point {
@@ -16,6 +17,11 @@ pub fn pointFor(s: *sess.Session, para: u32, byte: u32) ?annotations.Point {
     if (p.position == 0) return null;
     const chars = book_model.charOffset(p.text, byte);
     return .{ .element = p.element, .offset = chars, .short = p.position + chars };
+}
+
+/// Asks Amazon to sync the notes just written (not while writes are off for testing).
+pub fn sync() void {
+    if (!annotation_db.dryRun()) lipc.syncNow();
 }
 
 /// Queues a record for sync. True when it was written (or writes are off for testing).

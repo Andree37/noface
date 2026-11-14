@@ -144,7 +144,7 @@ pub fn newHighlight(a: *app.App, s: *sess.Session, alloc: std.mem.Allocator, ent
     };
     const id = try highlights.freeId(alloc, s.highlights.items, start.short);
     const saved = saveHighlight(s, entry, id, highlights.Span.of(lo, hi));
-    if (saved and !annotation_db.dryRun()) lipc.syncNow();
+    if (saved) records.sync();
     std.debug.print("highlight {s}: {d} words, saved {}\n", .{ id, @max(fixed, head) - @min(fixed, head) + 1, saved });
     if (!saved) {
         try highlightNotSaved(a, s);
@@ -171,7 +171,7 @@ pub fn extendHighlight(a: *app.App, s: *sess.Session, alloc: std.mem.Allocator, 
     const crossed = if (grab_start) head > fixed else head < fixed;
     const span = highlights.dragged(whole, words[fixed], words[head], grab_start, crossed);
     const saved = saveHighlight(s, entry, id, span);
-    if (saved and !annotation_db.dryRun()) lipc.syncNow();
+    if (saved) records.sync();
     std.debug.print("highlight extended: saved {}\n", .{saved});
     if (!saved) return app.showNotice(a, "This highlight couldn't be changed.");
     highlights.remove(&s.highlights, id);
@@ -181,12 +181,10 @@ pub fn extendHighlight(a: *app.App, s: *sess.Session, alloc: std.mem.Allocator, 
 
 /// Deletes a highlight here and, through sync, everywhere.
 pub fn removeHighlight(a: *app.App, s: *sess.Session, alloc: std.mem.Allocator, entry: *const catalog.Entry, id: []const u8) !void {
-    if (!annotation_db.dryRun()) {
-        const removed = records.delete(s, entry, .highlight, id);
-        std.debug.print("highlight removed: {}\n", .{removed});
-        if (!removed) return app.showNotice(a, "This highlight couldn't be deleted.");
-        lipc.syncNow();
-    }
+    const removed = records.delete(s, entry, .highlight, id);
+    std.debug.print("highlight removed: {}\n", .{removed});
+    if (!removed) return app.showNotice(a, "This highlight couldn't be deleted.");
+    records.sync();
     highlights.remove(&s.highlights, id);
     try refreshMarks(a, s, alloc);
 }

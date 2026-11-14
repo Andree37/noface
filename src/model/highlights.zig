@@ -135,6 +135,22 @@ pub fn add(list: *std.ArrayList(Highlight), alloc: std.mem.Allocator, paragraphs
 }
 
 /// Removes every mark of a highlight.
+/// Whether `list[i]` is the first mark of its highlight. A highlight keeps a mark per
+/// paragraph it covers; this lists or counts each one once.
+pub fn firstOfId(list: []const Highlight, i: usize) bool {
+    for (list[0..i]) |earlier| {
+        if (std.mem.eql(u8, earlier.id, list[i].id)) return false;
+    }
+    return true;
+}
+
+/// How many highlights there are, each counted once however many paragraphs it covers.
+pub fn count(list: []const Highlight) usize {
+    var n: usize = 0;
+    for (0..list.len) |i| n += @intFromBool(firstOfId(list, i));
+    return n;
+}
+
 pub fn remove(list: *std.ArrayList(Highlight), id: []const u8) void {
     var i: usize = 0;
     while (i < list.items.len) {
@@ -272,4 +288,14 @@ test "excerpts end at a word and never split a character" {
     try std.testing.expectEqualStrings("one two", excerpt("one two three", 10));
     try std.testing.expectEqualStrings("caf", excerpt("caf\u{e9}", 4)); // The accent is two bytes
     try std.testing.expectEqualStrings("lead", excerpt("  lead", 20));
+}
+
+test "a highlight over several paragraphs counts once" {
+    const list = [_]Highlight{
+        .{ .id = "a", .mark = .{ .para = 0, .start = 0, .end = 3 } },
+        .{ .id = "a", .mark = .{ .para = 1, .start = 0, .end = 3 } },
+        .{ .id = "b", .mark = .{ .para = 2, .start = 0, .end = 3 } },
+    };
+    try std.testing.expectEqual(@as(usize, 2), count(&list));
+    try std.testing.expect(firstOfId(&list, 0) and !firstOfId(&list, 1) and firstOfId(&list, 2));
 }

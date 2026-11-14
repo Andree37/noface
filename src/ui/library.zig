@@ -138,13 +138,16 @@ pub fn heroRect(width: u32) Rect {
     return .{ .x = margin, .y = hero_top, .w = width - 2 * margin, .h = cover.hero_height };
 }
 
+/// Where the `slot`th cover on a page of the grid sits (counting along rows).
+fn cellOrigin(slot: usize, with_hero: bool) struct { x: u32, y: u32 } {
+    const top: u32 = @intCast(gridTop(with_hero));
+    return .{ .x = margin + @as(u32, @intCast(slot % columns)) * cell_step, .y = top + @as(u32, @intCast(slot / columns)) * row_height };
+}
+
 /// Screen area of a grid book, for tap feedback.
 pub fn bookRect(index: usize, page: usize) Rect {
-    const offset = index - firstBook(page);
-    const column: u32 = @intCast(offset % columns);
-    const row: u32 = @intCast(offset / columns);
-    const top: u32 = @intCast(gridTop(page == 0));
-    return .{ .x = margin + column * cell_step, .y = top + row * row_height, .w = cover.width, .h = cover.height };
+    const at = cellOrigin(index - firstBook(page), page == 0);
+    return .{ .x = at.x, .y = at.y, .w = cover.width, .h = cover.height };
 }
 
 
@@ -399,9 +402,8 @@ pub fn render(alloc: std.mem.Allocator, fonts: Fonts, page: Page, entries: []cat
     const shown = visible[@min(first, visible.len)..@min(first + gridSize(with_hero), visible.len)];
     const top: u32 = @intCast(gridTop(with_hero));
     for (shown, 0..) |entry_index, i| {
-        const x: u32 = margin + @as(u32, @intCast(i % columns)) * cell_step;
-        const y: u32 = top + @as(u32, @intCast(i / columns)) * row_height;
-        try drawCell(alloc, fonts, page, &entries[entry_index], x, y);
+        const at = cellOrigin(i, with_hero);
+        try drawCell(alloc, fonts, page, &entries[entry_index], at.x, at.y);
     }
     if (visible.len == 0) try fonts.small.draw(page, margin, @intCast(top + 60), if (query.len > 0) "No books match." else "No books here yet.");
     try drawFooter(fonts, page, index, pageCount(visible.len));

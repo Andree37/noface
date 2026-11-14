@@ -90,9 +90,7 @@ fn notesRows(alloc: std.mem.Allocator, s: *const sess.Session) ![]goto.Row {
     }
     // A highlight has a mark per paragraph it covers; list it once, from its start.
     for (s.highlights.items, 0..) |h, i| {
-        var seen = false;
-        for (s.highlights.items[0..i]) |earlier| seen = seen or std.mem.eql(u8, earlier.id, h.id);
-        if (seen) continue;
+        if (!highlights.firstOfId(s.highlights.items, i)) continue;
         const span = highlights.extent(s.highlights.items, h.id) orelse continue;
         const para = s.paragraphs[span.first_para].text;
         const end = @min(if (span.last_para == span.first_para) span.last_byte else para.len, para.len);

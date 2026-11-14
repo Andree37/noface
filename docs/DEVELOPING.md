@@ -73,6 +73,43 @@ Code is split by who owns it. `zig build check` fails if a file imports across t
   and `xtap` record the screen and fake taps, for timing and demos.
 - `third_party/`: stb libraries.
 
+## How a screen works
+
+Two screens run for as long as noface does: the library (`screens/library.zig`) and a
+book (`screens/reader.zig`). Each is a struct with one loop that takes the next action
+and hands it to a handler, and each says how it takes touches (`Input.Modes`) in one
+place: the library's `touches`, the reader's `touchesFor(view)`.
+
+Everything opened over them (a card, a sheet, a list, the keyboard, the quick panel,
+the picture viewer) runs on `screens/screen.zig`. Such a screen is a struct that says
+only what makes it different:
+
+```zig
+const Bubble = struct {
+    pub const Result = void; // What it gives back when done
+    pub const touches = Input.Modes.sheet; // Optional: how it takes touches
+    a: *app.App,
+
+    pub fn draw(b: *Bubble, part: screen.Part) !void { ... } // .all, or .changing
+    pub fn onTap(b: *Bubble, t: screen.Tap) !screen.Step(void) {
+        return .close; // Or .stay, .{ .redraw = .changing }, .{ .done = result }
+    }
+};
+
+var bubble = Bubble{ .a = a };
+_ = try screen.run(a, &bubble); // null: closed, or the Kindle locked
+```
+
+`screen.run` draws it whole first, waits, and draws again as each step asks. It sets
+the touch modes and puts them back after, and when the Kindle locks or noface is told
+to leave, it closes the screen and keeps that action for the one underneath. A screen
+that changes on its own adds `tick_us` and `onTick`; holds and swipes go to `onAction`.
+Typing on the keyboard is `screens/typing.zig`, shared by every screen with a field.
+
+So a new screen never writes its own wait loop, redraw flags or touch settings. The
+loops left are the two above, the lock screen (which waits for the unlock, not a tap),
+and following one gesture to its end (`app.followDrag`, the picture's double tap).
+
 ## How the speed comparison was measured
 
 `docs/speed.gif` was recorded on a Kindle Paperwhite 12th gen with `tools/fbrec`

@@ -51,7 +51,10 @@ pub fn entries(alloc: std.mem.Allocator, data: []const u8) ![]Entry {
         at += 46 + name_len + extra_len + comment_len;
         if (flags & 1 != 0) continue; // Encrypted
         // The data starts after the local header, whose own name and extra lengths can differ.
-        if (local + 30 > data.len or !std.mem.eql(u8, data[local..][0..4], &std.zip.local_file_header_sig)) continue;
+        // Compared without adding to `local`, which comes from the file: on the Kindle's
+        // 32-bit CPU an offset near 4 GB plus the header would overflow and stop noface.
+        if (local > data.len or data.len - local < 30) continue;
+        if (!std.mem.eql(u8, data[local..][0..4], &std.zip.local_file_header_sig)) continue;
         const l = data[local..];
         const start = local + 30 + @as(usize, std.mem.readInt(u16, l[26..28], .little)) + std.mem.readInt(u16, l[28..30], .little);
         if (start > data.len or compressed > data.len - start) continue;

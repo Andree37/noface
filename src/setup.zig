@@ -24,7 +24,7 @@ pub const region_bytes = struct {
     pub const app: u32 = 64 << 20;
     /// Glyph bitmaps and pictures decoded by the stb C libraries: 15 MB measured at
     /// most (a large cover), so 64 for a picture four times that.
-    pub const stb: u32 = 64 << 20;
+    pub const decoders: u32 = 64 << 20;
     /// The library's list and its covers, 84 KB each once seen; a reload holds two
     /// lists for a moment. A cover that doesn't fit is drawn as type instead.
     pub const library: u32 = 32 << 20;
@@ -39,7 +39,7 @@ pub const region_bytes = struct {
 comptime {
     // Every region fits in the ~480 MB a Kindle has free beside Amazon's services
     const b = region_bytes;
-    assert(b.app + b.stb + b.library + b.book + b.scratch < 480 << 20);
+    assert(b.app + b.decoders + b.library + b.book + b.scratch < 480 << 20);
     // A book's region holds the largest book measured, with room to spare
     assert(b.book > 78 << 20);
 }
@@ -149,7 +149,7 @@ pub const DataFiles = struct {
 pub const Parts = struct {
     alloc: std.mem.Allocator, // Counted by app_budget
     app_budget: *memory.Budget,
-    stb_budget: *memory.Budget,
+    decoders_budget: *memory.Budget,
     screen: *hwtcon.Screen,
     input: *Input,
     kit: *Kit,
@@ -186,7 +186,7 @@ pub fn assemble(p: Parts) !app.App {
     return .{
         .alloc = p.alloc,
         .app_budget = p.app_budget,
-        .stb_budget = p.stb_budget,
+        .decoders_budget = p.decoders_budget,
         .library_budget = &regions.library_budget,
         .book_region = &regions.book,
         .scratch_region = &regions.scratch,

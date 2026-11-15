@@ -4,7 +4,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const Page = @import("page.zig").Page;
 const truetype = @import("truetype.zig");
-const c_memory = @import("c_memory.zig");
+const decoder_memory = @import("decoder_memory.zig");
 
 /// The font file's first bytes: its version, which says what kind of font it is.
 const sfnt_version_truetype = 0x00010000;
@@ -121,7 +121,8 @@ pub const Font = struct {
         const advance = truetype.horizontal_metrics(&f.info, index).advance;
         // Kept as long as the font: glyphs are drawn once, from the decoders' budget.
         // With no room left there, a glyph is drawn blank, as stb_truetype drew it.
-        const bitmap = truetype.glyph_bitmap(&f.info, c_memory.allocator(), f.scale, index) catch
+        const decoders = decoder_memory.allocator();
+        const bitmap = truetype.glyph_bitmap(&f.info, decoders, f.scale, index) catch
             truetype.glyph_bitmap_box(&f.info, f.scale, index);
         const g = Glyph{
             .index = index,

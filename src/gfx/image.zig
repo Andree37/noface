@@ -5,7 +5,7 @@ const assert = std.debug.assert;
 const check = @import("../base/check.zig");
 const file = @import("../sys/file.zig");
 const Page = @import("page.zig").Page;
-const c_memory = @import("c_memory.zig");
+const decoder_memory = @import("decoder_memory.zig");
 const decoded = @import("decoded.zig");
 const jpeg_decoder = @import("jpeg.zig");
 const png_decoder = @import("png.zig");
@@ -130,7 +130,7 @@ pub fn fill_screen(
 ) bool {
     const screen = Page{ .buf = buf, .width = width_px, .height = height_px, .stride = stride };
     assert(screen.holds_rows());
-    const decoder = c_memory.allocator();
+    const decoder = decoder_memory.allocator();
     const gray = decode_picture(decoder, jpeg) orelse return false;
     defer decoder.free(gray.pixels);
     const picture = Size{ .width = gray.width, .height = gray.height };
@@ -181,7 +181,7 @@ pub fn prepare(
 
 /// Decodes a JPEG or PNG, then prepares it at `w` x `h`.
 pub fn decode_and_prepare(alloc: std.mem.Allocator, encoded: []const u8, w: u32, h: u32) ?[]u8 {
-    const decoder = c_memory.allocator();
+    const decoder = decoder_memory.allocator();
     const gray = decode_picture(decoder, encoded) orelse return null;
     defer decoder.free(gray.pixels);
     const ready = prepare(alloc, gray.pixels, gray.width, gray.height, w, h) orelse return null;
@@ -211,7 +211,7 @@ pub fn load(alloc: std.mem.Allocator, path: [*:0]const u8, dw: u32, dh: u32) ?[]
     assert(dh > 0);
     const data = file.map(path) catch return null;
     defer file.unmap(data);
-    const decoder = c_memory.allocator();
+    const decoder = decoder_memory.allocator();
     const gray = decode_picture(decoder, data) orelse return null;
     defer decoder.free(gray.pixels);
     const picture = Size{ .width = gray.width, .height = gray.height };
@@ -244,7 +244,7 @@ fn decode_either(alloc: std.mem.Allocator, encoded: []const u8) !decoded.Gray {
 
 /// Decodes a JPEG or PNG at full size. The caller owns the pixels.
 pub fn decode_gray(alloc: std.mem.Allocator, encoded: []const u8) ?Gray {
-    const decoder = c_memory.allocator();
+    const decoder = decoder_memory.allocator();
     const picture = decode_picture(decoder, encoded) orelse return null;
     defer decoder.free(picture.pixels);
     const out = alloc.alloc(u8, picture.pixels.len) catch return null;

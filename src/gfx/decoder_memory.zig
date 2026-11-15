@@ -1,6 +1,5 @@
 //! Where the font and picture decoders take their memory from: a budget, like
-//! everything else, so glyph bitmaps and decoded pictures show up in its numbers. The
-//! name is from when the decoders were the stb C libraries, whose malloc this was.
+//! everything else, so glyph bitmaps and decoded pictures show up in its numbers.
 const std = @import("std");
 const assert = std.debug.assert;
 const memory = @import("../base/memory.zig");

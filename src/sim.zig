@@ -14,7 +14,7 @@ const assert = std.debug.assert;
 const app = @import("app.zig");
 const hwtcon = @import("kindle/hwtcon.zig");
 const input_mod = @import("kindle/input.zig");
-const c_memory = @import("gfx/c_memory.zig");
+const decoder_memory = @import("gfx/decoder_memory.zig");
 const memory = @import("base/memory.zig");
 const wifi_saver = @import("kindle/wifi_saver.zig");
 const setup = @import("setup.zig");
@@ -72,8 +72,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
     wifi_saver.use_data_dir(data);
 
     var app_budget = memory.Budget{ .name = "app", .child = alloc, .limit = 512 << 20 };
-    var stb_budget = memory.Budget{ .name = "stb", .child = alloc, .limit = 256 << 20 };
-    c_memory.use(&stb_budget);
+    var decoders_budget = memory.Budget{ .name = "decoders", .child = alloc, .limit = 256 << 20 };
+    decoder_memory.use(&decoders_budget);
     const a_alloc = app_budget.allocator();
 
     var screen = try hwtcon.Screen.fake(a_alloc, width_px, height_px);
@@ -101,7 +101,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     var a = try setup.assemble(.{
         .alloc = a_alloc,
         .app_budget = &app_budget,
-        .stb_budget = &stb_budget,
+        .decoders_budget = &decoders_budget,
         .screen = &screen,
         .input = &input,
         .kit = &kit,

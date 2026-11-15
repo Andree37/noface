@@ -10,7 +10,7 @@ test {
     _ = @import("screens/reader/records.zig");
     _ = @import("base/check.zig");
     _ = @import("base/memory.zig");
-    _ = @import("gfx/c_memory.zig");
+    _ = @import("gfx/decoder_memory.zig");
     _ = @import("model/settings.zig");
     _ = @import("kindle/fonts.zig");
     _ = @import("gfx/page.zig");

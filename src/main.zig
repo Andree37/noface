@@ -12,7 +12,7 @@ const paths = @import("kindle/paths.zig");
 const setup = @import("setup.zig");
 const fonts_db = @import("kindle/fonts.zig");
 const memory = @import("base/memory.zig");
-const c_memory = @import("gfx/c_memory.zig");
+const decoder_memory = @import("gfx/decoder_memory.zig");
 const Font = @import("gfx/font.zig").Font;
 const file = @import("sys/file.zig");
 const hwtcon = @import("kindle/hwtcon.zig");
@@ -84,13 +84,13 @@ fn main_reader(init: std.process.Init.Minimal) !void {
         .limit = setup.region_bytes.app,
     };
     const alloc = app_budget.allocator();
-    var stb_region = try memory.Region.reserve("stb", .heap, setup.region_bytes.stb);
-    var stb_budget = memory.Budget{
-        .name = "stb",
-        .region = &stb_region,
-        .limit = setup.region_bytes.stb,
+    var decoders_region = try memory.Region.reserve("decoders", .heap, setup.region_bytes.decoders);
+    var decoders_budget = memory.Budget{
+        .name = "decoders",
+        .region = &decoders_region,
+        .limit = setup.region_bytes.decoders,
     };
-    c_memory.use(&stb_budget);
+    decoder_memory.use(&decoders_budget);
 
     const state_dir = std.mem.sliceTo(argv[6], 0);
 
@@ -127,7 +127,7 @@ fn main_reader(init: std.process.Init.Minimal) !void {
     var shared = try setup.assemble(.{
         .alloc = alloc,
         .app_budget = &app_budget,
-        .stb_budget = &stb_budget,
+        .decoders_budget = &decoders_budget,
         .screen = &screen,
         .input = &input,
         .kit = &kit,

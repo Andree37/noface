@@ -144,7 +144,7 @@ pub fn read_book(a: *app.App, entry: *catalog.Entry) !Outcome {
         scratch_budget.report();
         a.library_budget.report();
         a.app_budget.report();
-        a.stb_budget.report();
+        a.decoders_budget.report();
     }
     return read_book_open(a, entry, book_budget.allocator(), &scratch_budget);
 }

@@ -11,7 +11,7 @@ const app = @import("app.zig");
 const hwtcon = @import("kindle/hwtcon.zig");
 const input_mod = @import("kindle/input.zig");
 const Font = @import("gfx/font.zig").Font;
-const c_memory = @import("gfx/c_memory.zig");
+const decoder_memory = @import("gfx/decoder_memory.zig");
 const memory = @import("base/memory.zig");
 const catalog = @import("model/catalog.zig");
 const settings_model = @import("model/settings.zig");
@@ -311,20 +311,20 @@ fn play_on(kindle: Kindle, steps: []const Step) !Outcome {
 
     const devices = try play_on_devices(alloc, steps);
 
-    // Before any font: stb allocates through it. Let go of on return, as it lives here
-    var stb_budget = memory.Budget{
-        .name = "stb",
+    // Before any font: the decoders allocate through it. Let go of on return, as it lives here
+    var decoders_budget = memory.Budget{
+        .name = "decoders",
         .child = std.heap.smp_allocator,
         .limit = 128 << 20,
     };
-    c_memory.use(&stb_budget);
-    defer c_memory.use_default();
+    decoder_memory.use(&decoders_budget);
+    defer decoder_memory.use_default();
 
     const kept = try play_on_kept(alloc, dir);
     var a = try setup.assemble(.{
         .alloc = alloc,
         .app_budget = &budget,
-        .stb_budget = &stb_budget,
+        .decoders_budget = &decoders_budget,
         .screen = devices.screen,
         .input = devices.input,
         .kit = kept.kit,

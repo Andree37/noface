@@ -75,7 +75,7 @@ pub const Slot = struct { page: i64 = -1, buf: []u8, hits: text.Hits = .{} };
 pub const App = struct {
     alloc: std.mem.Allocator, // Lives as long as the app, counted by app_budget
     app_budget: *memory.Budget,
-    stb_budget: *memory.Budget,
+    decoders_budget: *memory.Budget,
     // Reserved at startup, like the app's: the library's list and covers (a budget
     // that outlives each list), the open book's memory, and one action's
     library_budget: *memory.Budget,

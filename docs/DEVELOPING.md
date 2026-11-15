@@ -109,6 +109,9 @@ Code is split by who owns it. `zig build check` fails if a file imports across t
 - `src/layout/`: setting a book's text into pages, and hyphenation.
 - `src/ui/`: drawing screens and mapping taps to controls.
 - `src/epub/`: the open EPUB format, read into our model.
+- `src/library/`: the library's index on the user drive: built from the catalog, the
+  EPUBs found and the series set by hand, sorted on the drive, and read back a page at
+  a time, in memory of a fixed size for any number of books.
 - `src/base/`: building blocks every folder may use: memory budgets, checks.
 - `src/screens/`: the flow of each screen. Of the folders, the only one that calls
   into `kindle/`.

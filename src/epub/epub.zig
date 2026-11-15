@@ -824,9 +824,9 @@ test "a note reference ending in a space at a paragraph's end stays inside it" {
 
 test "a series place that isn't a number in range counts as none" {
     const places = [_]struct { []const u8, f32 }{
-        .{ "2", 2 },     .{ "1.5", 1.5 }, .{ "nan", 0 }, .{ "NaN", 0 },
-        .{ "inf", 0 },   .{ "-inf", 0 },  .{ "-3", 0 },  .{ "word", 0 },
-        .{ "99999", 0 }, .{ "", 0 },
+        .{ "2", 2 },         .{ "1.5", 1.5 },    .{ "nan", 0 }, .{ "NaN", 0 },
+        .{ "inf", 0 },       .{ "-inf", 0 },     .{ "-3", 0 },  .{ "word", 0 },
+        .{ "99999", 99999 }, .{ "99999999", 0 }, .{ "", 0 },
     };
     for (places) |place| {
         var p = Package{ .dir = "", .items = &.{}, .spine = &.{} };

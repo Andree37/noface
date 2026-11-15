@@ -275,8 +275,10 @@ fn bracketed(first: []const u8) ?SeriesPlace {
 
 const Sureness = enum { stated, guessed };
 
-/// The highest place in a series noface believes.
-pub const max_index = 9999;
+/// The highest place in a series noface believes: the largest whole number an f32 holds
+/// exactly, past any series (Perry Rhodan is past 3000), short of an ISBN or a date
+/// written as one number. A stated place is any whole number up to it.
+pub const max_index = (1 << 24) - 1;
 
 /// Words that make a guessed name not a series when they end it ("Penguin Edition") or
 /// a number follows them ("Volume 2", "Vol. 1", "Part 3"). Inside a name they're fine:
@@ -599,6 +601,20 @@ test "series come from file names" {
     try std.testing.expectEqualStrings("1632", year.name);
     const perry = series_from_file_name("/d/X -- Y -- Perry Rhodan #2500 -- Z.kfx").?;
     try std.testing.expectEqual(@as(f32, 2500), perry.index);
+    // Past the 9999 once believed
+    const long = series_from_file_name("/d/X -- Y -- Long Saga #12000 -- Z.kfx").?;
+    try std.testing.expectEqual(@as(f32, 12000), long.index);
+    var label: [64]u8 = undefined;
+    const e: Entry = .{
+        .path = "/a",
+        .title = "T",
+        .author = "",
+        .percent = 0,
+        .last = 0,
+        .series = "S",
+        .series_index = max_index,
+    };
+    try std.testing.expectEqualStrings("S #16777215", series_label(&label, e));
     // The series named last, right before the extension
     const scarlet = "/d/A Study in Scarlet -- Arthur Conan Doyle -- Sherlock Holmes #1.epub";
     const last = series_from_file_name(scarlet).?;

@@ -3,7 +3,6 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const battery = @import("../model/battery.zig");
-const state = @import("../sys/state.zig");
 const file = @import("../sys/file.zig");
 const journal = @import("../model/journal.zig");
 const clock = @import("../sys/clock.zig");
@@ -73,13 +72,13 @@ pub fn note(path: [*:0]const u8, last: *?battery.Sample) void {
 /// Keeps the newest half of the log, from a line start.
 fn note_trim(path: [*:0]const u8) void {
     var buffer: [log_bytes_max + 4096]u8 = undefined;
-    const all = state.read_small(path, &buffer);
+    const all = file.read_small(path, &buffer);
     assert(all.len <= buffer.len);
     const cut = all.len / 2;
     const start = (std.mem.indexOfScalarPos(u8, all, cut, '\n') orelse return) + 1;
     assert(start > cut);
     assert(start <= all.len);
-    state.write_small(path, all[start..]);
+    file.write_small(path, all[start..]);
 }
 
 /// The samples in the log, oldest first, as many as `out` holds (the newest).
@@ -87,7 +86,7 @@ pub fn load(path: [*:0]const u8, out: []battery.Sample) []battery.Sample {
     assert(out.len > 0);
     assert(out.len <= std.math.maxInt(u32));
     var buffer: [log_bytes_max + 4096]u8 = undefined;
-    const all = state.read_small(path, &buffer);
+    const all = file.read_small(path, &buffer);
     assert(all.len <= buffer.len);
     // Kept in a ring, so a long log costs one pass, then put in order. No more lines
     // than bytes, so the count fits a u32.

@@ -14,7 +14,6 @@ const paths = @import("paths.zig");
 const stock_ui = @import("stock_ui.zig");
 const process = @import("../sys/process.zig");
 const service = @import("../sys/service.zig");
-const state = @import("../sys/state.zig");
 const calls = @import("../sys/calls.zig");
 const linux = calls;
 const file = @import("../sys/file.zig");
@@ -92,7 +91,7 @@ pub fn run(envp: [*:null]const ?[*:0]const u8) u32 {
         exit_not_started;
     var line: [32]u8 = undefined;
     const said = std.fmt.bufPrint(&line, "exit code {d}\n", .{code}) catch "exit\n";
-    service.append_file(log_path, said);
+    file.append_file(log_path, said);
     // Leaving on purpose is a good start too, even within the first minute
     if (code == 0) _ = calls.unlink(attempts_path); // Gone already: nothing to reset
     stock_ui.restore();
@@ -133,7 +132,7 @@ fn watch(
         if (rc == @as(u32, @intCast(pid)) or failed(rc)) {
             if (check) |c| c.give_up();
             if (failed(rc)) return exit_not_started;
-            return service.exit_code(@bitCast(status));
+            return process.exit_code(@bitCast(status));
         }
         if (service.take_stop_request()) {
             _ = linux.kill(pid, linux.SIG.TERM); // Ended already: then the next turn reaps it
@@ -213,10 +212,10 @@ const PowerCheck = struct {
 fn look(pid: i32) void {
     assert(pid > 0);
     var beat_buffer: [32]u8 = undefined;
-    const beat = state.read_small(paths.heartbeat, &beat_buffer);
+    const beat = file.read_small(paths.heartbeat, &beat_buffer);
     assert(beat.len <= beat_buffer.len);
     if (!stuck(os.unix_time(), beat)) return;
-    service.append_file(log_path, "watchdog: no heartbeat for 2 minutes, stopping noface\n");
+    file.append_file(log_path, "watchdog: no heartbeat for 2 minutes, stopping noface\n");
     _ = linux.kill(pid, linux.SIG.KILL); // Ended already: then the next turn reaps it
 }
 

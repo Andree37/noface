@@ -70,7 +70,6 @@ pub const CatalogFacts = struct {
     database: ?calls.Facts = null,
     log: ?calls.Facts = null,
 
-    // Assertions: it reads two files' size and change time: outside data.
     pub fn read() CatalogFacts {
         return .{
             .database = file.facts_of(paths.catalog),
@@ -196,7 +195,6 @@ pub const Library = struct {
         return .catalog_changed;
     }
 
-    // Assertions: it reads a book's file, which is outside data.
     fn is_whole(_: void, e: *const catalog.Entry) bool {
         return e.path.len > 0 and builder.is_complete_book(e.path);
     }

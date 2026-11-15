@@ -8,6 +8,7 @@ const assert = std.debug.assert;
 const linux = std.os.linux;
 const os = @import("os.zig");
 const calls = @import("calls.zig");
+const file = @import("file.zig");
 
 const failed = os.failed;
 
@@ -19,12 +20,8 @@ const processes_max = 4096;
 const cmdline_bytes_max = 1024;
 /// The kernel keeps a process's name to 15 characters (`comm`).
 const comm_length_max = 15;
-/// The largest file `copy_file` copies: Amazon's catalog is a few megabytes.
-const copy_bytes_max = 1 << 30;
-const copy_chunk_bytes = 1 << 16;
 
 comptime {
-    assert(copy_bytes_max % copy_chunk_bytes == 0);
     assert(cmdline_bytes_max > comm_length_max);
 }
 
@@ -100,94 +97,6 @@ pub fn spawn_to_file(
     assert(pid > 0);
     assert(pid <= std.math.maxInt(i32));
     return @intCast(pid);
-}
-
-/// The status a shell's `$?` gives for a wait status: the exit code, or 128 plus the
-/// signal that ended it.
-pub fn exit_code(status: u32) u32 {
-    const code: u32 = if (linux.W.IFEXITED(status))
-        linux.W.EXITSTATUS(status)
-    else
-        128 + @as(u32, @backingInt(linux.W.TERMSIG(status)));
-    assert(code < 256);
-    if (status == 0) assert(code == 0);
-    return code;
-}
-
-/// Waits for a child to end until `deadline` (microseconds, monotonic); then kills
-/// it. Its exit code, or null when it ran out of time.
-pub fn wait_until(pid: i32, deadline: u64) ?u32 {
-    assert(pid > 0);
-    var status: i32 = 0;
-    // Bounded by the deadline: each look waits a few milliseconds
-    while (os.now_us() < deadline) {
-        const rc = linux.waitpid(pid, &status, linux.W.NOHANG);
-        if (rc == @as(u32, @intCast(pid))) return exit_code(@bitCast(status));
-        if (failed(rc)) return null; // Not our child, or gone already: nothing to wait for
-        os.sleep_ms(20);
-    }
-    _ = linux.kill(pid, .KILL); // Already gone: then there's nothing to stop
-    _ = linux.waitpid(pid, &status, 0); // Reaped, whatever its status
-    assert(os.now_us() >= deadline);
-    return null;
-}
-
-/// Copies the file at `source` to `target`, replacing it. False when it couldn't
-/// be copied whole, in which case no partial copy is left.
-pub fn copy_file(source: [*:0]const u8, target: [*:0]const u8) bool {
-    assert(source[0] == '/');
-    assert(target[0] == '/');
-    const in_rc = linux.open(source, .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0);
-    if (failed(in_rc)) return false;
-    const in: i32 = @intCast(in_rc);
-    defer _ = linux.close(in); // Only read: nothing is lost if closing fails
-    const out_flags: linux.O = .{
-        .ACCMODE = .WRONLY,
-        .CREAT = true,
-        .TRUNC = true,
-        .CLOEXEC = true,
-    };
-    const out_rc = linux.open(target, out_flags, 0o644);
-    if (failed(out_rc)) return false;
-    const out: i32 = @intCast(out_rc);
-    var chunk: [copy_chunk_bytes]u8 = undefined;
-    var copied: u64 = 0;
-    const whole = for (0..copy_bytes_max / copy_chunk_bytes) |_| {
-        const got = linux.read(in, &chunk, chunk.len);
-        if (failed(got)) break false;
-        if (got == 0) break true;
-        if (!write_all(out, chunk[0..got])) break false;
-        copied += got;
-    } else false; // Larger than any catalog
-    const closed = !failed(linux.close(out)); // A copy that can't be closed may be short
-    if (!whole or !closed) _ = linux.unlink(target); // A partial copy goes
-    assert(copied <= copy_bytes_max);
-    return whole and closed;
-}
-
-fn write_all(fd: i32, data: []const u8) bool {
-    assert(fd >= 0);
-    var done: u32 = 0;
-    // Each write moves at least a byte, or fails
-    while (done < data.len) {
-        const wrote = linux.write(fd, data[done..].ptr, data.len - done);
-        if (failed(wrote) or wrote == 0) return false;
-        done += @intCast(wrote);
-    }
-    assert(done == data.len);
-    return true;
-}
-
-/// Appends `text` to the file at `path`, as a shell's `echo text >> path` does.
-pub fn append_file(path: [*:0]const u8, text: []const u8) void {
-    assert(path[0] == '/');
-    assert(text.len > 0);
-    const flags: linux.O = .{ .ACCMODE = .WRONLY, .CREAT = true, .APPEND = true, .CLOEXEC = true };
-    const rc = linux.open(path, flags, 0o644);
-    if (failed(rc)) return; // A log line that can't be written is only a log line
-    const fd: i32 = @intCast(rc);
-    _ = write_all(fd, text); // Likewise
-    _ = linux.close(fd); // Likewise
 }
 
 /// Wake-ups: a signal handler writes a byte to a pipe, which the waiting side polls,
@@ -281,19 +190,7 @@ pub fn read_cmdline(pid: i32, buffer: []u8) []const u8 {
     var path_buffer: [32]u8 = undefined;
     const path = std.fmt.bufPrintSentinel(&path_buffer, "/proc/{d}/cmdline", .{pid}, 0) catch
         return "";
-    return read_small(path, buffer);
-}
-
-fn read_small(path: [*:0]const u8, buffer: []u8) []const u8 {
-    assert(path[0] == '/');
-    assert(buffer.len > 0);
-    const rc = linux.open(path, .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0);
-    if (failed(rc)) return ""; // Gone since it was listed
-    const fd: i32 = @intCast(rc);
-    defer _ = linux.close(fd); // Only read: nothing is lost if closing fails
-    const got = linux.read(fd, buffer.ptr, buffer.len);
-    if (failed(got)) return "";
-    return buffer[0..got];
+    return file.read_small(path, buffer);
 }
 
 /// Calls `each(context, pid, cmdline)` for every running process named `name`, but
@@ -312,7 +209,7 @@ pub fn each_named(
         var path_buffer: [32]u8 = undefined;
         const comm_path = std.fmt.bufPrintSentinel(&path_buffer, "/proc/{d}/comm", .{pid}, 0) catch
             continue;
-        const comm = read_small(comm_path, &comm_buffer);
+        const comm = file.read_small(comm_path, &comm_buffer);
         var cmdline_buffer: [cmdline_bytes_max]u8 = undefined;
         const cmdline = read_cmdline(pid, &cmdline_buffer);
         if (!is_named(comm, cmdline, name)) continue;

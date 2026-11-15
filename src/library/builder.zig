@@ -335,7 +335,6 @@ fn lines_max(lines: *const files.Lines) u32 {
 
 /// The catalog's downloading flag can stay set long after a download ended, so
 /// the file decides: a partial book points past its own end.
-// Assertions: it reads a book's file: outside data.
 pub fn is_complete_book(path: [:0]const u8) bool {
     if (path.len == 0) return false;
     const data = file.map(path) catch return false;
@@ -379,7 +378,7 @@ fn read_epub(b: *Build, path: [:0]const u8, cover_path: [:0]const u8) ?epub_cach
     defer file.unmap(data);
     const have_cover = file.exists(cover_path);
     const about = read_about(b.scratch, data, !have_cover) orelse return null;
-    if (about.cover) |bytes| state.write_small(cover_path, bytes);
+    if (about.cover) |bytes| file.write_small(cover_path, bytes);
     if (about.cover != null) assert(!have_cover); // Read only for a book without one
     return .{
         .title = about.title,

@@ -4,12 +4,12 @@
 //! `Input`'s methods (input.zig names each one); the state they keep is Input's.
 const std = @import("std");
 const assert = std.debug.assert;
+const file = @import("../../sys/file.zig");
 const input = @import("../input.zig");
 const evdev = @import("evdev.zig");
 const paths = @import("../paths.zig");
 const lipc = @import("../lipc.zig");
 const touch_zones = @import("../touch.zig");
-const state = @import("../../sys/state.zig");
 const linux = @import("../../sys/calls.zig");
 const os = @import("../../sys/os.zig");
 const Input = input.Input;
@@ -66,7 +66,7 @@ pub fn beat(in: *Input) void {
     comptime assert(stamp.len >= 20 + 1);
     const text = std.fmt.bufPrint(&stamp, "{d}\n", .{os.unix_time()}) catch "0\n";
     assert(text.len > 1);
-    state.write_small(heartbeat_path, text);
+    file.write_small(heartbeat_path, text);
 }
 
 /// Waking up: the monotonic clock stood still while the Kindle slept, so the last

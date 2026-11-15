@@ -74,8 +74,6 @@ pub fn open(path: [*:0]const u8, flags: O, mode: u32) usize { // usize: Linux's 
     if (!flags.CREAT) assert(mode == 0); // A mode only means something to a new file
     return linux_result(c.open(path, c_flags(flags), @as(c.mode_t, @intCast(mode))));
 }
-// Assertions: a call to C: the descriptor may be -1 (see above), and its result is the caller's to
-// read.
 pub fn close(fd: i32) usize { // usize: Linux's syscall ABI
     return linux_result(c.close(fd));
 }
@@ -162,7 +160,6 @@ pub fn nanosleep(request: *const timespec, remaining: ?*timespec) usize {
     assert(request.nsec < std.time.ns_per_s);
     return linux_result(c.nanosleep(request, remaining));
 }
-// Assertions: a call to C, given nothing to check; its result is the caller's to read.
 pub fn fork() usize { // usize: Linux's syscall ABI
     return linux_result(c.fork());
 }
@@ -194,8 +191,6 @@ pub fn pipe2(fds: *[2]i32, flags: O) usize { // usize: Linux's syscall ABI
     }
     return 0;
 }
-// Assertions: a call to C: the descriptor may be -1 (see above), and its result is the
-// caller's to read.
 pub fn dup(fd: i32) usize { // usize: Linux's syscall ABI
     return linux_result(c.dup(fd));
 }
@@ -210,7 +205,6 @@ pub fn setpgid(pid: i32, pgid: i32) usize { // usize: Linux's syscall ABI
 }
 pub const W = struct {
     pub const NOHANG = 1;
-    // Assertions: C's macro as it is, for which every status is one to read.
     pub fn IFEXITED(status: u32) bool {
         return status & 0x7f == 0;
     }

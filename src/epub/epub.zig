@@ -238,7 +238,6 @@ fn read_package_meta(p: *Package, meta: *const xml.Tag) void {
 
 /// Calibre's place in a series: a number from 0 to `catalog.max_index`, as a file name's
 /// or a hand-set one is. Anything else ("nan", "inf", "-3", a word) counts as none.
-// Assertions: it reads a place from the book's metadata, which is outside data.
 fn series_place(text: []const u8) f32 {
     const place = std.fmt.parseFloat(f32, std.mem.trim(u8, text, " ")) catch return 0;
     if (!std.math.isFinite(place)) return 0;

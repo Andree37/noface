@@ -35,7 +35,6 @@ pub fn find(list: []const Override, path: []const u8) ?Override {
 }
 
 /// Whether `text`, a line of the file, is `path`'s.
-// Assertions: it compares two strings, and every pair of them is valid.
 pub fn is_for(text: []const u8, path: []const u8) bool {
     if (text.len <= path.len) return false;
     return std.mem.startsWith(u8, text, path) and text[path.len] == '\t';

@@ -93,7 +93,6 @@ pub const NoteStore = union(enum) {
     }
 
     /// Asks Amazon to send what was just written: only the database's notes go anywhere.
-    // Assertions: a one-line call to lipc, for one kind of store.
     pub fn sync(store: NoteStore) void {
         switch (store) {
             .amazon => lipc.sync_now(),
@@ -225,7 +224,6 @@ fn test_store(buffer: []u8, name: []const u8) !NoteStore {
     return .{ .own_file = path };
 }
 
-// Assertions: it builds a point, and every value of one is valid.
 fn point(short: u32) annotations.Point {
     return .{ .element = 1, .offset = 0, .short = short };
 }

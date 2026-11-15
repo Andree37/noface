@@ -598,12 +598,12 @@ pub fn save_journal(a: *const App) void {
         journal_model.older_lines(old, first_day),
         content[journal_model.tag_line_bytes..],
     };
-    state.write_parts(a.journal_path, &parts);
+    file.write_parts(a.journal_path, &parts);
 }
 
 pub fn load_speed(path: [*:0]const u8) stats.Speed {
     var buf: [64]u8 = undefined;
-    const speed = stats.parse(state.read_small(path, &buf));
+    const speed = stats.parse(file.read_small(path, &buf));
     assert(speed.seconds >= 0); // Parsing starts over on anything else
     assert(speed.words >= 0);
     return speed;
@@ -613,12 +613,12 @@ pub fn save_speed(a: *const App) void {
     var buf: [64]u8 = undefined;
     assert(a.speed.seconds >= 0);
     assert(a.speed.words >= 0);
-    state.write_small(a.speed_path, stats.format(&buf, a.speed));
+    file.write_small(a.speed_path, stats.format(&buf, a.speed));
 }
 
 pub fn load_settings(path: [*:0]const u8) settings_model.Settings {
     var buf: [settings_bytes_max]u8 = undefined;
-    const settings = settings_model.parse(state.read_small(path, &buf));
+    const settings = settings_model.parse(file.read_small(path, &buf));
     // Parsing clamps every value to its steps
     assert(settings.size < settings_model.sizes.len);
     assert(settings.font < settings_model.families.len);
@@ -641,7 +641,7 @@ pub fn save_settings(path: [*:0]const u8, s: settings_model.Settings) void {
         return;
     }
     assert(content.len <= buf.len);
-    state.write_small(path, content);
+    file.write_small(path, content);
 }
 
 /// The last few pictures drawn, decoded, scaled and dithered, so drawing a page

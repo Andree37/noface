@@ -3,10 +3,10 @@
 //! into an issue; noface also writes it to its log when it refuses to start.
 const std = @import("std");
 const assert = std.debug.assert;
+const file = @import("../sys/file.zig");
 const devices = @import("devices.zig");
 const hwtcon = @import("hwtcon.zig");
 const lipc = @import("lipc.zig");
-const state = @import("../sys/state.zig");
 const linux = @import("../sys/calls.zig");
 
 /// The start of the name of every display driver noface can drive: MediaTek's hwtcon.
@@ -17,7 +17,6 @@ comptime {
 }
 
 /// The display drivers noface can drive: MediaTek's hwtcon, in every Kindle since 2021.
-// Assertions: it reads the display driver's name, which is outside data.
 pub fn supported_driver(name: []const u8) bool {
     const supported = std.mem.startsWith(u8, name, driver_prefix);
     if (supported) assert(name.len >= driver_prefix.len);
@@ -26,7 +25,7 @@ pub fn supported_driver(name: []const u8) bool {
 
 fn read_trim(path: [*:0]const u8, buffer: []u8) []const u8 {
     assert(buffer.len > 0);
-    const text = std.mem.trim(u8, state.read_small(path, buffer), " \n\x00");
+    const text = std.mem.trim(u8, file.read_small(path, buffer), " \n\x00");
     assert(text.len <= buffer.len);
     return text;
 }

@@ -27,14 +27,12 @@ pub const Entry = struct {
     /// When any book of its series was last read, for sorting by series.
     series_last: u64 = 0,
 
-    // Assertions: it reads the entry's fields, which come from the Kindle's catalog: outside data.
     pub fn is_read(e: Entry) bool {
         return e.finished or e.percent >= finished_percent;
     }
 
     /// Opened for reading at some point, here or in the stock reader: past the 1% stock
     /// gives a new book, or read in noface. Only then is its last-opened date a reading.
-    // Assertions: it reads the entry's fields, which come from the Kindle's catalog: outside data.
     pub fn was_opened(e: Entry) bool {
         return e.seconds_read > 0 or e.percent > untouched_percent;
     }
@@ -47,13 +45,11 @@ pub const Entry = struct {
     }
 
     /// An EPUB copied over the cable, which noface reads itself.
-    // Assertions: it reads the book's path, which is outside data.
     pub fn is_epub(e: Entry) bool {
         return std.ascii.endsWithIgnoreCase(e.path, ".epub");
     }
 
     /// On this Kindle and complete, so it can be opened.
-    // Assertions: it reads one field, for which every value is valid.
     pub fn is_local(e: Entry) bool {
         return e.availability == .local;
     }
@@ -116,7 +112,6 @@ comptime {
 }
 
 /// Whether `a` sorts before `b` in `order`, their series times set (`sort` sets them).
-// Assertions: another name for `before`, whose comparisons assert what they rely on.
 pub fn before_in(order: Order, a: Entry, b: Entry) bool {
     return before(order, a, b);
 }
@@ -195,8 +190,6 @@ pub fn stage(e: Entry) u2 {
 }
 
 /// Books under way first, furthest along at the top; within the rest, most recent.
-// Assertions: it compares the entries' fields, which come from the Kindle's catalog: outside data.
-// `stage` asserts what it relies on.
 fn by_progress(a: Entry, b: Entry) bool {
     if (stage(a) != stage(b)) return stage(a) < stage(b);
     if (stage(a) == 0 and a.percent != b.percent) return a.percent > b.percent;
@@ -343,7 +336,6 @@ fn named(name_part: []const u8, number_part: []const u8, sureness: Sureness) ?Se
 
 /// Whether two series names are the same series: "The Hitchhiker's Guide to the
 /// Galaxy" and "hitchhiker's guide to the galaxy" are.
-// Assertions: it compares series names, from the catalog or a file name: outside data.
 pub fn same_series(a: []const u8, b: []const u8) bool {
     return a.len > 0 and std.ascii.eqlIgnoreCase(without_the(a), without_the(b));
 }
@@ -431,7 +423,6 @@ pub fn series_key(e: Entry) []const u8 {
     return key;
 }
 
-// Assertions: it compares two series names, from the catalog or a file name: outside data.
 fn by_series_name(_: void, a: Entry, b: Entry) bool {
     return std.ascii.lessThanIgnoreCase(series_key(a), series_key(b));
 }

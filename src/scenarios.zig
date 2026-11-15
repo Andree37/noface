@@ -272,7 +272,7 @@ fn count_notes(state_path: []const u8, kind: []const u8) u32 {
     const path = state.sibling(&path_buf, state_path, "notes") catch return 0;
     var buf: [8192]u8 = undefined;
     var n: u32 = 0;
-    var lines = std.mem.tokenizeScalar(u8, state.read_small(path, &buf), '\n');
+    var lines = std.mem.tokenizeScalar(u8, file.read_small(path, &buf), '\n');
     while (lines.next()) |l| {
         if (std.mem.startsWith(u8, l, kind)) n += 1;
     }
@@ -636,7 +636,7 @@ fn play_on_outcome(
         .updates = a.screen.updates,
         .airplane_asked_on = ran.fake.was_set(wifi_key ++ " 0"),
         .airplane_at_end = std.mem.eql(u8, ran.fake.get(wifi_key), "0"),
-        .wifi_note_left = state.read_small(wifi_saver.note_path(), &note_buf).len > 0,
+        .wifi_note_left = file.read_small(wifi_saver.note_path(), &note_buf).len > 0,
     };
 }
 

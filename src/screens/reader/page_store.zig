@@ -116,7 +116,7 @@ pub fn save(
     // Not saving only costs laying the book out again next time
     const bytes = encode(alloc, k, pages) catch return;
     defer alloc.free(bytes);
-    state.write_small(path, bytes);
+    file.write_small(path, bytes);
 }
 
 /// Whether `first` comes strictly before `second` in the book.

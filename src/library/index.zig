@@ -136,7 +136,6 @@ pub const Header = extern struct {
 
     /// Whether the header reads as whole and of this format: a damaged one, or one from
     /// another version of noface, means building again.
-    // Assertions: it reads a header from the user drive: outside data.
     pub fn valid(h: *const Header) bool {
         if (!std.mem.eql(u8, &h.magic, &header_magic)) return false;
         if (h.checksum != checksum_of(h)) return false;
@@ -202,7 +201,6 @@ pub const Slot = struct {
     id: u32 = std.math.maxInt(u32), // None
     text: [blob_bytes_max]u8 = undefined,
 
-    // Assertions: it reads one field, whose one invalid range is asserted.
     pub fn holds(s: *const Slot) bool {
         assert(s.id == std.math.maxInt(u32) or s.id < books_max);
         return s.id != std.math.maxInt(u32);
@@ -334,7 +332,6 @@ pub fn entry_of(r: *const Record, blob: []const u8) !catalog.Entry {
     var texts: [8][:0]const u8 = undefined;
     try split_blob(blob, &texts);
     const t = struct {
-        // Assertions: it picks one of eight texts, each valid.
         fn get(all: *const [8][:0]const u8, field: Field) [:0]const u8 {
             return all[@backingInt(field)];
         }

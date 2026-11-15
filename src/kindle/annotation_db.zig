@@ -34,7 +34,6 @@ comptime {
 }
 
 /// While this file exists, annotation writes are skipped. Used by device tests.
-// Assertions: it only looks for a file, outside data.
 pub fn dry_run() bool {
     const result = linux.open(paths.dry_run, .{ .ACCMODE = .RDONLY }, 0);
     if (failed(result)) return false;

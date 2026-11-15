@@ -50,6 +50,7 @@ pub const dup = chosen.dup;
 pub const dup2 = chosen.dup2;
 pub const setpgid = chosen.setpgid;
 pub const W = chosen.W;
+pub const O = chosen.O;
 pub const waitpid = chosen.waitpid;
 pub const SIG = chosen.SIG;
 pub const kill = chosen.kill;

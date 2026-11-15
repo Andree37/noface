@@ -3,8 +3,8 @@
 //! each device. Kindles name and number these differently from model to model.
 const std = @import("std");
 const assert = std.debug.assert;
+const file = @import("../sys/file.zig");
 const calls = @import("../sys/calls.zig");
-const state = @import("../sys/state.zig");
 const evdev = @import("input/evdev.zig");
 
 /// A kernel `long`, the width of each word of a capability mask.
@@ -51,7 +51,7 @@ fn read(comptime format: []const u8, arguments: anytype, buffer: []u8) []const u
     assert(buffer.len > 0);
     var path_buffer: [96]u8 = undefined;
     const path = std.fmt.bufPrintSentinel(&path_buffer, format, arguments, 0) catch return "";
-    const text = std.mem.trim(u8, state.read_small(path, buffer), " \n");
+    const text = std.mem.trim(u8, file.read_small(path, buffer), " \n");
     assert(text.len <= buffer.len);
     return text;
 }
@@ -104,7 +104,6 @@ pub fn find_inputs() Found {
 
 /// A power supply's role, from its type. USB_WET is a moisture sensor in the port, not
 /// a charger, though it says it's online.
-// Assertions: it reads the kernel's name for a power supply's type, which is outside data.
 pub fn is_charger(kind: []const u8) bool {
     if (std.mem.eql(u8, kind, "USB_WET")) return false;
     const usb = std.mem.startsWith(u8, kind, "USB");

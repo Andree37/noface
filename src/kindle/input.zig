@@ -276,7 +276,6 @@ pub const Input = struct {
         if (in.script != null) assert(in.remote < 0);
     }
 
-    // Assertions: it reads three switches, for which every value is valid.
     pub fn modes(in: *const Input) Modes {
         return .{ .grips = in.grips, .deferred = in.deferred, .edge_zones = in.edge_zones };
     }
@@ -291,7 +290,6 @@ pub const Input = struct {
 
     /// Keeps `action` back, for the next call to `poll`: a lock noface starts under,
     /// say.
-    // Assertions: it sets one field, for which every action is valid.
     pub fn hold_back(in: *Input, action: Action) void {
         in.stashed = action;
     }

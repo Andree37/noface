@@ -1,7 +1,7 @@
 //! Per-book reading state, kept in small text files beside the reader.
 const std = @import("std");
 const assert = std.debug.assert;
-const linux = @import("calls.zig");
+const file = @import("file.zig");
 
 pub const State = struct {
     para: u32 = 0,
@@ -110,69 +110,7 @@ fn read_value(comptime T: type, text: []const u8) ?T {
 pub fn load(path: [*:0]const u8) State {
     assert(path[0] != 0);
     var buf: [256]u8 = undefined;
-    return parse(read_small(path, &buf));
-}
-
-/// A small file's contents, or nothing if it can't be read.
-pub fn read_small(path: [*:0]const u8, buf: []u8) []const u8 {
-    assert(path[0] != 0);
-    assert(buf.len > 0);
-    const rc = linux.open(path, .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0);
-    if (failed(rc)) return "";
-    const fd: i32 = @intCast(rc);
-    defer _ = linux.close(fd); // Only read: nothing is lost if closing fails
-    const n = linux.read(fd, buf.ptr, buf.len);
-    if (failed(n)) return "";
-    assert(n <= buf.len);
-    return buf[0..n];
-}
-
-/// Writes beside the real file and renames, so a crash can't lose the old contents.
-pub fn write_small(path: [*:0]const u8, data: []const u8) void {
-    assert(path[0] != 0);
-    assert(data.len <= std.math.maxInt(u32));
-    write_parts(path, &.{data});
-}
-
-/// Writes `parts`, one after another, beside the real file and renames, as
-/// `write_small`.
-pub fn write_parts(path: [*:0]const u8, parts: []const []const u8) void {
-    assert(path[0] != 0);
-    assert(parts.len > 0);
-    var tmp: [320]u8 = undefined;
-    const name = std.mem.sliceTo(path, 0);
-    const tmp_path = std.fmt.bufPrintSentinel(&tmp, "{s}.tmp", .{name}, 0) catch return;
-    assert(std.mem.endsWith(u8, tmp_path, ".tmp")); // Beside the real file, never it
-    const rc = linux.open(
-        tmp_path,
-        .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true, .CLOEXEC = true },
-        0o644,
-    );
-    if (failed(rc)) return;
-    const fd: i32 = @intCast(rc);
-    var total: u64 = 0;
-    const whole = for (parts) |part| {
-        if (!write_all(fd, part)) break false;
-        total += part.len;
-    } else true;
-    // A failed close may mean a short file: the rename below needs it whole
-    const closed = !failed(linux.close(fd));
-    // Never an empty file in place of the old one
-    if (!whole or !closed or total == 0) return;
-    _ = linux.rename(tmp_path, path); // Failed: the old file stays, whole
-}
-
-fn write_all(fd: i32, data: []const u8) bool {
-    assert(fd >= 0);
-    var done: u32 = 0;
-    // Each write moves at least a byte, or fails
-    while (done < data.len) {
-        const wrote = linux.write(fd, data[done..].ptr, data.len - done);
-        if (failed(wrote) or wrote == 0) return false;
-        done += @intCast(wrote);
-    }
-    assert(done == data.len);
-    return true;
+    return parse(file.read_small(path, &buf));
 }
 
 /// Writes every value of `s`, by name, one a line.
@@ -190,7 +128,7 @@ pub fn save(path: [*:0]const u8, s: State) void {
     }
     // What's written reads back as the same state
     assert(std.meta.eql(parse(w.buffered()), s));
-    write_small(path, w.buffered());
+    file.write_small(path, w.buffered());
 }
 
 test "state file name matches basename piped to md5sum" {

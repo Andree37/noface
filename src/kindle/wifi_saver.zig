@@ -11,8 +11,8 @@
 //! on its way in.
 const std = @import("std");
 const assert = std.debug.assert;
+const file = @import("../sys/file.zig");
 const lipc = @import("lipc.zig");
-const state = @import("../sys/state.zig");
 const linux = @import("../sys/calls.zig");
 const paths = @import("paths.zig");
 
@@ -72,7 +72,7 @@ pub fn pause(downloading: bool) Outcome {
     // else the reader's
     if (lipc.airplane_on() orelse return .later) return if (marked()) .paused else .never;
     if (lipc.bluetooth_on() orelse return .later) return .later;
-    state.write_small(marker, "1\n");
+    file.write_small(marker, "1\n");
     if (!marked()) return .never;
     lipc.set_airplane(true);
     // A clear "still on": it didn't happen, try again later. No answer (cmd busy taking
@@ -91,7 +91,7 @@ pub fn pause(downloading: bool) Outcome {
 pub fn marked() bool {
     assert(marker_is_note());
     var buffer: [8]u8 = undefined;
-    const note = state.read_small(marker, &buffer);
+    const note = file.read_small(marker, &buffer);
     assert(note.len <= buffer.len);
     return note.len > 0;
 }

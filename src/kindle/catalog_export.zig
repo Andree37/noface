@@ -5,6 +5,7 @@
 //! is written beside the old one and renamed over it only when it has something in it.
 const std = @import("std");
 const assert = std.debug.assert;
+const process = @import("../sys/process.zig");
 const paths = @import("paths.zig");
 const service = @import("../sys/service.zig");
 const calls = @import("../sys/calls.zig");
@@ -71,7 +72,7 @@ pub fn run() void {
         return;
     };
     const copy = copy_place(file.size_of(paths.catalog));
-    if (!service.copy_file(paths.catalog, copy)) {
+    if (!file.copy_file(paths.catalog, copy)) {
         std.debug.print("export: couldn't copy {s}\n", .{paths.catalog});
         return;
     }
@@ -83,7 +84,7 @@ pub fn run() void {
             break :finished false;
         const deadline = os.now_us() + query_timeout_ms * std.time.us_per_ms;
         // Its exit code isn't the measure, as it wasn't before: what it wrote is
-        break :finished service.wait_until(pid, deadline) != null;
+        break :finished process.wait_until(pid, deadline) != null;
     };
     // Cut short, the list may be part of one: the old one stays
     if (!finished) {

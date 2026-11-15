@@ -115,7 +115,7 @@ pub fn run_until(argv: [*:null]const ?[*:0]const u8, out: []u8, deadline: u64) ?
     }
     // Closing first means a child with more to say gets SIGPIPE instead of blocking.
     _ = linux.close(child.out); // Our end of the pipe: nothing to do if it fails
-    if (!reap(child.pid, deadline)) {
+    if (wait_until(child.pid, deadline) == null) {
         std.debug.print("command timed out: {s}\n", .{std.mem.sliceTo(argv[0].?, 0)});
         return null;
     }
@@ -159,7 +159,7 @@ pub fn run_all(
         _ = linux.close(child.out); // Our end of the pipe: nothing to do if it fails
         // Reaped whether or not it finished printing: one still running at the deadline
         // is killed here, so none is left behind as a zombie
-        const reaped = reap(child.pid, deadline);
+        const reaped = wait_until(child.pid, deadline) != null;
         if (open[index] or !reaped) lens[index] = null; // Not finished in time
         if (lens[index]) |count| assert(count <= outs[index].len);
     }
@@ -206,21 +206,38 @@ fn run_all_read(
     return true;
 }
 
-/// Waits for a child to exit until `deadline`, then kills its whole group. For
-/// `sh -c`, the stuck program is the shell's child. True when it exited in time.
-fn reap(pid: i32, deadline: u64) bool {
+/// Waits for a child to end until `deadline` (microseconds, monotonic): its exit code,
+/// or null when it ran out of time and was killed, with its group (for `sh -c`, the
+/// stuck program is the shell's child), and reaped.
+pub fn wait_until(pid: i32, deadline: u64) ?u32 {
     assert(pid > 0); // So -pid is its group, not every process
     var status: i32 = 0;
-    // Bounded by the deadline
-    while (linux.waitpid(pid, &status, linux.W.NOHANG) == 0) {
-        if (os.now_us() >= deadline) {
-            _ = linux.kill(-pid, linux.SIG.KILL); // Already gone: then there's nothing to stop
-            _ = linux.waitpid(pid, &status, 0); // Reaped, whatever its status
-            return false;
-        }
-        os.sleep_ms(reap_poll_ms);
+    // A look first, even past the deadline, so a child already done counts as done;
+    // then one look every few milliseconds until the deadline
+    const now = os.now_us();
+    const looks: u64 = (deadline -| now) / (reap_poll_ms * 1000) + 1;
+    const looks_max: u32 = @intCast(@min(looks, std.math.maxInt(u32)));
+    for (0..looks_max) |look| {
+        const rc = linux.waitpid(pid, &status, linux.W.NOHANG);
+        if (rc == @as(u32, @intCast(pid))) return exit_code(@bitCast(status));
+        if (failed(rc)) return null; // Not our child, or gone already: nothing to wait for
+        if (look + 1 < looks_max) os.sleep_ms(reap_poll_ms);
     }
-    return true;
+    _ = linux.kill(-pid, linux.SIG.KILL); // Not a group's leader: no such group
+    _ = linux.kill(pid, linux.SIG.KILL); // Gone already: nothing to stop
+    _ = linux.waitpid(pid, &status, 0); // Reaped, whatever its status
+    return null;
+}
+
+/// The status a shell's `$?` gives for a wait status: the exit code, or 128 plus the
+/// signal that ended it.
+pub fn exit_code(status: u32) u32 {
+    // The low seven bits are the signal that ended it, on Linux and elsewhere alike
+    const ended_itself = linux.W.IFEXITED(status);
+    const code: u32 = if (ended_itself) linux.W.EXITSTATUS(status) else 128 + (status & 0x7f);
+    assert(code < 256);
+    if (status == 0) assert(code == 0);
+    return code;
 }
 
 /// A spawned child's state, without waiting: null while it runs, then whether it

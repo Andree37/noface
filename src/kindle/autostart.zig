@@ -5,9 +5,9 @@
 //! the setting is off, so switching it off leaves the file in place, idle.
 const std = @import("std");
 const assert = std.debug.assert;
+const file = @import("../sys/file.zig");
 const paths = @import("paths.zig");
 const process = @import("../sys/process.zig");
-const state = @import("../sys/state.zig");
 
 const shipped = paths.autostart_conf;
 const installed_path = "/etc/upstart/noface-autostart.conf";
@@ -26,8 +26,8 @@ comptime {
 pub fn installed() bool {
     var want_buffer: [conf_size_max]u8 = undefined;
     var have_buffer: [conf_size_max]u8 = undefined;
-    const want = state.read_small(shipped, &want_buffer);
-    const have = state.read_small(installed_path, &have_buffer);
+    const want = file.read_small(shipped, &want_buffer);
+    const have = file.read_small(installed_path, &have_buffer);
     assert(want.len <= want_buffer.len);
     assert(have.len <= have_buffer.len);
     return want.len > 0 and std.mem.eql(u8, want, have);
@@ -39,8 +39,8 @@ pub fn installed() bool {
 pub fn outdated() bool {
     var want_buffer: [conf_size_max]u8 = undefined;
     var have_buffer: [conf_size_max]u8 = undefined;
-    const want = state.read_small(shipped, &want_buffer);
-    const have = state.read_small(installed_path, &have_buffer);
+    const want = file.read_small(shipped, &want_buffer);
+    const have = file.read_small(installed_path, &have_buffer);
     assert(want.len <= want_buffer.len);
     assert(have.len <= have_buffer.len);
     return want.len > 0 and have.len > 0 and !std.mem.eql(u8, want, have);

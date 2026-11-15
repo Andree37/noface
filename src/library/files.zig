@@ -7,6 +7,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const calls = @import("../sys/calls.zig");
+const file = @import("../sys/file.zig");
 const failed = @import("../sys/os.zig").failed;
 
 /// The longest path the library names, as Linux's PATH_MAX.
@@ -53,7 +54,7 @@ pub const Writer = struct {
         if (bytes.len > w.buffer.len - w.used) w.flush();
         if (bytes.len > w.buffer.len) {
             // Larger than the buffer: straight through, after what was buffered
-            if (!write_all(w.fd, bytes)) w.broken = true;
+            if (!file.write_all(w.fd, bytes)) w.broken = true;
         } else {
             @memcpy(w.buffer[w.used..][0..bytes.len], bytes);
             w.used += @intCast(bytes.len);
@@ -73,7 +74,7 @@ pub const Writer = struct {
 
     fn flush(w: *Writer) void {
         assert(w.used <= w.buffer.len);
-        if (w.used > 0 and !write_all(w.fd, w.buffer[0..w.used])) w.broken = true;
+        if (w.used > 0 and !file.write_all(w.fd, w.buffer[0..w.used])) w.broken = true;
         w.used = 0;
         assert(w.used == 0);
     }
@@ -99,19 +100,6 @@ pub const Writer = struct {
         assert(w.fd < 0);
     }
 };
-
-fn write_all(fd: i32, data: []const u8) bool {
-    assert(fd >= 0);
-    var done: u32 = 0;
-    // Each write moves at least a byte, or fails
-    while (done < data.len) {
-        const wrote = calls.write(fd, data[done..].ptr, data.len - done);
-        if (failed(wrote) or wrote == 0) return false;
-        done += @intCast(wrote);
-    }
-    assert(done == data.len);
-    return true;
-}
 
 /// Reads a file through `buffer`: a range the buffer holds is served from it, and any
 /// other is read in, starting where it starts. Reading on through a file, each part is

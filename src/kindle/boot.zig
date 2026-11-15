@@ -10,9 +10,8 @@
 //!     or when noface leaves on purpose).
 const std = @import("std");
 const assert = std.debug.assert;
+const file = @import("../sys/file.zig");
 const paths = @import("paths.zig");
-const state = @import("../sys/state.zig");
-const service = @import("../sys/service.zig");
 const os = @import("../sys/os.zig");
 const calls = @import("../sys/calls.zig");
 
@@ -121,21 +120,21 @@ fn file_exists(path: [*:0]const u8) bool {
 pub fn should_start() bool {
     var settings_buffer: [settings_bytes_max]u8 = undefined;
     var attempts_buffer: [32]u8 = undefined;
-    const settings = state.read_small(settings_path, &settings_buffer);
-    const attempts = state.read_small(attempts_path, &attempts_buffer);
+    const settings = file.read_small(settings_path, &settings_buffer);
+    const attempts = file.read_small(attempts_path, &attempts_buffer);
     switch (decide(settings, attempts)) {
         .off => return false,
         .give_up => {
             // A file that filled the buffer may hold more: rewriting it would lose that
             var out: [settings_bytes_max + 64]u8 = undefined;
             if (settings.len < settings_buffer.len) {
-                if (turned_off(settings, &out)) |text| state.write_small(settings_path, text);
+                if (turned_off(settings, &out)) |text| file.write_small(settings_path, text);
             }
             _ = calls.unlink(attempts_path); // Gone already: the count starts over either way
             const message = "autostart: noface failed to start 3 boots in a row, " ++
                 "autostart turned off\n";
             comptime assert(attempts_max == 3); // As the message says
-            service.append_file(log_path, message);
+            file.append_file(log_path, message);
             return false;
         },
         .start => |attempt| {
@@ -143,7 +142,7 @@ pub fn should_start() bool {
             var text: [16]u8 = undefined;
             comptime assert(text.len >= 10 + 1); // Any u32, and its newline
             const count = std.fmt.bufPrint(&text, "{d}\n", .{attempt}) catch return true;
-            state.write_small(attempts_path, count);
+            file.write_small(attempts_path, count);
             return true;
         },
     }

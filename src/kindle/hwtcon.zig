@@ -3,9 +3,9 @@
 //! hwtcon_v2 headers in the Linux kernel source Amazon publishes for this Kindle.
 const std = @import("std");
 const assert = std.debug.assert;
+const file = @import("../sys/file.zig");
 const check = @import("../base/check.zig");
 const linux = @import("../sys/calls.zig");
-const state = @import("../sys/state.zig");
 
 pub const Waveform = enum(u32) {
     du = 1,
@@ -93,7 +93,6 @@ pub const width_px = 1272;
 pub const height_px = 1696;
 
 /// Whether noface's interface is laid out for a screen this size.
-// Assertions: it compares a screen's size, which the driver reports: outside data.
 pub fn supported_size(width: u32, height: u32) bool {
     return width == width_px and height == height_px;
 }
@@ -162,7 +161,7 @@ pub const Screen = struct {
     pub fn open() !Screen {
         // Only MediaTek's driver understands the updates sent below
         var name_buffer: [64]u8 = undefined;
-        const name_read = state.read_small("/sys/class/graphics/fb0/name", &name_buffer);
+        const name_read = file.read_small("/sys/class/graphics/fb0/name", &name_buffer);
         const name = std.mem.trim(u8, name_read, " \n");
         if (!std.mem.startsWith(u8, name, "hwtcon")) return error.UnsupportedDisplay;
         const rc = linux.open("/dev/fb0", .{ .ACCMODE = .RDWR, .CLOEXEC = true }, 0);

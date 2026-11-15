@@ -56,7 +56,10 @@ on outside data to avoid one either.
 - **Assertions.** At least **two per function on average [checked]**, counted per
   file, as Tiger Style has it. A file short of that fails with each of its functions
   below two listed, as the places to add them; one that can't honestly have two is
-  marked `// Assertions: <why>` (above). Counted as assertions: `assert`, `check.that`,
+  marked `// Assertions: <why>` (above). A function of at most five lines of body is
+  left out of the average, as a marked one is: it does one thing, and an assertion
+  there mostly repeats its line. Never pad a function to meet the average; an
+  assertion states something that would be a bug if false. Counted as assertions: `assert`, `check.that`,
   `check.thatf`, `@compileError`, and a call to `invariants()`, a struct's method that
   asserts what holds of it between calls. In `src/scenarios.zig`, `expect` too: the
   scenarios are tests that also ship as `noface selftest`, so a failed check reports

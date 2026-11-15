@@ -69,6 +69,9 @@ pub const rule_count = @typeInfo(Rule).@"enum".field_names.len;
 pub const Break = struct { rule: Rule, line: u32 };
 
 pub const line_columns_max = 100;
+/// The longest a function is, signature to closing brace, and still left out of the
+/// assertion average: five lines of body.
+const short_function_lines_max = 7;
 pub const function_lines_max = 70;
 pub const assertions_per_function_min = 2;
 
@@ -404,7 +407,6 @@ const Scan = struct {
     };
     const open_max = 16;
 
-    // Assertions: it appends to a list; its one invariant is lines counted from 1.
     fn note(scan: *Scan, rule: Rule, line_number: u32, times: u32) !void {
         assert(line_number > 0);
         for (0..times) |_| {
@@ -480,8 +482,13 @@ fn close_functions(scan: *Scan, line_number: u32) !void {
         const length = line_number - open.start_line + 1;
         if (length > function_lines_max) try scan.note(.function_length, open.start_line, 1);
         const light = open.assertions < assertions_per_function_min;
+        // A short function does one thing: asserting there mostly repeats its line, so
+        // it's left out of the average, its assertions with it, as a marked one is
+        const short = length <= short_function_lines_max;
         if (open.excused_at) |marker_line| {
-            if (!light) try scan.note(.marker_unused, marker_line, 1);
+            if (!light or short) try scan.note(.marker_unused, marker_line, 1);
+        } else if (short) {
+            assert(length <= function_lines_max);
         } else {
             scan.functions += 1;
             scan.assertions += open.assertions;
@@ -796,17 +803,43 @@ test "long lines and camelCase functions count; type functions keep their case" 
     try std.testing.expectEqual(@as(u32, 1), try count_in(source, .line_length));
 }
 
-test "assertions are counted against functions" {
+test "assertions are counted against functions; a short function is left out" {
     const two =
         \\fn f(a: u32) u32 {
         \\    assert(a > 0);
         \\    check.that(a < 9, "small");
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
         \\    return a;
         \\}
     ;
     try std.testing.expectEqual(@as(u32, 0), try count_in(two, .assertion_density));
-    const none = "fn f() void {}\nfn g() void {}\n";
+    const none =
+        \\fn f() void {
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
+        \\}
+        \\fn g() void {
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
+        \\}
+    ;
     try std.testing.expectEqual(@as(u32, 2), try count_in(none, .assertion_density));
+    // Five lines of body or fewer: left out of the average, as a marked function is
+    const short = "fn f() void {}\nfn g(a: u32) void {\n    _ = a;\n}\n";
+    try std.testing.expectEqual(@as(u32, 0), try count_in(short, .assertion_density));
 }
 
 test "assertions average per file; a signature may run over lines; nesting" {
@@ -817,21 +850,33 @@ test "assertions average per file; a signature may run over lines; nesting" {
         \\    assert(a < 9);
         \\    assert(a != 3);
         \\    assert(a != 4);
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
         \\}
         \\fn g(
         \\    a: u32,
         \\) void {
         \\    _ = a;
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
         \\}
     ;
     try std.testing.expectEqual(@as(u32, 0), try count_in(even, .assertion_density));
     // Short once one goes: the function below two is listed, at the line it starts
     const short = comptime even[0..std.mem.indexOf(u8, even, "    assert(a != 4);").?] ++
-        even[std.mem.indexOf(u8, even, "}").?..];
+        even[std.mem.indexOf(u8, even, "    assert(a != 4);").? + "    assert(a != 4);\n".len ..];
     const breaks = try check_zig("src/a.zig", short, std.testing.allocator);
     defer std.testing.allocator.free(breaks);
     try std.testing.expect(breaks.len == 1);
-    try std.testing.expectEqual(Break{ .rule = .assertion_density, .line = 6 }, breaks[0]);
+    try std.testing.expectEqual(Break{ .rule = .assertion_density, .line = 12 }, breaks[0]);
     // An inner function's assertions are its own: its outer one has none
     const nested =
         \\fn outer() void {
@@ -842,6 +887,12 @@ test "assertions average per file; a signature may run over lines; nesting" {
         \\        }
         \\    };
         \\    _ = S;
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
         \\}
     ;
     try std.testing.expectEqual(@as(u32, 1), try count_in(nested, .assertion_density));
@@ -852,13 +903,31 @@ test "a call to invariants() asserts; its definition isn't one" {
         \\fn invariants(in: *const Input) void {
         \\    assert(in.a > 0);
         \\    assert(in.b > 0);
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
         \\}
         \\fn handle(in: *Input) void {
         \\    in.invariants();
         \\    defer in.invariants();
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
         \\}
         \\fn idle(in: *Input) void {
         \\    _ = in;
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
         \\}
     ;
     // Four of six: idle, without any, is where they're missing
@@ -870,6 +939,12 @@ test "in the scenarios, and only there, `expect(` is an assertion" {
         \\fn run() !void {
         \\    try expect(a, "a");
         \\    try expect(b and c, "b and c");
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
         \\}
     ;
     const in_scenarios = try check_zig("src/scenarios.zig", source, std.testing.allocator);
@@ -883,21 +958,49 @@ test "in the scenarios, and only there, `expect(` is an assertion" {
 test "a function marked `// Assertions:` is excused; a marker excusing nothing counts" {
     const source =
         \\/// A wrapper.
-        \\// Assertions: a one-line wrapper over outside data.
-        \\fn f() void {}
+        \\// Assertions: a wrapper over outside data.
+        \\fn f() void {
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
+        \\}
         \\// Assertions: this one has its two.
         \\fn g(a: u32) void {
         \\    assert(a > 0);
         \\    assert(a < 9);
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
         \\}
+        \\// Assertions: this one is short, so left out anyway.
+        \\fn s() void {}
         \\// Assertions:
-        \\fn h() void {}
+        \\fn h() void {
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
+        \\}
         \\fn i(a: u32) void {
         \\    assert(a > 0);
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
+        \\    work();
         \\}
     ;
     try std.testing.expectEqual(@as(u32, 2), try count_in(source, .assertion_density));
-    try std.testing.expectEqual(@as(u32, 1), try count_in(source, .marker_unused));
+    try std.testing.expectEqual(@as(u32, 2), try count_in(source, .marker_unused));
 }
 
 test "usize counts unless `// usize:` on its line or just above says why" {

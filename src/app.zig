@@ -579,7 +579,7 @@ pub fn save_speed(a: *const App) void {
 }
 
 pub fn load_settings(path: [*:0]const u8) settings_model.Settings {
-    var buf: [512]u8 = undefined;
+    var buf: [settings_bytes_max]u8 = undefined;
     const settings = settings_model.parse(state.read_small(path, &buf));
     // Parsing clamps every value to its steps
     assert(settings.size < settings_model.sizes.len);
@@ -587,10 +587,22 @@ pub fn load_settings(path: [*:0]const u8) settings_model.Settings {
     return settings;
 }
 
+/// Room for every setting with the longest typeface name a file can give it: 255
+/// characters of up to three bytes each, as a FAT folder holds them.
+const settings_bytes_max = 1024;
+
+/// Writes the settings to `path`. A typeface's name comes from its file, so one too
+/// long to write leaves the file as it was, and says so in the log.
 pub fn save_settings(path: [*:0]const u8, s: settings_model.Settings) void {
-    var buf: [512]u8 = undefined;
+    assert(path[0] != 0);
+    var buf: [settings_bytes_max]u8 = undefined;
     const content = settings_model.format(&buf, s);
-    assert(content.len > 0); // The buffer is sized for every setting
+    if (content.len == 0) {
+        const message = "settings: not saved, the typeface's name is too long\n";
+        if (!@import("builtin").is_test) std.debug.print(message, .{});
+        return;
+    }
+    assert(content.len <= buf.len);
     state.write_small(path, content);
 }
 
@@ -656,4 +668,31 @@ test "pictures are kept until replaced or cleared" {
         p.put(alloc, @ptrFromInt(0x1000 + i), 1, 1, try alloc.dupe(u8, "z"));
     }
     try std.testing.expect(p.get(key.ptr, 2, 1) == null); // Pushed out
+}
+
+test "a typeface's long name saves, and one too long to is left out, never a crash" {
+    const linux = @import("sys/calls.zig");
+    defer settings_model.reset_families();
+    var buffer: [64]u8 = undefined;
+    const format = "/tmp/noface-settings-test-{d}";
+    const path = try std.fmt.bufPrintSentinel(&buffer, format, .{linux.getpid()}, 0);
+    defer _ = linux.unlink(path); // Ignored: only /tmp is left fuller
+    // The longest a font file's name can make one: 255 characters, three bytes each
+    const long: [255 * 3]u8 = comptime blk: {
+        var name: [255 * 3]u8 = undefined;
+        for (0..255) |i| name[i * 3 ..][0..3].* = "\u{6587}".*;
+        break :blk name;
+    };
+    try std.testing.expect(settings_model.add_family(&long));
+    var s = settings_model.Settings{};
+    s.font = @intCast(settings_model.families.len - 1);
+    save_settings(path, s);
+    try std.testing.expectEqual(s.font, load_settings(path).font);
+    // Longer than any file's name: the settings stay as they were
+    const longer: [2000]u8 = @splat('x');
+    try std.testing.expect(settings_model.add_family(&longer));
+    var other = s;
+    other.font = @intCast(settings_model.families.len - 1);
+    save_settings(path, other);
+    try std.testing.expectEqual(s.font, load_settings(path).font);
 }

@@ -12,7 +12,7 @@ pub fn failed(rc: usize) bool { // usize: Linux's syscall ABI
 /// of minutes (the Wi-Fi pause, a hold, a double tap) takes no time at all.
 pub var fake_us: ?u64 = null;
 
-/// The day the test clock starts on, 14 Nov 2026, in seconds since 1970.
+/// The day the test clock starts on, 15 Nov 2026 at 00:00 UTC, in seconds since 1970.
 const fake_day_unix = 1_794_700_800;
 
 comptime {
@@ -65,4 +65,14 @@ pub fn sleep_ms(duration_ms: u64) void {
 test "error codes are told from results" {
     try std.testing.expect(failed(@bitCast(@as(isize, -2))));
     try std.testing.expect(!failed(3));
+}
+
+test "the test clock starts at midnight on 15 Nov 2026" {
+    const epoch: std.time.epoch.EpochSeconds = .{ .secs = fake_day_unix };
+    const year_day = epoch.getEpochDay().calculateYearDay();
+    const month_day = year_day.calculateMonthDay();
+    try std.testing.expectEqual(@as(u16, 2026), year_day.year);
+    try std.testing.expectEqual(@as(u4, 11), month_day.month.numeric());
+    try std.testing.expectEqual(@as(u5, 15), month_day.day_index + 1);
+    try std.testing.expectEqual(@as(u64, 0), epoch.getDaySeconds().secs);
 }

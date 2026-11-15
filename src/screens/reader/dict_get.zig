@@ -18,9 +18,17 @@ const awake_us_max = 15 * 60 * 1_000_000;
 /// How long to wait for Wi-Fi to connect before giving up.
 const connect_us_max = 30 * 1_000_000;
 
+/// The most times the progress is shown: each lasts a tick of a second unless the
+/// download is cancelled, so more than the seconds a download may take.
+const polls_max = dict_download.download_s_max + 1;
+
 comptime {
     // Connecting is part of the download, so the Kindle stays awake through it
     assert(connect_us_max < awake_us_max);
+    assert(connect_us_max + dict_download.download_s_max * 1_000_000 < awake_us_max);
+    // Each poll lasts a tick at least, so the polls outlast the download's time
+    assert(Progress.tick_us == 1_000_000);
+    assert(polls_max > dict_download.download_s_max);
     // The card shows the wait at least once before giving up
     assert(Progress.tick_us < connect_us_max);
 }
@@ -116,10 +124,46 @@ pub fn get(a: *app.App, background: []const u8, lang: hyphen.Lang) !bool {
         try tell(a, background, "Couldn't start the download", "Try again in a moment.");
         return false;
     };
-    // Unbounded: curl has no overall time limit, so this waits as long as the download
-    // takes; the reader stops it with Cancel, or by locking the Kindle.
-    const ok = while (true) {
-        if (download.done()) |finished| break finished;
+    const waited = try wait_for(a, background, title, &download, l);
+    std.debug.print("dictionary {s} download: {s}\n", .{ l.file, @tagName(waited) });
+    switch (waited) {
+        .finished => {},
+        .cancelled => return false,
+        .failed => {
+            const again = "Check the Wi-Fi and try again.";
+            try tell(a, background, "The download didn't finish", again);
+            return false;
+        },
+        .too_long => {
+            const again = "The Wi-Fi may be too slow. Try again somewhere faster.";
+            try tell(a, background, "The download took too long", again);
+            return false;
+        },
+    }
+    a.forget_dictionary(lang);
+    return a.dictionary_for(lang) != null;
+}
+
+/// How waiting for a download ended.
+const Waited = enum { finished, failed, cancelled, too_long };
+
+/// Shows the download's progress until it ends, the reader cancels it (or locks the
+/// Kindle), or it runs past `download_s_max`, when it's stopped.
+fn wait_for(
+    a: *app.App,
+    background: []const u8,
+    title: []const u8,
+    download: *const dict_download.Download,
+    l: dict_download.Language,
+) !Waited {
+    assert(background.len == a.screen.pixels.len);
+    assert(download.pid > 0);
+    const rows = [_]card.Row{.{ .label = "Cancel" }};
+    const deadline_us = os.now_us() + @as(u64, dict_download.download_s_max) * 1_000_000;
+    // Each poll lasts a tick at least, or ends with Cancel: the clock runs out first
+    for (0..polls_max) |_| {
+        if (download.done()) |ok| return if (ok) .finished else .failed;
+        if (os.now_us() >= deadline_us) break;
         var subtitle_buffer: [64]u8 = undefined;
         const subtitle = std.fmt.bufPrint(
             &subtitle_buffer,
@@ -128,17 +172,12 @@ pub fn get(a: *app.App, background: []const u8, lang: hyphen.Lang) !bool {
         ) catch "";
         if (try show_progress(a, background, title, subtitle, &rows)) {
             download.cancel();
-            std.debug.print("dictionary download cancelled\n", .{});
-            return false;
+            return .cancelled;
         }
-    };
-    std.debug.print("dictionary {s} downloaded: {}\n", .{ l.file, ok });
-    if (!ok) {
-        try tell(a, background, "The download didn't finish", "Check the Wi-Fi and try again.");
-        return false;
     }
-    a.forget_dictionary(lang);
-    return a.dictionary_for(lang) != null;
+    download.cancel();
+    assert(os.now_us() >= deadline_us);
+    return .too_long;
 }
 
 /// Shows the card for about a second. True when Cancel was tapped.

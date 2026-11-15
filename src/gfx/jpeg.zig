@@ -6,11 +6,20 @@
 //! faster: the gray of a YCbCr picture is its Y alone, so the colour is read past
 //! but never transformed back into pixels. A file cut short or damaged is an error,
 //! never a crash.
+//!
+//! The gray leaves row by row, into a `rows.Sink` that scales it as it comes: a
+//! baseline picture's as each row of blocks is read, a progressive one's as each row of
+//! blocks is transformed once every scan is read. Only a progressive picture's gray
+//! components keep their coefficients whole; the others keep a bit per coefficient,
+//! which is all reading the later scans needs. A picture too large for its workspace
+//! is decoded at a half, a quarter or an eighth (`shrink`), keeping only that much of
+//! each block's coefficients.
 const std = @import("std");
 const assert = std.debug.assert;
 const decoded = @import("decoded.zig");
 const Gray = decoded.Gray;
 const scaler = @import("rows.zig");
+const Workspace = @import("workspace.zig").Workspace;
 
 pub const Error = error{ BadJpeg, OutOfMemory };
 
@@ -84,10 +93,22 @@ const Component = struct {
     y: u32 = 0,
     w2: u32 = 0,
     h2: u32 = 0,
-    /// Its samples once transformed, if the gray needs them.
+    /// Its samples once transformed, if the gray needs them: `data_rows` rows of
+    /// `stride` samples, all of them or a few block rows in turn, row r at r modulo
+    /// `data_rows`. At the decoder's `shrink`, a block is `8 / shrink` samples a side.
     data: []u8 = &.{},
-    /// A progressive picture's coefficients, kept between scans.
+    data_rows: u32 = 0,
+    stride: u32 = 0,
+    /// Rows of samples transformed so far, from the top.
+    rows_done: u32 = 0,
+    /// Its pixels at the decoder's `shrink`.
+    out_x: u32 = 0,
+    out_y: u32 = 0,
+    /// A progressive picture's coefficients, kept between scans: every one of each
+    /// block (`masks` empty), or the top-left square `8 / shrink` a side and a bit per
+    /// coefficient saying which aren't zero (`masks`), or only those bits.
     coefficients: []i16 = &.{},
+    masks: []u64 = &.{},
     coefficients_width: u32 = 0,
 };
 
@@ -133,7 +154,23 @@ const Decoder = struct {
     needed: Needed,
     /// Components whose samples are kept: only those the gray is made from.
     keep: [components_max]bool = @splat(false),
-    alloc: std.mem.Allocator,
+    work: *Workspace,
+    sink: *scaler.Sink,
+    /// The picture is decoded at 1 / `shrink` of its size, each block `side` samples.
+    shrink: u8,
+    side: u8,
+    /// Whether a baseline picture's rows go to the sink as its first scan is read,
+    /// which holds a few rows instead of the whole picture. Else they go once every
+    /// scan is read.
+    streaming: bool,
+    /// What the rows going out are made from, and how each component is upsampled.
+    gray_from: GrayFrom = .{ .count = 1, .kind = .y },
+    resamples: [components_max]Resample = undefined,
+    /// A row of gray, when it isn't the first component's samples as they are.
+    gray_line: []u8 = &.{},
+    out_width: u32 = 0,
+    out_height: u32 = 0,
+    rows_out: u32 = 0,
 
     fn get8(d: *Decoder) u8 {
         assert(d.at <= d.source.len);
@@ -169,17 +206,6 @@ const Decoder = struct {
         d.at = @intCast(@min(target, d.source.len));
         assert(d.at <= d.source.len);
     }
-
-    fn free(d: *Decoder) void {
-        assert(d.channels <= components_max);
-        for (&d.component) |*component| {
-            if (component.data.len > 0) d.alloc.free(component.data);
-            if (component.coefficients.len > 0) d.alloc.free(component.coefficients);
-            component.data = &.{};
-            component.coefficients = &.{};
-        }
-        assert(d.component[0].data.len == 0);
-    }
 };
 
 /// Whether `data` starts like a JPEG: fill bytes, then the start-of-image marker.
@@ -194,61 +220,99 @@ pub fn is_jpeg(data: []const u8) bool {
 
 /// Decodes a JPEG into gray pixels allocated from `alloc`, which the caller frees.
 pub fn decode(alloc: std.mem.Allocator, data: []const u8) Error!Gray {
+    var work = Workspace.init(alloc, std.math.maxInt(u32));
+    defer work.reset();
+    var sink = scaler.Sink{ .target = .{ .divided = 1 }, .out = alloc };
+    try decode_rows(&work, data, &sink, 1);
+    const pixels = sink.finish();
+    assert(pixels.len == @as(u64, sink.size.width) * sink.size.height);
+    return .{ .pixels = pixels, .width = sink.size.width, .height = sink.size.height };
+}
+
+/// Shrinks a picture can be decoded at: a block gives 8, 4, 2 or 1 samples a side.
+pub fn shrink_valid(shrink: u8) bool {
+    return shrink == 1 or shrink == 2 or shrink == 4 or shrink == 8;
+}
+
+/// Decodes a JPEG into `sink`, which `begin`s once the size is known, at 1 / `shrink`
+/// of its size, its memory from `work`. On an error, the sink is as it was given.
+pub fn decode_rows(work: *Workspace, data: []const u8, sink: *scaler.Sink, shrink: u8) Error!void {
+    assert(shrink_valid(shrink));
+    assert(sink.mode == .waiting);
     if (!is_jpeg(data)) return error.BadJpeg;
     if (data.len > std.math.maxInt(u32)) return error.BadJpeg;
-    assert(data.len >= 2);
-    assert(data[0] == 0xff);
-    const tables = try alloc.create(Tables);
-    defer alloc.destroy(tables);
-    return decode_with(alloc, data, tables, .predicted) catch |err| switch (err) {
-        // A colour marker after the first scan changed which components make the gray
-        error.BadJpegRetry => decode_with(alloc, data, tables, .all) catch |again| switch (again) {
-            error.BadJpegRetry => unreachable, // Every component was kept
-            error.BadJpeg => error.BadJpeg,
-            error.OutOfMemory => error.OutOfMemory,
-        },
-        error.BadJpeg => error.BadJpeg,
-        error.OutOfMemory => error.OutOfMemory,
-    };
+    const tables = try work.allocator().create(Tables);
+    const tables_made = work.mark();
+    var plan = Plan{ .needed = .predicted, .streaming = true };
+    // Each retry keeps more or streams less, so there are three plans at most
+    for (0..3) |_| {
+        decode_with(work, data, tables, sink, .{ .shrink = shrink, .plan = plan }) catch |err| {
+            if (sink.mode != .waiting) sink.abandon();
+            work.rewind(tables_made);
+            switch (err) {
+                // A colour marker after the first scan changed which components make
+                // the gray: keep them all
+                error.BadJpegRetry => {
+                    assert(plan.needed == .predicted); // Every component was kept
+                    plan.needed = .all;
+                },
+                // A later scan went back over rows already gone: keep them all
+                error.Replan => {
+                    assert(plan.streaming);
+                    plan.streaming = false;
+                },
+                error.BadJpeg => return error.BadJpeg,
+                error.OutOfMemory => return error.OutOfMemory,
+            }
+            continue;
+        };
+        assert(sink.mode != .waiting);
+        return;
+    }
+    unreachable; // The plans ran out: each retry changed one, and both have changed
 }
 
-/// Decodes a JPEG into `sink`, its memory from `work`. Interim: decoded whole, then
-/// handed on row by row.
-pub fn decode_rows(
-    work: std.mem.Allocator,
-    data: []const u8,
-    sink: *scaler.Sink,
-    shrink: u8,
-) Error!void {
-    if (shrink > 1) return error.OutOfMemory;
-    // Interim: whole, in the decoders' memory as before, outside the workspace
-    const whole = @import("decoder_memory.zig").allocator();
-    const gray = try decode(whole, data);
-    defer whole.free(gray.pixels);
-    try sink.begin(work, .{ .width = gray.width, .height = gray.height }, .rows);
-    for (0..gray.height) |y| sink.put_row(gray.pixels[y * gray.width ..][0..gray.width]);
-}
+/// What a decoding keeps, and when its rows go.
+const Plan = struct { needed: Needed, streaming: bool };
 
-const RetryError = Error || error{BadJpegRetry};
+const RetryError = Error || error{ BadJpegRetry, Replan };
 
 fn decode_with(
-    alloc: std.mem.Allocator,
+    work: *Workspace,
     data: []const u8,
     tables: *Tables,
-    needed: Needed,
-) RetryError!Gray {
+    sink: *scaler.Sink,
+    options: struct { shrink: u8, plan: Plan },
+) RetryError!void {
     assert(data.len <= std.math.maxInt(u32));
+    assert(shrink_valid(options.shrink));
     tables.* = std.mem.zeroes(Tables);
-    var d = Decoder{ .source = data, .tables = tables, .needed = needed, .alloc = alloc };
-    defer d.free();
+    var d = Decoder{
+        .source = data,
+        .tables = tables,
+        .needed = options.plan.needed,
+        .work = work,
+        .sink = sink,
+        .shrink = options.shrink,
+        .side = 8 / options.shrink,
+        .streaming = options.plan.streaming,
+    };
     try decode_image(&d);
-    const gray_from = gray_components(&d);
-    for (0..gray_from.count) |index| {
-        if (d.component[index].data.len == 0) return error.BadJpegRetry;
-    }
-    assert(gray_from.count >= 1);
     assert(d.scans_decoded > 0);
-    return assemble(&d, gray_from);
+    const gray_from = gray_components(&d);
+    assert(gray_from.count >= 1);
+    for (0..gray_from.count) |index| {
+        const component = &d.component[index];
+        const kept = if (d.progressive) component.coefficients.len > 0 else component.data.len > 0;
+        if (!kept) return error.BadJpegRetry;
+    }
+    if (d.progressive) return finish_progressive(&d);
+    if (!d.streaming) return finish_planes(&d);
+    // The rows went with what made the gray at the first scan
+    if (gray_from.kind != d.gray_from.kind or gray_from.count != d.gray_from.count) {
+        return error.Replan;
+    }
+    assert(d.rows_out == d.out_height);
 }
 
 /// What the gray of a picture is made from, as stb_image decided it.
@@ -493,8 +557,7 @@ fn read_frame_header(d: *Decoder) Error!void {
     assert(d.mcu_x > 0);
 }
 
-/// Works out each component's size, and makes room for a progressive one's
-/// coefficients.
+/// Works out each component's size, at the picture's own and at the decoder's shrink.
 fn size_components(d: *Decoder) Error!void {
     assert(d.h_max >= 1);
     assert(d.v_max >= 1);
@@ -502,32 +565,113 @@ fn size_components(d: *Decoder) Error!void {
     const mcu_height = @as(u32, d.v_max) * 8;
     d.mcu_x = (d.width + mcu_width - 1) / mcu_width;
     d.mcu_y = (d.height + mcu_height - 1) / mcu_height;
+    d.out_width = shrunk(d.width, d.shrink);
+    d.out_height = shrunk(d.height, d.shrink);
     for (d.component[0..d.channels]) |*component| {
         component.x = (d.width * component.h + d.h_max - 1) / d.h_max;
         component.y = (d.height * component.v + d.v_max - 1) / d.v_max;
         component.w2 = d.mcu_x * component.h * 8;
         component.h2 = d.mcu_y * component.v * 8;
+        component.out_x = shrunk(component.x, d.shrink);
+        component.out_y = shrunk(component.y, d.shrink);
+        component.stride = component.w2 / d.shrink;
+        component.coefficients_width = component.w2 / 8;
         if (d.progressive) {
             const count = @as(u64, component.w2) * component.h2;
             if (count > samples_max) return error.BadJpeg;
-            component.coefficients = try d.alloc.alloc(i16, @intCast(count));
-            @memset(component.coefficients, 0);
-            component.coefficients_width = component.w2 / 8;
         }
     }
 }
 
-/// Makes room for the samples of each component kept.
+/// A length at 1 / `shrink`, rounded up.
+fn shrunk(length: u32, shrink: u8) u32 {
+    assert(shrink_valid(shrink));
+    assert(length > 0);
+    return @intCast(scaler.divide_up(length, shrink));
+}
+
+/// At the first scan: decides which components to keep and makes room for them, and
+/// for the gray the sink is given.
+fn begin_scans(d: *Decoder) Error!void {
+    assert(d.scans_decoded == 0);
+    assert(d.scan_count >= 1);
+    predict_kept(d);
+    const work = d.work.allocator();
+    if (d.progressive) {
+        d.streaming = false;
+        try allocate_coefficients(d);
+    } else {
+        // Every component kept comes in this scan, or the rows wait for the last
+        for (0..d.channels) |index| {
+            if (d.keep[index] and !in_scan(d, @intCast(index))) d.streaming = false;
+        }
+        try allocate_kept(d);
+    }
+    try d.sink.begin(work, .{ .width = d.out_width, .height = d.out_height }, .rows);
+    if (d.streaming) try begin_rows(d);
+}
+
+fn in_scan(d: *const Decoder, index: u8) bool {
+    assert(index < d.channels);
+    assert(d.scan_count <= components_max);
+    for (d.order[0..d.scan_count]) |n| {
+        if (n == index) return true;
+    }
+    return false;
+}
+
+/// Makes room for the samples of each component kept: a few rows of blocks when they
+/// go to the sink as they come, else all of them.
 fn allocate_kept(d: *Decoder) Error!void {
     assert(d.channels >= 1);
+    assert(!d.progressive);
     for (d.component[0..d.channels], 0..) |*component, index| {
-        if (!d.keep[index] or component.data.len > 0) continue;
+        if (!d.keep[index]) continue;
         const count = @as(u64, component.w2) * component.h2;
         if (count > samples_max) return error.BadJpeg;
-        component.data = try d.alloc.alloc(u8, @intCast(count));
-        @memset(component.data, 0);
+        const rows = if (d.streaming) band_rows(d, component) * 2 else component.h2 / d.shrink;
+        try allocate_samples(d, component, rows);
     }
     assert(d.component[0].data.len > 0);
+}
+
+/// Rows of samples a row of MCUs gives a component.
+fn band_rows(d: *const Decoder, component: *const Component) u32 {
+    assert(component.v >= 1);
+    assert(d.side >= 1);
+    return @as(u32, component.v) * d.side;
+}
+
+fn allocate_samples(d: *Decoder, component: *Component, rows: u32) Error!void {
+    assert(rows % d.side == 0); // Whole blocks, which never wrap
+    assert(component.stride > 0);
+    component.data_rows = rows;
+    component.data = try d.work.allocator().alloc(u8, @intCast(@as(u64, component.stride) * rows));
+    @memset(component.data, 0);
+    component.rows_done = 0;
+}
+
+/// Makes room for a progressive picture's coefficients: whole for the components the
+/// gray is made of, a corner of each block's when shrunk, only which aren't zero for
+/// the others.
+fn allocate_coefficients(d: *Decoder) Error!void {
+    assert(d.progressive);
+    assert(d.channels >= 1);
+    const work = d.work.allocator();
+    for (d.component[0..d.channels], 0..) |*component, index| {
+        const blocks = @as(u64, component.coefficients_width) * (component.h2 / 8);
+        assert(blocks * block_length <= samples_max); // `size_components` checked
+        if (d.keep[index]) {
+            const per_block = @as(u64, d.side) * d.side;
+            component.coefficients = try work.alloc(i16, @intCast(blocks * per_block));
+            @memset(component.coefficients, 0);
+        }
+        if (!d.keep[index] or d.shrink > 1) {
+            component.masks = try work.alloc(u64, @intCast(blocks));
+            @memset(component.masks, 0);
+        }
+    }
+    assert(d.component[0].coefficients.len > 0);
 }
 
 fn read_header(d: *Decoder) Error!void {
@@ -577,8 +721,12 @@ fn decode_image(d: *Decoder) RetryError!void {
         if (marker == marker_scan) {
             if (!read_scan_header(d)) return error.BadJpeg;
             if (d.scans_decoded == 0) {
-                predict_kept(d);
-                if (!d.progressive) try allocate_kept(d);
+                try begin_scans(d);
+            } else if (d.streaming) {
+                // A later scan going back over rows already handed on
+                for (0..d.channels) |index| {
+                    if (d.keep[index] and in_scan(d, @intCast(index))) return error.Replan;
+                }
             }
             try decode_scan(d);
             d.scans_decoded += 1;
@@ -602,7 +750,6 @@ fn decode_image(d: *Decoder) RetryError!void {
     } else return error.BadJpeg;
     if (d.scans_decoded == 0) return error.BadJpeg;
     if (d.cut_short) return error.BadJpeg;
-    if (d.progressive) try finish_progressive(d);
 }
 
 // The bit reader.
@@ -835,6 +982,10 @@ fn decode_scan_single(d: *Decoder) Error!void {
             try decode_block_at(d, n, @intCast(block_x), @intCast(block_y), true);
             try next_restart(d, block_y + 1 == blocks_y and block_x + 1 == blocks_x);
         }
+        if (d.streaming and component.data.len > 0) {
+            component.rows_done = @as(u32, @intCast(block_y + 1)) * d.side;
+            emit_rows(d);
+        }
     }
 }
 
@@ -856,7 +1007,19 @@ fn decode_scan_interleaved(d: *Decoder) Error!void {
             }
             try next_restart(d, mcu_y + 1 == d.mcu_y and mcu_x + 1 == d.mcu_x);
         }
+        if (d.streaming) stream_band(d, @intCast(mcu_y));
     }
+}
+
+/// After a row of MCUs of the first scan: the rows it finished go to the sink.
+fn stream_band(d: *Decoder, mcu_y: u32) void {
+    assert(d.streaming);
+    assert(mcu_y < d.mcu_y);
+    for (d.order[0..d.scan_count]) |n| {
+        const component = &d.component[n];
+        if (component.data.len > 0) component.rows_done = (mcu_y + 1) * band_rows(d, component);
+    }
+    emit_rows(d);
 }
 
 fn decode_block_at(d: *Decoder, n: u8, block_x: u32, block_y: u32, single: bool) Error!void {
@@ -867,22 +1030,100 @@ fn decode_block_at(d: *Decoder, n: u8, block_x: u32, block_y: u32, single: bool)
         var block: [block_length]i16 = undefined;
         const dequant = &d.tables.dequant[component.quant];
         try decode_block(d, &block, n, dequant);
-        if (component.data.len > 0) {
-            const at = block_y * 8 * component.w2 + block_x * 8;
-            idct_block(component.data[at..], component.w2, &block);
-        }
+        if (component.data.len > 0) put_block(d, component, block_x, block_y, &block);
         return;
     }
-    const index = (block_x + block_y * component.coefficients_width) * block_length;
-    const block = component.coefficients[index..][0..block_length];
-    // AC coefficients come one component a scan: several at once are DC
-    if (d.spec_start == 0 or !single) {
-        try decode_block_dc(d, block, n);
-    } else {
-        const table = component.ac_table;
-        try decode_block_ac(d, block, &d.tables.ac[table], &d.tables.fast_ac[table]);
+    const index = block_x + block_y * component.coefficients_width;
+    if (component.masks.len == 0) {
+        const whole = component.coefficients[index * block_length ..][0..block_length];
+        return decode_block_progressive(d, Whole, .{ .values = whole }, n, single);
     }
+    const per_block = @as(u32, d.side) * d.side;
+    const kept = if (component.coefficients.len > 0)
+        component.coefficients[index * per_block ..][0..per_block]
+    else
+        component.coefficients[0..0];
+    const sparse = Sparse{ .mask = &component.masks[index], .values = kept, .side = d.side };
+    return decode_block_progressive(d, Sparse, sparse, n, single);
 }
+
+fn decode_block_progressive(
+    d: *Decoder,
+    comptime Block: type,
+    block: Block,
+    n: u8,
+    single: bool,
+) Error!void {
+    assert(d.progressive);
+    assert(n < d.channels);
+    // AC coefficients come one component a scan: several at once are DC
+    if (d.spec_start == 0 or !single) return decode_block_dc(d, Block, block, n);
+    const table = d.component[n].ac_table;
+    return decode_block_ac(d, Block, block, &d.tables.ac[table], &d.tables.fast_ac[table]);
+}
+
+/// A progressive block whose every coefficient is kept.
+const Whole = struct {
+    values: *[block_length]i16,
+
+    inline fn clear(b: Whole) void {
+        @memset(b.values, 0);
+    }
+
+    inline fn set(b: Whole, at: u8, value: i16) void {
+        b.values[at] = value;
+    }
+
+    inline fn nonzero(b: Whole, at: u8) bool {
+        return b.values[at] != 0;
+    }
+
+    inline fn slot(b: Whole, at: u8) ?*i16 {
+        return &b.values[at];
+    }
+};
+
+/// A progressive block of which only the top-left `side` square of coefficients is
+/// kept (none when `side` is 0 or `values` empty), with a bit for every coefficient
+/// saying whether it's zero. A refinement scan reads bits for a coefficient only when
+/// it isn't zero, and a refinement never makes one zero, so the bits read the scans
+/// exactly as the whole block would.
+const Sparse = struct {
+    mask: *u64,
+    values: []i16,
+    side: u8,
+
+    fn kept(b: Sparse, at: u8) ?u32 {
+        assert(at < block_length);
+        assert(b.values.len == 0 or b.values.len == @as(u32, b.side) * b.side);
+        if (b.values.len == 0) return null;
+        const row = at / 8;
+        const column = at % 8;
+        if (row >= b.side or column >= b.side) return null;
+        return @as(u32, row) * b.side + column;
+    }
+
+    fn clear(b: Sparse) void {
+        b.mask.* = 0;
+        @memset(b.values, 0);
+    }
+
+    fn set(b: Sparse, at: u8, value: i16) void {
+        const bit = @as(u64, 1) << @intCast(at);
+        if (value != 0) b.mask.* |= bit else b.mask.* &= ~bit;
+        if (b.kept(at)) |index| b.values[index] = value;
+    }
+
+    fn nonzero(b: Sparse, at: u8) bool {
+        assert(at < block_length);
+        return b.mask.* & (@as(u64, 1) << @intCast(at)) != 0;
+    }
+
+    fn slot(b: Sparse, at: u8) ?*i16 {
+        const index = b.kept(at) orelse return null;
+        return &b.values[index];
+    }
+};
 
 /// The DC difference, added to the component's running prediction.
 fn decode_dc(d: *Decoder, n: u8) Error!i32 {
@@ -954,47 +1195,51 @@ fn fits_short(a: i32, b: i32) bool {
     return product >= std.math.minInt(i16) and product <= std.math.maxInt(i16);
 }
 
-fn decode_block_dc(d: *Decoder, block: *[block_length]i16, n: u8) Error!void {
+fn decode_block_dc(d: *Decoder, comptime Block: type, block: Block, n: u8) Error!void {
     assert(n < d.channels);
     assert(d.progressive);
     if (d.spec_end != 0) return error.BadJpeg;
     if (d.code_bits < 16) grow_buffer(d);
     if (d.succ_high == 0) {
         // The first DC scan
-        @memset(block, 0);
+        block.clear();
         const dc = try decode_dc(d, n);
         const scale = @as(i32, 1) << @intCast(d.succ_low);
         if (!fits_short(dc, scale)) return error.BadJpeg;
-        block[0] = @intCast(dc * scale);
+        block.set(0, @intCast(dc * scale));
     } else {
         // A refinement: one more bit
-        if (get_bit(d)) block[0] +%= @as(i16, 1) << @intCast(d.succ_low);
+        if (get_bit(d)) {
+            if (block.slot(0)) |dc| dc.* +%= @as(i16, 1) << @intCast(d.succ_low);
+        }
     }
     assert(d.succ_low <= 13);
 }
 
 fn decode_block_ac(
     d: *Decoder,
-    block: *[block_length]i16,
+    comptime Block: type,
+    block: Block,
     ac: *const Huffman,
     fast_ac: *const [fast_size]i16,
 ) Error!void {
     if (d.spec_start == 0) return error.BadJpeg;
     assert(d.spec_end <= 63);
-    if (d.succ_high == 0) return decode_block_ac_first(d, block, ac, fast_ac);
+    if (d.succ_high == 0) return decode_block_ac_first(d, Block, block, ac, fast_ac);
     const bit = @as(i16, 1) << @intCast(d.succ_low);
     if (d.eob_run > 0) {
         d.eob_run -= 1;
-        for (d.spec_start..@as(u32, d.spec_end) + 1) |k| refine(d, &block[dezigzag[k]], bit);
+        for (d.spec_start..@as(u32, d.spec_end) + 1) |k| refine(d, Block, block, dezigzag[k], bit);
         return;
     }
-    return decode_block_ac_refine(d, block, ac, bit);
+    return decode_block_ac_refine(d, Block, block, ac, bit);
 }
 
 /// The first scan of a band of AC coefficients.
 fn decode_block_ac_first(
     d: *Decoder,
-    block: *[block_length]i16,
+    comptime Block: type,
+    block: Block,
     ac: *const Huffman,
     fast_ac: *const [fast_size]i16,
 ) Error!void {
@@ -1016,7 +1261,7 @@ fn decode_block_ac_first(
             if (size > d.code_bits) return error.BadJpeg;
             d.code_buffer = std.math.shl(u32, d.code_buffer, size);
             d.code_bits -= size;
-            block[dezigzag[k]] = @truncate(@as(i32, fast >> 8) *% (@as(i32, 1) << shift));
+            block.set(dezigzag[k], @truncate(@as(i32, fast >> 8) *% (@as(i32, 1) << shift)));
             k += 1;
             continue;
         }
@@ -1034,7 +1279,7 @@ fn decode_block_ac_first(
             k += 16;
         } else {
             k += r;
-            block[dezigzag[k]] = @truncate(extend_receive(d, s) *% (@as(i32, 1) << shift));
+            block.set(dezigzag[k], @truncate(extend_receive(d, s) *% (@as(i32, 1) << shift)));
             k += 1;
         }
     }
@@ -1042,11 +1287,13 @@ fn decode_block_ac_first(
 }
 
 /// One correction bit for a coefficient already known not to be zero.
-fn refine(d: *Decoder, coefficient: *i16, bit: i16) void {
+fn refine(d: *Decoder, comptime Block: type, block: Block, at: u8, bit: i16) void {
     assert(bit > 0);
     assert(bit <= 1 << 13);
-    if (coefficient.* == 0) return;
+    if (!block.nonzero(at)) return;
     if (!get_bit(d)) return;
+    // A coefficient not kept: the bit is read past, and it stays not zero
+    const coefficient = block.slot(at) orelse return;
     if (coefficient.* & bit != 0) return;
     if (coefficient.* > 0) {
         coefficient.* +%= bit;
@@ -1057,7 +1304,8 @@ fn refine(d: *Decoder, coefficient: *i16, bit: i16) void {
 
 fn decode_block_ac_refine(
     d: *Decoder,
-    block: *[block_length]i16,
+    comptime Block: type,
+    block: Block,
     ac: *const Huffman,
     bit: i16,
 ) Error!void {
@@ -1083,13 +1331,13 @@ fn decode_block_ac_refine(
         }
         // Moves past `r` coefficients still zero, refining those that aren't
         while (k <= d.spec_end) {
-            const coefficient = &block[dezigzag[k]];
+            const at = dezigzag[k];
             k += 1;
-            if (coefficient.* != 0) {
-                refine(d, coefficient, bit);
+            if (block.nonzero(at)) {
+                refine(d, Block, block, at, bit);
             } else {
                 if (r == 0) {
-                    coefficient.* = value;
+                    block.set(at, value);
                     break;
                 }
                 r -= 1;
@@ -1099,43 +1347,60 @@ fn decode_block_ac_refine(
     assert(k >= d.spec_start);
 }
 
-/// Dequantizes and transforms a progressive picture's kept components.
+/// Transforms a progressive picture's gray components, a row of MCUs at a time, and
+/// hands their rows to the sink.
 fn finish_progressive(d: *Decoder) Error!void {
     assert(d.progressive);
-    // Which components the gray needs is known for sure now
-    const gray_from = gray_components(d);
-    for (0..components_max) |index| d.keep[index] = d.needed == .all or index < gray_from.count;
-    // The coefficients of a component left out go before the samples come in, and a
-    // kept one's once transformed: no more than one component's of each at once
-    for (d.component[0..d.channels], 0..) |*component, index| {
-        if (!d.keep[index]) free_coefficients(d, component);
+    assert(d.rows_out == 0);
+    for (d.component[0..gray_components(d).count]) |*component| {
+        try allocate_samples(d, component, band_rows(d, component) * 2);
     }
-    try allocate_kept(d);
-    for (d.component[0..d.channels], 0..) |*component, index| {
-        if (!d.keep[index]) continue;
-        defer free_coefficients(d, component);
-        const dequant = &d.tables.dequant[component.quant];
-        const blocks_x = (component.x + 7) >> 3;
-        const blocks_y = (component.y + 7) >> 3;
-        for (0..blocks_y) |block_y| {
-            for (0..blocks_x) |block_x| {
-                const at = (block_x + block_y * component.coefficients_width) * block_length;
-                const block = component.coefficients[at..][0..block_length];
-                for (block, dequant) |*coefficient, factor| coefficient.* *%= @bitCast(factor);
-                const target = block_y * 8 * component.w2 + block_x * 8;
-                idct_block(component.data[target..], component.w2, block);
-            }
+    try begin_rows(d);
+    for (0..d.mcu_y) |mcu_y| {
+        for (d.component[0..d.gray_from.count]) |*component| {
+            transform_band(d, component, @intCast(mcu_y));
         }
+        emit_rows(d);
     }
-    assert(d.component[0].data.len > 0);
-    assert(d.component[0].coefficients.len == 0);
+    assert(d.rows_out == d.out_height);
 }
 
-fn free_coefficients(d: *Decoder, component: *Component) void {
-    assert(d.progressive); // Only a progressive picture keeps coefficients
-    if (component.coefficients.len > 0) d.alloc.free(component.coefficients);
-    component.coefficients = &.{};
-    assert(component.coefficients.len == 0);
+/// Dequantizes and transforms one row of MCUs of a component's coefficients.
+fn transform_band(d: *Decoder, component: *Component, mcu_y: u32) void {
+    assert(d.progressive);
+    assert(component.coefficients.len > 0);
+    const dequant = &d.tables.dequant[component.quant];
+    const blocks_x = (component.x + 7) >> 3;
+    const blocks_y = (component.y + 7) >> 3;
+    const first = mcu_y * component.v;
+    for (first..@min(first + component.v, blocks_y)) |block_y| {
+        for (0..blocks_x) |block_x| {
+            const index = block_x + block_y * component.coefficients_width;
+            var block: [block_length]i16 = @splat(0);
+            if (component.masks.len == 0) {
+                block = component.coefficients[index * block_length ..][0..block_length].*;
+            } else {
+                const per_block = @as(u32, d.side) * d.side;
+                const kept = component.coefficients[index * per_block ..][0..per_block];
+                for (0..d.side) |row| {
+                    @memcpy(block[row * 8 ..][0..d.side], kept[row * d.side ..][0..d.side]);
+                }
+            }
+            for (&block, dequant) |*coefficient, factor| coefficient.* *%= @bitCast(factor);
+            put_block(d, component, @intCast(block_x), @intCast(block_y), &block);
+        }
+    }
+    component.rows_done = (mcu_y + 1) * band_rows(d, component);
+}
+
+/// Each component's samples once every scan of a picture whose rows waited is read.
+fn finish_planes(d: *Decoder) Error!void {
+    assert(!d.progressive);
+    assert(!d.streaming);
+    try begin_rows(d);
+    for (d.component[0..d.gray_from.count]) |*component| component.rows_done = component.data_rows;
+    emit_rows(d);
+    assert(d.rows_out == d.out_height);
 }
 
 // The inverse DCT: stb_image's integer one, from the IJG's jidctint.
@@ -1273,6 +1538,8 @@ fn idct_column(block: *const [block_length]i16, values: *[block_length]i32, colu
 
 const ResampleKind = enum { copy, vertical, horizontal, both, generic };
 
+/// Upsampling one component: the rows of its samples the next output row mixes,
+/// `line0` above `line1`.
 const Resample = struct {
     kind: ResampleKind,
     line0: u32 = 0,
@@ -1285,51 +1552,44 @@ const Resample = struct {
     line_buffer: []u8,
 };
 
-fn assemble(d: *Decoder, gray_from: GrayFrom) Error!Gray {
-    assert(gray_from.count <= d.channels);
-    const pixel_count = @as(u64, d.width) * d.height;
-    assert(pixel_count <= samples_max);
-    const first = &d.component[0];
-    const copied = resample_kind(d.h_max / first.h, d.v_max / first.v) == .copy;
-    if (gray_from.kind == .y and copied) return assemble_in_place(d);
-    const pixels = try d.alloc.alloc(u8, @intCast(pixel_count));
-    errdefer d.alloc.free(pixels);
-    var resamples: [components_max]Resample = undefined;
-    var made: u8 = 0;
-    defer for (resamples[0..made]) |r| d.alloc.free(r.line_buffer);
-    for (resamples[0..gray_from.count], 0..) |*r, index| {
+/// Readies the rows: each component the gray is made from upsampled, and a row of gray
+/// unless it's the first component's samples as they are.
+fn begin_rows(d: *Decoder) Error!void {
+    assert(d.rows_out == 0);
+    assert(d.sink.mode != .waiting);
+    d.gray_from = gray_components(d);
+    for (d.resamples[0..d.gray_from.count], 0..) |*r, index| {
         r.* = try resample_for(d, @intCast(index));
-        made += 1;
     }
-    var rows: [components_max][]const u8 = undefined;
-    for (0..d.height) |y| {
-        for (resamples[0..gray_from.count], 0..) |*r, index| {
-            rows[index] = resample_row(r, &d.component[index]);
-        }
-        const out = pixels[y * d.width ..][0..d.width];
-        gray_row(gray_from, rows[0..gray_from.count], out);
+    const copied = d.resamples[0].kind == .copy;
+    if (d.gray_from.kind != .y or !copied) {
+        d.gray_line = try d.work.allocator().alloc(u8, d.out_width);
     }
-    return .{ .pixels = pixels, .width = d.width, .height = d.height };
+    assert(d.gray_from.count <= d.channels);
 }
 
-/// The gray when it is the first component's samples as they are (a gray picture, or
-/// most colour ones): its rows moved up to sit end to end, where they are, so a large
-/// picture never needs a second buffer its size.
-fn assemble_in_place(d: *Decoder) Error!Gray {
-    const component = &d.component[0];
-    assert(component.y == d.height); // At full size: its rows are the picture's
-    assert(component.w2 >= d.width);
-    const samples = component.data;
-    assert(samples.len >= @as(u64, component.w2) * d.height);
-    // Row y moves from y * w2 to y * width, never later, so in order it never
-    // overwrites a row still to move
-    for (0..d.height) |y| {
-        const from = samples[y * component.w2 ..][0..d.width];
-        std.mem.copyForwards(u8, samples[y * d.width ..][0..d.width], from);
+/// Hands the sink every row of gray whose samples are all transformed.
+fn emit_rows(d: *Decoder) void {
+    assert(d.rows_out <= d.out_height);
+    const count = d.gray_from.count;
+    assert(count >= 1);
+    // Each turn hands on a row
+    while (d.rows_out < d.out_height) {
+        for (d.resamples[0..count], d.component[0..count]) |r, component| {
+            if (r.line1 >= component.rows_done) return;
+        }
+        var rows: [components_max][]const u8 = undefined;
+        for (d.resamples[0..count], d.component[0..count], 0..) |*r, *component, index| {
+            rows[index] = resample_row(r, component);
+        }
+        if (d.gray_line.len == 0) {
+            d.sink.put_row(rows[0][0..d.out_width]);
+        } else {
+            gray_row(d.gray_from, rows[0..count], d.gray_line);
+            d.sink.put_row(d.gray_line);
+        }
+        d.rows_out += 1;
     }
-    const pixels = try d.alloc.realloc(samples, @as(u32, d.width) * d.height);
-    component.data = &.{}; // The picture's now
-    return .{ .pixels = pixels, .width = d.width, .height = d.height };
 }
 
 fn resample_for(d: *Decoder, index: u8) Error!Resample {
@@ -1342,10 +1602,10 @@ fn resample_for(d: *Decoder, index: u8) Error!Resample {
         .kind = resample_kind(hs, vs),
         .hs = hs,
         .vs = vs,
-        .w_lores = (d.width + hs - 1) / hs,
+        .w_lores = (d.out_width + hs - 1) / hs,
         .ystep = vs >> 1,
         // Room for upsampling past the edge by up to four
-        .line_buffer = try d.alloc.alloc(u8, d.width + 3),
+        .line_buffer = try d.work.allocator().alloc(u8, d.out_width + 3),
     };
 }
 
@@ -1359,14 +1619,19 @@ fn resample_kind(hs: u8, vs: u8) ResampleKind {
     return .generic;
 }
 
+/// Row `row` of a component's samples, wherever it's kept.
+fn sample_row(component: *const Component, row: u32) []const u8 {
+    assert(row < component.rows_done);
+    assert(component.data_rows > 0);
+    return component.data[(row % component.data_rows) * component.stride ..][0..component.stride];
+}
+
 /// The next output row of one component, upsampled.
 fn resample_row(r: *Resample, component: *const Component) []const u8 {
     assert(r.vs >= 1);
     const bottom = r.ystep >= (r.vs >> 1);
-    const near_at = if (bottom) r.line1 else r.line0;
-    const far_at = if (bottom) r.line0 else r.line1;
-    const near = component.data[near_at..];
-    const far = component.data[far_at..];
+    const near = sample_row(component, if (bottom) r.line1 else r.line0);
+    const far = sample_row(component, if (bottom) r.line0 else r.line1);
     const row: []const u8 = switch (r.kind) {
         .copy => near,
         .vertical => resample_vertical(r.line_buffer, near, far, r.w_lores),
@@ -1379,10 +1644,46 @@ fn resample_row(r: *Resample, component: *const Component) []const u8 {
         r.ystep = 0;
         r.line0 = r.line1;
         r.ypos += 1;
-        if (r.ypos < component.y) r.line1 += component.w2;
+        if (r.ypos < component.out_y) r.line1 += 1;
     }
-    assert(r.line1 < component.data.len);
+    assert(r.line1 < component.out_y);
     return row;
+}
+
+/// Transforms a block's coefficients into its samples, `side` a side.
+fn put_block(
+    d: *const Decoder,
+    component: *Component,
+    block_x: u32,
+    block_y: u32,
+    block: *const [block_length]i16,
+) void {
+    assert(component.data.len > 0);
+    assert(component.data_rows % d.side == 0); // A block's rows never wrap
+    const row = (block_y * d.side) % component.data_rows;
+    const target = component.data[row * component.stride + block_x * d.side ..];
+    if (d.shrink == 1) return idct_block(target, component.stride, block);
+    var samples: [block_length]u8 = undefined;
+    idct_block(&samples, 8, block);
+    shrink_block(target, component.stride, &samples, d.shrink);
+}
+
+/// Averages a block's 8 x 8 samples down to `8 / shrink` a side, rounded.
+fn shrink_block(target: []u8, stride: u32, samples: *const [block_length]u8, shrink: u8) void {
+    assert(shrink > 1);
+    assert(shrink_valid(shrink));
+    const side = 8 / shrink;
+    const area = @as(u32, shrink) * shrink;
+    for (0..side) |row| {
+        for (0..side) |column| {
+            var sum: u32 = 0;
+            for (0..shrink) |y| {
+                const line = samples[(row * shrink + y) * 8 + column * shrink ..][0..shrink];
+                for (line) |sample| sum += sample;
+            }
+            target[row * stride + column] = @intCast((sum + area / 2) / area);
+        }
+    }
 }
 
 fn div4(x: u32) u8 {

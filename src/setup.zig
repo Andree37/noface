@@ -15,6 +15,7 @@ const style = @import("ui/style.zig");
 const text = @import("layout/text.zig");
 const books = @import("screens/books.zig");
 const image = @import("gfx/image.zig");
+const workspace = @import("gfx/workspace.zig");
 
 /// What each memory region reserves, taken once at startup (`memory.Region`). Pages
 /// come in as they're first touched, so a region costs what's used, not its size.
@@ -27,9 +28,9 @@ pub const region_bytes = struct {
     pub const app: u32 = 64 << 20;
     /// Glyph bitmaps and pictures being decoded: 15 MB for a large cover, but kept at
     /// the 128 MB the stb C libraries had, so every picture they decoded still decodes.
-    /// The Zig decoders need less for any picture than stb did (no copy of the picture
-    /// data beside the pixels, only the samples the gray is made of), and a block takes
-    /// whole 64 KB units: an 8000x6000 JPEG needs 48 MB, where stb needed 120.
+    /// The Zig decoders hand a picture on row by row, scaled as it comes: drawing an
+    /// 8000x6000 JPEG takes 300 KB, where stb needed 120 MB; a progressive one keeps
+    /// two bytes a pixel, and one past `workspace.bytes_max` is decoded smaller.
     pub const decoders: u32 = 128 << 20;
     /// The library's list and its covers: two lists of `books.books_max` books at
     /// `books.book_bytes_max` each (a reload holds two for a moment), and the covers
@@ -71,6 +72,8 @@ comptime {
     assert(b.book > 78 << 20);
     // The decoders have what the stb C libraries had
     assert(b.decoders >= 128 << 20);
+    // A picture's workspace leaves a quarter of the decoders' region to glyphs
+    assert(workspace.bytes_max * 4 <= b.decoders * 3);
 }
 
 /// The regions an App reads in, reserved by the first `assemble` and kept for good:

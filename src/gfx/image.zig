@@ -210,7 +210,7 @@ fn decoded_into(sink: *scaler.Sink, source: Encoded, parent: std.mem.Allocator) 
         const decoding = if (is_png)
             png_decoder.decode_rows(work.allocator(), encoded, sink)
         else
-            jpeg_decoder.decode_rows(work.allocator(), encoded, sink, shrink);
+            jpeg_decoder.decode_rows(&work, encoded, sink, shrink);
         decoding catch |err| {
             if (sink.mode != .waiting) sink.abandon();
             // A picture that can't be decoded is shown as none: nothing worse
@@ -653,7 +653,87 @@ test "a deflated picture draws as the same picture kept as it is" {
     const gray = decode_gray_from(alloc, source, 41 * 29).?;
     defer alloc.free(gray.pixels);
     try std.testing.expectEqual(@as(u32, 41), gray.width);
-    try std.testing.expect(decode_gray_from(alloc, source, 41 * 29 - 1) == null);
+    // Allowed fewer pixels than it has, it comes at half its size
+    const half = decode_gray_from(alloc, source, 41 * 29 - 1).?;
+    defer alloc.free(half.pixels);
+    try std.testing.expectEqual(@as(u32, 21), half.width);
+    try std.testing.expectEqual(@as(u32, 15), half.height);
+    try std.testing.expect(decode_gray_from(alloc, source, 2) == null);
     const short = Encoded{ .bytes = deflated, .deflated = true, .inflated_size = length + 1 };
     try std.testing.expect(prepare_from(alloc, short, 20, 14) == null);
+}
+
+test "a JPEG decoded smaller looks like the whole picture scaled down" {
+    const alloc = std.testing.allocator;
+    inline for (test_pictures) |case| {
+        const data = test_picture(case[0]);
+        if (comptime std.mem.endsWith(u8, case[0], ".jpg")) {
+            const whole = decode_picture(alloc, data).?;
+            defer alloc.free(whole.pixels);
+            for ([_]u8{ 2, 4, 8 }) |shrink| {
+                var work = workspace.Workspace.init(alloc, workspace.bytes_max);
+                defer work.reset();
+                var sink = scaler.Sink{ .target = .{ .divided = 1 }, .out = alloc };
+                try jpeg_decoder.decode_rows(&work, data, &sink, shrink);
+                const small = sink.finish();
+                defer alloc.free(small);
+                const size = sink.size;
+                try std.testing.expectEqual(scaler.divide_up(case[1], shrink), size.width);
+                try std.testing.expectEqual(scaler.divide_up(case[2], shrink), size.height);
+                var difference: u64 = 0;
+                for (0..size.height) |y| {
+                    for (0..size.width) |x| {
+                        const wanted = test_block_average(whole, @intCast(x), @intCast(y), shrink);
+                        difference += @abs(@as(i32, small[y * size.width + x]) - wanted);
+                    }
+                }
+                // Within a few grays on average: a progressive picture keeps only its
+                // blocks' coarsest coefficients, colour is upsampled from fewer samples,
+                // and in pictures this small most pixels are near an edge
+                try std.testing.expect(difference <= small.len * 4 * shrink);
+            }
+        }
+    }
+}
+
+/// The average of the `shrink` x `shrink` square of a picture's pixels at (x, y) of the
+/// picture shrunk, rounded, as a JPEG decoded smaller averages a block's.
+fn test_block_average(picture: decoded.Gray, x: u32, y: u32, shrink: u8) u8 {
+    assert(shrink > 1);
+    assert(picture.width > 0);
+    var sum: u32 = 0;
+    var count: u32 = 0;
+    for (y * shrink..@min((y + 1) * shrink, picture.height)) |row| {
+        for (x * shrink..@min((x + 1) * shrink, picture.width)) |column| {
+            sum += picture.pixels[row * picture.width + column];
+            count += 1;
+        }
+    }
+    return @intCast((sum + count / 2) / count);
+}
+
+test "a picture too large for the workspace is decoded smaller, not dropped" {
+    const alloc = std.testing.allocator;
+    const data = test_picture("progressive_restarts.jpg");
+    var peaks: [2]u64 = undefined;
+    for (&peaks, [_]u8{ 1, 2 }) |*peak, shrink| {
+        var work = workspace.Workspace.init(alloc, workspace.bytes_max);
+        defer work.reset();
+        var sink = scaler.Sink{ .target = .{ .divided = 1 }, .out = alloc };
+        try jpeg_decoder.decode_rows(&work, data, &sink, shrink);
+        alloc.free(sink.finish());
+        peak.* = work.peak;
+    }
+    try std.testing.expect(peaks[1] < peaks[0]);
+    // Room for the picture decoded at half its size, not at its own
+    var work = workspace.Workspace.init(alloc, peaks[1]);
+    defer work.reset();
+    var sink = scaler.Sink{ .target = .{ .divided = 1 }, .out = alloc };
+    try std.testing.expectError(error.OutOfMemory, jpeg_decoder.decode_rows(&work, data, &sink, 1));
+    try std.testing.expectEqual(scaler.Sink.Mode.waiting, sink.mode);
+    work.reset();
+    try jpeg_decoder.decode_rows(&work, data, &sink, 2);
+    const small = sink.finish();
+    defer alloc.free(small);
+    try std.testing.expectEqual(@as(u32, 21), sink.size.width);
 }

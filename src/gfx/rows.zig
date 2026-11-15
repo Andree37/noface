@@ -121,7 +121,7 @@ pub const Sink = struct {
     rows_in: u32 = 0,
     rows_out: u32 = 0,
 
-    const Mode = enum { waiting, copy, box, scatter, cells, done };
+    pub const Mode = enum { waiting, copy, box, scatter, cells, done };
 
     /// The size the picture leaves at, now its own is known.
     fn size_for(target: Target, source: Size) Size {

@@ -9,7 +9,8 @@ const Alignment = std.mem.Alignment;
 
 /// The most one picture's decoding may hold, besides its scaled result: enough for
 /// every picture the decoders read whole before (a 48 MP progressive gray JPEG, whose
-/// coefficients take two bytes a pixel), and half the decoders' region.
+/// coefficients take two bytes a pixel), leaving a quarter of the decoders' region to
+/// the glyphs drawn meanwhile.
 pub const bytes_max: u64 = 96 << 20;
 
 /// The most blocks a picture's decoding takes: tables, a few rows or planes per

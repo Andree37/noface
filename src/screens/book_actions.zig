@@ -88,7 +88,10 @@ pub fn book_sheet(
         var row_buffer: [4]card.Row = undefined;
         var subtitle_buffer: [320]u8 = undefined;
         const list = book_actions.options(e, confirming, &list_buffer);
-        assert(list.len > 0);
+        // Only a book being downloaded has nothing to pick: its card says so, and a
+        // tap above it closes it
+        if (list.len == 0) assert(e.availability == .downloading);
+        if (e.availability != .downloading) assert(list.len > 0);
         const subtitle = book_actions.subtitle(&subtitle_buffer, e, confirming);
         const rows = book_actions.rows(list, &row_buffer);
         const picked = try app.choose_from_card(a, background, e.title, subtitle, rows) orelse

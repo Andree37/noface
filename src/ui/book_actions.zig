@@ -34,9 +34,14 @@ pub fn rows(list: []const Option, out: []card.Row) []card.Row {
     return result;
 }
 
-/// The line under the title: the author and time read, or what removal means.
+/// What a book being downloaded says in place of its actions, which it has none of.
+pub const downloading_note = "Downloading. It opens once it's here.";
+
+/// The line under the title: the author and time read, what removal means, or that
+/// the book is still on its way.
 pub fn subtitle(buf: []u8, e: *const catalog.Entry, confirming: bool) []const u8 {
     if (confirming) return "It stays in your Amazon library.";
+    if (e.availability == .downloading) return downloading_note;
     var series_buf: [160]u8 = undefined;
     var time_buf: [32]u8 = undefined;
     // Room for the series and the time, so only a long author falls back to itself
@@ -130,6 +135,20 @@ test "options follow where the book is" {
     try std.testing.expectEqualSlices(Option, &.{ .remove, .mark_unread, .series }, read_options);
     const busy = entry(.downloading, 0);
     try std.testing.expectEqualSlices(Option, &.{}, options(&busy, false, &out));
+}
+
+test "a book being downloaded shows a card that says so, with nothing to pick" {
+    var out: [4]Option = undefined;
+    var subtitle_buffer: [320]u8 = undefined;
+    const busy = entry(.downloading, 0);
+    const busy_options = options(&busy, false, &out);
+    try std.testing.expectEqual(@as(usize, 0), busy_options.len);
+    const busy_subtitle = subtitle(&subtitle_buffer, &busy, false);
+    try std.testing.expectEqualStrings(downloading_note, busy_subtitle);
+    // The card the sheet shows for it: no rows, so only a tap above it closes it
+    var row_buffer: [4]card.Row = undefined;
+    try std.testing.expectEqual(@as(usize, 0), rows(busy_options, &row_buffer).len);
+    try std.testing.expectEqual(@as(?u32, null), card.hit(636, 300, 0));
 }
 
 test "removal asks first" {

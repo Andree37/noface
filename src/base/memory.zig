@@ -655,16 +655,21 @@ test "a heap region gives a freed block's pages back, and keeps its slabs" {
     const a = b.allocator();
     const small = try a.alloc(u8, 100);
     const big = try a.alloc(u8, 1 << 20);
-    @memset(big, 0xaa); // Touched, so resident
+    @memset(big, 0x55); // Touched, so resident
+    const big_start: u32 = @intCast(big.ptr - region.bytes.ptr);
     try std.testing.expectEqual(@as(u64, 0), region.bytes_given_back);
     a.free(big);
     try std.testing.expectEqual(@as(u64, 1 << 20), region.bytes_given_back);
     a.free(small); // A slot: its slab stays, for the next small block
     try std.testing.expectEqual(@as(u64, 1 << 20), region.bytes_given_back);
-    // Given back, the pages read as zeros when next handed out
+    // Given back, the pages read as zeros. Read through the region, not a new block:
+    // the allocator fills a new block with 0xaa in safe builds, hiding the pages.
+    if (builtin.os.tag == .linux) {
+        try std.testing.expectEqual(@as(u8, 0), region.bytes[big_start + 4096]);
+    }
     const again = try a.alloc(u8, 1 << 20);
     defer a.free(again);
-    if (builtin.os.tag == .linux) try std.testing.expectEqual(@as(u8, 0), again[4096]);
+    try std.testing.expect(again.len == 1 << 20);
 }
 
 test "a bump region is an arena: in turn, the last given back, all emptied at once" {

@@ -213,9 +213,10 @@ const Browser = struct {
     over_ending: ?screen.Ending(void) = null,
     stats: stats_screen.Stats = undefined, // While `over` is .stats
     bubble: battery_screen.Bubble = undefined, // While `over` is .battery
+    lock: lock.Lock = undefined, // While `over` is .lock
 
     /// The screens the library opens over itself.
-    const Over = enum { none, stats, battery };
+    const Over = enum { none, stats, battery, lock };
 
     pub const Result = void;
     /// The home screen: under every other, it takes the lock and leaving.
@@ -269,7 +270,7 @@ const Browser = struct {
             .hold => |h| try b.on_hold(h.x, h.y),
             .swipe => |direction| b.turn(direction),
             .pull => if (try panel.library_menu(b.a, b.buf)) .leave else .nothing,
-            .lock => try b.on_lock(),
+            .lock => b.on_lock(),
             .power, .computer, .stop => .leave,
             .drag, .drag_end, .unlock => .nothing,
         };
@@ -301,6 +302,7 @@ const Browser = struct {
                 try battery_screen.put_back(b.a);
                 return .stay;
             },
+            .lock => return step(b.on_woken(b.over_ending.?)),
         }
     }
 
@@ -313,6 +315,7 @@ const Browser = struct {
             .none => unreachable,
             .stats => screen.open(&b.stats, &b.over_ending),
             .battery => screen.open(&b.bubble, &b.over_ending),
+            .lock => screen.open(&b.lock, &b.over_ending),
         } };
     }
 
@@ -620,15 +623,22 @@ const Browser = struct {
         return .everything;
     }
 
-    fn on_lock(b: *Browser) !Next {
-        const a = b.a;
+    fn on_lock(b: *Browser) Next {
         var hero: ?*const catalog.Entry = null;
         if (b.hero) |h| {
             assert(h < b.lib.entries.len);
             hero = &b.lib.entries[h];
         }
         // Not put back on waking: it's all drawn again, fresh
-        if (lock.lock_screen(a, hero, .{ .restore = false }) == .leaving) return .nothing;
+        b.lock = lock.make(b.a, hero, .{ .restore = false });
+        return b.open_over(.lock);
+    }
+
+    /// Woken, or the lock screen ended as noface leaves (which goes on to leave).
+    fn on_woken(b: *Browser, ending: screen.Ending(void)) Next {
+        const a = b.a;
+        if (ending != .done) return .nothing;
+        assert(!a.input.locked); // Awake, back in front
         a.note_battery(); // What sleeping (or charging) did
         a.quick = lipc.read(a.quick); // The clock and battery may be hours old
         // A download may have finished while the Kindle slept

@@ -338,6 +338,7 @@ pub fn run_to_end(a: *app.App, s: anytype) !Ending(@TypeOf(s.*).Result) {
 /// action but those a screen under it takes (`Takes`).
 const Stack = struct {
     frames: [depth_max]Frame = undefined,
+    input: *input_mod.Input,
     depth: u32 = 0,
     changes: u32 = 0, // Screens opened and ended, counting on (wrapping)
     /// When the screen in front was put up: a tap touched before then wasn't meant
@@ -388,6 +389,8 @@ const Stack = struct {
         stack.depth -= 1;
         stack.changes +%= 1;
         assert(stack.depth < depth_max);
+        // The one under it takes input as it did, before it hears how this one ended
+        if (stack.depth > 0) stack.input.apply(stack.scope(), false);
         return f;
     }
 
@@ -494,7 +497,7 @@ pub fn run_root(a: *app.App, root: anytype) !Ending(@TypeOf(root.*).Result) {
         assert(takes.leave);
     }
     var ending: ?Ending(R) = null;
-    var stack = Stack{};
+    var stack = Stack{ .input = a.input };
     try stack.push(a, open(root, &ending));
     stack.shown_us = os.now_us();
     // Unbounded: noface's event loop, which runs for as long as the reader reads

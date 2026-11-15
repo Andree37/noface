@@ -112,6 +112,9 @@ fn parse_line(alloc: std.mem.Allocator, line: []const u8) !?library.Entry {
     const kind = fields.next() orelse "";
     const guid = fields.next() orelse "";
     if (path.len == 0 and availability == .local) return null;
+    // The export lists only KFX files and cloud books, so never an EPUB; one that came
+    // anyway is left to the library's own walk of the folder, which lists every EPUB
+    if (std.ascii.endsWithIgnoreCase(path, ".epub")) return null;
     const series = library.series_from_file_name(path);
     // A place in a series is a number the library can sort by
     if (series) |s| assert(std.math.isFinite(s.index));
@@ -203,6 +206,14 @@ test "a series place or percent that isn't a number counts as none" {
     try std.testing.expectEqualStrings("", rows[1].series);
     try std.testing.expectEqual(@as(f32, 2), rows[2].series_index);
     for ([_]library.Order{ .title, .author, .series }) |order| library.sort(rows, order);
+}
+
+test "an EPUB in the catalog is left to the library's walk of the folder" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const rows = try parse(arena.allocator(), "/d/a.EPUB\tA\tx\n/d/b.kfx\tB\tx\n");
+    try std.testing.expectEqual(@as(usize, 1), rows.len);
+    try std.testing.expectEqualStrings("/d/b.kfx", rows[0].path);
 }
 
 test "titles get their colons back and lose a series prefix" {

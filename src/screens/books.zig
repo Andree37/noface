@@ -215,14 +215,13 @@ fn add_epubs(
     list: *std.ArrayList(catalog.Entry),
 ) void {
     assert(list.items.len <= books_max);
-    const kindle = list.items;
+    // The catalog lists no EPUB (`catalog_db.parse` leaves them out), so no book found
+    // here is listed twice
+    for (list.items) |e| assert(!e.is_epub());
     const each_book = scratch.mark(); // The catalog and the folder's list stay
     var left_out: u32 = 0;
-    next: for (found) |path| {
+    for (found) |path| {
         assert(std.ascii.endsWithIgnoreCase(path, ".epub"));
-        for (kindle) |e| {
-            if (std.mem.eql(u8, e.path, path)) continue :next;
-        }
         if (list.items.len == list.capacity) {
             left_out += 1;
             continue;

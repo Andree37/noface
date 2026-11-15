@@ -332,32 +332,36 @@ pub const Input = struct {
 
     pub const ignores = gestures.ignores;
 
-    /// The next action from the simulator's pipe, or a tick when one is due first.
-    fn from_remote(in: *Input) Action {
+    /// The next action from the simulator's pipe, or a tick when one is due first; null
+    /// when neither is, without waiting.
+    fn from_remote(in: *Input) ?Action {
         assert(in.remote >= 0);
         assert(in.script == null);
-        // Unbounded: the simulator's page sends taps whenever its viewer makes them
-        while (true) {
-            const now = now_us();
-            assert(in.last_tick <= now);
-            if (in.tick_us != 0 and now - in.last_tick >= in.tick_us) {
-                in.last_tick = now;
-                return .tick;
-            }
-            const wait = in.wait_ms_for_tick(now);
-            var fds = [_]linux.pollfd{
-                .{ .fd = in.remote, .events = linux.POLL.IN, .revents = 0 },
-            };
-            const woke = linux.poll(&fds, 1, wait);
-            if (stop_requested.load(.acquire)) return .stop;
-            if (failed(woke) or woke == 0) continue;
-            var action: Action = undefined;
-            const got = linux.read(in.remote, @ptrCast(&action), @sizeOf(Action));
-            if (got == 0) return .stop; // The simulator closed it
-            if (got != @sizeOf(Action)) continue;
-            in.last_input = now_us();
-            return action;
+        const now = now_us();
+        assert(in.last_tick <= now);
+        if (in.tick_us != 0 and now - in.last_tick >= in.tick_us) {
+            in.last_tick = now;
+            return .tick;
         }
+        var fds = [_]linux.pollfd{.{ .fd = in.remote, .events = linux.POLL.IN, .revents = 0 }};
+        const woke = linux.poll(&fds, 1, 0);
+        if (failed(woke) or woke == 0) return null;
+        var action: Action = undefined;
+        const got = linux.read(in.remote, @ptrCast(&action), @sizeOf(Action));
+        if (got == 0) return .stop; // The simulator closed it
+        // Whole Actions only are written, each at once (see the comptime check above)
+        if (got != @sizeOf(Action)) return null;
+        in.last_input = now_us();
+        return action;
+    }
+
+    /// Sleeps until the simulator's pipe has something, or the next tick is due.
+    fn wait_for_remote(in: *const Input) void {
+        assert(in.remote >= 0);
+        assert(in.script == null);
+        var fds = [_]linux.pollfd{.{ .fd = in.remote, .events = linux.POLL.IN, .revents = 0 }};
+        // Woken, timed out or interrupted, the loop looks again alike
+        _ = linux.poll(&fds, 1, in.wait_ms_for_tick(now_us()));
     }
 
     /// How long to wait for input with a tick due: no longer than until the tick, so a
@@ -457,9 +461,15 @@ pub const Input = struct {
     /// computer, a tick of the timer, or a request to stop. Waits until there is one.
     pub fn next(in: *Input) Action {
         in.invariants();
-        // Unbounded: the reader's event loop, which waits for as long as they read
+        // Unbounded: the reader's event loop, which waits for as long as they read, on
+        // the Kindle and in the simulator alike
         while (true) {
             if (in.ready()) |action| return action;
+            if (in.remote >= 0) {
+                // The simulator has no Kindle to keep awake, and no watchers
+                in.wait_for_remote();
+                continue;
+            }
             in.keep_alive();
             in.wait_for_events();
             if (in.from_power_key()) |action| return action;

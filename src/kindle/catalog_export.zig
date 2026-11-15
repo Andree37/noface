@@ -98,6 +98,12 @@ pub fn run() void {
         return;
     }
     if (file.size_of(library_tmp) == 0) return;
+    // The same list as before is left as it was, so the library sees nothing changed
+    // (by its size and change time) and needn't read every book again
+    if (same_contents(library_tmp, library_path)) {
+        _ = calls.unlink(library_tmp); // Ignored: the next export replaces it
+        return;
+    }
     if (failed(calls.rename(library_tmp, library_path))) {
         std.debug.print("export: couldn't replace {s}\n", .{library_path});
     }
@@ -130,6 +136,17 @@ fn remove_copy(copy: [*:0]const u8) void {
         assert(std.mem.startsWith(u8, beside, name));
         _ = calls.unlink(beside); // Ignored: most are never made
     }
+}
+
+/// Whether the files at `a` and `b` hold the same bytes; false when either can't be read.
+fn same_contents(a: [*:0]const u8, b: [*:0]const u8) bool {
+    assert(a[0] == '/');
+    assert(b[0] == '/');
+    const data_a = file.map(a) catch return false;
+    defer file.unmap(data_a);
+    const data_b = file.map(b) catch return false;
+    defer file.unmap(data_b);
+    return std.mem.eql(u8, data_a, data_b);
 }
 
 fn find_sqlite() ?[*:0]const u8 {

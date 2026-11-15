@@ -4,7 +4,8 @@ const assert = std.debug.assert;
 const paths = @import("kindle/paths.zig");
 const card = @import("ui/card.zig");
 const memory = @import("base/memory.zig");
-const fonts_db = @import("kindle/fonts.zig");
+const typefaces = @import("typefaces.zig");
+const Typefaces = typefaces.Typefaces;
 const settings_model = @import("model/settings.zig");
 const Page = @import("gfx/page.zig").Page;
 const Font = @import("gfx/font.zig").Font;
@@ -45,22 +46,16 @@ const clock_baseline_px = 38;
 
 pub const notice_ms = 1800;
 
-/// The faces of a family: regular, bold, italic and bold italic, indexed by
-/// bold | italic << 1.
-const faces_per_family = 4;
-
 /// How many languages noface hyphenates and has dictionaries for.
 const languages_count = @typeInfo(hyphen.Lang).@"enum".field_names.len;
-
-/// A family's body fonts in one face, by reader size and book size.
-const FaceFontsBySize = [settings_model.sizes.len][book_model.size_scales.len]?Font;
 
 comptime {
     // The clock's text is drawn inside the band its partial refresh covers.
     assert(clock_baseline_px < clock_height_px);
     assert(clock_height_px < clock_width_px);
-    // Bold and italic, one bit each, pick one of the faces.
-    assert(faces_per_family == 1 << 2);
+    // A face's book size and the reader's size each fit a byte of a font's key
+    assert(book_model.size_scales.len <= std.math.maxInt(u8));
+    assert(settings_model.sizes.len <= std.math.maxInt(u8));
     // Every language has a dictionary file, named in `dictionary_for`.
     assert(languages_count == 2);
     // The interface's own family is the first, and always offered.
@@ -86,12 +81,10 @@ pub const App = struct {
     screen: *hwtcon.Screen,
     input: *Input,
     body: *Font,
-    // Body fonts by family, face (bold, italic), reader size and book size, made on first use.
-    face_fonts: [settings_model.max_families][faces_per_family]FaceFontsBySize =
-        @splat(@splat(@splat(@splat(null)))),
-    face_files: [settings_model.max_families][faces_per_family]?[]const u8 = @splat(@splat(null)),
-    // Each family's regular at interface size, for its name in Aa; made on first use
-    family_samples: [settings_model.max_families]?Font = @splat(null),
+    // The reading face's fonts by family, face (bold, italic), reader size and book
+    // size, and each family's name in itself for Aa: made on first use, the least used
+    // given up past a fixed number
+    typefaces: Typefaces = .{},
     family_sample_ptrs: [settings_model.max_families]?*Font = @splat(null),
     tab: aa.Tab = .font,
     turns: u32 = 0,
@@ -211,16 +204,7 @@ pub const App = struct {
         assert(families_count >= settings_model.builtin_families.len);
         assert(families_count <= settings_model.max_families);
         for (0..families_count) |i| {
-            if (a.family_sample_ptrs[i] != null) {
-                assert(a.family_samples[i] != null); // The pointer points at it
-                continue;
-            }
-            const file_slot = &a.face_files[i][0];
-            if (file_slot.* == null) {
-                file_slot.* = file.map(fonts_db.path(@intCast(i), false, false)) catch continue;
-            }
-            a.family_samples[i] = Font.init(file_slot.*.?, 36, 1.2) catch continue;
-            a.family_sample_ptrs[i] = &a.family_samples[i].?;
+            a.family_sample_ptrs[i] = a.typefaces.sample(@intCast(i));
         }
         return a.family_sample_ptrs[0..families_count];
     }
@@ -230,24 +214,24 @@ pub const App = struct {
     pub fn face(a: *App, bold_text: bool, italic: bool, size: u8) !*Font {
         assert(size < book_model.size_scales.len);
         // Parsing clamps every setting to its steps: one past them is a bug of ours
-        assert(a.settings.font < settings_model.max_families);
+        assert(a.settings.font < settings_model.families.len);
         assert(a.settings.size < settings_model.sizes.len);
         const bold = bold_text or a.settings.bold;
         const which: u2 = @as(u2, @intFromBool(bold)) | @as(u2, @intFromBool(italic)) << 1;
-        const file_slot = &a.face_files[a.settings.font][which];
-        if (file_slot.* == null) {
-            file_slot.* = try file.map(fonts_db.path(a.settings.font, bold, italic));
-        }
         const scale = book_model.size_scales[size];
-        const slot = &a.face_fonts[a.settings.font][which][a.settings.size][size];
-        if (slot.* == null) {
-            slot.* = try Font.init(file_slot.*.?, a.settings.px() * scale, 1);
-        }
+        const key: typefaces.FaceKey = .{
+            .family = a.settings.font,
+            .which = which,
+            .size = @intCast(a.settings.size),
+            .scale = size,
+        };
+        // The body font is in use between pages too, so it's never the one given up
+        const font = try a.typefaces.face(key, a.settings.px() * scale, a.body);
         // Spacing can change without the font changing, so set it every time.
         const line_height_px: f32 = @floatFromInt(a.settings.line_height());
-        slot.*.?.line_height = @intFromFloat(line_height_px * scale);
-        assert(slot.*.?.line_height > 0);
-        return &slot.*.?;
+        font.line_height = @intFromFloat(line_height_px * scale);
+        assert(font.line_height > 0);
+        return font;
     }
 
     fn draw_image(

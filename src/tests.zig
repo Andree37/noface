@@ -16,6 +16,7 @@ test {
     _ = @import("gfx/page.zig");
     _ = @import("gfx/font.zig");
     _ = @import("gfx/glyph_cache.zig");
+    _ = @import("typefaces.zig");
     _ = @import("gfx/truetype.zig");
     _ = @import("model/book.zig");
     _ = @import("model/notes.zig");

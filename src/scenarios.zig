@@ -481,12 +481,7 @@ fn play_on_start(
     // Every typeface the settings could pick is the test font: no Kindle fonts needed.
     // A real book is set in the Kindle's own, found by the app as it always does.
     if (kindle.real_book == null) {
-        for (&a.face_files) |*family| {
-            family[0] = go_regular;
-            family[1] = go_bold;
-            family[2] = go_regular;
-            family[3] = go_bold;
-        }
+        a.typefaces.stand_in = .{ go_regular, go_bold, go_regular, go_bold };
     }
     try a.apply_settings();
 

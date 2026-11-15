@@ -51,16 +51,6 @@ pub fn apply(alloc: std.mem.Allocator, state_dir: []const u8, entries: []catalog
     }
 }
 
-/// One of `rows`, chosen from a page of them under a heading: its index, or null when
-/// "Library" along the top is tapped or the Kindle locks.
-fn pick(a: *app.App, heading: []const u8, about: []const u8, rows: []const goto_ui.Row) !?u32 {
-    assert(rows.len > 0);
-    var list = Choices{ .a = a, .heading = heading, .about = about, .rows = rows };
-    const picked = try screen.run(a, &list) orelse return null;
-    assert(picked < rows.len);
-    return picked;
-}
-
 const Choices = struct {
     pub const Result = u32;
     a: *app.App,
@@ -100,17 +90,6 @@ const Choices = struct {
     }
 };
 
-/// A new series' name, typed. Null if cancelled.
-fn type_name(a: *app.App, alloc: std.mem.Allocator) !?[]const u8 {
-    var entry = NameEntry{ .a = a };
-    const typed = try screen.run(a, &entry) orelse return null;
-    // Done only once something besides spaces is typed
-    assert(std.mem.trim(u8, typed, " ").len > 0);
-    const name = try overrides.title_case(alloc, typed);
-    assert(name.len > 0);
-    return name;
-}
-
 const NameEntry = struct {
     pub const Result = []const u8; // As typed, kept in `name`
     a: *app.App,
@@ -143,86 +122,252 @@ fn by_name(_: void, x: []const u8, y: []const u8) bool {
     return std.ascii.lessThanIgnoreCase(x, y);
 }
 
-/// Sets `e`'s series by hand, and then, in the series picked, any other books'. True
-/// when anything changed; what was on screen is the caller's to redraw either way.
-pub fn choose(a: *app.App, entries: []const catalog.Entry, e: *const catalog.Entry) !bool {
+/// Starts setting `e`'s series by hand, and then, in the series picked, any other
+/// books', in `s`, where it stays while it's open (`screen.open`). It leads only to
+/// lists and the keyboard, and ends with true when anything changed; what was on
+/// screen is the caller's to redraw either way.
+pub fn begin(
+    s: *Series,
+    a: *app.App,
+    entries: []const catalog.Entry,
+    e: *const catalog.Entry,
+) void {
     // Offered only for books on the Kindle, which have a file to key it by
     assert(e.is_local());
-    var arena = std.heap.ArenaAllocator.init(a.alloc);
-    defer arena.deinit();
-    const alloc = arena.allocator();
-
-    // The library's series, once each, by name
-    var names: std.ArrayList([]const u8) = .empty;
-    for (entries) |o| {
-        if (o.series.len == 0) continue;
-        const seen = for (names.items) |n| {
-            if (catalog.same_series(n, o.series)) break true;
-        } else false;
-        if (!seen) try names.append(alloc, o.series);
-    }
-    std.mem.sort([]const u8, names.items, {}, by_name);
-    var rows: std.ArrayList(goto_ui.Row) = .empty;
-    try rows.append(alloc, .{ .label = "New series\u{2026}", .page = 0, .note = "" });
-    try rows.append(alloc, .{ .label = "Not in a series", .page = 0, .note = "" });
-    for (names.items) |n| {
-        const note = if (catalog.same_series(n, e.series)) "Now" else "";
-        try rows.append(alloc, .{ .label = n, .page = 0, .note = note });
-    }
-    assert(rows.items.len == names.items.len + rows_before_series);
-
-    const picked = try pick(a, "Series", e.title, rows.items) orelse return false;
-    if (picked == 1) {
-        try save(a, alloc, e.path, .{ .series = "", .index = 0 });
-        return true;
-    }
-    if (picked == 0) {
-        const typed = try type_name(a, alloc) orelse return false;
-        return try manage(a, alloc, entries, typed, e);
-    }
-    const name = names.items[picked - rows_before_series];
-    return try manage(a, alloc, entries, name, e);
+    s.* = .{ .a = a, .entries = entries, .e = e, .arena = .init(a.alloc) };
+    assert(s.phase == .choosing);
+    assert(!s.changed);
 }
+
+pub const Series = struct {
+    pub const Result = bool; // Whether anything changed
+    a: *app.App,
+    entries: []const catalog.Entry,
+    e: *const catalog.Entry,
+    arena: std.heap.ArenaAllocator, // Emptied as it ends
+    phase: Phase = .choosing,
+    /// The library's series, once each, by name, and the first list's rows.
+    names: std.ArrayList([]const u8) = .empty,
+    rows: std.ArrayList(goto_ui.Row) = .empty,
+    /// The series being put together, and where each book stands in it.
+    name: []const u8 = "",
+    places: []Place = &.{},
+    changed: bool = false,
+    /// The books listed, and which of them is being numbered.
+    order: std.ArrayList(u32) = .empty,
+    listed: Listed = .{ .in_series = 0, .next = 1 },
+    numbering: u32 = 0,
+    number_rows: [numbers + 1]goto_ui.Row = undefined,
+    /// The list or keyboard open over it, and how it ended.
+    choices: Choices = undefined,
+    choices_ending: ?screen.Ending(u32) = null,
+    naming: NameEntry = undefined,
+    naming_ending: ?screen.Ending([]const u8) = null,
+
+    /// What's open over it: the first list (a series, a new one or none), the keyboard
+    /// for a new one's name, the series' books, or the numbers for one of them.
+    const Phase = enum { choosing, naming, listing, numbering };
+
+    /// Never shown itself: what it opens is.
+    pub fn draw(s: *Series, part: screen.Part) !void {
+        assert(part == .all);
+        assert(s.phase == .choosing);
+    }
+
+    pub fn on_tap(s: *Series, _: screen.Tap) !screen.Step(bool) {
+        assert(s.phase == .choosing);
+        unreachable; // Never in front: a list or the keyboard always is
+    }
+
+    /// The first list: the library's series, a new one, or none.
+    pub fn on_open(s: *Series) !screen.Step(bool) {
+        assert(s.phase == .choosing);
+        const alloc = s.arena.allocator();
+        for (s.entries) |o| {
+            if (o.series.len == 0) continue;
+            const seen = for (s.names.items) |n| {
+                if (catalog.same_series(n, o.series)) break true;
+            } else false;
+            if (!seen) try s.names.append(alloc, o.series);
+        }
+        std.mem.sort([]const u8, s.names.items, {}, by_name);
+        try s.rows.append(alloc, .{ .label = "New series\u{2026}", .page = 0, .note = "" });
+        try s.rows.append(alloc, .{ .label = "Not in a series", .page = 0, .note = "" });
+        for (s.names.items) |n| {
+            const note = if (catalog.same_series(n, s.e.series)) "Now" else "";
+            try s.rows.append(alloc, .{ .label = n, .page = 0, .note = note });
+        }
+        assert(s.rows.items.len == s.names.items.len + rows_before_series);
+        return s.pick("Series", s.e.title, s.rows.items);
+    }
+
+    pub fn on_resume(s: *Series) !screen.Step(bool) {
+        // Set as a series is chosen to put together, for every book in the library
+        if (s.phase == .listing) assert(s.places.len == s.entries.len);
+        if (s.phase == .numbering) assert(s.numbering < s.entries.len);
+        return switch (s.phase) {
+            .choosing => s.chosen(),
+            .naming => {
+                const typed = switch (s.naming_ending.?) {
+                    .done => |typed| typed,
+                    .closed, .interrupted => return s.finish(),
+                };
+                // Done only once something besides spaces is typed
+                assert(std.mem.trim(u8, typed, " ").len > 0);
+                return s.manage(try overrides.title_case(s.arena.allocator(), typed));
+            },
+            .listing => s.tapped(),
+            .numbering => s.numbered(),
+        };
+    }
+
+    /// A series picked in the first list, a new one or none.
+    fn chosen(s: *Series) !screen.Step(bool) {
+        assert(s.phase == .choosing);
+        const picked = s.row_picked() orelse return s.finish();
+        if (picked == 1) {
+            try save(s.a, s.arena.allocator(), s.e.path, .{ .series = "", .index = 0 });
+            s.changed = true;
+            return s.finish();
+        }
+        if (picked == 0) {
+            s.phase = .naming;
+            s.naming = .{ .a = s.a };
+            return .{ .push = screen.open(&s.naming, &s.naming_ending) };
+        }
+        assert(picked >= rows_before_series);
+        return s.manage(s.names.items[picked - rows_before_series]);
+    }
+
+    /// The books of series `name`, by number, then the rest of the books on the Kindle
+    /// (the book this started from at the top of them): tapping one of the rest adds
+    /// it as the next number, tapping one in the series changes its number or takes it
+    /// out. Each change is saved as it's made, until "Library" or a lock.
+    fn manage(s: *Series, name: []const u8) !screen.Step(bool) {
+        assert(name.len > 0);
+        assert(s.e.is_local());
+        s.name = name;
+        s.places = try s.arena.allocator().alloc(Place, s.entries.len);
+        for (s.entries, s.places) |e, *p| p.* = .{ .series = e.series, .index = e.series_index };
+        return s.list();
+    }
+
+    fn list(s: *Series) !screen.Step(bool) {
+        assert(s.name.len > 0);
+        assert(s.places.len == s.entries.len);
+        s.phase = .listing;
+        s.listed = try manage_list(
+            s.arena.allocator(),
+            s.entries,
+            s.places,
+            s.name,
+            s.e,
+            &s.order,
+            &s.rows,
+        );
+        const about = "Tap a book to add it, or to change its number";
+        return s.pick(s.name, about, s.rows.items);
+    }
+
+    /// A book tapped in the series' list: one of the rest is added as the next number,
+    /// one in the series is given a number to choose.
+    fn tapped(s: *Series) !screen.Step(bool) {
+        assert(s.phase == .listing);
+        const tapped_index = s.row_picked() orelse return s.finish();
+        assert(tapped_index < s.order.items.len);
+        const i = s.order.items[tapped_index];
+        if (tapped_index >= s.listed.in_series) {
+            s.places[i] = .{ .series = s.name, .index = s.listed.next };
+            try save(s.a, s.arena.allocator(), s.entries[i].path, s.places[i]);
+            s.changed = true;
+            return s.list();
+        }
+        s.phase = .numbering;
+        s.numbering = i;
+        return s.number_for(i);
+    }
+
+    /// A new number for the book being numbered, or out of the series; nothing
+    /// changes when the list is left.
+    fn numbered(s: *Series) !screen.Step(bool) {
+        assert(s.phase == .numbering);
+        const i = s.numbering;
+        const n = s.row_picked() orelse return s.list();
+        assert(n <= numbers);
+        s.places[i] = if (n == 0) .{ .series = "", .index = 0 } else .{
+            .series = s.name,
+            .index = @floatFromInt(n),
+        };
+        try save(s.a, s.arena.allocator(), s.entries[i].path, s.places[i]);
+        s.changed = true;
+        return s.list();
+    }
+
+    /// Opens a page of `rows` under a heading.
+    fn pick(
+        s: *Series,
+        heading: []const u8,
+        about: []const u8,
+        rows: []const goto_ui.Row,
+    ) screen.Step(bool) {
+        assert(rows.len > 0);
+        assert(heading.len > 0);
+        s.choices = .{ .a = s.a, .heading = heading, .about = about, .rows = rows };
+        return .{ .push = screen.open(&s.choices, &s.choices_ending) };
+    }
+
+    /// The row picked in the list just closed, or null when "Library" along the top
+    /// was tapped or the Kindle locked.
+    fn row_picked(s: *const Series) ?u32 {
+        assert(s.phase != .naming); // The keyboard picks no row
+        const index = switch (s.choices_ending.?) {
+            .done => |index| index,
+            .closed, .interrupted => return null,
+        };
+        assert(index < s.choices.rows.len);
+        return index;
+    }
+
+    /// The numbers offered for book `i` in the series, with the books already at each
+    /// place beside them, or out of the series.
+    fn number_for(s: *Series, i: u32) !screen.Step(bool) {
+        assert(i < s.entries.len);
+        assert(s.places.len == s.entries.len);
+        const alloc = s.arena.allocator();
+        s.number_rows[0] = .{ .label = "Take out of this series", .page = 0, .note = "" };
+        for (s.number_rows[1..], 1..) |*r, n| {
+            var taken: []const u8 = "";
+            for (s.entries, s.places, 0..) |o, p, j| {
+                if (j == i) continue;
+                if (!catalog.same_series(p.series, s.name)) continue;
+                if (p.index == @as(f32, @floatFromInt(n))) taken = o.title;
+            }
+            const label = try std.fmt.allocPrint(alloc, "#{d}  {s}", .{ n, taken });
+            r.* = .{ .label = label, .page = 0, .note = "" };
+        }
+        const heading = try std.fmt.allocPrint(alloc, "Number in {s}", .{s.name});
+        return s.pick(heading, s.entries[i].title, &s.number_rows);
+    }
+
+    /// Done: what it kept is let go of, and whether anything changed said.
+    fn finish(s: *Series) screen.Step(bool) {
+        // Something it opened has ended, which is what ends it
+        assert(s.choices_ending != null or s.naming_ending != null);
+        // Nothing is saved before a series is chosen to put together
+        if (s.changed) assert(s.phase != .naming);
+        const changed = s.changed;
+        s.arena.deinit();
+        return .{ .done = changed };
+    }
+};
 
 /// Where each book stands while a series is being put together: what the library
 /// said, changed by what's been set here.
 const Place = struct { series: []const u8, index: f32 };
 
-/// The books of series `name`, by number, then the rest of the books on the Kindle
-/// (`first` at the top of them): tapping one of the rest adds it as the next number,
-/// tapping one in the series changes its number or takes it out. Each change is
-/// saved as it's made. True when anything changed.
-fn manage(
-    a: *app.App,
-    alloc: std.mem.Allocator,
-    entries: []const catalog.Entry,
-    name: []const u8,
-    first: *const catalog.Entry,
-) !bool {
-    assert(name.len > 0);
-    assert(first.is_local());
-    const places = try alloc.alloc(Place, entries.len);
-    for (entries, places) |e, *p| p.* = .{ .series = e.series, .index = e.series_index };
-    var changed = false;
-    var order: std.ArrayList(u32) = .empty;
-    var rows: std.ArrayList(goto_ui.Row) = .empty;
-    // Unbounded: the reader adds and renumbers books for as long as they like, until
-    // they tap "Library" or the Kindle locks
-    while (true) {
-        const listed = try manage_list(alloc, entries, places, name, first, &order, &rows);
-        const about = "Tap a book to add it, or to change its number";
-        const tapped = try pick(a, name, about, rows.items) orelse return changed;
-        assert(tapped < order.items.len);
-        const i = order.items[tapped];
-        if (tapped >= listed.in_series) {
-            places[i] = .{ .series = name, .index = listed.next };
-        } else {
-            places[i] = try number_for(a, alloc, entries, places, i, name) orelse continue;
-        }
-        try save(a, alloc, entries[i].path, places[i]);
-        changed = true;
-    }
-}
+/// The books `manage` lists: how many of them are in the series, and the number the
+/// next one added would take.
+const Listed = struct { in_series: u32, next: f32 };
 
 /// The books `manage` lists, in `order` (indexes into `entries`) with a row for each:
 /// how many of them are in the series, and the number the next one added would take.
@@ -234,7 +379,7 @@ fn manage_list(
     first: *const catalog.Entry,
     order: *std.ArrayList(u32),
     rows: *std.ArrayList(goto_ui.Row),
-) !struct { in_series: u32, next: f32 } {
+) !Listed {
     assert(places.len == entries.len);
     // In the series, by number; then the rest, the book this started from first
     order.clearRetainingCapacity();
@@ -284,37 +429,6 @@ fn manage_list_less(places: []const Place, x: u32, y: u32) bool {
     assert(x < places.len);
     assert(y < places.len);
     return places[x].index < places[y].index;
-}
-
-/// A new number in `name` for book `i`, with the books already at each place
-/// beside them, or out of the series. Null if left as it was.
-fn number_for(
-    a: *app.App,
-    alloc: std.mem.Allocator,
-    entries: []const catalog.Entry,
-    places: []const Place,
-    i: u32,
-    name: []const u8,
-) !?Place {
-    assert(places.len == entries.len);
-    assert(i < entries.len);
-    var rows: [numbers + 1]goto_ui.Row = undefined;
-    rows[0] = .{ .label = "Take out of this series", .page = 0, .note = "" };
-    for (rows[1..], 1..) |*r, n| {
-        var taken: []const u8 = "";
-        for (entries, places, 0..) |o, p, j| {
-            if (j == i) continue;
-            if (!catalog.same_series(p.series, name)) continue;
-            if (p.index == @as(f32, @floatFromInt(n))) taken = o.title;
-        }
-        const label = try std.fmt.allocPrint(alloc, "#{d}  {s}", .{ n, taken });
-        r.* = .{ .label = label, .page = 0, .note = "" };
-    }
-    const heading = try std.fmt.allocPrint(alloc, "Number in {s}", .{name});
-    const n = try pick(a, heading, entries[i].title, &rows) orelse return null;
-    assert(n <= numbers);
-    if (n == 0) return .{ .series = "", .index = 0 };
-    return .{ .series = name, .index = @floatFromInt(n) };
 }
 
 /// Saves one book's series and number in the overrides file.

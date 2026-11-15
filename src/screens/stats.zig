@@ -50,15 +50,15 @@ pub fn summarize(a: *const app.App, library: *books.Library) stats_ui.Summary {
     return s;
 }
 
-/// Shows the stats over the library until a tap.
-pub fn run(a: *app.App, library: *books.Library) !void {
-    var stats = Stats{ .a = a, .summary = summarize(a, library) };
+/// The stats, to show over the library until a tap.
+pub fn make(a: *app.App, library: *books.Library) Stats {
+    const stats = Stats{ .a = a, .summary = summarize(a, library) };
     assert(stats.summary.books >= stats.summary.finished);
     assert(stats.summary.week >= stats.summary.today);
-    _ = try screen.run(a, &stats);
+    return stats;
 }
 
-const Stats = struct {
+pub const Stats = struct {
     pub const Result = void;
     a: *app.App,
     summary: stats_ui.Summary,

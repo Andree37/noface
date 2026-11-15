@@ -3,12 +3,15 @@
 //! anyway), and colours become gray with stb_image's weights, 16-bit samples rounded as
 //! it did, so a picture looks exactly as it did when stb_image decoded it. A file
 //! stb_image turned down is turned down here too; a damaged or cut-short one is an
-//! error, never a crash.
+//! error, never a crash. Rows are inflated, unfiltered and handed on one at a time, so
+//! a picture of any size takes a few rows' memory.
 const std = @import("std");
 const assert = std.debug.assert;
 const flate = std.compress.flate;
 const decoded = @import("decoded.zig");
 const Gray = decoded.Gray;
+const scaler = @import("rows.zig");
+const Workspace = @import("workspace.zig").Workspace;
 
 pub const Error = error{ BadPng, OutOfMemory };
 
@@ -62,23 +65,6 @@ const Header = struct {
 
 pub fn is_png(data: []const u8) bool {
     return data.len >= signature.len and std.mem.eql(u8, data[0..signature.len], signature);
-}
-
-/// Decodes a PNG into gray pixels allocated from `alloc`, which the caller frees.
-pub fn decode(alloc: std.mem.Allocator, data: []const u8) Error!Gray {
-    if (!is_png(data)) return error.BadPng;
-    var header: Header = .{};
-    try read_chunks(data, &header);
-    assert(header.seen_header);
-    assert(header.idat_count > 0);
-    const raw_size = try raw_size_of(&header);
-    const raw = try alloc.alloc(u8, raw_size);
-    defer alloc.free(raw);
-    try inflate_idat(alloc, data, &header, raw);
-    const pixels = try alloc.alloc(u8, @as(u32, header.width) * header.height);
-    errdefer alloc.free(pixels);
-    try unfilter_all(alloc, &header, raw, pixels);
-    return .{ .pixels = pixels, .width = header.width, .height = header.height };
 }
 
 /// Reads every chunk up to IEND, checking them as stb_image did.
@@ -190,47 +176,130 @@ fn check_transparency(header: *const Header, body: []const u8) Error!void {
     if (body.len != @as(u32, header.channels) * 2) return error.BadPng;
 }
 
-/// Inflates the picture data into `raw`. A copy of the IDAT chunks joined goes as soon
-/// as it's inflated, so it's never held beside the pixels.
-fn inflate_idat(
-    alloc: std.mem.Allocator,
-    data: []const u8,
-    header: *const Header,
-    raw: []u8,
-) Error!void {
-    assert(header.idat_count > 0);
-    assert(raw.len > 0);
-    const compressed = try gather_idat(alloc, data, header);
-    defer if (header.idat_count > 1) alloc.free(compressed);
-    try inflate(compressed, header.apple, raw);
+/// Decodes a PNG into gray pixels allocated from `alloc`, which the caller frees.
+pub fn decode(alloc: std.mem.Allocator, data: []const u8) Error!Gray {
+    var work = Workspace.init(alloc, std.math.maxInt(u32));
+    defer work.reset();
+    var sink = scaler.Sink{ .target = .{ .divided = 1 }, .out = alloc };
+    decode_rows(work.allocator(), data, &sink) catch |err| {
+        if (sink.mode != .waiting) sink.abandon();
+        return err;
+    };
+    const pixels = sink.finish();
+    assert(pixels.len == @as(u64, sink.size.width) * sink.size.height);
+    return .{ .pixels = pixels, .width = sink.size.width, .height = sink.size.height };
 }
 
-/// The compressed picture data, in one piece: the one IDAT chunk itself, or a copy of
-/// them all joined (owned by the caller when there is more than one).
-fn gather_idat(alloc: std.mem.Allocator, data: []const u8, header: *const Header) Error![]const u8 {
+/// Decodes a PNG row by row into `sink`, which `begin`s once the size is known. The
+/// picture data is inflated as the rows need it, straight from its chunks, so the
+/// memory taken from `work` is a few rows' and the inflater's window, whatever the
+/// picture's size.
+pub fn decode_rows(work: std.mem.Allocator, data: []const u8, sink: *scaler.Sink) Error!void {
+    if (!is_png(data)) return error.BadPng;
+    var header: Header = .{};
+    try read_chunks(data, &header);
+    assert(header.seen_header);
     assert(header.idat_count > 0);
-    assert(header.idat_size <= idat_size_max);
-    const joined = if (header.idat_count > 1) try alloc.alloc(u8, header.idat_size) else null;
-    var filled: u32 = 0;
-    var at: u32 = signature.len;
-    // Checked by `read_chunks`: each chunk lies inside the file, up to IEND
-    while (at + chunk_header_size <= data.len) {
-        const length = std.mem.readInt(u32, data[at..][0..4], .big);
-        const kind = std.mem.readInt(u32, data[at + 4 ..][0..4], .big);
-        if (kind == chunk_type("IEND")) break;
-        const body = data[at + chunk_header_size ..][0..length];
-        if (kind == chunk_type("IDAT")) {
-            if (joined) |target| {
-                @memcpy(target[filled..][0..length], body);
-            } else {
-                return body;
-            }
-            filled += length;
+    // Turned down as before, when the inflated data couldn't be held in 32 bits
+    _ = try raw_size_of(&header);
+    const order: scaler.Order = if (header.interlaced) .passes else .rows;
+    try sink.begin(work, .{ .width = header.width, .height = header.height }, order);
+    var input_buffer: [input_buffer_size]u8 = undefined;
+    var idat = Idat.init(data, &input_buffer);
+    if (!header.apple) try read_zlib_header(&idat.reader);
+    const window = try work.alloc(u8, flate.max_window_len);
+    var inflater: flate.Decompress = .init(&idat.reader, .raw, window);
+    const widest = row_size(&header, header.width);
+    const work_rows: Work = .{
+        .line = try work.alloc(u8, widest + 1),
+        .rows = try work.alloc(u8, widest * 2),
+        .samples = try work.alloc(u8, @as(u32, header.width) * header.channels),
+        .gray_row = try work.alloc(u8, header.width),
+    };
+    for (0..pass_count) |pass_index| {
+        const pass: u8 = @intCast(pass_index);
+        const size = pass_size(&header, pass);
+        if (size.width > 0 and size.height > 0) {
+            try unfilter_pass(&header, pass, &inflater.reader, sink, &work_rows);
         }
-        at += chunk_header_size + length + chunk_checksum_size;
+        if (!header.interlaced) break;
     }
-    assert(filled == header.idat_size);
-    return joined.?;
+    assert(sink.mode == .copy or sink.mode == .box or sink.mode == .scatter or
+        sink.mode == .cells);
+}
+
+/// The inflater reads its input this many bytes at a time, copied out of the chunks.
+const input_buffer_size = 4096;
+
+comptime {
+    // The inflater needs at least 10 bytes of its input at once
+    assert(input_buffer_size >= 10);
+}
+
+/// The compressed picture data as one stream, read out of its IDAT chunks in turn: no
+/// copy of them joined.
+const Idat = struct {
+    data: []const u8,
+    /// Where the next chunk starts, and what's left of the current IDAT chunk's data.
+    at: u32 = signature.len,
+    body: []const u8 = &.{},
+    reader: std.Io.Reader,
+
+    fn init(data: []const u8, buffer: []u8) Idat {
+        assert(data.len <= std.math.maxInt(u32));
+        assert(buffer.len >= 10);
+        return .{
+            .data = data,
+            .reader = .{ .vtable = &.{ .stream = stream }, .buffer = buffer, .seek = 0, .end = 0 },
+        };
+    }
+
+    /// The next IDAT chunk's data, or false past the last. `read_chunks` checked each
+    /// chunk lies inside the file, up to IEND.
+    fn next_body(idat: *Idat) bool {
+        assert(idat.body.len == 0);
+        assert(idat.at <= idat.data.len);
+        // Every chunk takes at least its header, so the loop ends
+        while (idat.at + chunk_header_size <= idat.data.len) {
+            const length = std.mem.readInt(u32, idat.data[idat.at..][0..4], .big);
+            const kind = std.mem.readInt(u32, idat.data[idat.at + 4 ..][0..4], .big);
+            if (kind == chunk_type("IEND")) return false;
+            const body = idat.data[idat.at + chunk_header_size ..][0..length];
+            idat.at += chunk_header_size + length + chunk_checksum_size;
+            if (kind == chunk_type("IDAT") and length > 0) {
+                idat.body = body;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    fn stream(
+        reader: *std.Io.Reader,
+        writer: *std.Io.Writer,
+        limit: std.Io.Limit,
+    ) std.Io.Reader.StreamError!usize { // usize: std.Io.Reader's interface
+        const idat: *Idat = @alignCast(@fieldParentPtr("reader", reader));
+        if (idat.body.len == 0 and !idat.next_body()) return error.EndOfStream;
+        assert(idat.body.len > 0);
+        const wanted = limit.minInt(idat.body.len);
+        const written = try writer.write(idat.body[0..wanted]);
+        idat.body = idat.body[written..];
+        assert(written <= wanted);
+        return written;
+    }
+};
+
+/// The zlib header: deflate, no preset dictionary, and its own check. Like stb_image,
+/// nothing checks the checksum at the end, nor minds data past what the picture needs.
+fn read_zlib_header(input: *std.Io.Reader) Error!void {
+    assert(input.seek == 0);
+    assert(input.buffer.len >= 2);
+    const method = input.takeByte() catch return error.BadPng;
+    const flags = input.takeByte() catch return error.BadPng;
+    if ((@as(u32, method) * 256 + flags) % 31 != 0) return error.BadPng;
+    if (flags & 32 != 0) return error.BadPng;
+    if (method & 15 != 8) return error.BadPng;
 }
 
 /// Bytes a row of `width` pixels takes in the file, without its filter byte.
@@ -276,73 +345,23 @@ fn pass_size(header: *const Header, pass: u8) decoded_size {
 
 const decoded_size = struct { width: u32, height: u32 };
 
-/// Inflates exactly `raw.len` bytes. Like stb_image, it doesn't check the checksum at
-/// the end, nor mind data past what the picture needs.
-fn inflate(compressed: []const u8, apple: bool, raw: []u8) Error!void {
-    assert(raw.len > 0);
-    var stream = compressed;
-    if (!apple) {
-        // The zlib header: deflate, no preset dictionary, and its own check
-        if (stream.len < 2) return error.BadPng;
-        const method = stream[0];
-        const flags = stream[1];
-        if ((@as(u32, method) * 256 + flags) % 31 != 0) return error.BadPng;
-        if (flags & 32 != 0) return error.BadPng;
-        if (method & 15 != 8) return error.BadPng;
-        stream = stream[2..];
-    }
-    var input: std.Io.Reader = .fixed(stream);
-    var decompress: flate.Decompress = .init(&input, .raw, &.{});
-    var output: std.Io.Writer = .fixed(raw);
-    decompress.reader.streamExact(&output, raw.len) catch return error.BadPng;
-    assert(output.end == raw.len);
-}
+/// Buffers `unfilter_pass` reuses for every row: one as the file has it, two to filter
+/// in turn, a row's samples unpacked to bytes, and its grays.
+const Work = struct { line: []u8, rows: []u8, samples: []u8, gray_row: []u8 };
 
-/// Undoes each row's filter and turns it gray, pass by pass.
-fn unfilter_all(
-    alloc: std.mem.Allocator,
-    header: *const Header,
-    raw: []const u8,
-    pixels: []u8,
-) Error!void {
-    assert(pixels.len == @as(u64, header.width) * header.height);
-    const widest = row_size(header, header.width);
-    // Two rows to filter in turn, and the samples of one row unpacked to bytes
-    const rows = try alloc.alloc(u8, widest * 2);
-    defer alloc.free(rows);
-    const samples = try alloc.alloc(u8, @as(u32, header.width) * header.channels);
-    defer alloc.free(samples);
-    const gray_row = try alloc.alloc(u8, header.width);
-    defer alloc.free(gray_row);
-    const work: Work = .{ .rows = rows, .samples = samples, .gray_row = gray_row };
-    var at: u32 = 0;
-    for (0..pass_count) |pass_index| {
-        const pass: u8 = @intCast(pass_index);
-        const size = pass_size(header, pass);
-        if (size.width > 0 and size.height > 0) {
-            const used = (row_size(header, size.width) + 1) * size.height;
-            try unfilter_pass(header, pass, raw[at..][0..used], pixels, &work);
-            at += used;
-        }
-        if (!header.interlaced) break;
-    }
-    assert(at == raw.len);
-}
-
-/// Buffers `unfilter_pass` reuses for every row.
-const Work = struct { rows: []u8, samples: []u8, gray_row: []u8 };
-
+/// Inflates a pass's rows one at a time, undoes their filters and hands their grays
+/// to `sink`.
 fn unfilter_pass(
     header: *const Header,
     pass: u8,
-    raw: []const u8,
-    pixels: []u8,
+    inflated: *std.Io.Reader,
+    sink: *scaler.Sink,
     work: *const Work,
 ) Error!void {
     const size = pass_size(header, pass);
     const size_in_row = row_size(header, size.width);
-    assert(raw.len == (size_in_row + 1) * size.height);
     assert(work.rows.len >= size_in_row * 2);
+    assert(work.line.len >= size_in_row + 1);
     // Low bit depths filter byte by byte, others pixel by pixel
     const bytes_per_sample: u32 = if (header.depth == 16) 2 else 1;
     const filter_bytes = if (header.depth < 8) 1 else header.channels * bytes_per_sample;
@@ -350,16 +369,21 @@ fn unfilter_pass(
         const half = (row & 1) * size_in_row;
         const current = work.rows[half..][0..size_in_row];
         const prior = work.rows[size_in_row - half ..][0..size_in_row];
-        const line = raw[row * (size_in_row + 1) ..][0 .. size_in_row + 1];
+        const line = work.line[0 .. size_in_row + 1];
+        inflated.readSliceAll(line) catch return error.BadPng;
         var filter = line[0];
         if (filter > 4) return error.BadPng;
         // The first row has no row above: stb_image's equivalents that don't look at it
         if (row == 0) filter = first_row_filter[filter];
         unfilter_row(filter, line[1..], current, prior, filter_bytes);
-        const gray = if (header.interlaced) work.gray_row[0..size.width] else pixels[row *
-            header.width ..][0..header.width];
+        const gray = work.gray_row[0..size.width];
         row_to_gray(header, current, work.samples, gray);
-        if (header.interlaced) scatter(header, pass, @intCast(row), gray, pixels);
+        if (header.interlaced) {
+            const y = @as(u32, @intCast(row)) * pass_y_step[pass] + pass_y_start[pass];
+            sink.put_pass_row(y, pass_x_start[pass], pass_x_step[pass], gray);
+        } else {
+            sink.put_row(gray);
+        }
     }
 }
 
@@ -517,15 +541,4 @@ fn gray_from_16(bytes: []const u8, channels: u8, gray: []u8) void {
             pixel.* = @intCast(decoded.luma16(red, green, blue) >> 8);
         }
     }
-}
-
-/// Puts one row of an interlaced pass where its pixels belong.
-fn scatter(header: *const Header, pass: u8, row: u32, gray: []const u8, pixels: []u8) void {
-    assert(pass < pass_count);
-    assert(gray.len <= header.width);
-    const y = row * pass_y_step[pass] + pass_y_start[pass];
-    assert(y < header.height);
-    const line = pixels[y * header.width ..][0..header.width];
-    const step = pass_x_step[pass];
-    for (gray, 0..) |pixel, column| line[column * step + pass_x_start[pass]] = pixel;
 }

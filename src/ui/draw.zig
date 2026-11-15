@@ -208,15 +208,8 @@ test "pager arrows sit either side of the count" {
 }
 
 test "a line keeps a word that fits just before the space that overflows" {
-    const decoder_memory = @import("../gfx/decoder_memory.zig");
-    const memory = @import("../base/memory.zig");
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit(); // Fonts are kept for the app's life, so nothing frees them
-    var budget = memory.Budget{ .name = "test", .child = arena.allocator(), .limit = 16 << 20 };
-    decoder_memory.use(&budget);
-    defer decoder_memory.use_default();
     const go_regular = @embedFile("../testdata/fonts/Go-Regular.ttf");
-    var font = try Font.init(arena.allocator(), go_regular, 40, 1.2);
+    var font = try Font.init(go_regular, 40, 1.2);
     const s = "abc def ghi";
     // Exactly as wide as "abc def": the space after it is what overflows
     const avail = try font.measure("abc def");

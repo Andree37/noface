@@ -77,61 +77,94 @@ fn show_row(a: *app.App, row: menu.Row, level: u32) !void {
     try a.show_band(menu.band_top(row), menu.band_height);
 }
 
-/// Follows a finger along a panel slider from where it landed until it lifts.
-/// The knob slides under the finger; the light changes a step at a time, after each
-/// frame is on its way, so the lipc call never holds the knob back.
-pub fn drag_row(a: *app.App, row: menu.Row, first_x: i32) !void {
+/// Following a finger along a panel slider from where it landed until it lifts, kept
+/// while it's open over the panel. The knob slides under the finger; the light
+/// changes a step at a time, after each frame is on its way, so the lipc call never
+/// holds the knob back.
+pub const SliderDrag = struct {
+    row: menu.Row = undefined,
+    knob: u32 = 0,
+    path: [2]u32 = .{ 0, 0 }, // Leftmost and rightmost knob positions shown
+    drag: app.Drag(SliderFollow) = undefined,
+    ending: ?screen.Ending(void) = null,
+};
+
+const SliderFollow = struct {
+    a: *app.App,
+    row: menu.Row,
+    knob: *u32,
+    path: *[2]u32,
+
+    pub fn moved(f: SliderFollow, x: i32, _: i32) !?u32 {
+        assert(f.path[0] <= f.path[1]);
+        const knob = menu.knob_under(x);
+        if (knob == f.knob.*) return null;
+        const level = menu.level_at(f.row, x);
+        assert(level <= f.row.max);
+        const page = f.a.page(f.a.screen.pixels);
+        try menu.draw_slider_at(f.a.ui, page, f.row, level, knob, true);
+        const span = menu.knob_span(f.knob.*, knob);
+        f.knob.* = knob;
+        f.path.* = .{ @min(f.path[0], knob), @max(f.path[1], knob) };
+        assert(f.path[0] <= knob);
+        assert(knob <= f.path[1]);
+        const top = menu.band_top(f.row);
+        const marker = try f.a.screen.show_region(
+            span.left,
+            top,
+            span.width,
+            menu.band_height,
+            .quick,
+        );
+        if (level != row_value(f.a, f.row)) set_row_value(f.a, f.row, level);
+        return marker;
+    }
+};
+
+/// Starts following a finger along slider `row`, from where it landed: the screen to
+/// open over the panel.
+fn drag_row(a: *app.App, sd: *SliderDrag, row: menu.Row, first_x: i32) !screen.Frame {
     assert(row.y == menu.warmth_row.y or row.y == menu.brightness_row.y);
     a.input.begin_drag();
-    const Follow = struct {
-        a: *app.App,
-        row: menu.Row,
-        knob: *u32,
-        path: *[2]u32, // Leftmost and rightmost knob positions shown
-        pub fn moved(f: @This(), x: i32, _: i32) !?u32 {
-            assert(f.path[0] <= f.path[1]);
-            const knob = menu.knob_under(x);
-            if (knob == f.knob.*) return null;
-            const level = menu.level_at(f.row, x);
-            assert(level <= f.row.max);
-            const page = f.a.page(f.a.screen.pixels);
-            try menu.draw_slider_at(f.a.ui, page, f.row, level, knob, true);
-            const span = menu.knob_span(f.knob.*, knob);
-            f.knob.* = knob;
-            f.path.* = .{ @min(f.path[0], knob), @max(f.path[1], knob) };
-            assert(f.path[0] <= knob);
-            assert(knob <= f.path[1]);
-            const top = menu.band_top(f.row);
-            const marker = try f.a.screen.show_region(
-                span.left,
-                top,
-                span.width,
-                menu.band_height,
-                .quick,
-            );
-            if (level != row_value(f.a, f.row)) set_row_value(f.a, f.row, level);
-            return marker;
-        }
-    };
-    var knob = menu.knob_at(row, row_value(a, row));
-    var path = [2]u32{ knob, knob };
-    const follow = Follow{ .a = a, .row = row, .knob = &knob, .path = &path };
+    sd.row = row;
+    sd.knob = menu.knob_at(row, row_value(a, row));
+    sd.path = .{ sd.knob, sd.knob };
+    const follow = SliderFollow{ .a = a, .row = row, .knob = &sd.knob, .path = &sd.path };
     const first = try follow.moved(first_x, 0);
-    _ = try app.follow_drag(a, first, follow);
-    // Settles the stretch the knob crossed back to smooth edges
-    assert(path[0] <= path[1]);
+    sd.drag = .{ .a = a, .follow = follow, .marker = first };
+    assert(sd.path[0] <= sd.path[1]);
+    return screen.open(&sd.drag, &sd.ending);
+}
+
+/// The finger lifted from a slider (or the Kindle locked): settles the stretch the
+/// knob crossed back to smooth edges.
+pub fn slider_ended(a: *app.App, sd: *SliderDrag) !void {
+    _ = try app.drag_ended(&sd.drag, sd.ending.?);
+    const row = sd.row;
+    assert(sd.path[0] <= sd.path[1]);
     try menu.draw_slider(a.ui, a.page(a.screen.pixels), row, row_value(a, row), false);
-    const crossed = menu.knob_span(path[0], path[1]);
+    const crossed = menu.knob_span(sd.path[0], sd.path[1]);
     try app.clean_rect(a, crossed.left, menu.band_top(row), crossed.width, menu.band_height);
 }
 
-/// Runs a panel control. False means the tap wasn't on one. Each control redraws only
-/// its own part of the panel, before telling the Kindle, so the tap answers at once.
-pub fn panel_control(a: *app.App, background: []const u8, choice: menu.Hit, x: i32) !bool {
+/// What a tap on the panel did: nothing (it wasn't on a control), ran a control, or
+/// began a slider's drag, to open over the panel.
+pub const Control = union(enum) { not_one, ran, drag: screen.Frame };
+
+/// Runs a panel control. Each control redraws only its own part of the panel, before
+/// telling the Kindle, so the tap answers at once. A slider follows the finger in
+/// `slider`, opened over the panel.
+pub fn panel_control(
+    a: *app.App,
+    background: []const u8,
+    choice: menu.Hit,
+    x: i32,
+    slider: *SliderDrag,
+) !Control {
     assert(background.len == a.screen.pixels.len);
     switch (choice) {
-        .slider => try drag_row(a, menu.brightness_row, x),
-        .warmth => try drag_row(a, menu.warmth_row, x),
+        .slider => return .{ .drag = try drag_row(a, slider, menu.brightness_row, x) },
+        .warmth => return .{ .drag = try drag_row(a, slider, menu.warmth_row, x) },
         .dimmer, .brighter, .cooler, .warmer => {
             const brightness = choice == .dimmer or choice == .brighter;
             const row = if (brightness) menu.brightness_row else menu.warmth_row;
@@ -148,9 +181,9 @@ pub fn panel_control(a: *app.App, background: []const u8, choice: menu.Hit, x: i
         },
         // Not a control: closing and leaving are the caller's. Every Hit is named, so
         // a new tile doesn't compile until it's handled here or there
-        .none, .close, .settings, .kindle => return false,
+        .none, .close, .settings, .kindle => return .not_one,
     }
-    return true;
+    return .ran;
 }
 
 /// A round shortcut at the top of the panel: airplane mode, Bluetooth or sync. Its
@@ -197,11 +230,21 @@ fn panel_control_shortcut(a: *app.App, choice: menu.Hit) !void {
     }
 }
 
-/// The quick panel over the library. Returns true to quit to the stock UI.
-pub fn library_menu(a: *app.App, background: []const u8) !bool {
+/// The quick panel, to open over the library drawn in `background`.
+pub fn library_menu(a: *app.App, background: []const u8) LibraryPanel {
     assert(background.len == a.screen.pixels.len);
-    var panel = LibraryPanel{ .a = a, .background = background };
-    switch (try screen.run_to_end(a, &panel)) {
+    assert(a.overlay.len == background.len);
+    return .{ .a = a, .background = background };
+}
+
+/// Once the panel over the library has ended: true to quit to the stock UI.
+pub fn library_menu_ended(
+    a: *app.App,
+    background: []const u8,
+    ending: screen.Ending(void),
+) !bool {
+    assert(background.len == a.screen.pixels.len);
+    switch (ending) {
         .done => return true,
         // Closed, or the Kindle locking: the library comes back from under it
         .closed => try close_menu(a, background),
@@ -210,17 +253,19 @@ pub fn library_menu(a: *app.App, background: []const u8) !bool {
             if (action == .lock) try close_menu(a, background);
         },
     }
+    assert(ending != .done);
     return false;
 }
 
 /// Touches as they land, as in the reader: a slider follows the finger from there, and
 /// a tap that only arrived on the lift would leave it waiting for a drag. Done when
 /// noface should go to the Kindle's own screens.
-const LibraryPanel = struct {
+pub const LibraryPanel = struct {
     pub const Result = void;
     pub const touches = input_mod.Input.Modes.sheet;
     a: *app.App,
     background: []const u8,
+    slider: SliderDrag = .{}, // A slider followed, over it
 
     pub fn draw(p: *LibraryPanel, _: screen.Part) !void {
         assert(p.background.len == p.a.screen.pixels.len);
@@ -229,7 +274,11 @@ const LibraryPanel = struct {
 
     pub fn on_tap(p: *LibraryPanel, t: screen.Tap) !screen.Step(void) {
         const choice = menu.hit(t.x, t.y);
-        if (try panel_control(p.a, p.background, choice, t.x)) return .stay; // Drew itself
+        switch (try panel_control(p.a, p.background, choice, t.x, &p.slider)) {
+            .not_one => {},
+            .ran => return .stay, // Drew itself
+            .drag => |f| return .{ .push = f },
+        }
         // Every control drew itself above: what's left closes the panel or leaves noface
         assert(choice != .slider);
         assert(choice != .sync);
@@ -242,5 +291,13 @@ const LibraryPanel = struct {
             .close => .close,
             else => .stay,
         };
+    }
+
+    /// The slider's drag ended.
+    pub fn on_resume(p: *LibraryPanel) !screen.Step(void) {
+        assert(p.slider.ending != null);
+        assert(p.background.len == p.a.screen.pixels.len);
+        try slider_ended(p.a, &p.slider);
+        return .stay;
     }
 };

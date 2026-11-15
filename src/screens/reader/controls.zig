@@ -4,10 +4,12 @@ const assert = std.debug.assert;
 const autostart = @import("../../kindle/autostart.zig");
 const card = @import("../../ui/card.zig");
 const aa = @import("../../ui/aa.zig");
+const settings_model = @import("../../model/settings.zig");
 const toolbar = @import("../../ui/toolbar.zig");
 const app = @import("../../app.zig");
 const sess = @import("session.zig");
 const lock = @import("../lock.zig");
+const screen = @import("../screen.zig");
 
 comptime {
     // The toolbar's top bar, or the tallest sheet, ends above its bottom bar, and the
@@ -28,7 +30,10 @@ pub fn draw_toolbar(a: *app.App, s: *sess.Session, title: []const u8, drawn: Dra
     const total = if (s.layout_pending()) 0 else s.page_count(); // No page count until it's known
     assert(total == 0 or total > s.current);
     var fonts = a.ui;
-    if (drawn.sheet_open and a.tab == .font) fonts.families = a.load_family_samples();
+    if (drawn.sheet_open and a.tab == .font) {
+        fonts.families = a.load_family_samples();
+        fonts.family_first = a.family_first;
+    }
     try toolbar.render(
         fonts,
         a.page(a.overlay),
@@ -68,45 +73,65 @@ fn show_bars(a: *app.App, sheet_open: bool) !void {
     try a.screen.wait_complete(first);
 }
 
-/// Follows a finger along the page scrubber, then jumps there.
-pub fn drag_scrub(
+/// What the toolbar's controls opened over the book, kept while it's open: the page
+/// scrubber or an Aa slider following a finger, or a card asking before a switch turns
+/// on. `resumed` finishes what was begun once it has ended.
+pub const Pending = struct {
+    kind: enum { scrub, setting, autostart, lock_picture } = .scrub,
+    /// The scrubber: the page under the finger.
+    target: u32 = 0,
+    page_count: u32 = 0,
+    /// An Aa slider: its row, its step under the finger, and the step it began at.
+    row: aa.Row = undefined,
+    value: u32 = 0,
+    started: u32 = 0,
+    toggle: u32 = 0, // The switch a card asks about
+    background: []const u8 = &.{}, // The page under a card
+    scrub: app.Drag(ScrubFollow) = undefined,
+    setting: app.Drag(SettingFollow) = undefined,
+    drag_ending: ?screen.Ending(void) = null,
+    card: app.Card = undefined,
+    card_ending: ?screen.Ending(u32) = null,
+};
+
+const ScrubFollow = struct {
     a: *app.App,
-    s: *sess.Session,
-    title: []const u8,
-    sheet_open: bool,
-    first_x: i32,
-) !void {
+    page_count: u32,
+    target: *u32,
+
+    pub fn moved(f: ScrubFollow, x: i32, _: i32) !?u32 {
+        assert(f.target.* < f.page_count);
+        const next = toolbar.page_at(x, f.page_count);
+        assert(next < f.page_count);
+        if (next == f.target.*) return null;
+        f.target.* = next;
+        const pixels = f.a.page(f.a.screen.pixels);
+        try toolbar.draw_scrub(f.a.ui, pixels, next, f.page_count, true);
+        return try show_scrub(f.a);
+    }
+};
+
+/// Shows the scrubber's band, following a finger, and returns the update.
+fn show_scrub(a: *app.App) !u32 {
+    assert(toolbar.scrub_top < a.screen.height);
+    const band = a.screen.height - toolbar.scrub_top;
+    return a.screen.show_region(0, toolbar.scrub_top, a.screen.width, band, .quick);
+}
+
+/// Follows a finger along the page scrubber, then jumps there: the screen to open
+/// over the book.
+pub fn drag_scrub(p: *Pending, a: *app.App, s: *sess.Session, first_x: i32) !screen.Frame {
     assert(s.pages.len > 0);
     a.input.begin_drag();
-    const band = a.screen.height - toolbar.scrub_top;
-    const page_count = s.page_count();
-    const Follow = struct {
-        a: *app.App,
-        page_count: u32,
-        band: u32,
-        target: *u32,
-        pub fn moved(f: @This(), x: i32, _: i32) !?u32 {
-            assert(f.target.* < f.page_count);
-            const next = toolbar.page_at(x, f.page_count);
-            assert(next < f.page_count);
-            if (next == f.target.*) return null;
-            f.target.* = next;
-            const pixels = f.a.page(f.a.screen.pixels);
-            try toolbar.draw_scrub(f.a.ui, pixels, next, f.page_count, true);
-            const width = f.a.screen.width;
-            return try f.a.screen.show_region(0, toolbar.scrub_top, width, f.band, .quick);
-        }
-    };
-    var target = toolbar.page_at(first_x, page_count);
-    assert(target < page_count);
-    try toolbar.draw_scrub(a.ui, a.page(a.screen.pixels), target, page_count, true);
-    const first = try a.screen.show_region(0, toolbar.scrub_top, a.screen.width, band, .quick);
-    const follow = Follow{ .a = a, .page_count = page_count, .band = band, .target = &target };
-    _ = try app.follow_drag(a, first, follow);
-    s.set_page(target);
-    assert(s.current == target);
-    try draw_toolbar(a, s, title, .{ .sheet_open = sheet_open, .whole_page = true });
-    try app.clean_band(a, toolbar.scrub_top, band);
+    p.kind = .scrub;
+    p.page_count = s.page_count();
+    p.target = toolbar.page_at(first_x, p.page_count);
+    assert(p.target < p.page_count);
+    try toolbar.draw_scrub(a.ui, a.page(a.screen.pixels), p.target, p.page_count, true);
+    const first = try show_scrub(a);
+    const follow = ScrubFollow{ .a = a, .page_count = p.page_count, .target = &p.target };
+    p.scrub = .{ .a = a, .follow = follow, .marker = first };
+    return screen.open(&p.scrub, &p.drag_ending);
 }
 
 /// The setting an Aa slider row changes.
@@ -133,111 +158,60 @@ fn row_value_set(a: *app.App, row: aa.Row, value: u32) void {
     assert(row_value(a, row) == value);
 }
 
-/// Follows a finger along an Aa slider, and applies it when lifted.
-fn drag_setting(
+const SettingFollow = struct {
     a: *app.App,
-    alloc: std.mem.Allocator,
-    s: *sess.Session,
-    title: []const u8,
     row: aa.Row,
-    first_x: i32,
-) !void {
-    var value = aa.step_at(row, first_x);
-    assert(value < row.steps);
-    const started = row_value(a, row);
+    value: *u32,
+
+    pub fn moved(f: SettingFollow, x: i32, _: i32) !?u32 {
+        assert(f.value.* < f.row.steps);
+        const next = aa.step_at(f.row, x);
+        assert(next < f.row.steps);
+        if (next == f.value.*) return null;
+        f.value.* = next;
+        try aa.draw_row(f.a.ui, f.a.page(f.a.screen.pixels), f.row, next, true);
+        const width = f.a.screen.width;
+        return try f.a.screen.show_region(0, f.row.top, width, aa.row_height, .quick);
+    }
+};
+
+/// Follows a finger along an Aa slider, and applies it when lifted: the screen to open
+/// over the book.
+fn drag_setting(p: *Pending, a: *app.App, row: aa.Row, first_x: i32) !screen.Frame {
+    p.kind = .setting;
+    p.row = row;
+    p.value = aa.step_at(row, first_x);
+    assert(p.value < row.steps);
+    p.started = row_value(a, row);
     a.input.begin_drag();
-    try aa.draw_row(a.ui, a.page(a.screen.pixels), row, value, true);
+    try aa.draw_row(a.ui, a.page(a.screen.pixels), row, p.value, true);
     const first = try a.screen.show_region(0, row.top, a.screen.width, aa.row_height, .quick);
-    const Follow = struct {
-        a: *app.App,
-        row: aa.Row,
-        value: *u32,
-        pub fn moved(f: @This(), x: i32, _: i32) !?u32 {
-            assert(f.value.* < f.row.steps);
-            const next = aa.step_at(f.row, x);
-            assert(next < f.row.steps);
-            if (next == f.value.*) return null;
-            f.value.* = next;
-            try aa.draw_row(f.a.ui, f.a.page(f.a.screen.pixels), f.row, next, true);
-            const width = f.a.screen.width;
-            return try f.a.screen.show_region(0, f.row.top, width, aa.row_height, .quick);
-        }
-    };
-    _ = try app.follow_drag(a, first, Follow{ .a = a, .row = row, .value = &value });
-    if (value != started) {
-        row_value_set(a, row, value);
-        try sess.relayout(a, alloc, s);
-    }
-    try draw_toolbar(a, s, title, .{ .sheet_open = true, .whole_page = true });
-    try app.clean_band(a, row.top, aa.row_height);
+    p.setting = .{ .a = a, .follow = .{ .a = a, .row = row, .value = &p.value }, .marker = first };
+    return screen.open(&p.setting, &p.drag_ending);
 }
 
-/// Whether a switch with this guard may turn on: asks, or says what's missing, first.
-/// False when it may not; the sheet is drawn again either way.
-fn ready(a: *app.App, s: *sess.Session, title: []const u8, guard: aa.Guard) !bool {
-    assert(s.current < s.pages.len);
-    const sheet_only: Drawn = .{ .sheet_open = true, .whole_page = false };
-    switch (guard) {
-        .none => return true,
-        .autostart => {
-            // Turning it on needs the startup file in the system folder: ask first
-            if (autostart.installed()) return true;
-            const page = try s.ensure(s.current, s.current);
-            const rows = [_]card.Row{.{ .label = "Turn on" }};
-            const chosen = try app.choose_from_card(
-                a,
-                page,
-                "Open noface when the Kindle starts",
-                "This adds one small startup file to the Kindle's system.",
-                &rows,
-            );
-            if (chosen == null) {
-                try draw_toolbar(a, s, title, sheet_only);
-                return false;
-            }
-            if (autostart.install()) return true;
-            try draw_toolbar(a, s, title, sheet_only);
-            try app.show_notice(a, "Couldn't set up starting with the Kindle.");
-            return false;
-        },
-        .lock_picture => {
-            // Turning it on needs a picture to show
-            if (lock.has_picture(a)) return true;
-            const page = try s.ensure(s.current, s.current);
-            const rows = [_]card.Row{.{ .label = "OK" }};
-            _ = try app.choose_from_card(
-                a,
-                page,
-                "Add your picture first",
-                "Name it lockscreen.jpg or lockscreen.png, and put it in the noface-data folder.",
-                &rows,
-            );
-            try draw_toolbar(a, s, title, sheet_only);
-            return false;
-        },
-    }
-}
-
-/// Handles a tap inside the Aa sheet.
+/// Handles a tap inside the Aa sheet: a slider or a card to open over the book, or
+/// null when it's done.
 pub fn tap_sheet(
+    p: *Pending,
     a: *app.App,
-    alloc: std.mem.Allocator,
     s: *sess.Session,
     title: []const u8,
     x: i32,
     y: i32,
-) !void {
+) !?screen.Frame {
     assert(s.current < s.pages.len);
     const sheet_only: Drawn = .{ .sheet_open = true, .whole_page = false };
     switch (aa.hit(a.tab, x, y)) {
-        .none => return,
+        .none => return null,
         .tab => |tab| {
             a.tab = tab;
-            return draw_toolbar(a, s, title, sheet_only);
+            try draw_toolbar(a, s, title, sheet_only);
+            return null;
         },
-        .text_size => return drag_setting(a, alloc, s, title, aa.size_row, x),
-        .spacing => return drag_setting(a, alloc, s, title, aa.spacing_row, x),
-        .margins => return drag_setting(a, alloc, s, title, aa.margin_row, x),
+        .text_size => return try drag_setting(p, a, aa.size_row, x),
+        .spacing => return try drag_setting(p, a, aa.spacing_row, x),
+        .margins => return try drag_setting(p, a, aa.margin_row, x),
         .theme => |index| {
             assert(index < aa.themes.len);
             const theme = aa.themes[index];
@@ -245,25 +219,134 @@ pub fn tap_sheet(
             a.settings.spacing = theme.spacing;
             a.settings.margin = theme.margin;
         },
-        .family => |index| a.settings.font = index,
+        .family => |cell| {
+            const family = a.family_first + cell;
+            // The last page may have fewer typefaces than cells
+            if (family >= settings_model.families.len) return null;
+            a.settings.font = family;
+        },
+        .more_families => {
+            a.family_first = aa.next_family_page(a.family_first);
+            try draw_toolbar(a, s, title, sheet_only);
+            return null;
+        },
         .toggle => |index| {
             assert(index < aa.switches.len);
-            const switch_hit = aa.switches[index];
             const turning_on = !aa.is_on(index, a.settings);
-            if (turning_on and !try ready(a, s, title, switch_hit.guard)) return;
-            aa.flip(index, &a.settings);
-            assert(aa.is_on(index, a.settings) == turning_on);
-            switch (switch_hit.effect) {
-                .relayout => {}, // Below
-                .footer, .nothing => {
-                    app.save_settings(a.settings_path, a.settings);
-                    // The footer is drawn into each page
-                    if (switch_hit.effect == .footer) a.forget_pages();
-                    return draw_toolbar(a, s, title, sheet_only);
-                },
+            if (turning_on) {
+                if (try ask_first(p, a, s, aa.switches[index].guard, index)) |f| return f;
             }
+            try flip(a, s, title, index);
+            return null;
         },
     }
-    try sess.relayout(a, alloc, s);
+    try sess.relayout(a, s);
     try draw_toolbar(a, s, title, .{ .sheet_open = true, .whole_page = true });
+    return null;
+}
+
+/// Turns switch `index` over, and applies it.
+fn flip(
+    a: *app.App,
+    s: *sess.Session,
+    title: []const u8,
+    index: u32,
+) !void {
+    assert(index < aa.switches.len);
+    const switch_hit = aa.switches[index];
+    const turning_on = !aa.is_on(index, a.settings);
+    aa.flip(index, &a.settings);
+    assert(aa.is_on(index, a.settings) == turning_on);
+    switch (switch_hit.effect) {
+        .relayout => {
+            try sess.relayout(a, s);
+            try draw_toolbar(a, s, title, .{ .sheet_open = true, .whole_page = true });
+        },
+        .footer, .nothing => {
+            app.save_settings(a.settings_path, a.settings);
+            // The footer is drawn into each page
+            if (switch_hit.effect == .footer) a.forget_pages();
+            try draw_toolbar(a, s, title, .{ .sheet_open = true, .whole_page = false });
+        },
+    }
+}
+
+/// Before a switch with this guard turns on: a card asking, or saying what's
+/// missing, to open over the book; null when it may turn on at once.
+fn ask_first(
+    p: *Pending,
+    a: *app.App,
+    s: *sess.Session,
+    guard: aa.Guard,
+    index: u32,
+) !?screen.Frame {
+    assert(s.current < s.pages.len);
+    assert(index < aa.switches.len);
+    p.toggle = index;
+    switch (guard) {
+        .none => return null,
+        .autostart => {
+            // Turning it on needs the startup file in the system folder: ask first
+            if (autostart.installed()) return null;
+            p.kind = .autostart;
+            p.background = try s.ensure(s.current, s.current);
+            const title = "Open noface when the Kindle starts";
+            const subtitle = "This adds one small startup file to the Kindle's system.";
+            p.card = app.card_over(a, p.background, title, subtitle, &turn_on_rows, null);
+        },
+        .lock_picture => {
+            // Turning it on needs a picture to show
+            if (lock.has_picture(a)) return null;
+            p.kind = .lock_picture;
+            p.background = try s.ensure(s.current, s.current);
+            const title = "Add your picture first";
+            const subtitle = "Name it lockscreen.jpg or lockscreen.png, and put it in the " ++
+                "noface-data folder.";
+            p.card = app.card_over(a, p.background, title, subtitle, &ok_rows, null);
+        },
+    }
+    return screen.open(&p.card, &p.card_ending);
+}
+
+const turn_on_rows = [_]card.Row{.{ .label = "Turn on" }};
+const ok_rows = [_]card.Row{.{ .label = "OK" }};
+
+/// What the scrubber, a slider or a card opened over the book does once it has ended.
+pub fn resumed(
+    p: *Pending,
+    a: *app.App,
+    s: *sess.Session,
+    title: []const u8,
+    sheet_open: bool,
+) !void {
+    const sheet_only: Drawn = .{ .sheet_open = true, .whole_page = false };
+    switch (p.kind) {
+        .scrub => {
+            _ = try app.drag_ended(&p.scrub, p.drag_ending.?);
+            s.set_page(p.target);
+            assert(s.current == p.target);
+            try draw_toolbar(a, s, title, .{ .sheet_open = sheet_open, .whole_page = true });
+            try app.clean_band(a, toolbar.scrub_top, a.screen.height - toolbar.scrub_top);
+        },
+        .setting => {
+            _ = try app.drag_ended(&p.setting, p.drag_ending.?);
+            if (p.value != p.started) {
+                row_value_set(a, p.row, p.value);
+                try sess.relayout(a, s);
+            }
+            try draw_toolbar(a, s, title, .{ .sheet_open = true, .whole_page = true });
+            try app.clean_band(a, p.row.top, aa.row_height);
+        },
+        .autostart => {
+            try app.card_closed(a, p.background);
+            if (p.card_ending.? != .done) return draw_toolbar(a, s, title, sheet_only);
+            if (autostart.install()) return flip(a, s, title, p.toggle);
+            try draw_toolbar(a, s, title, sheet_only);
+            try app.show_notice(a, "Couldn't set up starting with the Kindle.");
+        },
+        .lock_picture => {
+            try app.card_closed(a, p.background);
+            try draw_toolbar(a, s, title, sheet_only);
+        },
+    }
 }

@@ -49,12 +49,11 @@ comptime {
         @compileError("every family needs its font files");
     }
     assert(std.math.maxInt(Which) + 1 == faces[0].len);
-    assert(settings.max_families == faces.len + settings.max_own);
 }
 
-/// The reader's own families' files, found by `find_own`, and how many were.
-var own: [settings.max_own][4][:0]const u8 = undefined;
-var own_count: u32 = 0;
+/// The reader's own families' files, as many as `find_own` found, in the order they're
+/// offered after the Kindle's.
+var own: []const [4][:0]const u8 = &.{};
 
 /// The file for a family's weight and slant.
 pub fn path(family: u32, bold: bool, italic: bool) [*:0]const u8 {
@@ -63,7 +62,7 @@ pub fn path(family: u32, bold: bool, italic: bool) [*:0]const u8 {
     if (italic) assert(which & 2 == 2);
     if (family < faces.len) return faces[family][which];
     // Only a family `find_own` filled in is offered
-    assert(family - faces.len < own_count);
+    assert(family - faces.len < own.len);
     return own[family - faces.len][which];
 }
 
@@ -173,32 +172,30 @@ fn style_of(word: []const u8) ??Which {
 /// One family's files as found, by which of the four each is.
 const Found = struct { name: []const u8, files: [4]?[]const u8 = @splat(null) };
 
-/// Groups file names into families, alphabetically, the first `max` of them.
-pub fn group(alloc: std.mem.Allocator, names: []const []const u8, out: []Found) ![]Found {
-    assert(out.len > 0);
-    var count: u32 = 0;
+/// Groups file names into families, alphabetically, as many as there are.
+pub fn group(alloc: std.mem.Allocator, names: []const []const u8) ![]Found {
+    var out: std.ArrayList(Found) = .empty;
     for (names) |name| {
         const font = named(name) orelse continue;
         const which = font.which orelse continue;
         assert(font.family.len > 0);
-        const at = for (out[0..count], 0..) |found, index| {
+        const at = for (out.items, 0..) |found, index| {
             if (std.mem.eql(u8, found.name, font.family)) break index;
         } else blk: {
-            if (count == out.len) continue;
-            out[count] = .{ .name = try alloc.dupe(u8, font.family) };
-            count += 1;
-            break :blk count - 1;
+            try out.append(alloc, .{ .name = try alloc.dupe(u8, font.family) });
+            break :blk out.items.len - 1;
         };
-        assert(at < count);
-        if (out[at].files[which] == null) out[at].files[which] = try alloc.dupe(u8, name);
+        assert(at < out.items.len);
+        const files = &out.items[at].files;
+        if (files[which] == null) files[which] = try alloc.dupe(u8, name);
     }
-    std.mem.sort(Found, out[0..count], {}, struct {
+    std.mem.sort(Found, out.items, {}, struct {
         fn less(_: void, x: Found, y: Found) bool {
             return std.ascii.lessThanIgnoreCase(x.name, y.name);
         }
     }.less);
-    assert(count <= out.len);
-    return out[0..count];
+    assert(out.items.len <= names.len);
+    return out.items;
 }
 
 /// A family's four files, any missing filled from the others: bold italic from bold,
@@ -217,34 +214,44 @@ pub fn complete(files: [4]?[]const u8) [4][]const u8 {
     };
 }
 
-/// Finds the reader's own typefaces in the fonts folder and offers them. Files that
-/// `usable` turns down (not fonts noface can set text in) are left out. Called once,
-/// before the settings are read, so a chosen one is found by name.
+/// Finds the reader's own typefaces in the fonts folder and offers them after the
+/// Kindle's, every one there is. Files that `usable` turns down (not fonts noface can
+/// set text in) are left out, and a name already offered is offered once. Called
+/// once, before the settings are read, so a chosen one is found by name. The lists are
+/// kept in `alloc`'s memory for good; with no room for another, the rest are left out.
 pub fn find_own(alloc: std.mem.Allocator, usable_font: *const fn ([]const u8) bool) void {
-    assert(own_count == 0);
-    var names_buffer: [64][]const u8 = undefined;
-    const names = list_dir(alloc, own_dir, &names_buffer);
-    var found_buffer: [8]Found = undefined;
-    const found = group(alloc, names, &found_buffer) catch return;
+    assert(own.len == 0);
+    assert(settings.families.len == settings.builtin_families.len);
+    const names = list_dir(alloc, own_dir);
+    const found = group(alloc, names) catch return;
+    var own_list: std.ArrayList([4][:0]const u8) = .empty;
+    var offered: std.ArrayList([]const u8) = .empty;
+    offered.appendSlice(alloc, &settings.builtin_families) catch return;
     for (found) |family| {
-        if (own_count == settings.max_own) {
-            std.debug.print("fonts: {s} left out, only {d} of your own fit\n", .{
-                family.name,
-                settings.max_own,
-            });
-            continue;
-        }
+        if (find_own_offered(offered.items, family.name)) continue;
         var full: [4][:0]const u8 = undefined;
         if (!find_own_usable(alloc, &family, usable_font, &full)) {
             std.debug.print("fonts: {s} can't be used\n", .{family.name});
             continue;
         }
-        if (!settings.add_family(family.name)) continue;
-        own[own_count] = full;
-        own_count += 1;
+        own_list.ensureUnusedCapacity(alloc, 1) catch break;
+        offered.ensureUnusedCapacity(alloc, 1) catch break;
+        own_list.appendAssumeCapacity(full);
+        offered.appendAssumeCapacity(family.name);
         std.debug.print("fonts: added {s}\n", .{family.name});
     }
-    assert(own_count <= settings.max_own);
+    assert(offered.items.len == settings.builtin_families.len + own_list.items.len);
+    own = own_list.items;
+    settings.offer_families(offered.items);
+}
+
+fn find_own_offered(offered: []const []const u8, name: []const u8) bool {
+    assert(offered.len >= settings.builtin_families.len);
+    assert(name.len > 0);
+    for (offered) |other| {
+        if (std.mem.eql(u8, other, name)) return true;
+    }
+    return false;
 }
 
 /// Whether every one of a family's four files opens, and sets text without crashing
@@ -264,6 +271,8 @@ fn find_own_usable(
             return false;
         };
         const data = file.map(full_path.*) catch return false;
+        // Mapped again when chosen: a folder of many fonts keeps none of them mapped
+        defer file.unmap(data);
         // Tried in a child process: a damaged font can crash the font library
         const trial = FontTrial{ .data = data, .check = usable_font };
         if (!process.survives(trial, FontTrial.run)) return false;
@@ -279,26 +288,25 @@ const FontTrial = struct {
     }
 };
 
-/// The names of the files in `dir`.
-fn list_dir(alloc: std.mem.Allocator, dir: [*:0]const u8, out: [][]const u8) [][]const u8 {
-    assert(out.len > 0);
+/// The names of the files in `dir`, as many as there are room for in `alloc`.
+fn list_dir(alloc: std.mem.Allocator, dir: [*:0]const u8) []const []const u8 {
+    assert(dir[0] != 0);
     const Into = struct {
         alloc: std.mem.Allocator,
-        out: [][]const u8,
-        count: u32 = 0,
+        out: std.ArrayList([]const u8) = .empty,
         fn add(into: *@This(), name: []const u8, is_dir: bool) void {
             // `each_entry` passes no empty names
             assert(name.len > 0);
-            assert(into.count <= into.out.len);
-            if (is_dir or into.count == into.out.len) return;
-            into.out[into.count] = into.alloc.dupe(u8, name) catch return;
-            into.count += 1;
+            if (is_dir) return;
+            into.out.ensureUnusedCapacity(into.alloc, 1) catch return;
+            const kept = into.alloc.dupe(u8, name) catch return;
+            into.out.appendAssumeCapacity(kept);
+            assert(into.out.items.len > 0);
         }
     };
-    var into = Into{ .alloc = alloc, .out = out };
+    var into = Into{ .alloc = alloc };
     linux.each_entry(dir, &into, Into.add);
-    assert(into.count <= out.len);
-    return out[0..into.count];
+    return into.out.items;
 }
 
 test "a font file's name says its family and style" {
@@ -334,7 +342,6 @@ test "styles of several words, and family names that end like a style" {
 test "files group into families, and missing styles borrow from the others" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    var out: [4]Found = undefined;
     const names = [_][]const u8{
         "Readme.txt",
         "Literata-Bold.ttf",
@@ -342,7 +349,7 @@ test "files group into families, and missing styles borrow from the others" {
         "Literata-Regular.ttf",
         "Atkinson.otf",
     };
-    const got = try group(arena.allocator(), &names, &out);
+    const got = try group(arena.allocator(), &names);
     try std.testing.expectEqual(@as(usize, 2), got.len);
     try std.testing.expectEqualStrings("Atkinson", got[0].name);
     const literata = complete(got[1].files);
@@ -350,4 +357,21 @@ test "files group into families, and missing styles borrow from the others" {
     try std.testing.expectEqualStrings("Literata-Bold.ttf", literata[1]);
     try std.testing.expectEqualStrings("Literata-Regular.ttf", literata[2]);
     try std.testing.expectEqualStrings("Literata-Bold.ttf", literata[3]);
+}
+
+test "every family in the folder is grouped, however many" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    var names: [300][]const u8 = undefined;
+    for (&names, 0..) |*name, i| {
+        const styles = [_][]const u8{ "Regular", "Bold", "Italic" };
+        const style = styles[i % 3];
+        name.* = try std.fmt.allocPrint(alloc, "Family{d:0>3}-{s}.ttf", .{ i / 3, style });
+    }
+    const got = try group(alloc, &names);
+    try std.testing.expectEqual(@as(usize, 100), got.len);
+    try std.testing.expectEqualStrings("Family000", got[0].name);
+    try std.testing.expectEqualStrings("Family099", got[99].name);
+    try std.testing.expectEqualStrings("Family099-Italic.ttf", got[99].files[2].?);
 }

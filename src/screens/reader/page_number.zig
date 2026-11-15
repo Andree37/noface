@@ -27,17 +27,16 @@ pub fn page_index(typed: []const u8, page_count: u32) ?u32 {
     return index;
 }
 
-pub fn run(a: *app.App, s: *sess.Session) !?u32 {
+/// The page number entry, to open over the page (`screen.open`): done with the index
+/// of the page typed.
+pub fn make(a: *app.App, s: *const sess.Session) PageEntry {
     assert(s.pages.len > 0);
     assert(s.pages.len <= std.math.maxInt(u32));
-    var entry = PageEntry{ .a = a, .page_count = @intCast(s.pages.len) };
-    const index = try screen.run(a, &entry) orelse return null;
-    assert(index < s.pages.len);
-    return index;
+    return .{ .a = a, .page_count = @intCast(s.pages.len) };
 }
 
 /// A page number typed on the keyboard, under the toolbar.
-const PageEntry = struct {
+pub const PageEntry = struct {
     pub const Result = u32;
     a: *app.App,
     page_count: u32,

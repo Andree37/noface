@@ -75,6 +75,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     // In the region the Kindle has, so a picture with no room there has none here
     const decoders_budget = try setup.decoders();
     decoder_memory.use(decoders_budget);
+    try setup.use_glyph_cache();
     const a_alloc = app_budget.allocator();
 
     var screen = try hwtcon.Screen.fake(a_alloc, width_px, height_px);
@@ -91,7 +92,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         .remote = pipe[0],
     };
 
-    var kit = try setup.Kit.init(a_alloc, .{
+    var kit = try setup.Kit.init(.{
         .book = go_regular,
         .book_bold = go_bold,
         .ui = go_regular,
@@ -112,7 +113,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     });
     a.documents = books;
     // Every typeface is the Go font: the Kindle's own aren't on a computer
-    for (&a.face_files) |*family| family.* = .{ go_regular, go_bold, go_regular, go_bold };
+    a.typefaces.stand_in = .{ go_regular, go_bold, go_regular, go_bold };
     try a.apply_settings();
 
     var server = Server{ .screen = &screen, .actions = pipe[1], .port = port };
@@ -189,7 +190,8 @@ const Server = struct {
             std.debug.print("noface-sim: port {d} is taken; set NOFACE_SIM_PORT\n", .{s.port});
             return;
         }
-        // Unbounded: the simulator serves the page until it's stopped.
+        // Unbounded: the simulator's web server, on a thread of its own beside the app's
+        // event loop, serves the page until the simulator is stopped
         while (true) {
             const conn = c.accept(fd, null, null);
             if (conn < 0) continue;

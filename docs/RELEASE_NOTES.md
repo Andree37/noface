@@ -17,6 +17,10 @@ button for later. Without Wi‑Fi, download `dict-en.zip` or `dict-pt.zip` from 
 [Dictionaries release](../../releases/tag/dictionaries), unzip, and copy the `dict-en`
 or `dict-pt` file into the **noface-data** folder on the Kindle.
 
+**Checking the download:** `SHA256SUMS` beside it holds its checksum, and GitHub
+signed where it was built: `gh attestation verify noface-*.zip -R Andree37/noface`
+says whether it came from this repository's release workflow, unchanged.
+
 ## Updating
 
 Copy the new **noface** folder over the old one; replacing it is fine. Everything noface
@@ -37,5 +41,5 @@ the first time it starts.
 Over SSH, `/mnt/us/noface/noface doctor` reports what noface finds on the Kindle and
 whether it can run there, and `/mnt/us/noface/noface selftest` runs noface's own
 checks in memory, without touching the screen, your library or the Kindle's
-settings. Paste both into a
-[device report](../../issues/new?template=device-report.md).
+settings. It names your books only by kind and number, never by title. Paste both
+into a [device report](../../issues/new?template=device-report.md).

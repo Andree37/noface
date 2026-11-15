@@ -12,8 +12,8 @@ pub const Entry = struct {
 
 const method_stored = 0;
 const method_deflated = 8;
-/// Larger than any file a book should carry.
-pub const size_max = 64 << 20;
+/// An entry's size is 32 bits in a zip without zip64: the only limit on a file in a book.
+pub const size_max = std.math.maxInt(u32);
 /// Offsets in a zip without zip64 are 32 bits: an archive past them isn't one noface reads.
 const archive_size_max = std.math.maxInt(u32);
 
@@ -117,11 +117,29 @@ pub fn find(list: []const Entry, name: []const u8) ?Entry {
     return null;
 }
 
-/// A file's contents, inflated if it was deflated.
-pub fn read(alloc: std.mem.Allocator, e: *const Entry) ![]u8 {
-    if (e.size > size_max) return error.TooLarge;
+/// Whether the file is kept deflated, for `inflate`; else it's stored.
+pub fn deflated(e: *const Entry) bool {
+    assert(e.size <= size_max);
+    assert(e.data.len <= archive_size_max);
+    return e.method == method_deflated;
+}
+
+/// A stored file's bytes, in the archive itself: nothing is copied. Null for a file
+/// deflated or kept some other way, or whose sizes don't agree.
+pub fn stored_bytes(e: *const Entry) ?[]const u8 {
+    assert(e.size <= size_max);
+    assert(e.data.len <= archive_size_max);
+    if (e.method != method_stored) return null;
+    if (e.data.len != e.size) return null;
+    return e.data;
+}
+
+/// A file's contents: a stored one's bytes in the archive, not a copy, or a deflated
+/// one inflated into `alloc`.
+pub fn read(alloc: std.mem.Allocator, e: *const Entry) ![]const u8 {
+    assert(e.size <= size_max);
     const contents = switch (e.method) {
-        method_stored => try read_stored(alloc, e),
+        method_stored => stored_bytes(e) orelse return error.Corrupt,
         method_deflated => try read_deflated(alloc, e),
         else => return error.Unsupported,
     };
@@ -129,25 +147,26 @@ pub fn read(alloc: std.mem.Allocator, e: *const Entry) ![]u8 {
     return contents;
 }
 
-fn read_stored(alloc: std.mem.Allocator, e: *const Entry) ![]u8 {
-    assert(e.method == method_stored);
-    assert(e.size <= size_max);
-    if (e.data.len != e.size) return error.Corrupt;
-    return alloc.dupe(u8, e.data);
-}
-
 fn read_deflated(alloc: std.mem.Allocator, e: *const Entry) ![]u8 {
     assert(e.method == method_deflated);
     assert(e.size <= size_max);
     const out = try alloc.alloc(u8, e.size);
     errdefer alloc.free(out);
-    var in: std.Io.Reader = .fixed(e.data);
-    var window: [std.compress.flate.max_window_len]u8 = undefined;
-    var inflate: std.compress.flate.Decompress = .init(&in, .raw, &window);
-    var writer: std.Io.Writer = .fixed(out);
-    const inflated_size = inflate.reader.streamRemaining(&writer) catch return error.Corrupt;
-    if (inflated_size != e.size) return error.Corrupt;
+    try inflate(e.data, out);
     return out;
+}
+
+/// Inflates raw deflate data that makes exactly `out.len` bytes, as a deflated file's
+/// contents do: data that makes more or fewer is corrupt.
+pub fn inflate(data: []const u8, out: []u8) !void {
+    assert(data.len <= archive_size_max);
+    assert(out.len <= size_max);
+    var in: std.Io.Reader = .fixed(data);
+    var window: [std.compress.flate.max_window_len]u8 = undefined;
+    var decompress: std.compress.flate.Decompress = .init(&in, .raw, &window);
+    var writer: std.Io.Writer = .fixed(out);
+    const inflated_size = decompress.reader.streamRemaining(&writer) catch return error.Corrupt;
+    if (inflated_size != out.len) return error.Corrupt;
 }
 
 const sample = @embedFile("testdata/sample.zip");
@@ -158,7 +177,8 @@ test "stored and deflated files come out whole" {
     defer alloc.free(list);
     try std.testing.expectEqual(@as(usize, 3), list.len);
     const mime = try read(alloc, &find(list, "mimetype").?);
-    defer alloc.free(mime);
+    // Stored: the archive's own bytes, not a copy
+    try std.testing.expect(mime.ptr == stored_bytes(&find(list, "mimetype").?).?.ptr);
     try std.testing.expectEqualStrings("application/epub+zip", mime);
     const text = try read(alloc, &find(list, "OEBPS/a.txt").?);
     defer alloc.free(text);
@@ -181,7 +201,7 @@ test "random and broken archives are refused, never crash" {
         defer alloc.free(list);
         for (list) |e| {
             const got = read(alloc, &e) catch continue;
-            alloc.free(got);
+            if (deflated(&e)) alloc.free(got);
         }
     }
 }

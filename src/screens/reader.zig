@@ -37,6 +37,7 @@ const bookmark = @import("reader/bookmark.zig");
 const bookmarks = @import("../model/bookmarks.zig");
 const panel = @import("panel.zig");
 const lock = @import("lock.zig");
+const screen = @import("screen.zig");
 const sess = @import("reader/session.zig");
 const hl = @import("reader/highlight.zig");
 const note_view = @import("reader/note.zig");
@@ -59,7 +60,9 @@ comptime {
     assert(clock_check_us < wifi_retry_us);
 }
 
-pub const Outcome = enum { library, quit };
+/// How reading a book ended: back to the library, leaving noface, or the book
+/// couldn't be read (the library says so).
+pub const Outcome = enum { library, quit, failed };
 
 /// What the reader shows: the page alone, or something over it. The toolbar may have
 /// its Aa sheet open below it (`Reader.sheet_open`).
@@ -117,62 +120,67 @@ fn needs_all_pages(
     };
 }
 
+/// Reads `entry` on its own, as the root of the stack of screens: for the scenario
+/// tests, which start in a book. noface opens books from the library (`open`).
 pub fn read_book(a: *app.App, entry: *catalog.Entry) !Outcome {
+    var r: Reader = undefined;
+    try open(&r, a, entry);
+    const ending = try screen.run_root(a, &r);
+    // A book takes the lock and leaving, so it only ever ends itself
+    assert(ending == .done);
+    assert(a.book_region.empty()); // Closing, it let go of its memory
+    if (ending.done == .failed) return error.BookFailed;
+    return ending.done;
+}
+
+/// Opens `entry` in `r`, where it stays while it's read (`screen.open`): parses it,
+/// finds its pages and the place to open at, and reads its notes. Its first page is
+/// shown as it opens; it ends when the reader leaves the book, or noface leaves.
+pub fn open(r: *Reader, a: *app.App, entry: *catalog.Entry) !void {
     // Only one book is open at a time, so its regions start empty
     assert(a.book_region.empty());
     assert(a.scratch_region.empty());
-    // The open book: parsed text, pages, highlights. An arena, as its region hands out
-    // one block after another: all emptied together on close.
-    var book_budget = memory.Budget{
-        .name = "book",
-        .region = a.book_region,
-        .limit = a.book_region.bytes.len,
+    r.* = .{
+        .a = a,
+        .entry = entry,
+        // The open book: parsed text, pages, highlights. An arena, as its region hands
+        // out one block after another: all emptied together on close.
+        .book_budget = .{
+            .name = "book",
+            .region = a.book_region,
+            .limit = a.book_region.bytes.len,
+        },
+        // What one action needs, like a Go To list or search results. Emptied after each.
+        .scratch_budget = .{
+            .name = "scratch",
+            .region = a.scratch_region,
+            .limit = a.scratch_region.bytes.len,
+        },
     };
-    // What one action needs, like a Go To list or search results. Emptied after each.
-    var scratch_budget = memory.Budget{
-        .name = "scratch",
-        .region = a.scratch_region,
-        .limit = a.scratch_region.bytes.len,
-    };
-    defer {
-        a.pictures.clear(a.alloc); // Its keys point into this book's memory
-        // Emptied for the next book, the pages touched handed back
-        scratch_budget.reset(.give_back);
-        book_budget.reset(.give_back);
-        assert(a.book_region.empty());
-        book_budget.report();
-        scratch_budget.report();
-        a.library_budget.report();
-        a.app_budget.report();
-        a.decoders_budget.report();
-    }
-    return read_book_open(a, entry, book_budget.allocator(), &scratch_budget);
+    r.alloc = r.book_budget.allocator();
+    r.scratch = r.scratch_budget.allocator();
+    errdefer r.release();
+    try open_book(r);
+    assert(r.start < r.s.pages.len);
 }
 
-/// Opens the book in its memory: parses it, finds its pages and the place to open at,
-/// shows that page, and reads until the reader leaves.
-fn read_book_open(
-    a: *app.App,
-    entry: *catalog.Entry,
-    alloc: std.mem.Allocator,
-    scratch_budget: *memory.Budget,
-) !Outcome {
+/// Opens the book in its memory: parses it, finds its pages and the place to open at.
+fn open_book(r: *Reader) !void {
+    const a = r.a;
+    const entry = r.entry;
     const t0 = now_us();
-    const data = try file.map(entry.path);
-    defer file.unmap(data);
-    const parsed = try read_book_parse(a, alloc, entry, data);
+    r.data = try file.map(entry.path);
+    const parsed = try read_book_parse(a, r.alloc, entry, r.data);
     const book = parsed.book;
-    const lang = parsed.lang;
     const t1 = now_us();
-
-    var path_buffer: [320]u8 = undefined;
-    const state_path = try a.state_path(&path_buffer, entry.path);
-    // Lives here, as the session points to it while it lays out
-    var progress: ?paginate.Progressive = null;
-    const opened = try read_book_pages(a, alloc, entry, book.paragraphs, .{
-        .book_bytes = data.len,
+    const state_path = try a.state_path(&r.path_buffer, entry.path);
+    r.state_path = state_path;
+    // Kept in the reader, as the session points to it while it lays out
+    r.progress = null;
+    const opened = try read_book_pages(a, r.alloc, entry, book.paragraphs, .{
+        .book_bytes = r.data.len,
         .state_path = state_path,
-        .progress = &progress,
+        .progress = &r.progress,
     });
     std.debug.print("open {s}: {d} pages, parsed in {d} ms, {s} in {d} ms\n", .{
         entry.title,
@@ -182,9 +190,8 @@ fn read_book_open(
         (now_us() - t1) / 1000,
     });
     assert(opened.start < opened.pages.len);
-
     a.layout.marks = &.{};
-    var session = sess.Session{
+    r.session = .{
         .app = a,
         .paragraphs = book.paragraphs,
         .pages = opened.pages,
@@ -193,35 +200,17 @@ fn read_book_open(
         .chapters = book.chapters,
         .seconds_read = opened.seconds_read,
         .pages_path = opened.pages_path,
-        .book_bytes = data.len,
+        .book_bytes = r.data.len,
     };
-    if (progress) |*p| session.progress = p;
-    try read_book_notes(a, alloc, entry, state_path, &session);
-    try session.show(opened.start, null, true);
-    sess.save_progress(entry, state_path, &session);
-    assert(session.current == opened.start);
-
-    a.wifi_hands_off = false;
-    defer wifi_saver.restore(); // Leaving the book, Wi-Fi comes back
-    defer sess.save_progress(entry, state_path, &session);
-    // The loop sets touches and the tick for each view; put back for the library on leaving
-    const was = a.input.enter(a.input.modes(), 0);
-    defer a.input.leave(was);
-    var reader = Reader{
-        .a = a,
-        .s = &session,
-        .entry = entry,
-        .alloc = alloc,
-        .scratch = scratch_budget.allocator(),
-        .chapters = book.chapters,
-        .lang = lang,
-        .state_path = state_path,
-        .last_place = opened.start,
-        .wifi_try_at = now_us() + wifi_saver.after_us,
-    };
-    return reader.run(scratch_budget);
+    if (r.progress) |*p| r.session.progress = p;
+    r.s = &r.session;
+    try read_book_notes(a, r.alloc, entry, state_path, r.s);
+    r.chapters = book.chapters;
+    r.lang = parsed.lang;
+    r.start = opened.start;
+    r.last_place = opened.start;
+    assert(r.s.current == r.start);
 }
-
 /// The book's text and contents, from its file, and its language, whose hyphenation
 /// layout is set to.
 fn read_book_parse(
@@ -230,7 +219,10 @@ fn read_book_parse(
     entry: *const catalog.Entry,
     data: []const u8,
 ) !struct { book: book_model.Book, lang: ?hyphen.Lang } {
-    const book = if (entry.is_epub()) try epub.parse(alloc, data) else try kfx.parse(alloc, data);
+    const book = if (entry.is_epub())
+        try epub.parse(alloc, a.scratch_region, data)
+    else
+        try kfx.parse(alloc, data);
     // Positions are u32: a book's paragraphs fit its memory budget, far below that
     assert(book.paragraphs.len <= std.math.maxInt(u32));
     // Both parsers point the contents inside the book, as Go To relies on
@@ -409,18 +401,28 @@ fn read_book_lines(
     return annotation_db.read_annotations(entry.key, kind, stored);
 }
 
-/// An open book and what's on screen over it. `run` takes each action: what's the
-/// same in every view (locking, the clock's tick, leaving) here, and touches by the
-/// view they land on, each in a handler of its own.
-const Reader = struct {
+/// An open book and what's on screen over it, a screen on the stack (screen.zig).
+pub const Reader = struct {
+    pub const Result = Outcome;
+    /// Under what's opened over it, a book takes the lock and leaving itself.
+    pub const takes = screen.Takes{ .lock = true, .leave = true };
     a: *app.App,
-    s: *sess.Session,
     entry: *catalog.Entry,
-    alloc: std.mem.Allocator, // The book's, kept while it's open
-    scratch: std.mem.Allocator, // One action's, emptied after it
-    chapters: []const book_model.Chapter,
-    lang: ?hyphen.Lang,
-    state_path: [*:0]const u8,
+    book_budget: memory.Budget,
+    scratch_budget: memory.Budget,
+    alloc: std.mem.Allocator = undefined, // The book's, kept while it's open
+    scratch: std.mem.Allocator = undefined, // One action's, emptied after it
+    data: []const u8 = &.{}, // The book's file, mapped
+    path_buffer: [320]u8 = undefined,
+    state_path: [:0]const u8 = "", // In `path_buffer`
+    progress: ?paginate.Progressive = null, // A first open's layout, laid out in idle moments
+    session: sess.Session = undefined,
+    s: *sess.Session = undefined, // The session above
+    chapters: []const book_model.Chapter = &.{},
+    lang: ?hyphen.Lang = null,
+    start: u32 = 0, // The page it opens at
+    reading_started: bool = false, // The first page shown, so its place is saved on leaving
+    failed: ?anyerror = null, // The first page couldn't be shown
     view: View = .page,
     sheet_open: bool = false, // The toolbar's Aa sheet, in the toolbar view
     active: ?[]const u8 = null, // The highlight being changed, in the highlight view
@@ -429,33 +431,252 @@ const Reader = struct {
     last_place: u32 = 0,
     wifi_try_at: ?u64 = null, // When to turn Wi-Fi off; null once that's settled
     battery_minute: u64 = 0, // The battery is noted once a minute at most
+    /// What's open over the book, if anything: each in a place of its own, and how it
+    /// ended once it has. `opening` is one a handler has just made, to open.
+    over: Over = .none,
+    opening: ?screen.Frame = null,
+    lock: lock.Lock = undefined,
+    lock_ending: ?screen.Ending(void) = null,
+    menu: more.More = undefined,
+    menu_ending: ?screen.Ending(more.Outcome) = null,
+    searching: search.Search = undefined,
+    going: goto.GoTo = undefined,
+    page_ending: ?screen.Ending(u32) = null, // Of search or Go To: a page to show
+    define: define.Define = undefined,
+    define_ending: ?screen.Ending(define.Choice) = null,
+    held: hl.Held = undefined, // The words held, looked up while the definition is open
+    slider: panel.SliderDrag = .{}, // A panel slider followed
+    pending: controls.Pending = .{}, // The scrubber, an Aa slider, or a card from Aa
+    selecting: hl.Selecting = .{}, // Words being selected, or a highlight's end dragged
+    picture: picture_view.Viewer = undefined, // A picture held, shown whole
 
-    fn run(r: *Reader, scratch_budget: *memory.Budget) !Outcome {
-        // Unbounded: the reader's loop runs until the book is closed or noface leaves.
-        while (true) {
-            // Nothing from the last action is still needed
-            scratch_budget.reset(.keep);
-            assert(r.s.current < r.s.pages.len);
-            if (r.view != .toolbar) assert(!r.sheet_open);
-            r.save_after_jump();
-            if (r.reading()) r.s.resume_clock() else r.s.pause_clock();
-            r.set_input();
-            const action = r.a.input.next();
-            if (r.s.layout_pending() and needs_all_pages(action, r.view, r.sheet(), r.s)) {
-                try r.s.finish_layout();
-                // The page's footer gains its count; anything else is about to be redrawn
-                if (r.reading()) try r.s.show_footer();
-            }
-            switch (action) {
-                .lock => try r.on_lock(),
-                .tick => try r.on_tick(),
-                .power, .computer, .stop => return .quit,
-                .unlock, .drag, .drag_end => {},
-                .tap, .hold, .swipe, .pull => {
-                    if (try r.on_touch(action)) |outcome| return outcome;
+    /// The screens a book opens over itself: the lock screen, the ⋮ menu, search and
+    /// Go To.
+    const Over = enum {
+        none,
+        lock,
+        menu,
+        searching,
+        going,
+        define,
+        slider,
+        controls,
+        selecting,
+        extending,
+        picture,
+    };
+
+    /// The page the book opens at, its place saved as it opens.
+    pub fn draw(r: *Reader, part: screen.Part) !void {
+        assert(part == .all); // Its views draw themselves as they change
+        assert(!r.reading_started);
+        r.show_first() catch |err| {
+            r.failed = err;
+        };
+    }
+
+    fn show_first(r: *Reader) !void {
+        assert(r.start < r.s.pages.len);
+        try r.s.show(r.start, null, true);
+        sess.save_progress(r.entry, r.state_path, r.s);
+        assert(r.s.current == r.start);
+        r.reading_started = true;
+        r.a.wifi_hands_off = false;
+        r.wifi_try_at = now_us() + wifi_saver.after_us;
+    }
+
+    pub fn on_open(r: *Reader) !screen.Step(Outcome) {
+        if (r.failed) |err| return r.fail(err);
+        assert(r.reading_started);
+        assert(r.view == .page);
+        return r.ready();
+    }
+
+    /// The input modes for the view on screen, and how often to tick: often while a
+    /// first open is still laid out in idle moments, else for the clock.
+    pub fn setting(r: *const Reader) input_mod.Input.Scope {
+        const tick_us: u64 = if (r.s.layout_pending()) layout_tick_us else clock_check_us;
+        // The Back button counts, where a resting thumb otherwise wouldn't
+        const exempt = if (r.reading()) r.s.back_zone() else null;
+        if (!r.reading()) assert(exempt == null);
+        assert(tick_us > 0);
+        return .{ .modes = touches_for(r.view), .tick_us = tick_us, .grip_exempt = exempt };
+    }
+
+    pub fn on_tap(r: *Reader, t: screen.Tap) !screen.Step(Outcome) {
+        assert(r.over == .none); // In front, nothing over it
+        assert(r.opening == null);
+        return r.on_act(.{ .tap = t }) catch |err| r.fail(err);
+    }
+
+    pub fn on_tick(r: *Reader) !screen.Step(Outcome) {
+        assert(r.over == .none); // In front, nothing over it
+        assert(r.opening == null);
+        return r.on_act(.tick) catch |err| r.fail(err);
+    }
+
+    pub fn on_action(r: *Reader, action: input_mod.Action) !screen.Step(Outcome) {
+        assert(r.over == .none); // In front, nothing over it
+        assert(r.opening == null);
+        return r.on_act(action) catch |err| r.fail(err);
+    }
+
+    /// Back in front, the screen over it ended.
+    pub fn on_resume(r: *Reader) !screen.Step(Outcome) {
+        assert(r.over != .none);
+        assert(r.reading_started);
+        const over = r.over;
+        r.over = .none;
+        return r.resumed(over) catch |err| r.fail(err);
+    }
+
+    /// What follows the screen `over` that has just ended.
+    fn resumed(r: *Reader, over: Over) !screen.Step(Outcome) {
+        const s = r.s;
+        assert(r.over == .none); // Back in front
+        assert(r.opening == null);
+        switch (over) {
+            .none => unreachable,
+            // Leaving: what comes next takes the stop
+            .lock => if (r.lock_ending.? == .done) try r.woken(),
+            .menu => switch (r.menu_ending.?) {
+                .done => |result| switch (result) {
+                    .stay => try r.draw_toolbar(true),
+                    .page => |target| try r.to_page(target),
+                    .refresh => try r.to_page(@intCast(s.current)),
                 },
-            }
+                .closed, .interrupted => try r.draw_toolbar(true),
+            },
+            .define => try r.defined(),
+            .slider => try panel.slider_ended(r.a, &r.slider),
+            .selecting => try r.held_ended(),
+            .picture => try picture_view.ended(&r.picture),
+            .extending => {
+                try hl.extend_ended(&r.selecting, r.a, s, r.alloc, r.entry);
+                try r.show_highlight_page(r.active.?);
+            },
+            .controls => {
+                const title = r.entry.title;
+                try controls.resumed(&r.pending, r.a, s, title, r.sheet_open);
+            },
+            .searching, .going => switch (r.page_ending.?) {
+                .done => |target| {
+                    assert(target < s.pages.len);
+                    try r.to_page(target);
+                },
+                .closed, .interrupted => try r.draw_toolbar(true),
+            },
         }
+        return r.after();
+    }
+
+    /// Opens `f`, the screen `over`, over the book, as the handler ends.
+    fn open_over(r: *Reader, over: Over, f: screen.Frame) void {
+        assert(over != .none);
+        assert(r.over == .none);
+        assert(r.opening == null);
+        r.over = over;
+        r.opening = f;
+    }
+
+    /// After a handler: a screen it made opens over the book, else the book waits for
+    /// the next action.
+    fn after(r: *Reader) screen.Step(Outcome) {
+        if (r.opening) |f| {
+            assert(r.over != .none);
+            r.opening = null;
+            return .{ .push = f };
+        }
+        assert(r.over == .none);
+        return r.ready();
+    }
+
+    fn woken(r: *Reader) !void {
+        assert(!r.a.input.locked);
+        r.a.note_battery(); // What sleeping cost
+        r.a.quick = lipc.read(r.a.quick); // Hours may have passed
+        try r.show_status();
+        assert(r.since_save == 0);
+    }
+
+    /// An action: what's the same in every view (locking, the clock's tick, leaving)
+    /// here, and touches by the view they land on, each in a handler of its own.
+    fn on_act(r: *Reader, action: input_mod.Action) !screen.Step(Outcome) {
+        assert(r.s.current < r.s.pages.len);
+        assert(r.reading_started);
+        if (r.s.layout_pending() and needs_all_pages(action, r.view, r.sheet(), r.s)) {
+            try r.s.finish_layout();
+            // The page's footer gains its count; anything else is about to be redrawn
+            if (r.reading()) try r.s.show_footer();
+        }
+        switch (action) {
+            .lock => return r.on_lock(),
+            .tick => try r.on_tick_any(),
+            .power, .computer, .stop => return r.finish(.quit),
+            .unlock, .drag, .drag_end => {},
+            .tap, .hold, .swipe, .pull => {
+                if (try r.on_touch(action)) |outcome| return r.finish(outcome);
+            },
+        }
+        return r.after();
+    }
+
+    /// Ready for the next action, the book still in front: what the last one left in
+    /// scratch let go of, a jump saved, and the reading clock running only while the
+    /// page alone is up.
+    fn ready(r: *Reader) screen.Step(Outcome) {
+        r.scratch_budget.reset(.keep);
+        assert(r.s.current < r.s.pages.len);
+        if (r.view != .toolbar) assert(!r.sheet_open);
+        r.save_after_jump();
+        if (r.reading()) r.s.resume_clock() else r.s.pause_clock();
+        return .stay;
+    }
+
+    /// Something went wrong reading the book: it closes, and the library says so.
+    fn fail(r: *Reader, err: anyerror) screen.Step(Outcome) {
+        std.debug.print("could not open book: {s}\n", .{@errorName(err)});
+        // Still open: its file mapped and pages found, until `finish` lets go of them
+        assert(r.data.len > 0);
+        assert(r.s.pages.len > 0);
+        r.failed = err;
+        // Whatever a handler meant to open, it won't now
+        r.opening = null;
+        r.over = .none;
+        return r.finish(.failed);
+    }
+
+    /// The book closes: its place saved, Wi-Fi back, and its memory let go of.
+    fn finish(r: *Reader, outcome: Outcome) screen.Step(Outcome) {
+        // A failure says what went wrong first
+        if (outcome == .failed) assert(r.failed != null);
+        if (r.reading_started) {
+            sess.save_progress(r.entry, r.state_path, r.s);
+            wifi_saver.restore(); // Leaving the book, Wi-Fi comes back
+        }
+        r.release();
+        assert(r.a.book_region.empty());
+        return .{ .done = outcome };
+    }
+
+    /// Lets go of what the book holds: its file, its pictures and its memory.
+    fn release(r: *Reader) void {
+        const a = r.a;
+        if (r.data.len > 0) file.unmap(r.data);
+        r.data = &.{};
+        a.pictures.clear(a.alloc); // Its keys point into this book's memory
+        // Emptied for the next book, the pages touched handed back
+        r.scratch_budget.reset(.give_back);
+        r.book_budget.reset(.give_back);
+        a.pages_budget.reset(.give_back); // The pages of layouts after settings changes
+        assert(a.book_region.empty());
+        assert(a.scratch_region.empty());
+        r.book_budget.report();
+        a.pages_budget.report();
+        r.scratch_budget.report();
+        a.library_budget.report();
+        a.app_budget.report();
+        a.decoders_budget.report();
     }
 
     /// The page alone is up: the reading clock runs, and the page's own corners count.
@@ -471,17 +692,6 @@ const Reader = struct {
         if (r.sheet_open) assert(r.view == .toolbar);
         if (r.view != .toolbar) assert(!r.sheet_open);
         return if (r.sheet_open) r.a.tab else null;
-    }
-
-    /// The input modes for the view on screen, and how often to tick: often while a
-    /// first open is still laid out in idle moments, else for the clock.
-    fn set_input(r: *Reader) void {
-        const in = r.a.input;
-        in.take(touches_for(r.view));
-        in.grip_exempt = if (r.reading()) r.s.back_zone() else null; // The Back button counts
-        in.tick_us = if (r.s.layout_pending()) layout_tick_us else clock_check_us;
-        assert(in.tick_us > 0);
-        if (!r.reading()) assert(in.grip_exempt == null);
     }
 
     /// A jump (Go To, search, a chapter, the slider) is saved at once: turning page by
@@ -559,18 +769,18 @@ const Reader = struct {
 
     // Actions in every view
 
-    fn on_lock(r: *Reader) !void {
+    /// The lock screen over the book, the place saved first.
+    fn on_lock(r: *Reader) screen.Step(Outcome) {
         r.s.pause_clock(); // Asleep isn't reading
         assert(r.s.shown_us == 0);
         r.save(); // A lock is a natural stop, and anything after it may end noface
-        if (lock.lock_screen(r.a, r.entry, .{}) == .leaving) return;
-        r.a.note_battery(); // What sleeping cost
-        r.a.quick = lipc.read(r.a.quick); // Hours may have passed
-        try r.show_status();
+        r.lock = lock.make(r.a, r.entry, .{});
         assert(r.since_save == 0);
+        r.open_over(.lock, screen.open(&r.lock, &r.lock_ending));
+        return r.after();
     }
 
-    fn on_tick(r: *Reader) !void {
+    fn on_tick_any(r: *Reader) !void {
         const a = r.a;
         if (a.input.charger_changed) { // A charger came or went: the bolt follows
             a.input.charger_changed = false;
@@ -654,23 +864,54 @@ const Reader = struct {
         if (try r.s.picture_at(x, y)) |img| {
             a.input.drag_slot = null;
             r.s.pause_clock();
-            return picture_view.show(a, img);
+            const f = try picture_view.begin(&r.picture, a, img) orelse return;
+            return r.open_over(.picture, f);
         }
         if (r.highlight_at(x, y)) |id| {
             a.input.drag_slot = null;
             return r.select_highlight(id);
         }
-        const held = try hl.select_from_hold(a, r.s, x, y) orelse return;
+        const f = try hl.select_from_hold(&r.selecting, a, r.s, x, y) orelse return;
+        r.open_over(.selecting, f);
+    }
+
+    /// The hold lifted: a word held still is looked up, words dragged over highlighted.
+    fn held_ended(r: *Reader) !void {
+        assert(r.view == .page);
+        assert(r.active == null);
+        const a = r.a;
+        const held = try hl.hold_ended(&r.selecting, a, r.s) orelse return;
+        r.held = held;
         if (held.head == held.fixed) { // Held without moving: look it up, highlight only if asked
             const words = hl.page_words(a, r.s);
             assert(held.fixed < words.len);
-            if (try define.run(a, r.s, words[held.fixed], r.lang) == .close) {
-                _ = try hl.show_page(a, r.s, null); // Takes the underline off
-                return;
-            }
+            try define.begin(&r.define, a, r.s, words[held.fixed], r.lang);
+            return r.open_over(.define, screen.open(&r.define, &r.define_ending));
         }
-        const id = try hl.new_highlight(a, r.s, r.alloc, r.entry, held.fixed, held.head);
+        try r.highlight_held();
+    }
+
+    /// The words held, highlighted, and the highlight selected.
+    fn highlight_held(r: *Reader) !void {
+        const held = r.held;
+        assert(held.fixed < hl.page_words(r.a, r.s).len);
+        assert(r.view == .page);
+        const id = try hl.new_highlight(r.a, r.s, r.alloc, r.entry, held.fixed, held.head);
         if (id) |selected| try r.select_highlight(selected);
+    }
+
+    /// The definition closed: the underline off, or Highlight pressed.
+    fn defined(r: *Reader) !void {
+        assert(r.view == .page); // A word on the page was held
+        assert(r.define_ending != null);
+        const choice: define.Choice = switch (r.define_ending.?) {
+            .done => |choice| choice,
+            .closed, .interrupted => .close,
+        };
+        // Only Highlight goes on to highlight the word
+        if (choice == .highlight) return r.highlight_held();
+        _ = try hl.show_page(r.a, r.s, null); // Takes the underline off
+        assert(choice == .close);
     }
 
     fn highlight_at(r: *Reader, x: i32, y: i32) ?[]const u8 {
@@ -703,7 +944,8 @@ const Reader = struct {
     fn open_toolbar(r: *Reader) !void {
         r.view = .toolbar;
         r.sheet_open = false;
-        r.set_input(); // Its controls reach the bottom edge before the next touch arrives
+        // Its controls reach the bottom edge before the next touch arrives
+        r.a.input.apply(r.setting(), false);
         try r.draw_toolbar(false);
         const fresh = lipc.read(r.a.quick);
         if (fresh.same(&r.a.quick)) return;
@@ -735,18 +977,17 @@ const Reader = struct {
                 // Closing it needs the page back under where it was
                 try r.draw_toolbar(!r.sheet_open);
             },
-            .more => switch (try more.run(a, s, r.entry)) {
-                .stay => try r.draw_toolbar(true),
-                .page => |target| try r.to_page(target),
-                .refresh => try r.to_page(@intCast(s.current)),
+            .more => {
+                try more.begin(&r.menu, a, s, r.entry);
+                r.open_over(.menu, screen.open(&r.menu, &r.menu_ending));
             },
             .search => {
-                const found = try search.run(a, s, r.scratch);
-                if (found) |target| try r.to_page(@intCast(target)) else try r.draw_toolbar(true);
+                r.searching = search.make(a, s, r.scratch);
+                r.open_over(.searching, screen.open(&r.searching, &r.page_ending));
             },
             .goto => {
-                const chosen = try goto.run(a, s, r.scratch, r.chapters);
-                if (chosen) |target| try r.to_page(target) else try r.draw_toolbar(true);
+                r.going = try goto.make(a, s, r.scratch, r.chapters);
+                r.open_over(.going, screen.open(&r.going, &r.page_ending));
             },
             .bookmark => {
                 try bookmark.toggle(a, s, r.alloc, r.entry);
@@ -759,8 +1000,12 @@ const Reader = struct {
                 s.set_page(toolbar.chapter_target(sections, s.current, forward));
                 try r.draw_toolbar(true);
             },
-            .scrub => try controls.drag_scrub(a, s, r.entry.title, r.sheet_open, t.x),
-            .sheet => try controls.tap_sheet(a, r.alloc, s, r.entry.title, t.x, t.y),
+            .scrub => r.open_over(.controls, try controls.drag_scrub(&r.pending, a, s, t.x)),
+            .sheet => {
+                const title = r.entry.title;
+                const f = try controls.tap_sheet(&r.pending, a, s, title, t.x, t.y);
+                if (f) |opened| r.open_over(.controls, opened);
+            },
         }
         return null;
     }
@@ -815,7 +1060,11 @@ const Reader = struct {
             const grab_start = selection.near_handle(selection.start_handle(chosen), t.x, t.y);
             const grab_end = selection.near_handle(selection.end_handle(chosen), t.x, t.y);
             if (grab_start or grab_end) {
-                try hl.extend_highlight(a, r.s, r.alloc, r.entry, id, grab_start);
+                const f = try hl.extend_highlight(&r.selecting, a, r.s, id, grab_start);
+                if (f) |opened| {
+                    r.open_over(.extending, opened);
+                    return null;
+                }
                 try r.show_highlight_page(id);
                 return null;
             }
@@ -857,7 +1106,14 @@ const Reader = struct {
         const a = r.a;
         const choice = menu.hit(t.x, t.y);
         const page = try r.s.ensure(r.s.current, r.s.current);
-        if (try panel.panel_control(a, page, choice, t.x)) return null;
+        switch (try panel.panel_control(a, page, choice, t.x, &r.slider)) {
+            .not_one => {},
+            .ran => return null,
+            .drag => |f| {
+                r.open_over(.slider, f);
+                return null;
+            },
+        }
         switch (choice) {
             .settings => {
                 lipc.open_settings();

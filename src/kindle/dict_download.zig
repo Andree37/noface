@@ -21,6 +21,22 @@ pub const Language = struct {
 
 const part_size_max = 320;
 
+/// The longest one try of curl's may take, connecting included: 27 MB in this time is
+/// about 40 KB a second, slower than any Wi-Fi worth downloading on. A retry starts
+/// its own clock, so the reader's side (`download_s_max`) is what bounds the whole.
+pub const curl_s_max = 12 * 60;
+/// The longest unzipping and moving the file into place may take after it, on the
+/// Kindle's slow drive: the biggest dictionary is under 100 MB.
+pub const unpack_s_max = 2 * 60;
+/// The longest a download may take, from start to the dictionary in place.
+pub const download_s_max = curl_s_max + unpack_s_max;
+
+comptime {
+    assert(curl_s_max > 0);
+    assert(unpack_s_max > 0);
+    assert(download_s_max > curl_s_max);
+}
+
 pub const Download = struct {
     pid: i32,
     part: [part_size_max]u8 = undefined,
@@ -56,7 +72,8 @@ const script_format =
     \\set -e
     \\cd '{[data_dir]s}'
     \\rm -rf .dict-new '{[file]s}.zip.part'
-    \\curl -fsSL --retry 2 --connect-timeout 20 -o '{[file]s}.zip.part' '{[base]s}/{[file]s}.zip'
+    \\curl -fsSL --retry 2 --connect-timeout 20 --max-time {[curl_s_max]d} \
+    \\  -o '{[file]s}.zip.part' '{[base]s}/{[file]s}.zip'
     \\mkdir .dict-new
     \\unzip -o -q '{[file]s}.zip.part' -d .dict-new
     \\test -s '.dict-new/{[file]s}'
@@ -78,6 +95,7 @@ pub fn start(data_dir: []const u8, base: []const u8, lang: Language) ?Download {
         .data_dir = data_dir,
         .file = lang.file,
         .base = base,
+        .curl_s_max = curl_s_max,
     }, 0) catch return null;
     const argv = [_:null]?[*:0]const u8{ "/bin/sh", "-c", script };
     const child = process.spawn(&argv) orelse return null;

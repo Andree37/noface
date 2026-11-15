@@ -4,7 +4,8 @@ const assert = std.debug.assert;
 const paths = @import("kindle/paths.zig");
 const card = @import("ui/card.zig");
 const memory = @import("base/memory.zig");
-const fonts_db = @import("kindle/fonts.zig");
+const typefaces = @import("typefaces.zig");
+const Typefaces = typefaces.Typefaces;
 const settings_model = @import("model/settings.zig");
 const Page = @import("gfx/page.zig").Page;
 const Font = @import("gfx/font.zig").Font;
@@ -47,27 +48,20 @@ const clock_baseline_px = 38;
 
 pub const notice_ms = 1800;
 
-/// The faces of a family: regular, bold, italic and bold italic, indexed by
-/// bold | italic << 1.
-const faces_per_family = 4;
-
 /// How many languages noface hyphenates and has dictionaries for.
 const languages_count = @typeInfo(hyphen.Lang).@"enum".field_names.len;
-
-/// A family's body fonts in one face, by reader size and book size.
-const FaceFontsBySize = [settings_model.sizes.len][book_model.size_scales.len]?Font;
 
 comptime {
     // The clock's text is drawn inside the band its partial refresh covers.
     assert(clock_baseline_px < clock_height_px);
     assert(clock_height_px < clock_width_px);
-    // Bold and italic, one bit each, pick one of the faces.
-    assert(faces_per_family == 1 << 2);
+    // A face's book size and the reader's size each fit a byte of a font's key
+    assert(book_model.size_scales.len <= std.math.maxInt(u8));
+    assert(settings_model.sizes.len <= std.math.maxInt(u8));
     // Every language has a dictionary file, named in `dictionary_for`.
     assert(languages_count == 2);
     // The interface's own family is the first, and always offered.
     assert(settings_model.builtin_families.len >= 1);
-    assert(settings_model.builtin_families.len <= settings_model.max_families);
     // A face's book size starts at its normal step.
     assert(book_model.normal_size < book_model.size_scales.len);
 }
@@ -86,17 +80,18 @@ pub const App = struct {
     library_shared: *books.Shared, // The library's buffers, in its region, kept for good
     library_scratch_region: *memory.Region,
     book_region: *memory.Region,
+    // An open book's pages after a settings change, emptied before each layout
+    pages_budget: *memory.Budget,
     scratch_region: *memory.Region,
     screen: *hwtcon.Screen,
     input: *Input,
     body: *Font,
-    // Body fonts by family, face (bold, italic), reader size and book size, made on first use.
-    face_fonts: [settings_model.max_families][faces_per_family]FaceFontsBySize =
-        @splat(@splat(@splat(@splat(null)))),
-    face_files: [settings_model.max_families][faces_per_family]?[]const u8 = @splat(@splat(null)),
-    // Each family's regular at interface size, for its name in Aa; made on first use
-    family_samples: [settings_model.max_families]?Font = @splat(null),
-    family_sample_ptrs: [settings_model.max_families]?*Font = @splat(null),
+    // The reading face's fonts by family, face (bold, italic), reader size and book
+    // size, and each family's name in itself for Aa: made on first use, the least used
+    // given up past a fixed number
+    typefaces: Typefaces = .{},
+    family_sample_ptrs: [aa.family_cells_max]?*Font = @splat(null),
+    family_first: u32 = 0, // The first typeface on the Aa sheet's page of them
     tab: aa.Tab = .font,
     turns: u32 = 0,
     note_font: *Font,
@@ -197,36 +192,31 @@ pub const App = struct {
     pub fn apply_settings(a: *App) !void {
         // Parsing clamps every setting to its steps: one past them is a bug of ours
         assert(a.settings.margin < settings_model.margins.len);
-        assert(a.settings.font < settings_model.max_families);
+        assert(a.settings.font < settings_model.families.len);
         a.body = try a.face(false, false, book_model.normal_size);
         a.layout.faces = .{ .ctx = a, .pick = pick_face };
         a.layout.images = .{ .ctx = a, .draw = draw_image };
         a.layout.margin_x = settings_model.margins[a.settings.margin];
         a.layout.justify = !a.settings.left_align;
         a.layout.bold_starts = a.settings.bold_starts;
+        // The Aa sheet shows the page of typefaces with the one chosen
+        a.family_first = aa.family_page_of(a.settings.font);
         assert(a.layout.margin_x > 0);
         assert(a.body.line_height > 0);
     }
 
-    /// Each typeface offered, at interface size, to show its name in itself. One that
-    /// can't be loaded is null, and its name shows in the interface font.
+    /// The typefaces on the Aa sheet's page of them, from `family_first`, at interface
+    /// size, to show their names in themselves. One that can't be loaded is null, and
+    /// its name shows in the interface font.
     pub fn load_family_samples(a: *App) []const ?*Font {
         const families_count = settings_model.families.len;
-        assert(families_count >= settings_model.builtin_families.len);
-        assert(families_count <= settings_model.max_families);
-        for (0..families_count) |i| {
-            if (a.family_sample_ptrs[i] != null) {
-                assert(a.family_samples[i] != null); // The pointer points at it
-                continue;
-            }
-            const file_slot = &a.face_files[i][0];
-            if (file_slot.* == null) {
-                file_slot.* = file.map(fonts_db.path(@intCast(i), false, false)) catch continue;
-            }
-            a.family_samples[i] = Font.init(a.alloc, file_slot.*.?, 36, 1.2) catch continue;
-            a.family_sample_ptrs[i] = &a.family_samples[i].?;
+        assert(a.family_first < families_count);
+        const shown = @min(aa.families_per_page(), families_count - a.family_first);
+        assert(shown <= a.family_sample_ptrs.len);
+        for (a.family_sample_ptrs[0..shown], a.family_first..) |*sample, family| {
+            sample.* = a.typefaces.sample(@intCast(family));
         }
-        return a.family_sample_ptrs[0..families_count];
+        return a.family_sample_ptrs[0..shown];
     }
 
     /// The body font for a weight, slant and book size, in the reader's family and size.
@@ -234,24 +224,24 @@ pub const App = struct {
     pub fn face(a: *App, bold_text: bool, italic: bool, size: u8) !*Font {
         assert(size < book_model.size_scales.len);
         // Parsing clamps every setting to its steps: one past them is a bug of ours
-        assert(a.settings.font < settings_model.max_families);
+        assert(a.settings.font < settings_model.families.len);
         assert(a.settings.size < settings_model.sizes.len);
         const bold = bold_text or a.settings.bold;
         const which: u2 = @as(u2, @intFromBool(bold)) | @as(u2, @intFromBool(italic)) << 1;
-        const file_slot = &a.face_files[a.settings.font][which];
-        if (file_slot.* == null) {
-            file_slot.* = try file.map(fonts_db.path(a.settings.font, bold, italic));
-        }
         const scale = book_model.size_scales[size];
-        const slot = &a.face_fonts[a.settings.font][which][a.settings.size][size];
-        if (slot.* == null) {
-            slot.* = try Font.init(a.alloc, file_slot.*.?, a.settings.px() * scale, 1);
-        }
+        const key: typefaces.FaceKey = .{
+            .family = a.settings.font,
+            .which = which,
+            .size = @intCast(a.settings.size),
+            .scale = size,
+        };
+        // The body font is in use between pages too, so it's never the one given up
+        const font = try a.typefaces.face(key, a.settings.px() * scale, a.body);
         // Spacing can change without the font changing, so set it every time.
         const line_height_px: f32 = @floatFromInt(a.settings.line_height());
-        slot.*.?.line_height = @intFromFloat(line_height_px * scale);
-        assert(slot.*.?.line_height > 0);
-        return &slot.*.?;
+        font.line_height = @intFromFloat(line_height_px * scale);
+        assert(font.line_height > 0);
+        return font;
     }
 
     fn draw_image(
@@ -269,13 +259,19 @@ pub const App = struct {
         assert(a.layout.images.?.ctx == ctx);
         const ready = a.pictures.get(image.data.ptr, w, h) orelse blk: {
             var made: ?[]u8 = null;
-            if (jpegxr.is_jpeg_xr(image.data)) {
+            if (!image.deflated and jpegxr.is_jpeg_xr(image.data)) {
                 made = prepared_jpeg_xr(a.alloc, image.data, w, h);
             } else {
-                made = cover.decode_and_prepare(a.alloc, image.data, w, h);
+                made = cover.prepare_from(a.alloc, .{
+                    .bytes = image.data,
+                    .deflated = image.deflated,
+                    .inflated_size = image.inflated_size,
+                }, w, h);
             }
             const pixels = made orelse {
-                std.debug.print("picture not drawn\n", .{});
+                // Not kept, so a picture that fails for want of memory is tried again
+                std.debug.print("picture not drawn: {d}x{d}\n", .{ image.width, image.height });
+                cover.placeholder(page_buf, x, y, w, h);
                 return;
             };
             assert(pixels.len == @as(u64, w) * h); // Prepared at the size asked for
@@ -424,32 +420,20 @@ pub const App = struct {
     }
 };
 
-/// Shows a sheet over `background` and waits for a row to be tapped. Null when the
-/// tap lands above the sheet, or the Kindle locks or quits (which is passed on to
-/// the caller's loop). What was under the sheet is put back either way.
-pub fn choose_from_card(
-    a: *App,
-    background: []const u8,
-    title: []const u8,
-    subtitle: []const u8,
-    rows: []const card.Row,
-) !?u32 {
-    assert(background.len == a.screen.pixels.len); // Put back over the whole screen
-    assert(a.overlay.len == a.screen.pixels.len); // The card is drawn there first
-    return choose_from_card_with(a, background, title, subtitle, rows, null);
-}
-
-/// The same, with a small cover beside the title.
-pub fn choose_from_card_with(
+/// A card of rows over `background`, to open over a screen (`screen.open`): it ends
+/// with the row tapped, or closes with a tap above it. Once it has ended, whatever
+/// way, `card_closed` puts back what was under it.
+pub fn card_over(
     a: *App,
     background: []const u8,
     title: []const u8,
     subtitle: []const u8,
     rows: []const card.Row,
     book_cover: ?card.Cover,
-) !?u32 {
+) Card {
     assert(background.len == a.screen.pixels.len); // Put back over the whole screen
-    var c = Card{
+    assert(a.overlay.len == a.screen.pixels.len); // The card is drawn there first
+    return .{
         .a = a,
         .background = background,
         .title = title,
@@ -457,15 +441,18 @@ pub fn choose_from_card_with(
         .rows = rows,
         .cover = book_cover,
     };
-    const chosen = try screen.run(a, &c);
-    if (chosen) |index| assert(index < rows.len);
+}
+
+/// What was under a card, back on the whole screen.
+pub fn card_closed(a: *App, background: []const u8) !void {
+    assert(background.len == a.screen.pixels.len);
+    assert(background.ptr != a.screen.pixels.ptr); // Kept apart from what's shown
     @memcpy(a.screen.pixels, background);
     try a.show_band(0, a.screen.height);
-    return chosen;
 }
 
 /// A card of rows over a dimmed screen: the row tapped, or closed by a tap above it.
-const Card = struct {
+pub const Card = struct {
     a: *App,
     background: []const u8,
     title: []const u8,
@@ -528,28 +515,60 @@ pub fn clean_rect(a: *App, left: u32, top: u32, width: u32, height: u32) !void {
     try a.screen.wait_complete(try a.screen.show_region(left, top, width, height, .clean));
 }
 
-/// Follows the dragged finger until it lifts. `follow.moved(x, y)` redraws for a
-/// new position and returns the update to wait on, or null when nothing changed.
-/// Only one update runs at a time: overlapping ones smear on the panel. False when
-/// the drag was cut short (the Kindle locking, say) rather than the finger lifting.
-pub fn follow_drag(a: *App, first: ?u32, follow: anytype) !bool {
-    // An update already sent to this screen
-    if (first) |m| assert(m < a.screen.next_marker);
-    var marker = first;
-    var lifted = true;
-    while (a.input.next_for()) |action| switch (action) {
-        .drag => |x0| {
-            if (marker) |m| try a.screen.wait_complete(m);
-            marker = try follow.moved(a.input.latest_drag() orelse x0, a.input.drag_y);
-        },
-        .drag_end => break,
-        else => {},
-    } else lifted = false; // Locked, or leaving, before the finger lifted
-    if (marker) |m| {
-        assert(m < a.screen.next_marker);
-        try a.screen.wait_complete(m);
+/// Follows the dragged finger until it lifts, as a screen over the one the drag began
+/// on (`screen.open`), made with the update that drew where it began (`marker`).
+/// `follow.moved(x, y)` redraws for a new position and returns the update to wait on,
+/// or null when nothing changed. Only one update runs at a time: overlapping ones
+/// smear on the panel. Done when the finger lifts; interrupted when the Kindle locks.
+/// Once it has ended, `drag_ended` waits for its last update.
+pub fn Drag(comptime Follow: type) type {
+    return struct {
+        const D = @This();
+        pub const Result = void;
+        a: *App,
+        follow: Follow,
+        marker: ?u32,
+
+        /// Where it began is drawn as it begins.
+        pub fn draw(d: *D, part: screen.Part) !void {
+            assert(part == .all);
+            if (d.marker) |m| assert(m < d.a.screen.next_marker);
+        }
+
+        /// A tap while a finger is followed: nothing to do.
+        pub fn on_tap(d: *D, _: screen.Tap) !screen.Step(void) {
+            if (d.marker) |m| assert(m < d.a.screen.next_marker);
+            assert(d.a.input.tick_us == 0); // It never ticks
+            return .stay;
+        }
+
+        pub fn on_action(d: *D, action: input_mod.Action) !screen.Step(void) {
+            switch (action) {
+                .drag => |x0| {
+                    if (d.marker) |m| try d.a.screen.wait_complete(m);
+                    const x = d.a.input.latest_drag() orelse x0;
+                    d.marker = try d.follow.moved(x, d.a.input.drag_y);
+                    if (d.marker) |m| assert(m < d.a.screen.next_marker);
+                    return .stay;
+                },
+                .drag_end => return .{ .done = {} },
+                else => return .stay,
+            }
+        }
+    };
+}
+
+/// A drag that has ended: its last update waited for. True when the finger lifted,
+/// false when the drag was cut short (the Kindle locking, say).
+pub fn drag_ended(d: anytype, ending: screen.Ending(void)) !bool {
+    if (d.marker) |m| {
+        assert(m < d.a.screen.next_marker);
+        try d.a.screen.wait_complete(m);
     }
-    return lifted;
+    d.marker = null;
+    // A drag ends when the finger lifts, or the Kindle locks or noface leaves
+    assert(ending != .closed);
+    return ending == .done;
 }
 
 /// The journal saved at `path`: every day is in the file, which is mapped, never read
@@ -600,7 +619,7 @@ pub fn load_settings(path: [*:0]const u8) settings_model.Settings {
     const settings = settings_model.parse(state.read_small(path, &buf));
     // Parsing clamps every value to its steps
     assert(settings.size < settings_model.sizes.len);
-    assert(settings.font < settings_model.max_families);
+    assert(settings.font < settings_model.families.len);
     return settings;
 }
 
@@ -700,14 +719,15 @@ test "a typeface's long name saves, and one too long to is left out, never a cra
         for (0..255) |i| name[i * 3 ..][0..3].* = "\u{6587}".*;
         break :blk name;
     };
-    try std.testing.expect(settings_model.add_family(&long));
+    const builtin = settings_model.builtin_families;
+    settings_model.offer_families(&(builtin ++ .{&long}));
     var s = settings_model.Settings{};
     s.font = @intCast(settings_model.families.len - 1);
     save_settings(path, s);
     try std.testing.expectEqual(s.font, load_settings(path).font);
     // Longer than any file's name: the settings stay as they were
     const longer: [2000]u8 = @splat('x');
-    try std.testing.expect(settings_model.add_family(&longer));
+    settings_model.offer_families(&(builtin ++ .{ &long, &longer }));
     var other = s;
     other.font = @intCast(settings_model.families.len - 1);
     save_settings(path, other);

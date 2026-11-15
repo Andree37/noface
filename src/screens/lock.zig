@@ -10,6 +10,8 @@ const now_us = os.now_us;
 const app = @import("../app.zig");
 const picture = @import("../epub/picture.zig");
 const draw = @import("../ui/draw.zig");
+const screen = @import("screen.zig");
+const input_mod = @import("../kindle/input.zig");
 
 pub const lock_redraw_us = 1500 * 1000;
 
@@ -37,23 +39,112 @@ comptime {
     assert(title_lines_max > 0);
 }
 
-/// How a lock ended: the Kindle woke, or noface is leaving (plugged into a computer,
-/// or told to stop), with the screen left as it is for whatever comes next.
-pub const Woke = enum { woke, leaving };
-
 /// `restore` puts the screen from before back on waking; a caller that redraws
 /// everything anyway passes false, saving a whole-screen refresh.
 pub const Options = struct { restore: bool = true };
 
-/// Shows the book's cover while the Kindle sleeps, then puts the screen back. A
-/// screen update that fails is logged, never fatal: the Kindle is asleep, and the
+/// The lock screen, to open over the library or a book while the Kindle sleeps: the
+/// book's cover, drawn again when stock paints over it, until the Kindle wakes (done)
+/// or noface leaves (interrupted: a computer, or a stop, goes to the screen under it).
+/// A screen update that fails is logged, never fatal: the Kindle is asleep, and the
 /// reader shouldn't wake to an error.
-pub fn lock_screen(a: *app.App, entry: ?*const catalog.Entry, options: Options) Woke {
+pub fn make(a: *app.App, entry: ?*const catalog.Entry, options: Options) Lock {
     assert(a.lock_saved.len == a.screen.pixels.len);
     assert(a.lock_cover.len == a.screen.pixels.len);
-    @memcpy(a.lock_saved, a.screen.pixels);
-    const target = a.lock_cover;
-    // The reader's own picture, if they chose it and it's there; else the book's cover
+    // Touches are taken as they were, though none counts while it's up
+    return .{ .a = a, .entry = entry, .options = options, .modes = a.input.modes() };
+}
+
+pub const Lock = struct {
+    pub const Result = void; // Done when the Kindle wakes
+    /// Another lock while asleep changes nothing.
+    pub const takes = screen.Takes{ .lock = true };
+    a: *app.App,
+    entry: ?*const catalog.Entry,
+    options: Options,
+    modes: input_mod.Input.Modes,
+    redraws: u32 = 0,
+
+    /// Drawn once, as it opens; repainted on ticks after.
+    pub fn draw(l: *Lock, part: screen.Part) !void {
+        assert(part == .all);
+        assert(l.redraws == 0);
+        l.show();
+    }
+
+    /// Keeps the screen from before, and shows the cover with a flash.
+    fn show(l: *Lock) void {
+        assert(l.redraws == 0);
+        const a = l.a;
+        @memcpy(a.lock_saved, a.screen.pixels);
+        draw_target(a, l.entry);
+        // What's kept is a picture's, a book's, or the title on white's: never nothing
+        assert(a.lock_cover_key != key_nothing);
+        a.present(a.lock_cover, .flash) catch |err| {
+            std.debug.print("lock screen not shown: {s}\n", .{@errorName(err)});
+        };
+    }
+
+    /// Stock paints its own lock screen just after this, so it ticks a few times to
+    /// draw over it again. Asleep: the input sleeps too, between events.
+    pub fn setting(l: *const Lock) input_mod.Input.Scope {
+        assert(l.redraws <= lock_redraws);
+        const tick_us: u64 = if (l.redraws < lock_redraws) lock_redraw_us else 0;
+        return .{ .modes = l.modes, .tick_us = tick_us, .locked = true };
+    }
+
+    pub fn on_tick(l: *Lock) !screen.Step(void) {
+        assert(l.redraws < lock_redraws); // No more ticks after the last redraw
+        l.repaint();
+        assert(l.redraws <= lock_redraws);
+        return .stay;
+    }
+
+    /// The cover again, if stock painted over it.
+    fn repaint(l: *Lock) void {
+        assert(l.redraws < lock_redraws);
+        l.redraws += 1;
+        const a = l.a;
+        // Only when stock painted over it, and only the pixels it changed.
+        if (!std.mem.eql(u8, a.screen.pixels, a.lock_cover)) {
+            std.debug.print("lock cover repainted\n", .{});
+            a.present(a.lock_cover, .screen) catch |err| {
+                std.debug.print("lock cover not repainted: {s}\n", .{@errorName(err)});
+            };
+        }
+        assert(l.redraws <= lock_redraws);
+    }
+
+    /// Waking: the screen from before back, unless the caller redraws it anyway.
+    pub fn on_action(l: *Lock, action: input_mod.Action) !screen.Step(void) {
+        assert(l.a.input.locked);
+        if (action != .unlock) return .stay; // Touches and the rest, while asleep
+        l.wake();
+        assert(action == .unlock);
+        return .{ .done = {} };
+    }
+
+    fn wake(l: *Lock) void {
+        assert(l.a.input.locked);
+        l.a.input.last_input = now_us();
+        if (l.options.restore) {
+            l.a.present(l.a.lock_saved, .flash) catch |err| {
+                std.debug.print("screen not put back: {s}\n", .{@errorName(err)});
+            };
+        }
+        assert(l.a.input.last_input > 0);
+    }
+
+    pub fn on_tap(l: *Lock, _: screen.Tap) !screen.Step(void) {
+        assert(l.a.input.locked);
+        assert(l.redraws <= lock_redraws);
+        return .stay; // A touch while asleep does nothing
+    }
+};
+
+/// Draws what the lock screen shows into `a.lock_cover`, unless it's there already:
+/// the reader's own picture, if they chose it and it's there; else the book's cover.
+fn draw_target(a: *app.App, entry: ?*const catalog.Entry) void {
     var picture_buffer: [320]u8 = undefined;
     const own = if (a.settings.lock_picture) picture_path(a, &picture_buffer) else null;
     const own_data: ?[]const u8 = if (own) |p| file.map(p) catch null else null;
@@ -65,50 +156,8 @@ pub fn lock_screen(a: *app.App, entry: ?*const catalog.Entry, options: Options) 
     } else {
         std.debug.print("locked, cover kept\n", .{});
     }
-    // What's kept is a picture's, a book's, or the title on white's: never nothing
     assert(a.lock_cover_key != key_nothing);
-    a.present(target, .flash) catch |err| {
-        std.debug.print("lock screen not shown: {s}\n", .{@errorName(err)});
-    };
-
-    // Stock paints its own lock screen just after this, so draw over it again.
-    const was = a.input.enter(a.input.modes(), lock_redraw_us);
-    defer a.input.leave(was);
-    a.input.locked = true;
-    defer a.input.locked = false;
-    var redraws: u32 = 0;
-    // Unbounded: the Kindle sleeps for as long as the reader leaves it
-    while (true) {
-        const action = a.input.next();
-        switch (action) {
-            .tick => {
-                redraws += 1;
-                // Only when stock painted over it, and only the pixels it changed.
-                if (!std.mem.eql(u8, a.screen.pixels, target)) {
-                    std.debug.print("lock cover repainted\n", .{});
-                    a.present(target, .screen) catch |err| {
-                        std.debug.print("lock cover not repainted: {s}\n", .{@errorName(err)});
-                    };
-                }
-                if (redraws == lock_redraws) a.input.tick_us = 0;
-            },
-            .unlock => break,
-            .computer, .stop => {
-                // Leaving: no point lighting up the old screen first
-                a.input.hold_back(action);
-                return .leaving;
-            },
-            else => {},
-        }
-    }
-    assert(a.input.locked);
-    a.input.last_input = now_us();
-    if (options.restore) {
-        a.present(a.lock_saved, .flash) catch |err| {
-            std.debug.print("screen not put back: {s}\n", .{@errorName(err)});
-        };
-    }
-    return .woke;
+    assert(wanted != key_nothing);
 }
 
 /// Draws the lock screen into `a.lock_cover`: the reader's picture when it decodes,

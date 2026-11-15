@@ -66,8 +66,8 @@ pub fn logged_hit(x: i32, y: i32, page_index: u32, count: u32, searching: bool) 
 const touches = input_mod.Input.Modes{ .grips = false, .deferred = true, .edge_zones = true };
 
 pub fn log_page(shown: []const catalog.Entry, page_index: u32) void {
-    assert(page_index < books.books_max);
     assert(shown.len <= library.page_books_max);
+    assert(page_index < books.books_max);
     for (shown, 0..) |e, i| std.debug.print("cell {d} {d} {s}\n", .{ page_index, i, e.title });
 }
 
@@ -75,23 +75,9 @@ pub fn log_page(shown: []const catalog.Entry, page_index: u32) void {
 /// the hero too.
 const SearchEnd = union(enum) { cancel, search, open: *catalog.Entry };
 
-/// The search sheet, with books matching what's typed listed as it changes. Ends by
-/// cancelling (what was searched before stays), searching for what's typed (nothing
-/// clears the search), or opening a book from the list.
-fn type_search(a: *app.App, lib: *Library, q: *search.Query) !SearchEnd {
-    assert(q.len <= q.buf.len);
-    const kept = q.*;
-    var sheet = LibrarySearch{ .a = a, .lib = lib, .q = q };
-    const end = try screen.run(a, &sheet);
-    // Cancelled, locked or leaving: what was searched before stays
-    if (end == null or end.? == .cancel) q.* = kept;
-    const result = end orelse .cancel;
-    // Only a book on the Kindle opens from the list
-    if (result == .open) assert(result.open.is_local());
-    return result;
-}
-
-/// The search sheet, its matches listed as they're typed.
+/// The search sheet, its matches listed as they're typed. Ends by cancelling (what was
+/// searched before stays), searching for what's typed (nothing clears the search), or
+/// opening a book from the list.
 const LibrarySearch = struct {
     pub const Result = SearchEnd;
     a: *app.App,
@@ -103,8 +89,8 @@ const LibrarySearch = struct {
     const rows: [search_sheet.max_rows]u32 = std.simd.iota(u32, search_sheet.max_rows);
 
     pub fn draw(ls: *LibrarySearch, part: screen.Part) !void {
-        assert(ls.q.len <= ls.q.buf.len);
         const a = ls.a;
+        assert(ls.q.len <= ls.q.buf.len);
         const words = ls.q.words();
         var more = false;
         ls.matches = &.{};
@@ -167,8 +153,8 @@ fn show_with_covers(
 
 /// What the library does after an action: nothing, draw the page again (a new filter,
 /// a page turn, a notice), draw everything again with a flash (back from a book, a
-/// reloaded library), or leave noface.
-const Next = enum { nothing, page, everything, leave };
+/// reloaded library), leave noface, or open a screen over it.
+const Next = union(enum) { nothing, page, everything, leave, open: screen.Frame };
 
 pub fn run_library(a: *app.App) !void {
     var b = Browser{ .a = a, .lib = try load_library(a), .buf = a.slots[0].buf };
@@ -180,12 +166,14 @@ pub fn run_library(a: *app.App) !void {
     // would sit under a locked Kindle with touch switched off.
     if (lipc.in_screen_saver() == true) a.input.hold_back(.lock);
     a.quick = lipc.read(a.quick); // Once up front, so the first screen never shows blanks
-    try b.run();
+    const ending = try screen.run_root(a, &b);
+    // Only leaving ends it: a lock or a stop goes to it, never past it
+    assert(ending == .done);
 }
 
 /// The library on screen: which books, in what order, which page of them, and what
-/// it's keeping an eye on (a download, the status after a book). `run` draws what the
-/// last action asked for, then hands the next action to its handler.
+/// it's keeping an eye on (a download, the status after a book). The screen at the
+/// root of the stack (screen.zig): each handler says what to draw next.
 const Browser = struct {
     a: *app.App,
     lib: Library,
@@ -201,56 +189,180 @@ const Browser = struct {
     watch_until: u64 = 0,
     /// After a book, Wi-Fi takes a while to come back: the status is read again until then.
     status_until: u64 = 0,
+    /// The screen open over the library, if one is, and how it ended once it has.
+    over: Over = .none,
+    over_ending: ?screen.Ending(void) = null,
+    stats: stats_screen.Stats = undefined, // While `over` is .stats
+    bubble: battery_screen.Bubble = undefined, // While `over` is .battery
+    lock: lock.Lock = undefined, // While `over` is .lock
+    panel: panel.LibraryPanel = undefined, // While `over` is .panel
+    search: LibrarySearch = undefined, // While `over` is .search
+    search_ending: ?screen.Ending(SearchEnd) = null,
+    query_kept: search.Query = .{}, // The search before the sheet, kept if it's cancelled
 
-    fn run(b: *Browser) !void {
-        var next: Next = .everything;
-        // Unbounded: the library is noface's home, open until noface is told to leave
-        while (true) {
-            switch (next) {
-                .nothing => {},
-                .page => try b.show_page(),
-                .everything => try b.show_everything(),
-                .leave => return,
-            }
-            // Whatever was drawn, the page shown is one there is, of the books let through
-            assert(b.count == b.lib.count());
-            assert(b.index < library.page_count(b.count));
-            b.set_input();
-            next = try b.on_action(b.a.input.next());
+    sheet: actions.Sheet = undefined, // While `over` is .sheet
+    sheet_ending: ?screen.Ending(actions.Change) = null,
+    offer: actions.UpNext = .{}, // While `over` is .up_next
+    offered: ?*catalog.Entry = null, // The book it offers
+    book: reader.Reader = undefined, // While `over` is .book
+    book_ending: ?screen.Ending(reader.Outcome) = null,
+    book_was_read: bool = false, // The book open was read before it was opened
+
+    /// The screens the library opens over itself.
+    const Over = enum { none, stats, battery, lock, panel, search, sheet, up_next, book };
+
+    pub const Result = void;
+    /// The home screen: under every other, it takes the lock and leaving.
+    pub const takes = screen.Takes{ .lock = true, .leave = true };
+
+    /// Everything drawn again with a flash (first, and back from a book or a reload),
+    /// or the page alone (a new filter, a page turn, a notice).
+    pub fn draw(b: *Browser, part: screen.Part) !void {
+        switch (part) {
+            .all => try b.show_everything(),
+            .changing => try b.show_page(),
         }
+        // Whatever was drawn, the page shown is one there is, of the books let through
+        assert(b.count == b.lib.count());
+        assert(b.index < library.page_count(b.count));
     }
 
     /// The library's `touches`, set each time round as a book changes them. It ticks
     /// often while watching a download or the status, else once a minute for the clock
     /// and the battery.
-    fn set_input(b: *Browser) void {
-        const in = b.a.input;
-        in.take(touches);
+    pub fn setting(b: *const Browser) input_mod.Input.Scope {
         const now = now_us();
+        var tick_us: u64 = idle_tick_us;
         if (now < b.watch_until) {
-            in.tick_us = download_poll_us;
+            tick_us = download_poll_us;
         } else if (now < b.status_until) {
-            in.tick_us = status_poll_us;
-        } else {
-            in.tick_us = idle_tick_us;
+            tick_us = status_poll_us;
         }
-        assert(in.tick_us >= download_poll_us);
-        assert(in.tick_us <= idle_tick_us);
+        assert(tick_us >= download_poll_us);
+        assert(tick_us <= idle_tick_us);
+        return .{ .modes = touches, .tick_us = tick_us };
     }
 
-    fn on_action(b: *Browser, action: input_mod.Action) !Next {
+    pub fn on_tap(b: *Browser, t: screen.Tap) !screen.Step(void) {
+        assert(b.count == b.lib.count());
+        assert(b.index < library.page_count(b.count));
+        return step(try b.on_tap_at(t.x, t.y));
+    }
+
+    pub fn on_tick(b: *Browser) !screen.Step(void) {
+        assert(b.count == b.lib.count());
+        assert(b.index < library.page_count(b.count));
+        return step(try b.on_tick_next());
+    }
+
+    pub fn on_action(b: *Browser, action: input_mod.Action) !screen.Step(void) {
         assert(b.buf.len == b.a.screen.pixels.len);
         assert(b.count == b.lib.count());
-        return switch (action) {
-            .tap => |t| b.on_tap(t.x, t.y),
-            .hold => |h| b.on_hold(h.x, h.y),
+        const next: Next = switch (action) {
+            .tap, .tick => unreachable, // `on_tap` and `on_tick` take those
+            .hold => |h| try b.on_hold(h.x, h.y),
             .swipe => |direction| b.turn(direction),
-            .pull => if (try panel.library_menu(b.a, b.buf)) .leave else .nothing,
-            .tick => b.on_tick(),
+            .pull => b.open_panel(),
             .lock => b.on_lock(),
             .power, .computer, .stop => .leave,
             .drag, .drag_end, .unlock => .nothing,
         };
+        return step(next);
+    }
+
+    /// What `Next` asks of the screen.
+    fn step(next: Next) screen.Step(void) {
+        const result: screen.Step(void) = switch (next) {
+            .nothing => .stay,
+            .page => .{ .redraw = .changing },
+            .everything => .{ .redraw = .all },
+            .leave => .{ .done = {} },
+            .open => |f| .{ .push = f },
+        };
+        // Only leaving ends the library, and only a screen opened goes over it
+        assert((result == .done) == (next == .leave));
+        assert((result == .push) == (next == .open));
+        return result;
+    }
+
+    /// Back in front, the screen over it ended: whatever way, what it covered comes back.
+    pub fn on_resume(b: *Browser) !screen.Step(void) {
+        // Only a screen the library opened ends back to it
+        assert(b.over != .none);
+        // It wrote how it ended in its own place, and only there
+        const endings = [_]bool{
+            b.over_ending != null,
+            b.search_ending != null,
+            b.sheet_ending != null,
+            b.offer.ending != null,
+            b.book_ending != null,
+        };
+        assert(std.mem.count(bool, &endings, &.{true}) == 1);
+        const over = b.over;
+        b.over = .none;
+        switch (over) {
+            .none => unreachable,
+            .stats => return .{ .redraw = .changing },
+            .battery => {
+                try battery_screen.put_back(b.a);
+                return .stay;
+            },
+            .lock => return step(b.on_woken(b.over_ending.?)),
+            .panel => {
+                const leave = try panel.library_menu_ended(b.a, b.buf, b.over_ending.?);
+                return step(if (leave) .leave else .nothing);
+            },
+            .search => return step(try b.searched(b.search_ending.?)),
+            .sheet => {
+                const change: actions.Change = switch (b.sheet_ending.?) {
+                    .done => |change| change,
+                    .closed, .interrupted => .none,
+                };
+                return step(b.acted(change));
+            },
+            .up_next => return step(try b.offer_ended()),
+            .book => {
+                // A book takes the lock and leaving, so it only ever ends itself
+                const outcome = b.book_ending.?.done;
+                return step(try b.book_closed(b.book.entry, outcome));
+            },
+        }
+    }
+
+    /// The quick panel, pulled down or from the menu button.
+    fn open_panel(b: *Browser) Next {
+        assert(b.over == .none);
+        assert(b.buf.len == b.a.screen.pixels.len);
+        b.panel = panel.library_menu(b.a, b.buf);
+        return b.open_over(.panel);
+    }
+
+    /// Opens `over` over the library.
+    fn open_over(b: *Browser, over: Over) Next {
+        assert(over != .none);
+        assert(b.over == .none);
+        return b.open_frame(over, switch (over) {
+            .stats => screen.open(&b.stats, &b.over_ending),
+            .battery => screen.open(&b.bubble, &b.over_ending),
+            .lock => screen.open(&b.lock, &b.over_ending),
+            .panel => screen.open(&b.panel, &b.over_ending),
+            .search => screen.open(&b.search, &b.search_ending),
+            .none, .sheet, .up_next, .book => unreachable, // Opened by what starts them
+        });
+    }
+
+    /// Opens `f`, the screen `over`, over the library, every ending of the screens before
+    /// let go of, so how it ends is the one ending there is.
+    fn open_frame(b: *Browser, over: Over, f: screen.Frame) Next {
+        assert(over != .none);
+        assert(b.over == .none);
+        b.over = over;
+        b.over_ending = null;
+        b.search_ending = null;
+        b.sheet_ending = null;
+        b.offer.ending = null;
+        b.book_ending = null;
+        return .{ .open = f };
     }
 
     // Drawing
@@ -364,14 +476,18 @@ const Browser = struct {
 
     // Actions
 
-    fn on_tap(b: *Browser, x: i32, y: i32) !Next {
-        assert(b.count == b.lib.count());
+    fn on_tap_at(b: *Browser, x: i32, y: i32) !Next {
         const a = b.a;
         switch (logged_hit(x, y, b.index, b.count, b.query.words().len > 0)) {
             .none => return .nothing,
             .next => return b.turn(1),
             .prev => return b.turn(-1),
-            .search => return b.search_books(),
+            .search => {
+                assert(b.query.len <= b.query.buf.len);
+                b.query_kept = b.query;
+                b.search = .{ .a = a, .lib = &b.lib, .q = &b.query };
+                return b.open_over(.search);
+            },
             .clear_search => {
                 b.query = .{};
                 b.index = 0;
@@ -388,13 +504,13 @@ const Browser = struct {
                 return .page;
             },
             .stats => {
-                try stats_screen.run(a, &b.lib);
-                return .page;
+                b.stats = stats_screen.make(a, &b.lib);
+                return b.open_over(.stats);
             },
-            .menu => return if (try panel.library_menu(a, b.buf)) .leave else .nothing,
+            .menu => return b.open_panel(),
             .battery => {
-                try battery_screen.show(a);
-                return .nothing;
+                battery_screen.open(a, &b.bubble);
+                return b.open_over(.battery);
             },
             .hero => {
                 const h = b.lib.hero() orelse return .nothing;
@@ -421,7 +537,7 @@ const Browser = struct {
 
     /// Holding a book brings up its actions.
     fn on_hold(b: *Browser, x: i32, y: i32) !Next {
-        assert(b.count == b.lib.count());
+        assert(b.over == .none); // In front, taking touches
         return switch (logged_hit(x, y, b.index, b.count, b.query.words().len > 0)) {
             .book => |i| {
                 assert(i < b.count);
@@ -447,9 +563,18 @@ const Browser = struct {
         return .nothing;
     }
 
-    fn search_books(b: *Browser) !Next {
+    /// The search sheet ended: cancelled, locked or leaving, what was searched before
+    /// stays.
+    fn searched(b: *Browser, ending: screen.Ending(SearchEnd)) !Next {
         assert(b.query.len <= b.query.buf.len);
-        switch (try type_search(b.a, &b.lib, &b.query)) {
+        const end: SearchEnd = switch (ending) {
+            .done => |end| end,
+            .closed, .interrupted => .cancel,
+        };
+        if (end == .cancel) b.query = b.query_kept;
+        // Only a book on the Kindle opens from the list
+        if (end == .open) assert(end.open.is_local());
+        switch (end) {
             .cancel => {
                 try b.a.present(b.buf, .screen); // What was there before the sheet
                 return .nothing;
@@ -467,41 +592,65 @@ const Browser = struct {
         }
     }
 
-    /// Reads a book, and on finishing one of a series offers the next, maybe going
-    /// straight on with it.
-    fn open_book(b: *Browser, first: *catalog.Entry) !Next {
-        const a = b.a;
-        // Only books on the Kindle are opened: the hero, a book on it, or a match
-        assert(first.is_local());
+    /// Reads a book, and on finishing one of a series offers the next, to go straight
+    /// on with. Each next book is further on in its series, so none comes round twice.
+    fn open_book(b: *Browser, entry: *catalog.Entry) !Next {
+        // Only books on the Kindle are opened: the hero, a book on it, a match, or the
+        // next of a series
+        assert(entry.is_local());
         assert(b.lib.local_count() > 0);
-        var entry = first;
-        // Each next book is further on in its series, so none comes round twice
-        for (0..b.lib.local_count()) |_| {
-            const was_read = entry.is_read();
-            const outcome = reader.read_book(a, entry) catch |err| blk: {
-                std.debug.print("could not open book: {s}\n", .{@errorName(err)});
-                b.notice = "This book can't be opened here.";
-                break :blk reader.Outcome.library;
-            };
-            b.lib.save(entry); // Its place and time read, in the library's index
-            if (outcome == .quit) return .leave;
-            a.slots[0].page = -1;
-            b.status_until = now_us() + status_watch_us; // Wi-Fi coming back, and the like
-            if (was_read or !entry.is_read()) break;
-            const next = b.lib.next_in_series(entry) orelse break;
-            // The next is one not read yet, so never the book just finished
-            assert(!next.is_read());
-            assert(next != entry);
-            if (!try actions.up_next(a, next, b.buf)) break;
-            entry = next;
-        }
-        return .everything;
+        b.book_was_read = entry.is_read();
+        reader.open(&b.book, b.a, entry) catch |err| {
+            std.debug.print("could not open book: {s}\n", .{@errorName(err)});
+            return b.book_closed(entry, .failed);
+        };
+        return b.open_frame(.book, screen.open(&b.book, &b.book_ending));
+    }
+
+    /// The book ended, `outcome` saying how: noface leaves, or the library is back,
+    /// offering the next of a series just finished.
+    fn book_closed(b: *Browser, entry: *catalog.Entry, outcome: reader.Outcome) !Next {
+        const a = b.a;
+        assert(entry.is_local());
+        assert(b.over == .none);
+        if (outcome == .failed) b.notice = "This book can't be opened here.";
+        b.lib.save(entry); // Its place and time read, in the library's index
+        if (outcome == .quit) return .leave;
+        a.slots[0].page = -1;
+        b.status_until = now_us() + status_watch_us; // Wi-Fi coming back, and the like
+        if (b.book_was_read or !entry.is_read()) return .everything;
+        const next = b.lib.next_in_series(entry) orelse return .everything;
+        // The next is one not read yet, so never the book just finished
+        assert(!next.is_read());
+        assert(next != entry);
+        const offer = actions.up_next(a, next, b.buf, &b.offer) orelse return .everything;
+        b.offered = next;
+        return b.open_frame(.up_next, offer);
+    }
+
+    /// The up-next card ended: the next book now, or the library back.
+    fn offer_ended(b: *Browser) !Next {
+        const next = b.offered orelse unreachable; // Set as the card opened
+        b.offered = null;
+        assert(b.offer.ending != null);
+        assert(b.over == .none); // Back in front
+        assert(next.is_local());
+        if (!try actions.up_next_closed(b.a, b.buf, &b.offer)) return .everything;
+        return b.open_book(next);
     }
 
     /// A book's actions sheet, and the library read again if they changed it.
-    fn act_on(b: *Browser, entry: *catalog.Entry) !Next {
+    fn act_on(b: *Browser, entry: *catalog.Entry) Next {
         assert(b.buf.len == b.a.screen.pixels.len);
-        switch (try actions.book_sheet(b.a, entry, &b.lib, b.buf)) {
+        assert(b.over == .none);
+        actions.begin_sheet(&b.sheet, b.a, entry, &b.lib, b.buf);
+        return b.open_frame(.sheet, screen.open(&b.sheet, &b.sheet_ending));
+    }
+
+    /// The book's actions ended, having changed `change`.
+    fn acted(b: *Browser, change: actions.Change) Next {
+        assert(b.buf.len == b.a.screen.pixels.len);
+        switch (change) {
             .none => return .nothing,
             .redraw => return .everything,
             .reload => _ = b.reload(.as_is),
@@ -517,8 +666,8 @@ const Browser = struct {
         return .everything;
     }
 
-    fn on_tick(b: *Browser) !Next {
-        assert(b.count == b.lib.count());
+    fn on_tick_next(b: *Browser) !Next {
+        assert(b.over == .none); // In front, ticking
         const now = now_us();
         // The status: the whole screen while it's settling after a book; else just the
         // strip, once a minute or at once when a charger comes or goes
@@ -557,12 +706,21 @@ const Browser = struct {
         return .everything;
     }
 
-    fn on_lock(b: *Browser) !Next {
+    fn on_lock(b: *Browser) Next {
         assert(b.count == b.lib.count());
-        const a = b.a;
         const hero: ?*const catalog.Entry = b.lib.hero();
         // Not put back on waking: it's all drawn again, fresh
-        if (lock.lock_screen(a, hero, .{ .restore = false }) == .leaving) return .nothing;
+        assert(b.over == .none);
+        b.lock = lock.make(b.a, hero, .{ .restore = false });
+        return b.open_over(.lock);
+    }
+
+    /// Woken, or the lock screen ended as noface leaves (which goes on to leave).
+    fn on_woken(b: *Browser, ending: screen.Ending(void)) Next {
+        const a = b.a;
+        assert(ending != .closed); // It wakes, or noface leaves: it's never closed
+        if (ending != .done) return .nothing;
+        assert(!a.input.locked); // Awake, back in front
         a.note_battery(); // What sleeping (or charging) did
         a.quick = lipc.read(a.quick); // The clock and battery may be hours old
         // A download may have finished while the Kindle slept

@@ -77,6 +77,8 @@ pub const Region = struct {
     slots_next: [slot_classes]u32 = @splat(0),
     units_taken: u32 = 0,
     units_peak: u32 = 0,
+    // Bytes of freed heap blocks whose pages went back to the system, ever
+    bytes_given_back: u64 = 0,
 
     pub const Kind = enum { heap, bump };
 
@@ -321,6 +323,20 @@ pub const Region = struct {
             o += 1;
         }
         region.free[at] = @as(u8, o) + 1;
+        region.give_back(unit, @as(u32, 1) << order);
+    }
+
+    /// Hands the pages of `count` free units from `unit` back to the system, which
+    /// gives them again, zeroed, when next touched: a big picture or a library scan
+    /// leaves nothing resident once freed, while the region stays reserved.
+    fn give_back(region: *Region, unit: u32, count: u32) void {
+        assert(count > 0);
+        assert(unit + count <= region.units());
+        const start: [*]align(unit_bytes) u8 = @alignCast(region.bytes.ptr + unit * unit_bytes);
+        const length = count * unit_bytes;
+        const advice = std.posix.MADV.DONTNEED;
+        std.posix.madvise(start, length, advice) catch return; // Ignored: only advice
+        region.bytes_given_back += length;
     }
 };
 
@@ -579,6 +595,25 @@ test "a heap region passes the standard allocator tests, and merges what comes b
     try std.testing.expectEqual(region.units(), free_units + slabs);
     const whole = try a.alloc(u8, 2 << 20); // Half the region, in one piece
     a.free(whole);
+}
+
+test "a heap region gives a freed block's pages back, and keeps its slabs" {
+    var region = try Region.reserve("test", .heap, 4 << 20);
+    defer region.release();
+    var b = Budget{ .name = "test", .region = &region, .limit = region.bytes.len };
+    const a = b.allocator();
+    const small = try a.alloc(u8, 100);
+    const big = try a.alloc(u8, 1 << 20);
+    @memset(big, 0xaa); // Touched, so resident
+    try std.testing.expectEqual(@as(u64, 0), region.bytes_given_back);
+    a.free(big);
+    try std.testing.expectEqual(@as(u64, 1 << 20), region.bytes_given_back);
+    a.free(small); // A slot: its slab stays, for the next small block
+    try std.testing.expectEqual(@as(u64, 1 << 20), region.bytes_given_back);
+    // Given back, the pages read as zeros when next handed out
+    const again = try a.alloc(u8, 1 << 20);
+    defer a.free(again);
+    if (builtin.os.tag == .linux) try std.testing.expectEqual(@as(u8, 0), again[4096]);
 }
 
 test "a bump region is an arena: in turn, the last given back, all emptied at once" {

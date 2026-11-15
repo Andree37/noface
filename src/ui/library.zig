@@ -208,7 +208,7 @@ fn hit_tabs(x: i32) Hit {
     return .none;
 }
 
-pub const Rect = struct { x: u32, y: u32, w: u32, h: u32 };
+pub const Rect = style.Rect;
 
 /// Screen area of the hero, for tap feedback.
 pub fn hero_rect(width: u32) Rect {

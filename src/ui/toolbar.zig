@@ -193,15 +193,8 @@ pub fn render(
 
     icons.back(page, margin + 18, tool_icon_y);
     try fonts.small.draw(page, margin + 56, 130, "Home");
-    try fonts.title.draw(page, tools[0].x - 34, 132, "Aa");
-    icons.lines(page, tools[1].x, tool_icon_y);
-    if (bookmarked) {
-        icons.bookmark_filled(page, tools[2].x, tool_icon_y);
-    } else {
-        icons.bookmark(page, tools[2].x, tool_icon_y);
-    }
-    icons.search(page, tools[3].x, tool_icon_y);
-    icons.dots(page, tools[4].x, tool_icon_y);
+    // Each tool drawn where its entry says it takes taps
+    for (tools) |t| try draw_tool(fonts, page, t, bookmarked);
 
     try draw.clipped(fonts.caption, page, margin, tool_row + 54, title, w - 2 * margin);
     page.tint(margin, tool_row + 20, page.width - 2 * margin, 46, style.faded);
@@ -213,6 +206,24 @@ pub fn render(
     icons.skip(page, skip_inset, bottom_top + 46, false);
     icons.skip(page, w - skip_inset, bottom_top + 46, true);
     try draw_scrub(fonts, page, index, total, false);
+}
+
+/// One tool's icon, at its place in `tools`.
+fn draw_tool(fonts: Fonts, page: Page, t: Tool, bookmarked: bool) !void {
+    const x: f32 = @floatFromInt(t.x);
+    assert(t.x >= home_right); // Right of Home, as the tools are
+    switch (t.hit) {
+        .text => try fonts.title.draw(page, x - 34, 132, "Aa"),
+        .goto => icons.lines(page, x, tool_icon_y),
+        .bookmark => if (bookmarked) {
+            icons.bookmark_filled(page, x, tool_icon_y);
+        } else {
+            icons.bookmark(page, x, tool_icon_y);
+        },
+        .search => icons.search(page, x, tool_icon_y),
+        .more => icons.dots(page, x, tool_icon_y),
+        else => unreachable, // Only these are tools; the rest are bands of the toolbar
+    }
 }
 
 test "toolbar buttons map to actions" {

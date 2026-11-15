@@ -195,13 +195,13 @@ fn panel_control_shortcut(a: *app.App, choice: menu.Hit) !void {
         else => a.quick.syncing = true,
     }
     const box = menu.shortcut_box(choice).?;
-    assert(box.top + box.height <= menu.height);
+    assert(box.y + box.h <= menu.height);
     try menu.draw_shortcut(a.ui, a.page(a.screen.pixels), choice, &a.quick);
     const marker = try a.screen.show_region(
-        box.left,
-        box.top,
-        box.width,
-        box.height,
+        box.x,
+        box.y,
+        box.w,
+        box.h,
         .page,
     );
     switch (choice) {
@@ -225,7 +225,7 @@ fn panel_control_shortcut(a: *app.App, choice: menu.Hit) !void {
         a.quick.airplane = false;
         const plane = menu.shortcut_box(.airplane).?;
         try menu.draw_shortcut(a.ui, a.page(a.screen.pixels), .airplane, &a.quick);
-        try a.show_rect(plane.left, plane.top, plane.width, plane.height);
+        try a.show_rect(plane.x, plane.y, plane.w, plane.h);
     }
 }
 

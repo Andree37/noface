@@ -1,4 +1,6 @@
 //! Layout and tones every screen shares, so they stay in step.
+const std = @import("std");
+const assert = std.debug.assert;
 pub const screen_width = 1272;
 pub const screen_height = 1696;
 pub const margin = 72; // Left and right edge of interface text
@@ -25,3 +27,22 @@ pub const sheet_corner = 36; // A sheet rising from the bottom
 pub const button_corner = 24; // Buttons, bubbles and tiles
 pub const key_corner = 14; // Keyboard keys
 pub const bar_corner = 10; // The bars of a chart
+
+/// A rectangle of the screen, in its pixels: where something is drawn, and so where it
+/// takes taps.
+pub const Rect = struct {
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+
+    /// Whether a touch at (`px`, `py`) falls in it.
+    pub fn contains(r: Rect, px: i32, py: i32) bool {
+        assert(r.x + r.w <= screen_width);
+        assert(r.y + r.h <= screen_height);
+        if (px < 0 or py < 0) return false;
+        const x: u32 = @intCast(px);
+        const y: u32 = @intCast(py);
+        return x >= r.x and x < r.x + r.w and y >= r.y and y < r.y + r.h;
+    }
+};

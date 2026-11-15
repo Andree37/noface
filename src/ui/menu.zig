@@ -295,20 +295,18 @@ pub fn draw_slider_at(
 }
 
 /// Where a toggle and its label sit, to redraw it alone.
-pub const Box = struct { left: u32, top: u32, width: u32, height: u32 };
-
-pub fn shortcut_box(choice: Hit) ?Box {
+pub fn shortcut_box(choice: Hit) ?style.Rect {
     for (0..tiles.len) |i| {
         if (tiles[i].hit != choice) continue;
         const c = tile_center(@intCast(i));
-        const box = Box{
-            .left = @intCast(c.x - 130),
-            .top = @intCast(c.y - icon_radius - 8),
-            .width = 260,
-            .height = icon_radius + 8 + 130,
+        const box = style.Rect{
+            .x = @intCast(c.x - 130),
+            .y = @intCast(c.y - icon_radius - 8),
+            .w = 260,
+            .h = icon_radius + 8 + 130,
         };
-        assert(box.left + box.width <= style.screen_width);
-        assert(box.top + box.height <= height);
+        assert(box.x + box.w <= style.screen_width);
+        assert(box.y + box.h <= height);
         return box;
     }
     return null;
@@ -317,7 +315,7 @@ pub fn shortcut_box(choice: Hit) ?Box {
 /// Redraws one toggle and its label, after a tap changed it.
 pub fn draw_shortcut(fonts: Fonts, page: Page, choice: Hit, quick: *const Quick) !void {
     const box = shortcut_box(choice) orelse return;
-    page.fill_rect(box.left, box.top, box.width, box.height, 0xff);
+    page.fill_rect(box.x, box.y, box.w, box.h, 0xff);
     for (0..tiles.len) |i| {
         if (tiles[i].hit == choice) try draw_tile(fonts, page, @intCast(i), quick);
     }
@@ -413,8 +411,8 @@ test "a knob move redraws only around old and new knob" {
 test "toggle boxes stay apart and on screen" {
     const a = shortcut_box(.airplane).?;
     const b = shortcut_box(.bluetooth).?;
-    try std.testing.expect(a.left + a.width <= shortcut_box(.settings).?.left);
-    try std.testing.expect(b.left + b.width <= 1272);
+    try std.testing.expect(a.x + a.w <= shortcut_box(.settings).?.x);
+    try std.testing.expect(b.x + b.w <= 1272);
     try std.testing.expect(shortcut_box(.close) == null);
 }
 

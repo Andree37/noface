@@ -13,6 +13,7 @@ const catalog = @import("../model/catalog.zig");
 const file = @import("../sys/file.zig");
 const kfx = @import("../kindle/kfx.zig");
 const state = @import("../sys/state.zig");
+const calls = @import("../sys/calls.zig");
 const catalog_db = @import("../kindle/catalog.zig");
 const app = @import("../app.zig");
 const series_screen = @import("series.zig");
@@ -108,6 +109,7 @@ pub fn load(s: Sources) !Library {
     };
     defer scratch.reset(.give_back);
     const rows = kindle_books(&scratch, data);
+    const saved = list_saved(scratch.allocator(), s.state_dir);
     // A folder that can't be read has no EPUBs to list
     const none: []const [:0]u8 = &.{};
     const found = dir.find_files(scratch.allocator(), s.documents, ".epub") catch none;
@@ -119,11 +121,11 @@ pub fn load(s: Sources) !Library {
     for (rows) |row| {
         // An error is the list's memory running out: it keeps the books that fit
         var e = keep_kindle_book(alloc, row) catch break orelse continue;
-        place_kindle_book(s, &e);
+        place_kindle_book(s, &saved, &e);
         list.appendAssumeCapacity(e);
     }
     const kindle = list.items.len;
-    add_epubs(s, alloc, &scratch, found, &list);
+    add_epubs(s, &saved, alloc, &scratch, found, &list);
     assert(list.items.len >= kindle);
     assert(list.items.len <= books_max);
     series_screen.apply(alloc, s.state_dir, list.items); // Series set by hand win
@@ -190,11 +192,13 @@ fn keep_kindle_book(alloc: std.mem.Allocator, row: catalog.Entry) !?catalog.Entr
 }
 
 /// A Kindle book's place: the Kindle's, or noface's when noface read it last.
-fn place_kindle_book(s: Sources, e: *catalog.Entry) void {
+fn place_kindle_book(s: Sources, listed: *const Saved, e: *catalog.Entry) void {
     assert(s.state_dir.len > 0);
     if (e.availability == .downloading and is_complete_book(e.path)) e.availability = .local;
     if (!e.is_local()) return;
     assert(e.path.len > 0); // The catalog gives every local book its file
+    // Most Kindle books were never opened here: no file, and no need to try opening it
+    if (!Saved.has(listed.states, state.key_for(e.path))) return;
     var path_buffer: [path_size_max]u8 = undefined;
     const state_path = state.path_for(&path_buffer, s.state_dir, e.path) catch return;
     const saved = state.load(state_path);
@@ -209,6 +213,7 @@ fn place_kindle_book(s: Sources, e: *catalog.Entry) void {
 /// beside the book's state. Each is read in `scratch`, emptied after it.
 fn add_epubs(
     s: Sources,
+    saved: *const Saved,
     alloc: std.mem.Allocator,
     scratch: *memory.Budget,
     found: []const [:0]u8,
@@ -228,7 +233,7 @@ fn add_epubs(
         }
         scratch.rewind(each_book);
         // An error is the list's memory running out: it keeps the books that fit
-        const entry = read_epub(s, alloc, scratch, path) catch {
+        const entry = read_epub(s, saved, alloc, scratch, path) catch {
             left_out += 1;
             continue;
         } orelse continue;
@@ -254,6 +259,7 @@ fn log(comptime format: []const u8, args: anytype) void {
 /// book that won't read; an error only when `alloc` has no room.
 fn read_epub(
     s: Sources,
+    saved: *const Saved,
     alloc: std.mem.Allocator,
     scratch: *memory.Budget,
     path: [:0]const u8,
@@ -266,17 +272,74 @@ fn read_epub(
     var cover_buffer: [path_size_max]u8 = undefined;
     const state_path = state.path_for(&path_buffer, s.state_dir, path) catch return null;
     const cover_path = state.sibling(&cover_buffer, state_path, "cover") catch return null;
-    const have_cover = if (file.map(cover_path)) |c| blk: {
-        file.unmap(c);
-        break :blk true;
-    } else |_| false;
+    const key = state.key_for(path);
+    const have_cover = Saved.has(saved.covers, key);
     const about = read_about(scratch, data, !have_cover) orelse return null;
     if (about.cover) |bytes| state.write_small(cover_path, bytes);
     const has_cover = have_cover or about.cover != null;
     if (about.cover != null) assert(!have_cover); // Read only for a book without one
     const thumbnail = if (has_cover) cover_path else "";
-    return try keep_epub(alloc, path, about, state.load(state_path), thumbnail);
+    const saved_state = if (Saved.has(saved.states, key)) state.load(state_path) else state.State{};
+    return try keep_epub(alloc, path, about, saved_state, thumbnail);
 }
+
+/// The books noface keeps files for in the data folder, read from one listing of it, so
+/// a book with none (most of a Kindle's) costs no open() on the slow user drive. Each
+/// list is the books' keys (`state.key_for`), sorted.
+const Saved = struct {
+    states: []u64 = &.{},
+    covers: []u64 = &.{},
+
+    fn has(keys: []const u64, key: u64) bool {
+        const found = std.sort.binarySearch(u64, keys, key, Saved.order) != null;
+        if (keys.len == 0) assert(!found);
+        if (found) assert(keys.len > 0);
+        return found;
+    }
+
+    fn order(key: u64, item: u64) std.math.Order {
+        return std.math.order(key, item);
+    }
+};
+
+/// The state and cover files in `state_dir`, in `alloc`. A folder that can't be read,
+/// or no room to list it, is as if it held none: every book is then new.
+fn list_saved(alloc: std.mem.Allocator, state_dir: []const u8) Saved {
+    assert(state_dir.len > 0);
+    var path_buffer: [path_size_max]u8 = undefined;
+    const folder = std.fmt.bufPrintSentinel(&path_buffer, "{s}", .{state_dir}, 0) catch
+        return .{};
+    var listing = SavedListing{ .alloc = alloc };
+    calls.each_entry(folder.ptr, &listing, SavedListing.add);
+    if (listing.failed) return .{};
+    std.mem.sort(u64, listing.states.items, {}, std.sort.asc(u64));
+    std.mem.sort(u64, listing.covers.items, {}, std.sort.asc(u64));
+    const result: Saved = .{ .states = listing.states.items, .covers = listing.covers.items };
+    assert(std.sort.isSorted(u64, result.states, {}, std.sort.asc(u64)));
+    assert(std.sort.isSorted(u64, result.covers, {}, std.sort.asc(u64)));
+    return result;
+}
+
+const SavedListing = struct {
+    alloc: std.mem.Allocator,
+    states: std.ArrayList(u64) = .empty,
+    covers: std.ArrayList(u64) = .empty,
+    failed: bool = false,
+
+    fn add(listing: *SavedListing, name: []const u8, is_dir: bool) void {
+        assert(name.len > 0);
+        if (is_dir) return;
+        const list = if (std.mem.startsWith(u8, name, "state-"))
+            &listing.states
+        else if (std.mem.startsWith(u8, name, "cover-")) &listing.covers else return;
+        const key = state.key_of_name(name, name[0.."state".len]) orelse return;
+        list.append(listing.alloc, key) catch {
+            listing.failed = true;
+            return;
+        };
+        assert(list.items[list.items.len - 1] == key);
+    }
+};
 
 /// What the library shows of an EPUB, read in `scratch`. With no room there for the
 /// cover's bytes, read again without them: the book is listed with a cover of type.
@@ -530,6 +593,34 @@ test "hundreds of EPUBs list in memory that grows with their count, not their fi
     try std.testing.expect(t.budget.peak <= 2 * epubs * book_bytes_max + list_slack);
     again.deinit();
     first.deinit();
+}
+
+test "a book's place is read from its state file, found by one listing of the folder" {
+    var buffer: [64]u8 = undefined;
+    const root = try test_folder(&buffer, 3, 2, 1 << 10);
+    defer test_folder_remove(root);
+    var t: TestLibrary = undefined;
+    try t.init(root);
+    defer t.deinit();
+    var path_buffer: [320]u8 = undefined;
+    const kindle = "/mnt/us/documents/Kindle 1.azw3";
+    state.save(try state.path_for(&path_buffer, t.sources.state_dir, kindle), .{
+        .para = 3,
+        .percent = 42,
+        .opened = 1000,
+    });
+    var library = try load(t.sources);
+    defer library.deinit();
+    var placed: u32 = 0;
+    for (library.entries) |e| {
+        if (std.mem.eql(u8, e.path, kindle)) {
+            try std.testing.expectEqual(@as(u32, 42), e.percent);
+            placed += 1;
+        } else {
+            try std.testing.expectEqual(@as(u32, 0), e.percent);
+        }
+    }
+    try std.testing.expectEqual(@as(u32, 1), placed);
 }
 
 test "a library past its most books lists the first that fit" {

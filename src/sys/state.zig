@@ -29,16 +29,40 @@ comptime {
 pub fn path_for(buf: []u8, dir: []const u8, book_path: []const u8) ![:0]u8 {
     assert(dir.len > 0);
     assert(book_path.len > 0);
+    const key = key_for(book_path);
+    const path = try std.fmt.bufPrintSentinel(buf, "{s}/state-{x:0>16}", .{ dir, key }, 0);
+    assert(std.mem.startsWith(u8, path, dir));
+    assert(key_of_name(std.fs.path.basename(path), "state") == key);
+    return path;
+}
+
+/// What a book's files beside its state are named by: the first 16 hex of the md5 of
+/// "basename\n", as a number.
+pub fn key_for(book_path: []const u8) u64 {
+    assert(book_path.len > 0);
     const name = std.fs.path.basename(book_path);
     var md5 = std.crypto.hash.Md5.init(.{});
     md5.update(name);
     md5.update("\n");
     var digest: [16]u8 = undefined;
     md5.final(&digest);
-    const hex = std.fmt.bytesToHex(digest[0..8], .lower);
-    const path = try std.fmt.bufPrintSentinel(buf, "{s}/state-{s}", .{ dir, &hex }, 0);
-    assert(std.mem.startsWith(u8, path, dir));
-    return path;
+    const key = std.mem.readInt(u64, digest[0..8], .big);
+    assert(std.mem.readInt(u64, digest[0..8], .big) == key);
+    return key;
+}
+
+/// The book's key in a file name "<kind>-<16 hex>", as `path_for` and `sibling` write
+/// them; null for any other name.
+// Assertions: it reads a file's name from a folder: outside data.
+pub fn key_of_name(name: []const u8, kind: []const u8) ?u64 {
+    const hex_len = 16;
+    if (name.len != kind.len + 1 + hex_len) return null;
+    if (!std.mem.startsWith(u8, name, kind) or name[kind.len] != '-') return null;
+    const hex = name[kind.len + 1 ..];
+    for (hex) |c| {
+        if (!std.ascii.isDigit(c) and (c < 'a' or c > 'f')) return null;
+    }
+    return std.fmt.parseInt(u64, hex, 16) catch null;
 }
 
 /// True when the Kindle's own position should win over ours: we have nothing
@@ -174,6 +198,11 @@ test "state file name matches basename piped to md5sum" {
     // The output of `printf 'abc\n' | md5sum` starts 0bee89b07a248e27
     const p = try path_for(&buf, "/d", "/books/abc");
     try std.testing.expectEqualStrings("/d/state-0bee89b07a248e27", p);
+    const key = key_of_name("state-0bee89b07a248e27", "state");
+    try std.testing.expectEqual(@as(?u64, 0x0bee89b07a248e27), key);
+    try std.testing.expectEqual(@as(?u64, null), key_of_name("state-0bee89b07a248e2", "state"));
+    try std.testing.expectEqual(@as(?u64, null), key_of_name("cover-0bee89b07a248e27", "state"));
+    try std.testing.expectEqual(@as(?u64, null), key_of_name("state-0BEE89B07A248E27", "state"));
 }
 
 test "old two-field files still load" {

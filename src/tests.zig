@@ -7,6 +7,7 @@ test {
     _ = @import("screens/reader/page_number.zig");
     _ = @import("ui/card.zig");
     _ = @import("screens/reader/page_store.zig");
+    _ = @import("screens/reader/records.zig");
     _ = @import("base/check.zig");
     _ = @import("base/memory.zig");
     _ = @import("gfx/c_memory.zig");

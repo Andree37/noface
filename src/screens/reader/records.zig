@@ -12,15 +12,24 @@ const sess = @import("session.zig");
 const local_notes = @import("local_notes.zig");
 const lipc = @import("../../kindle/lipc.zig");
 
-/// Amazon's position for a place in the text. Null for paragraphs it doesn't number.
+/// Amazon's position for a place in the text. Null for paragraphs it doesn't number,
+/// and for a place past the largest position a record can hold, which only a damaged
+/// book has: such a place can't be saved.
 pub fn point_for(s: *sess.Session, para: u32, byte: u32) ?annotations.Point {
     assert(para < s.paragraphs.len);
-    const p = s.paragraphs[para];
+    assert(byte <= s.paragraphs[para].text.len);
+    return point_in(&s.paragraphs[para], byte);
+}
+
+fn point_in(p: *const book_model.Paragraph, byte: u32) ?annotations.Point {
     assert(byte <= p.text.len);
     if (p.position == 0) return null;
     const chars = book_model.char_offset(p.text, byte);
     assert(chars <= byte); // A character takes at least a byte
-    return .{ .element = p.element, .offset = chars, .short = p.position + chars };
+    // A KFX's positions are sums of its own numbers, which stop at the largest
+    const short = std.math.add(u32, p.position, chars) catch return null;
+    assert(short >= p.position);
+    return .{ .element = p.element, .offset = chars, .short = short };
 }
 
 /// Asks Amazon to sync the notes just written (not while writes are off for testing).
@@ -78,4 +87,17 @@ pub fn delete(
     const sql = annotations.delete_sql(&buffer, kind, id, entry.key, now_ms) catch return false;
     assert(std.mem.endsWith(u8, sql, ";")); // A whole transaction, through its commit
     return annotation_db.run_annotation_sql(sql);
+}
+
+test "a place past the largest position can't be saved, and never overflows" {
+    const max = std.math.maxInt(u32);
+    var p = book_model.Paragraph{ .text = "a damaged paragraph", .style = 0, .position = max };
+    try std.testing.expectEqual(@as(u32, max), point_in(&p, 0).?.short);
+    try std.testing.expectEqual(@as(?annotations.Point, null), point_in(&p, 1));
+    try std.testing.expectEqual(@as(?annotations.Point, null), point_in(&p, 19));
+    p.position = max - 5;
+    try std.testing.expectEqual(@as(u32, max), point_in(&p, 5).?.short);
+    try std.testing.expectEqual(@as(?annotations.Point, null), point_in(&p, 6));
+    p.position = 0; // Not numbered at all
+    try std.testing.expectEqual(@as(?annotations.Point, null), point_in(&p, 0));
 }

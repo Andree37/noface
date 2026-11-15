@@ -231,7 +231,11 @@ pub fn new_highlight(
         try highlight_not_saved(a, s);
         return null;
     };
-    const id = try highlights.free_id(alloc, s.highlights.items, start.short);
+    const id = highlights.free_id(alloc, s.highlights.items, start.short) catch |err| {
+        if (err != error.PositionTooLarge) return err;
+        try highlight_not_saved(a, s);
+        return null;
+    };
     const saved = save_highlight(s, entry, id, highlights.Span.of(lo, hi));
     if (saved) records.sync();
     const word_count = @max(fixed, head) - @min(fixed, head) + 1;

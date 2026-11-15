@@ -159,11 +159,15 @@ fn overlaps(m: book_model.Mark, w: book_model.Word) bool {
 }
 
 /// An ID for a highlight starting at `short`. Moving a highlight's start keeps
-/// its ID, so that spot can already be taken by a highlight elsewhere.
+/// its ID, so that spot can already be taken by a highlight elsewhere. A damaged book's
+/// positions can reach the largest number, past which there's no ID to give:
+/// `error.PositionTooLarge`, and the highlight can't be saved.
 pub fn free_id(alloc: std.mem.Allocator, list: []const Highlight, short: u32) ![]const u8 {
+    assert(list.len < std.math.maxInt(u32));
     // Of `list.len + 1` IDs in a row, the list can't hold them all: one is free.
     next: for (0..list.len + 1) |offset| {
-        const candidate = short + @as(u32, @intCast(offset));
+        const candidate = std.math.add(u32, short, @intCast(offset)) catch
+            return error.PositionTooLarge;
         const id = try std.fmt.allocPrint(alloc, "kindle.highlight-{d}", .{candidate});
         for (list) |h| {
             if (std.mem.eql(u8, h.id, id)) continue :next;
@@ -420,6 +424,17 @@ test "a new highlight never takes an ID in use" {
     try std.testing.expectEqualStrings("kindle.highlight-99", before);
     const after = try free_id(arena.allocator(), &list, 100);
     try std.testing.expectEqualStrings("kindle.highlight-102", after);
+}
+
+test "a highlight at the largest position has no ID to take, and never overflows" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const max = std.math.maxInt(u32);
+    const mark = book_model.Mark{ .para = 0, .start = 0, .end = 1 };
+    const list = [_]Highlight{.{ .mark = mark, .id = "kindle.highlight-4294967295" }};
+    const free = try free_id(arena.allocator(), &.{}, max);
+    try std.testing.expectEqualStrings("kindle.highlight-4294967295", free);
+    try std.testing.expectError(error.PositionTooLarge, free_id(arena.allocator(), &list, max));
 }
 
 test "excerpts end at a word and never split a character" {

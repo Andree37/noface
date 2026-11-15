@@ -41,8 +41,11 @@ pub fn toggle(
         const at = first_position(s, page_index) orelse {
             return app.show_notice(a, "This page can't be bookmarked.");
         };
-        // A place Amazon numbers always has a point: first_position looked for one
-        const point = records.point_for(s, at.para, at.byte).?;
+        // A place Amazon numbers has a point, unless a damaged book numbers it past
+        // the largest position a record holds
+        const point = records.point_for(s, at.para, at.byte) orelse {
+            return app.show_notice(a, "This page can't be bookmarked.");
+        };
         const prefix = annotations.Kind.bookmark.prefix();
         const id = try std.fmt.allocPrint(alloc, "{s}{d}", .{ prefix, point.short });
         if (!records.write(s, entry, .bookmark, id, point, point)) {

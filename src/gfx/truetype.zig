@@ -604,7 +604,15 @@ fn glyph_shape_truetype(
             for (0..depth) |level| transform(list.items[first..], &frames[depth - 1 - level]);
         }
     }
-    assert(depth == 0 or info.data.len < 4);
+    // Still inside a composite after more steps than the font has components: it uses
+    // its components over and over (nested many times, or naming itself), as no real
+    // font does. A damaged glyph, drawn as nothing.
+    if (depth > 0) {
+        list.clearAndFree(alloc);
+        return;
+    }
+    assert(depth == 0);
+    assert(frames[0].at > g);
 }
 
 /// Reads a component record at `frame.at`: its transform into `frame`. Returns the
@@ -989,4 +997,111 @@ fn to_int(whole: f32) i32 {
     assert(whole > -2147483648.0);
     assert(whole < 2147483648.0);
     return @intFromFloat(whole);
+}
+
+/// A TrueType font made in memory for tests: the tables `init` needs, character 'A'
+/// mapped to glyph 1, and `glyphs` as the glyf table's glyphs, the first glyph 0.
+fn test_font(alloc: std.mem.Allocator, glyphs: []const []const u8) ![]u8 {
+    assert(glyphs.len > 1);
+    assert(glyphs.len < 256);
+    const tags = [_]*const [4]u8{ "cmap", "glyf", "head", "hhea", "hmtx", "loca", "maxp" };
+    var tables: [tags.len]std.ArrayList(u8) = @splat(.empty);
+    defer for (&tables) |*t| t.deinit(alloc);
+    const count: u16 = @intCast(glyphs.len);
+    // The character map: one Unicode subtable of format 0, a glyph for each byte
+    var cmap_bytes: [12 + 262]u8 = @splat(0);
+    std.mem.writeInt(u16, cmap_bytes[2..4], 1, .big);
+    std.mem.writeInt(u32, cmap_bytes[8..12], 12, .big);
+    std.mem.writeInt(u16, cmap_bytes[14..16], 262, .big);
+    cmap_bytes[18 + 'A'] = 1;
+    try tables[0].appendSlice(alloc, &cmap_bytes);
+    var locations: std.ArrayList(u8) = .empty;
+    defer locations.deinit(alloc);
+    for (glyphs) |g| {
+        var offset: [4]u8 = undefined;
+        std.mem.writeInt(u32, &offset, @intCast(tables[1].items.len), .big);
+        try tables[5].appendSlice(alloc, &offset);
+        try tables[1].appendSlice(alloc, g);
+    }
+    var last: [4]u8 = undefined;
+    std.mem.writeInt(u32, &last, @intCast(tables[1].items.len), .big);
+    try tables[5].appendSlice(alloc, &last);
+    var head: [54]u8 = @splat(0);
+    std.mem.writeInt(u16, head[18..20], 1000, .big); // Units per em
+    std.mem.writeInt(u16, head[50..52], 1, .big); // Long offsets in loca
+    try tables[2].appendSlice(alloc, &head);
+    var hhea: [36]u8 = @splat(0);
+    std.mem.writeInt(i16, hhea[4..6], 800, .big);
+    std.mem.writeInt(i16, hhea[6..8], -200, .big);
+    std.mem.writeInt(u16, hhea[34..36], count, .big);
+    try tables[3].appendSlice(alloc, &hhea);
+    for (glyphs) |_| try tables[4].appendSlice(alloc, &.{ 0x01, 0xf4, 0, 0 });
+    var maxp: [6]u8 = .{ 0, 0, 0x50, 0, 0, 0 };
+    std.mem.writeInt(u16, maxp[4..6], count, .big);
+    try tables[6].appendSlice(alloc, &maxp);
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(alloc);
+    var header: [12]u8 = .{ 0, 1, 0, 0, 0, tags.len, 0, 0, 0, 0, 0, 0 };
+    try out.appendSlice(alloc, &header);
+    var at: u32 = 12 + 16 * tags.len;
+    for (tags, tables) |tag, t| {
+        var record: [16]u8 = @splat(0);
+        @memcpy(record[0..4], tag);
+        std.mem.writeInt(u32, record[8..12], at, .big);
+        std.mem.writeInt(u32, record[12..16], @intCast(t.items.len), .big);
+        try out.appendSlice(alloc, &record);
+        at += @intCast(t.items.len);
+    }
+    for (tables) |t| try out.appendSlice(alloc, t.items);
+    assert(out.items.len == at);
+    return out.toOwnedSlice(alloc);
+}
+
+/// A composite glyph of `count` copies of glyph `component`, each moved a little.
+fn test_composite(alloc: std.mem.Allocator, component: u16, count: u32) ![]u8 {
+    assert(count > 0);
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(alloc);
+    try out.appendSlice(alloc, &.{ 0xff, 0xff, 0, 0, 0, 0, 0, 100, 0, 100 });
+    for (0..count) |i| {
+        // Offsets as bytes (2), and more after this one (0x20) but for the last
+        const more: u8 = if (i + 1 < count) 0x20 else 0;
+        const glyph: [2]u8 = @bitCast(std.mem.nativeToBig(u16, component));
+        try out.appendSlice(alloc, &.{ 0, 0x02 | more, glyph[0], glyph[1], 1, 1 });
+    }
+    assert(out.items.len == 10 + 6 * count);
+    return out.toOwnedSlice(alloc);
+}
+
+test "composites that nest or repeat past the font's size draw nothing, never crash" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    // A triangle: one contour of three points on the curve, as words
+    const triangle = [_]u8{
+        0, 1, 0, 0, 0, 0, 0, 100, 0, 100, // One contour, its box
+        0, 2, 0, 0, 1, 1, 1, // Its last point, no instructions, three flags
+        0, 0, 0, 100, 0xff, 0xce, // x: 0, then 100 on, then 50 back
+        0, 0, 0, 0, 0, 100, // y: 0, 0, then 100 up
+    };
+    // 40 triangles, 22 of those, 28 of those: far more steps than bytes
+    const nested = try test_font(alloc, &.{
+        "",
+        &triangle,
+        try test_composite(alloc, 1, 40),
+        try test_composite(alloc, 2, 22),
+        try test_composite(alloc, 3, 28),
+    });
+    // Itself, twice, as deep as a composite may nest
+    const looping = try test_font(alloc, &.{ "", &triangle, try test_composite(alloc, 2, 2) });
+    for ([_][]const u8{ nested, looping }, [_]u32{ 4, 2 }) |data, glyph| {
+        const info = init(data) orelse return error.TestUnexpectedResult;
+        // The triangle itself draws
+        const simple = try glyph_shape(&info, alloc, 1);
+        try std.testing.expect(simple.len > 0);
+        const shape = try glyph_shape(&info, alloc, glyph);
+        try std.testing.expectEqual(@as(usize, 0), shape.len);
+        const bitmap = try glyph_bitmap(&info, alloc, 0.1, glyph);
+        if (bitmap.pixels) |pixels| for (pixels) |p| try std.testing.expectEqual(0, p);
+    }
 }

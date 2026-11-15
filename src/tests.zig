@@ -15,6 +15,7 @@ test {
     _ = @import("kindle/fonts.zig");
     _ = @import("gfx/page.zig");
     _ = @import("gfx/font.zig");
+    _ = @import("gfx/truetype.zig");
     _ = @import("model/book.zig");
     _ = @import("model/notes.zig");
     _ = @import("kindle/catalog.zig");

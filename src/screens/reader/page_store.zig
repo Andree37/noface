@@ -2,8 +2,11 @@
 //!
 //! Breaks depend on the book, the reader's settings, the screen, and the code that
 //! sets text. All of that goes into a key; a saved file with another key is ignored
-//! and replaced. The code part is a fingerprint of the source files themselves, taken
-//! at compile time, so an update that changes layout can never serve stale pages.
+//! and replaced. The code's part is `layout_version`, raised by hand when the layout
+//! breaks pages differently. A scenario ("the layout breaks pages where …") lays out
+//! the test book and compares where its pages break with `breaks_digest`, so a change
+//! that moves breaks fails until the version is raised, and one that doesn't (a
+//! comment, a test, drawing alone) leaves every reader's saved breaks in place.
 const std = @import("std");
 const assert = std.debug.assert;
 const settings_model = @import("../../model/settings.zig");
@@ -15,61 +18,18 @@ const app = @import("../../app.zig");
 
 const magic = "NFPG";
 
-/// Raised by hand when breaks change for a reason no source file below shows (a font
-/// table read differently by a file not listed, say), so old saved breaks are dropped.
-const layout_version: u64 = 1;
+/// Raised by hand when the layout breaks pages differently, so saved breaks are laid
+/// out again; the scenario that checks `breaks_digest` says when.
+const layout_version: u64 = 2;
 
-/// The source of everything that decides where a page breaks, under `src/`: setting
-/// text, the fonts' advances, kerning and character maps, and reading the books.
-/// Every file these import is here or in `not_layout` (a test checks).
-const layout_sources = [_][]const u8{
-    "layout/text.zig",
-    "layout/hyphen.zig",
-    "layout/hyphen/hyph-en-us.pat.txt",
-    "layout/hyphen/hyph-en-us.hyp.txt",
-    "layout/hyphen/hyph-pt.pat.txt",
-    "gfx/font.zig",
-    "gfx/glyph_cache.zig",
-    "gfx/truetype.zig",
-    "gfx/cff.zig",
-    "gfx/outline.zig",
-    "gfx/raster.zig",
-    "kindle/kfx.zig",
-    "kindle/ion.zig",
-    "model/book.zig",
-    "model/notes.zig",
-    "model/settings.zig",
-    "epub/epub.zig",
-    "epub/xml.zig",
-    "epub/zip.zig",
-    "epub/picture.zig",
-    "app.zig",
-    "screens/reader/paginate.zig",
-};
+/// Where the test book's pages break today (scenarios.zig's `breaks_digest`).
+pub const breaks_digest: u64 = 0xd0b0973931a2e843;
 
-/// Files the layout sources import that don't move a break: checks, the pixels a page
-/// is drawn into, the memory fonts and decoders take, the memory a chapter's markup is
-/// read in and the budgets it's counted by, and the library's series numbers.
-const not_layout = [_][]const u8{
-    "base/check.zig",
-    "base/memory.zig",
-    "gfx/page.zig",
-    "gfx/decoder_memory.zig",
-    "model/catalog.zig",
-};
-
-const code_fingerprint: u64 = blk: {
-    @setEvalBranchQuota(100_000_000);
-    var h = std.hash.Wyhash.init(layout_version);
-    for (layout_sources) |source| h.update(@embedFile("../../" ++ source));
-    break :blk h.final();
-};
-
-/// Everything the breaks depend on, besides the code.
+/// Everything the breaks depend on.
 pub fn key(a: *const app.App, book_bytes: u64) u64 {
     assert(a.screen.width > 0);
     assert(a.screen.height > 0);
-    var h = std.hash.Wyhash.init(code_fingerprint);
+    var h = std.hash.Wyhash.init(layout_version);
     const s = a.settings;
     const l = a.layout;
     const parts = [_]u64{
@@ -117,7 +77,7 @@ pub fn path_for(buf: []u8, state_path: []const u8) ![:0]u8 {
 }
 
 /// The magic, the key, then the page count; each page's break follows in 8 bytes.
-const header_len = magic.len + 8 + 4;
+pub const header_len = magic.len + 8 + 4;
 const page_len = 8;
 
 comptime {
@@ -248,53 +208,4 @@ test "pages files sit beside state files" {
     var buf: [128]u8 = undefined;
     const path = try path_for(&buf, "/d/state-0bee89b07a248e27");
     try std.testing.expectEqualStrings("/d/pages-0bee89b07a248e27", path);
-}
-
-/// The files under `src/` that `source` (a path under `src/`) imports, resolved.
-fn imports_of(comptime source: []const u8) []const []const u8 {
-    const text = @embedFile("../../" ++ source);
-    const opening = "@import(\"";
-    const folder = source[0..(std.mem.lastIndexOfScalar(u8, source, '/') orelse 0)];
-    var found: []const []const u8 = &.{};
-    var at: u32 = 0;
-    for (0..text.len) |_| {
-        const start = std.mem.indexOfPos(u8, text, at, opening) orelse break;
-        const name_start = start + opening.len;
-        const name_end = std.mem.indexOfScalarPos(u8, text, name_start, '"').?;
-        at = @intCast(name_end);
-        const name = text[name_start..name_end];
-        if (!std.mem.endsWith(u8, name, ".zig")) continue; // std and build options
-        // Each "../" climbs a folder from the importing file's own
-        var base: []const u8 = folder;
-        var rest: []const u8 = name;
-        for (0..name.len) |_| {
-            if (!std.mem.startsWith(u8, rest, "../")) break;
-            rest = rest[3..];
-            base = base[0 .. std.mem.lastIndexOfScalar(u8, base, '/') orelse 0];
-        }
-        const path = if (base.len == 0) rest else base ++ "/" ++ rest;
-        found = found ++ [_][]const u8{path};
-    }
-    return found;
-}
-
-test "every file the layout sources import is in the fingerprint, or doesn't move breaks" {
-    comptime var missing: []const []const u8 = &.{};
-    comptime {
-        @setEvalBranchQuota(100_000_000);
-        for (layout_sources) |source| {
-            // The App's other imports are its screens and devices, not layout
-            if (!std.mem.endsWith(u8, source, ".zig") or std.mem.eql(u8, source, "app.zig")) {
-                continue;
-            }
-            for (imports_of(source)) |path| {
-                const listed = for (layout_sources ++ not_layout) |known| {
-                    if (std.mem.eql(u8, known, path)) break true;
-                } else false;
-                if (!listed) missing = missing ++ [_][]const u8{path};
-            }
-        }
-    }
-    for (missing) |path| std.debug.print("not fingerprinted: {s}\n", .{path});
-    try std.testing.expectEqual(@as(usize, 0), missing.len);
 }

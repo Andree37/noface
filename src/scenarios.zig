@@ -16,6 +16,7 @@ const memory = @import("base/memory.zig");
 const catalog = @import("model/catalog.zig");
 const settings_model = @import("model/settings.zig");
 const state = @import("sys/state.zig");
+const page_store = @import("screens/reader/page_store.zig");
 const os = @import("sys/os.zig");
 const reader = @import("screens/reader.zig");
 const library_screen = @import("screens/library.zig");
@@ -127,6 +128,7 @@ const Outcome = struct {
     // The most of the book's region, and of the pages', in use at once
     book_peak: u64,
     pages_peak: u64,
+    breaks: u64, // A digest of the page breaks saved for the book, 0 when none were
 };
 
 /// The most books a scenario puts in the documents folder.
@@ -625,11 +627,25 @@ fn play_on_outcome(
         .bookmarks = count_notes(state_path, "bookmark"),
         .book_peak = a.book_region.end_peak,
         .pages_peak = a.pages_budget.peak,
+        .breaks = breaks_digest(state_path),
         .updates = a.screen.updates,
         .airplane_asked_on = ran.fake.was_set(wifi_key ++ " 0"),
         .airplane_at_end = std.mem.eql(u8, ran.fake.get(wifi_key), "0"),
         .wifi_note_left = state.read_small(wifi_saver.note_path(), &note_buf).len > 0,
     };
+}
+
+/// A digest of the page breaks saved beside the book's state file, without the key
+/// they're saved under: where the pages break, nothing else. 0 when none were saved.
+fn breaks_digest(state_path: []const u8) u64 {
+    assert(state_path.len > 0);
+    var path_buf: [320]u8 = undefined;
+    const path = page_store.path_for(&path_buf, state_path) catch return 0;
+    var buf: [64 << 10]u8 = undefined;
+    const data = state.read_small(path, &buf);
+    assert(data.len < buf.len); // The scenario book is short: its breaks fit whole
+    if (data.len <= page_store.header_len) return 0;
+    return std.hash.Wyhash.hash(0, data[page_store.header_len..]);
 }
 
 fn write_file(path: [*:0]const u8, data: []const u8) !void {
@@ -668,6 +684,25 @@ const scenarios = [_]Scenario{
             try expect(!same_place(two_on.saved, start.saved), "turning didn't move the place");
         }
     }.run },
+    .{
+        .name = "the layout breaks pages where page_store.layout_version says it does",
+        .run = struct {
+            fn run() !void {
+                // Long enough for the whole book to be laid out in idle moments, and saved
+                const laid_out = try play(&.{wait(3000)});
+                if (laid_out.breaks != page_store.breaks_digest) {
+                    std.debug.print(
+                        "page breaks moved: digest {x}. If the layout changed on purpose, " ++
+                            "raise layout_version in page_store.zig and set its " ++
+                            "breaks_digest to this, so saved breaks are laid out again.\n",
+                        .{laid_out.breaks},
+                    );
+                }
+                try expect(laid_out.breaks != 0, "no page breaks were saved");
+                try expect(laid_out.breaks == page_store.breaks_digest, "page breaks moved");
+            }
+        }.run,
+    },
     .{ .name = "going back from the first page stays there", .run = struct {
         fn run() !void {
             const start = try play(&.{});

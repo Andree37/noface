@@ -1,5 +1,6 @@
 //! Laying out a whole book into pages. Kept apart from the rest of the reader because
-//! saved page breaks are only valid for this code: page_store fingerprints this file.
+//! saved page breaks are only valid for this code: a change that moves them raises
+//! page_store's `layout_version` (a scenario says when).
 const std = @import("std");
 const assert = std.debug.assert;
 const app = @import("../../app.zig");

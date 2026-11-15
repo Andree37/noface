@@ -2,6 +2,8 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const sys = @import("calls.zig");
+const os = @import("os.zig");
+const process = @import("process.zig");
 
 /// The longest path walked, as Linux's PATH_MAX: a path past it can't be opened.
 const path_bytes_max: u32 = 4096;
@@ -196,7 +198,7 @@ test "files are found however deep their folders are, past the six levels once w
             .ACCMODE = .WRONLY,
             .CREAT = true,
         }, 0o644);
-        try std.testing.expect(!@import("os.zig").failed(rc));
+        try std.testing.expect(!os.failed(rc));
         _ = linux.close(@intCast(rc));
         const folder = try std.fmt.bufPrintSentinel(path_buffer[len..], "/d{d}", .{level}, 0);
         len += @intCast(folder.len);
@@ -208,5 +210,5 @@ test "files are found however deep their folders are, past the six levels once w
     try std.testing.expectEqual(@as(usize, 20), found.len);
     const argv = [_:null]?[*:0]const u8{ "/bin/rm", "-rf", root };
     var out: [64]u8 = undefined;
-    _ = @import("process.zig").run(&argv, &out); // Ignored: only /tmp is left fuller
+    _ = process.run(&argv, &out); // Ignored: only /tmp is left fuller
 }

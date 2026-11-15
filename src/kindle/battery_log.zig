@@ -5,6 +5,8 @@ const assert = std.debug.assert;
 const battery = @import("../model/battery.zig");
 const state = @import("../sys/state.zig");
 const file = @import("../sys/file.zig");
+const journal = @import("../model/journal.zig");
+const clock = @import("../sys/clock.zig");
 const os = @import("../sys/os.zig");
 const devices = @import("devices.zig");
 const linux = @import("../sys/calls.zig");
@@ -137,8 +139,6 @@ fn report_samples(log_path: [*:0]const u8, samples: []battery.Sample) []battery.
 /// battery log and the reading journal in `data_dir`, written to `fd`.
 pub fn report(fd: i32, data_dir: []const u8) void {
     assert(fd >= 0);
-    const journal = @import("../model/journal.zig");
-    const clock = @import("../sys/clock.zig");
 
     var path_buffer: [320]u8 = undefined;
     var samples: [4096]battery.Sample = undefined;

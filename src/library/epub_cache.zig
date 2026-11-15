@@ -13,6 +13,7 @@ const assert = std.debug.assert;
 const files = @import("files.zig");
 const sorter = @import("sorter.zig");
 const calls = @import("../sys/calls.zig");
+const process = @import("../sys/process.zig");
 
 /// What the library keeps of an EPUB. Its text points into the cache's buffers, valid
 /// until the next `find`.
@@ -410,5 +411,5 @@ test "an EPUB read once is found again by its path, size and change time" {
     empty.finish();
     const argv = [_:null]?[*:0]const u8{ "/bin/rm", "-rf", dir };
     var out: [64]u8 = undefined;
-    _ = @import("../sys/process.zig").run(&argv, &out); // Ignored: only /tmp is left fuller
+    _ = process.run(&argv, &out); // Ignored: only /tmp is left fuller
 }

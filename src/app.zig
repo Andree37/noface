@@ -82,6 +82,8 @@ pub const App = struct {
     library_budget: *memory.Budget,
     library_scratch_region: *memory.Region,
     book_region: *memory.Region,
+    // An open book's pages after a settings change, emptied before each layout
+    pages_budget: *memory.Budget,
     scratch_region: *memory.Region,
     screen: *hwtcon.Screen,
     input: *Input,

@@ -23,6 +23,7 @@ const library_ui = @import("ui/library.zig");
 const card = @import("ui/card.zig");
 const style = @import("ui/style.zig");
 const toolbar = @import("ui/toolbar.zig");
+const aa = @import("ui/aa.zig");
 const dictionary = @import("model/dictionary.zig");
 const FakeKindle = @import("testing/fake_kindle.zig").FakeKindle;
 const wifi_saver = @import("kindle/wifi_saver.zig");
@@ -123,6 +124,9 @@ const Outcome = struct {
     finished: [2]bool, // Whether they were marked finished
     highlights: u32, // Highlights and bookmarks saved for the book
     bookmarks: u32,
+    // The most of the book's region, and of the pages', in use at once
+    book_peak: u64,
+    pages_peak: u64,
 };
 
 /// The most books a scenario puts in the documents folder.
@@ -512,7 +516,10 @@ fn play_on_start(
     assert(a.screen.width == width);
     assert(a.screen.height == height);
     a.documents = dir;
-    // Each run starts as a new reader: nothing read before, every setting as shipped
+    // Each run starts as a new reader: nothing read before, every setting as shipped,
+    // and the regions' peaks its own
+    a.book_region.end_peak = 0;
+    a.pages_budget.peak = 0;
     a.settings = .{};
     a.speed = .{};
     a.journal = .{};
@@ -620,6 +627,8 @@ fn play_on_outcome(
         .offers_dictionary = a.settings.offer_dictionary,
         .highlights = count_notes(state_path, "highlight"),
         .bookmarks = count_notes(state_path, "bookmark"),
+        .book_peak = a.book_region.end_peak,
+        .pages_peak = a.pages_budget.peak,
         .updates = a.screen.updates,
         .airplane_asked_on = ran.fake.was_set(wifi_key ++ " 0"),
         .airplane_at_end = std.mem.eql(u8, ran.fake.get(wifi_key), "0"),
@@ -904,6 +913,24 @@ const scenarios = [_]Scenario{
                 });
                 try expect(r.finished[0], "the first wasn't marked finished");
                 try expect(r.opened[1], "the next one didn't open");
+            }
+        }.run,
+    },
+    .{
+        .name = "changing the text size again and again takes no more memory",
+        .run = struct {
+            fn run() !void {
+                const sheet = [_]Step{ top, tap(696, toolbar_button_y) };
+                // The slider's smallest step, then its largest, each a tap and a lift
+                const change = [_]Step{
+                    tap(100, aa.size_row.top + 90),  lift,
+                    tap(1172, aa.size_row.top + 90), lift,
+                };
+                const twice = try play(&(sheet ++ change));
+                const often = try play(&(sheet ++ change ++ change ++ change ++ change));
+                try expect(often.book_peak == twice.book_peak, "the book's memory grew");
+                try expect(twice.pages_peak > 0, "the pages weren't laid out again");
+                try expect(often.pages_peak <= twice.pages_peak, "the pages' memory grew");
             }
         }.run,
     },

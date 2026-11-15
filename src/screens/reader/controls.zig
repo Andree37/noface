@@ -136,7 +136,6 @@ fn row_value_set(a: *app.App, row: aa.Row, value: u32) void {
 /// Follows a finger along an Aa slider, and applies it when lifted.
 fn drag_setting(
     a: *app.App,
-    alloc: std.mem.Allocator,
     s: *sess.Session,
     title: []const u8,
     row: aa.Row,
@@ -166,7 +165,7 @@ fn drag_setting(
     _ = try app.follow_drag(a, first, Follow{ .a = a, .row = row, .value = &value });
     if (value != started) {
         row_value_set(a, row, value);
-        try sess.relayout(a, alloc, s);
+        try sess.relayout(a, s);
     }
     try draw_toolbar(a, s, title, .{ .sheet_open = true, .whole_page = true });
     try app.clean_band(a, row.top, aa.row_height);
@@ -221,7 +220,6 @@ fn ready(a: *app.App, s: *sess.Session, title: []const u8, guard: aa.Guard) !boo
 /// Handles a tap inside the Aa sheet.
 pub fn tap_sheet(
     a: *app.App,
-    alloc: std.mem.Allocator,
     s: *sess.Session,
     title: []const u8,
     x: i32,
@@ -235,9 +233,9 @@ pub fn tap_sheet(
             a.tab = tab;
             return draw_toolbar(a, s, title, sheet_only);
         },
-        .text_size => return drag_setting(a, alloc, s, title, aa.size_row, x),
-        .spacing => return drag_setting(a, alloc, s, title, aa.spacing_row, x),
-        .margins => return drag_setting(a, alloc, s, title, aa.margin_row, x),
+        .text_size => return drag_setting(a, s, title, aa.size_row, x),
+        .spacing => return drag_setting(a, s, title, aa.spacing_row, x),
+        .margins => return drag_setting(a, s, title, aa.margin_row, x),
         .theme => |index| {
             assert(index < aa.themes.len);
             const theme = aa.themes[index];
@@ -264,6 +262,6 @@ pub fn tap_sheet(
             }
         },
     }
-    try sess.relayout(a, alloc, s);
+    try sess.relayout(a, s);
     try draw_toolbar(a, s, title, .{ .sheet_open = true, .whole_page = true });
 }

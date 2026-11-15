@@ -15,6 +15,7 @@ const style = @import("ui/style.zig");
 const text = @import("layout/text.zig");
 const books = @import("screens/books.zig");
 const image = @import("gfx/image.zig");
+const book_model = @import("model/book.zig");
 
 /// What each memory region reserves, taken once at startup (`memory.Region`). Pages
 /// come in as they're first touched, so a region costs what's used, not its size.
@@ -44,6 +45,10 @@ pub const region_bytes = struct {
     /// 78 from a 70 MB EPUB); kept at the old limit, so every book that opened still
     /// does. A larger one shows a notice instead of opening, as before.
     pub const book: u32 = 128 << 20;
+    /// An open book's pages after a text setting changed: emptied before each layout,
+    /// so changing settings again and again takes no more. A layout's two lists of
+    /// where pages start, joined, and the copy saved (see `book_bytes_per_page_min`).
+    pub const pages: u32 = 32 << 20;
     /// One action's: a Go To list (27 KB measured) or search results (500 at most).
     pub const scratch: u32 = 8 << 20;
 };
@@ -55,6 +60,10 @@ comptime {
     assert(hwtcon.height_px == style.screen_height);
 }
 
+/// A page holds at least this many bytes of a book's text, at the largest type: the
+/// pages region is sized for a book region full of text cut that finely.
+const book_bytes_per_page_min = 128;
+
 /// Room in the library's region for covers beside its two lists: 256 of the grid's,
 /// three pages of fifteen for each list being looked through, and plenty more.
 const library_covers: u32 = 256 * image.width * image.height;
@@ -62,13 +71,17 @@ const library_covers: u32 = 256 * image.width * image.height;
 comptime {
     // Every region fits in the ~480 MB a Kindle has free beside Amazon's services
     const b = region_bytes;
-    const reading_bytes = b.library + b.library_scratch + b.book + b.scratch;
+    const reading_bytes = b.library + b.library_scratch + b.book + b.pages + b.scratch;
     assert(b.app + b.decoders + reading_bytes < 480 << 20);
     // Regions are whole units
     assert(b.library % memory.unit_bytes == 0);
     assert(b.library_scratch % memory.unit_bytes == 0);
     // A book's region holds the largest book measured, with room to spare
     assert(b.book > 78 << 20);
+    // A layout's lists of pages, joined and saved, fit for the most pages a book has
+    const pages_most = b.book / book_bytes_per_page_min;
+    assert(4 * pages_most * @sizeOf(book_model.Pos) <= b.pages);
+    assert(b.pages % memory.unit_bytes == 0);
     // The decoders have what the stb C libraries had
     assert(b.decoders >= 128 << 20);
 }
@@ -84,6 +97,8 @@ const Reading = struct {
     library_budget: memory.Budget, // Shared by a library list and the one reloaded after it
     library_scratch: memory.Region,
     book: memory.Region,
+    pages: memory.Region,
+    pages_budget: memory.Budget, // Emptied before each layout after a settings change
     scratch: memory.Region,
 };
 
@@ -92,6 +107,8 @@ fn reserve_reading() !*Reading {
         // The last App closed its book and its library, so the next starts with
         // nothing open
         assert(reading.book.empty());
+        assert(reading.pages.empty());
+        assert(reading.pages_budget.live == 0);
         assert(reading.scratch.empty());
         assert(reading.library_scratch.empty());
         assert(reading.library_budget.live == 0);
@@ -105,6 +122,12 @@ fn reserve_reading() !*Reading {
     };
     reading.library_scratch = try .reserve("library scratch", .bump, region_bytes.library_scratch);
     reading.book = try .reserve("book", .bump, region_bytes.book);
+    reading.pages = try .reserve("pages", .bump, region_bytes.pages);
+    reading.pages_budget = .{
+        .name = "pages",
+        .region = &reading.pages,
+        .limit = region_bytes.pages,
+    };
     reading.scratch = try .reserve("scratch", .bump, region_bytes.scratch);
     reading_reserved = true;
     return &reading;
@@ -246,6 +269,7 @@ pub fn assemble(p: Parts) !app.App {
         .library_budget = &regions.library_budget,
         .library_scratch_region = &regions.library_scratch,
         .book_region = &regions.book,
+        .pages_budget = &regions.pages_budget,
         .scratch_region = &regions.scratch,
         .screen = p.screen,
         .input = p.input,

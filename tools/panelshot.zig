@@ -118,7 +118,7 @@ const PreviewFaces = struct {
         const slot = &faces.fonts[which][size];
         if (slot.* == null) {
             const size_px = 46 * core.book.size_scales[size];
-            slot.* = try Font.init(faces.allocator, faces.files[which], size_px, 1.35);
+            slot.* = try Font.init(faces.files[which], size_px, 1.35);
         }
         assert(slot.* != null);
         return &slot.*.?;
@@ -135,11 +135,11 @@ pub fn main(init: std.process.Init.Minimal) !void {
     const book_bold = try file.map(font_folder ++ "Bookerly-Bold.ttf");
     const ui_regular = try file.map(font_folder ++ "Amazon-Ember-Regular.ttf");
     const ui_bold = try file.map(font_folder ++ "Amazon-Ember-Bold.ttf");
-    var title = try Font.init(allocator, ui_bold, 34, 1.2);
-    var small = try Font.init(allocator, ui_regular, 34, 1.2);
-    var caption = try Font.init(allocator, ui_regular, 26, 1.2);
-    var hero = try Font.init(allocator, book_bold, 56, 1.2);
-    var cover_type = try Font.init(allocator, book_bold, 36, 1.2);
+    var title = try Font.init(ui_bold, 34, 1.2);
+    var small = try Font.init(ui_regular, 34, 1.2);
+    var caption = try Font.init(ui_regular, 26, 1.2);
+    var hero = try Font.init(book_bold, 56, 1.2);
+    var cover_type = try Font.init(book_bold, 36, 1.2);
     const pixels = try allocator.alloc(u8, screen_width * screen_height);
     @memset(pixels, 0xff);
     const mode = if (argv.len > 1) std.mem.sliceTo(argv[1], 0) else "panel";
@@ -243,9 +243,9 @@ fn render_library_search(shot: *const Shot) !void {
 
 /// A page with both shapes of note reference, and a note's panel open over it.
 fn render_notes(shot: *const Shot) !void {
-    var body = try Font.init(shot.allocator, shot.book_regular, 46, 1.35);
-    var note_font = try Font.init(shot.allocator, shot.book_regular, 36, 1.3);
-    var mark = try Font.init(shot.allocator, shot.book_regular, 28, 1.2);
+    var body = try Font.init(shot.book_regular, 46, 1.35);
+    var note_font = try Font.init(shot.book_regular, 36, 1.3);
+    var mark = try Font.init(shot.book_regular, 28, 1.2);
     const links = [_]book_model.Link{
         .{ .start = word_reference, .end = word_reference + word_reference_size, .target = 1 },
         .{ .start = mark_reference, .end = mark_reference + mark_reference_size, .target = 2 },

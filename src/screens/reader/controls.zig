@@ -4,6 +4,7 @@ const assert = std.debug.assert;
 const autostart = @import("../../kindle/autostart.zig");
 const card = @import("../../ui/card.zig");
 const aa = @import("../../ui/aa.zig");
+const settings_model = @import("../../model/settings.zig");
 const toolbar = @import("../../ui/toolbar.zig");
 const app = @import("../../app.zig");
 const sess = @import("session.zig");
@@ -28,7 +29,10 @@ pub fn draw_toolbar(a: *app.App, s: *sess.Session, title: []const u8, drawn: Dra
     const total = if (s.layout_pending()) 0 else s.page_count(); // No page count until it's known
     assert(total == 0 or total > s.current);
     var fonts = a.ui;
-    if (drawn.sheet_open and a.tab == .font) fonts.families = a.load_family_samples();
+    if (drawn.sheet_open and a.tab == .font) {
+        fonts.families = a.load_family_samples();
+        fonts.family_first = a.family_first;
+    }
     try toolbar.render(
         fonts,
         a.page(a.overlay),
@@ -243,7 +247,16 @@ pub fn tap_sheet(
             a.settings.spacing = theme.spacing;
             a.settings.margin = theme.margin;
         },
-        .family => |index| a.settings.font = index,
+        .family => |cell| {
+            const family = a.family_first + cell;
+            // The last page may have fewer typefaces than cells
+            if (family >= settings_model.families.len) return;
+            a.settings.font = family;
+        },
+        .more_families => {
+            a.family_first = aa.next_family_page(a.family_first);
+            return draw_toolbar(a, s, title, sheet_only);
+        },
         .toggle => |index| {
             assert(index < aa.switches.len);
             const switch_hit = aa.switches[index];

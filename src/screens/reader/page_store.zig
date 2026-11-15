@@ -29,6 +29,7 @@ const layout_sources = [_][]const u8{
     "layout/hyphen/hyph-en-us.hyp.txt",
     "layout/hyphen/hyph-pt.pat.txt",
     "gfx/font.zig",
+    "gfx/glyph_cache.zig",
     "gfx/truetype.zig",
     "gfx/cff.zig",
     "gfx/outline.zig",
@@ -47,8 +48,8 @@ const layout_sources = [_][]const u8{
 };
 
 /// Files the layout sources import that don't move a break: checks, the pixels a page
-/// is drawn into, the font decoder's memory and the budgets it's counted by, and the
-/// library's series numbers.
+/// is drawn into, the memory fonts and decoders take and the budgets it's counted by,
+/// and the library's series numbers.
 const not_layout = [_][]const u8{
     "base/check.zig",
     "base/memory.zig",

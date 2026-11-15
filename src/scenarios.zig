@@ -323,6 +323,7 @@ fn play_on(kindle: Kindle, steps: []const Step) !Outcome {
     const decoders_budget = try setup.decoders();
     decoder_memory.use(decoders_budget);
     defer decoder_memory.stop_using(decoders_budget);
+    try setup.use_glyph_cache();
 
     const kept = try play_on_kept(alloc, dir);
     var a = try setup.assemble(.{
@@ -455,7 +456,7 @@ const Kept = struct { kit: *setup.Kit, files: *setup.DataFiles };
 fn play_on_kept(alloc: std.mem.Allocator, dir: [:0]const u8) !Kept {
     assert(dir.len > 0);
     const kit = try alloc.create(setup.Kit);
-    kit.* = try setup.Kit.init(alloc, .{
+    kit.* = try setup.Kit.init(.{
         .book = go_regular,
         .book_bold = go_bold,
         .ui = go_regular,
@@ -526,12 +527,7 @@ fn play_on_start(
     // Every typeface the settings could pick is the test font: no Kindle fonts needed.
     // A real book is set in the Kindle's own, found by the app as it always does.
     if (kindle.real_book == null) {
-        for (&a.face_files) |*family| {
-            family[0] = go_regular;
-            family[1] = go_bold;
-            family[2] = go_regular;
-            family[3] = go_bold;
-        }
+        a.typefaces.stand_in = .{ go_regular, go_bold, go_regular, go_bold };
     }
     try a.apply_settings();
 

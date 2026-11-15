@@ -32,23 +32,21 @@ pub fn seal() void {
 /// What a heap region hands out whole, and cuts into slots for small blocks.
 pub const unit_bytes: u32 = 64 << 10;
 
-/// A heap region's most units: 64 MB. Its tables have one byte per unit.
-const units_max: u32 = 1 << order_max;
+/// A heap region's most units: 128 MB. Its tables have two bytes and a bit per unit.
+const units_max: u32 = 2048;
 
-/// A heap block is 2^order units; the largest is the whole of the largest region.
-const order_max: u5 = 10;
-
-/// Small blocks go in slots of 16 bytes to 32 KB, each class twice the last.
+/// Small blocks go in slots of 16 bytes to 32 KB, each class twice the last. A larger
+/// block is a run of whole units, so it wastes less than a unit, never half itself.
 const slot_bytes_min: u32 = 16;
 const slot_classes: u32 = 12;
 
 /// In `Region.taken`: a unit cut into slots, which stays so.
-const slab: u8 = 0xff;
+const slab: u16 = std.math.maxInt(u16);
 
 comptime {
     assert(slot_bytes_min << slot_classes == unit_bytes);
     assert(slot_bytes_min >= @sizeOf(u32)); // A free slot holds the next one's place
-    assert(order_max + 1 < slab); // Orders and the slab mark never meet
+    assert(units_max < slab); // A run's length and the slab mark never meet
     // Pages given back are whole: a unit is a whole number of pages
     assert(unit_bytes % std.heap.page_size_max == 0);
 }
@@ -66,11 +64,10 @@ pub const Region = struct {
     end: u32 = 0,
     end_peak: u32 = 0,
     touched: u32 = 0,
-    // A heap region's, per unit: the order + 1 of the free block that starts there,
-    // and of the block handed out that starts there (`slab` for one cut into slots);
-    // 0 for neither
-    free: [units_max]u8 = @splat(0),
-    taken: [units_max]u8 = @splat(0),
+    // A heap region's, per unit: whether it's handed out, and at the first unit of a
+    // run handed out, the run's length in units (`slab` for a unit cut into slots)
+    used: std.StaticBitSet(units_max) = .empty,
+    taken: [units_max]u16 = @splat(0),
     // Per slot class: the first free slot (its offset + 1, 0 for none), and where the
     // next new slot is cut (a multiple of `unit_bytes` when a new slab is needed)
     slots_free: [slot_classes]u32 = @splat(0),
@@ -95,8 +92,8 @@ pub const Region = struct {
             return error.OutOfMemory;
         system_requests += 1;
         const bytes: []align(unit_bytes) u8 = @alignCast(pointer[0..size]);
-        var region = Region{ .name = name, .kind = kind, .bytes = bytes };
-        if (kind == .heap) region.heap_init();
+        const region = Region{ .name = name, .kind = kind, .bytes = bytes };
+        assert(region.units_taken == 0); // Every unit free
         return region;
     }
 
@@ -182,7 +179,9 @@ pub const Region = struct {
                 if (size < unit_bytes) {
                     region.slot_give(at, class_of(size));
                 } else {
-                    region.block_give(at / unit_bytes, order_of(size).?);
+                    assert(at % unit_bytes == 0); // A run starts at a unit
+                    assert(region.taken[at / unit_bytes] == units_for(block.len));
+                    region.run_give(at / unit_bytes);
                 }
             },
         }
@@ -202,8 +201,12 @@ pub const Region = struct {
             },
             .heap => {
                 const align_bytes = alignment.toByteUnits();
+                const size = slot_size(block.len, align_bytes).?;
                 const new_size = slot_size(new_len, align_bytes) orelse return false;
-                return new_size == slot_size(block.len, align_bytes).?;
+                // A slot stays its size; a run grows or shrinks where it is
+                if (size < unit_bytes or new_size < unit_bytes) return new_size == size;
+                if (new_len > region.bytes.len) return false;
+                return region.run_resize(at / unit_bytes, units_for(new_len));
             },
         }
     }
@@ -225,29 +228,13 @@ pub const Region = struct {
         region.touched = @max(region.touched, end);
     }
 
-    fn heap_init(region: *Region) void {
-        const count = region.units();
-        assert(count > 0);
-        // Free blocks as large as fit, each starting at a multiple of its own size
-        var unit: u32 = 0;
-        while (unit < count) {
-            var order: u5 = order_max;
-            while (unit % (@as(u32, 1) << order) != 0 or unit + (@as(u32, 1) << order) > count) {
-                order -= 1;
-            }
-            region.free[unit] = @as(u8, order) + 1;
-            unit += @as(u32, 1) << order;
-        }
-        assert(unit == count);
-    }
-
     fn heap_take(region: *Region, len: u64, align_bytes: u64) ?[*]u8 {
         assert(region.kind == .heap);
         assert(align_bytes <= unit_bytes);
         const size = slot_size(len, align_bytes) orelse return null;
         if (size < unit_bytes) return region.slot_take(class_of(size));
-        const unit = region.block_take(order_of(size) orelse return null) orelse return null;
-        return region.bytes.ptr + unit * unit_bytes; // Within 64 MB, so in u32
+        const unit = region.run_take(units_for(len)) orelse return null;
+        return region.bytes.ptr + unit * unit_bytes; // Within 128 MB, so in u32
     }
 
     fn slot_take(region: *Region, class: u32) ?[*]u8 {
@@ -262,7 +249,7 @@ pub const Region = struct {
         }
         // None yet, or the slab is used up: cut a fresh unit into slots
         if (region.slots_next[class] % unit_bytes == 0) {
-            const unit = region.block_take(0) orelse return null;
+            const unit = region.run_take(1) orelse return null;
             region.taken[unit] = slab;
             region.slots_next[class] = unit * unit_bytes;
         }
@@ -280,50 +267,69 @@ pub const Region = struct {
         region.slots_free[class] = at + 1;
     }
 
-    /// The smallest free block of `order` or more, split down to `order`: its first unit.
-    fn block_take(region: *Region, order: u5) ?u32 {
-        assert(order <= order_max);
+    /// The first `count` free units in a row, handed out as one run: its first unit.
+    fn run_take(region: *Region, count: u32) ?u32 {
+        assert(count > 0);
         assert(region.units_taken <= region.units());
-        var best: ?u32 = null;
-        var best_order: u32 = order_max + 1;
-        for (region.free[0..region.units()], 0..) |head, unit| {
-            if (head == 0) continue;
-            const o = head - 1;
-            if (o >= order and o < best_order) {
-                best = @intCast(unit);
-                best_order = o;
+        if (count > region.units() - region.units_taken) return null;
+        var start: u32 = 0;
+        for (0..region.units()) |unit| {
+            if (region.used.isSet(unit)) {
+                start = @intCast(unit + 1);
+            } else if (unit + 1 - start == count) {
+                region.mark(start, count);
+                region.taken[start] = @intCast(count);
+                return start;
             }
         }
-        const unit = best orelse return null;
-        region.free[unit] = 0;
-        var o: u5 = @intCast(best_order);
-        while (o > order) {
-            o -= 1;
-            region.free[unit + (@as(u32, 1) << o)] = @as(u8, o) + 1; // The upper half stays free
-        }
-        region.taken[unit] = @as(u8, order) + 1;
-        region.units_taken += @as(u32, 1) << order;
-        region.units_peak = @max(region.units_peak, region.units_taken);
-        return unit;
+        return null;
     }
 
-    /// Frees the block at `unit`, merging it with its free neighbours of the same size.
-    fn block_give(region: *Region, unit: u32, order: u5) void {
-        assert(region.taken[unit] == @as(u8, order) + 1); // Handed out at this size
-        assert(region.units_taken >= @as(u32, 1) << order);
+    /// Frees the run that starts at `unit`, handing its pages back.
+    fn run_give(region: *Region, unit: u32) void {
+        const count = region.taken[unit];
+        assert(count != slab); // Slabs stay slabs
+        assert(count > 0); // A run handed out starts here
         region.taken[unit] = 0;
-        region.units_taken -= @as(u32, 1) << order;
-        var at = unit;
-        var o = order;
-        while (o < order_max) {
-            const buddy = at ^ (@as(u32, 1) << o);
-            if (buddy >= region.units() or region.free[buddy] != @as(u8, o) + 1) break;
-            region.free[buddy] = 0;
-            at = @min(at, buddy);
-            o += 1;
+        region.unmark(unit, count);
+    }
+
+    /// Whether the run at `unit` becomes `count` units where it is: a shrink always,
+    /// handing the end's pages back; a growth when the units after it are free.
+    fn run_resize(region: *Region, unit: u32, count: u32) bool {
+        const old = region.taken[unit];
+        assert(old != slab);
+        assert(old > 0);
+        assert(count > 0);
+        if (count < old) {
+            region.unmark(unit + count, old - count);
+        } else if (count > old) {
+            if (unit + count > region.units()) return false;
+            for (unit + old..unit + count) |next| {
+                if (region.used.isSet(next)) return false;
+            }
+            region.mark(unit + old, count - old);
         }
-        region.free[at] = @as(u8, o) + 1;
-        region.give_back(unit, @as(u32, 1) << order);
+        region.taken[unit] = @intCast(count);
+        return true;
+    }
+
+    /// Hands out the `count` free units from `unit`.
+    fn mark(region: *Region, unit: u32, count: u32) void {
+        assert(count > 0);
+        assert(unit + count <= region.units());
+        region.used.setRangeValue(.{ .start = unit, .end = unit + count }, true);
+        region.units_taken += count;
+        region.units_peak = @max(region.units_peak, region.units_taken);
+    }
+
+    /// Takes back the `count` units from `unit`, and hands their pages to the system.
+    fn unmark(region: *Region, unit: u32, count: u32) void {
+        assert(count > 0);
+        assert(region.units_taken >= count);
+        region.used.setRangeValue(.{ .start = unit, .end = unit + count }, false);
+        region.units_taken -= count;
+        region.give_back(unit, count);
     }
 
     /// Hands the pages of `count` free units from `unit` back to the system, which
@@ -340,8 +346,9 @@ pub const Region = struct {
     }
 };
 
-/// The slot or block size a heap region keeps `len` bytes at `align_bytes` in: a power
-/// of two, so blocks of the same size can stand in for each other.
+/// The slot size a heap region keeps `len` bytes at `align_bytes` in: a power of two,
+/// so slots of the same size can stand in for each other. `unit_bytes` or more means a
+/// run of whole units instead.
 fn slot_size(len: u64, align_bytes: u64) ?u64 {
     assert(len > 0);
     assert(std.math.isPowerOfTwo(align_bytes));
@@ -354,12 +361,13 @@ fn class_of(size: u64) u32 {
     return std.math.log2_int(u64, size) - std.math.log2_int(u64, slot_bytes_min);
 }
 
-fn order_of(size: u64) ?u5 {
-    assert(size >= unit_bytes);
-    assert(std.math.isPowerOfTwo(size));
-    const order = std.math.log2_int(u64, size / unit_bytes);
-    if (order > order_max) return null;
-    return @intCast(order);
+/// The whole units a run of `len` bytes takes: at least one.
+fn units_for(len: u64) u32 {
+    assert(len > 0);
+    assert(len <= @as(u64, units_max) * unit_bytes); // No region is larger
+    const count: u32 = @intCast((len + unit_bytes - 1) / unit_bytes);
+    assert(count >= 1);
+    return count;
 }
 
 pub const Budget = struct {
@@ -580,21 +588,43 @@ test "a heap region passes the standard allocator tests, and merges what comes b
     try std.heap.testAllocatorAligned(b.allocator());
     try std.heap.testAllocatorAlignedShrink(b.allocator());
     try std.testing.expectEqual(@as(u64, 0), b.live);
-    // Big blocks of every size, freed out of order, merge back into whole free blocks
+    // Big blocks of every size, freed out of order, leave the region whole again
     const a = b.allocator();
     var blocks: [6][]u8 = undefined;
     for (&blocks, 0..) |*block, i| block.* = try a.alloc(u8, (unit_bytes << @intCast(i % 3)) - 7);
     for ([_]u32{ 3, 0, 5, 1, 4, 2 }) |i| a.free(blocks[i]);
     const slabs = region.units_taken;
     for (region.taken[0..region.units()]) |t| try std.testing.expect(t == 0 or t == slab);
-    // All of the region bar its slabs is free again, in blocks no buddy could join
-    var free_units: u32 = 0;
-    for (region.free[0..region.units()]) |head| {
-        if (head != 0) free_units += @as(u32, 1) << @intCast(head - 1);
-    }
-    try std.testing.expectEqual(region.units(), free_units + slabs);
+    // All of the region bar its slabs is free again
+    try std.testing.expectEqual(slabs, @as(u32, @intCast(region.used.count())));
     const whole = try a.alloc(u8, 2 << 20); // Half the region, in one piece
     a.free(whole);
+    try std.testing.expectEqual(slabs, region.units_taken);
+}
+
+test "a heap region keeps a big block in whole units, not a power of two" {
+    var region = try Region.reserve("test", .heap, 64 << 20);
+    defer region.release();
+    var b = Budget{ .name = "test", .region = &region, .limit = region.bytes.len };
+    const a = b.allocator();
+    // 40 and 20 MB: a power of two each would take 64 and 32
+    const large = try a.alloc(u8, 40 << 20);
+    defer a.free(large);
+    var medium = try a.alloc(u8, 20 << 20);
+    defer a.free(medium);
+    try std.testing.expectEqual(@as(u32, 60 << 20), region.units_taken * unit_bytes);
+    // A run shrinks where it is, its end free again, and grows back into it
+    medium = try a.realloc(medium, 3 << 20);
+    try std.testing.expectEqual(@as(u32, 43 << 20), region.units_taken * unit_bytes);
+    const at = medium.ptr;
+    medium = try a.realloc(medium, (20 << 20) + 1);
+    try std.testing.expect(medium.ptr == at);
+    try std.testing.expectEqual(@as(u32, (60 << 20) + unit_bytes), region.units_taken * unit_bytes);
+    // A slot never becomes a run where it is, nor a run a slot
+    const small = try a.alloc(u8, 100);
+    try std.testing.expect(!a.resize(small, 200 << 10));
+    a.free(small);
+    try std.testing.expectError(error.OutOfMemory, a.alloc(u8, 4 << 20)); // Full
 }
 
 test "a heap region gives a freed block's pages back, and keeps its slabs" {

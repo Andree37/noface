@@ -627,8 +627,7 @@ fn play_on_outcome(
         .bookmarks = count_notes(state_path, "bookmark"),
         .book_peak = a.book_region.end_peak,
         .pages_peak = a.pages_budget.peak,
-        // Only the test book's: a real book's breaks can be any length
-        .breaks = if (kindle.real_book == null) breaks_digest(state_path) else 0,
+        .breaks = breaks_digest(state_path),
         .updates = a.screen.updates,
         .airplane_asked_on = ran.fake.was_set(wifi_key ++ " 0"),
         .airplane_at_end = std.mem.eql(u8, ran.fake.get(wifi_key), "0"),
@@ -637,16 +636,32 @@ fn play_on_outcome(
 }
 
 /// A digest of the page breaks saved beside the book's state file, without the key
-/// they're saved under: where the pages break, nothing else. 0 when none were saved.
+/// they're saved under: where the pages break, nothing else, read a piece at a time so
+/// a book of any length is digested whole. 0 when none were saved.
 fn breaks_digest(state_path: []const u8) u64 {
     assert(state_path.len > 0);
     var path_buf: [320]u8 = undefined;
     const path = page_store.path_for(&path_buf, state_path) catch return 0;
-    var buf: [64 << 10]u8 = undefined;
-    const data = state.read_small(path, &buf);
-    assert(data.len < buf.len); // The scenario book is short: its breaks fit whole
-    if (data.len <= page_store.header_len) return 0;
-    return std.hash.Wyhash.hash(0, data[page_store.header_len..]);
+    const rc = linux.open(path, .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0);
+    if (os.failed(rc)) return 0;
+    const fd: i32 = @intCast(rc);
+    defer _ = linux.close(fd); // Ignored: only read
+    var h = std.hash.Wyhash.init(0);
+    var skip: u32 = page_store.header_len;
+    var total: u64 = 0;
+    var buf: [4096]u8 = undefined;
+    // Each read moves on by at least a byte, or ends the file
+    for (0..std.math.maxInt(u32)) |_| {
+        const got = linux.read(fd, &buf, buf.len);
+        if (os.failed(got) or got == 0) break;
+        const piece = buf[0..got];
+        const from = @min(skip, piece.len);
+        skip -= @intCast(from);
+        h.update(piece[from..]);
+        total += piece.len;
+    }
+    if (total <= page_store.header_len) return 0;
+    return h.final();
 }
 
 fn write_file(path: [*:0]const u8, data: []const u8) !void {

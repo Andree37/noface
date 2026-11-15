@@ -3,116 +3,210 @@ const std = @import("std");
 const assert = std.debug.assert;
 const sys = @import("calls.zig");
 
-/// How deep below the root folder files are looked for: the root's folders are 1.
-const depth_max = 6;
+/// The longest path walked, as Linux's PATH_MAX: a path past it can't be opened.
+const path_bytes_max: u32 = 4096;
 
-/// The most entries looked at in one search. A Kindle holds far fewer files.
-const steps_max = 1 << 24;
+/// How deep below the root folders are walked: as deep as a path can go, each folder
+/// adding at least "/x". A folder past it couldn't be opened, so none is missed.
+const depth_max: u32 = path_bytes_max / 2;
 
-/// Paths of the files under `root` whose names end with `suffix`. Hidden folders
-/// and the Kindle's ".sdr" sidecar folders are skipped.
-pub fn find_files(
+/// The most folders looked at in one walk (each listing at most `calls.each_entry`'s
+/// names): a Kindle holds far fewer. A walk that reaches it stops there, and says so.
+const steps_max: u32 = 1 << 24;
+
+/// What a walk found, and whether it stopped short of the end: a folder that couldn't
+/// be listed for want of memory, or past `steps_max` names.
+pub const Walked = struct { files: u32 = 0, cut_short: bool = false };
+
+/// Calls `each(context, path)` for every file under `root` whose name ends with `suffix`
+/// (ignoring case), as it's found. Hidden folders and the Kindle's ".sdr" sidecar
+/// folders are skipped. `alloc` holds only the folders on the way down and the names of
+/// those still to walk beside them, never the files.
+pub fn walk(
     alloc: std.mem.Allocator,
     root: []const u8,
     suffix: []const u8,
-) ![][:0]u8 {
+    context: anytype,
+    comptime each: fn (@TypeOf(context), [:0]const u8) void,
+) !Walked {
     assert(root.len > 0);
     assert(suffix.len > 0);
-    var out: std.ArrayList([:0]u8) = .empty;
-    errdefer {
-        for (out.items) |path| alloc.free(path);
-        out.deinit(alloc);
+    var walked: Walked = .{};
+    var stack: std.ArrayList(Frame) = .empty;
+    defer {
+        for (stack.items) |*frame| frame.free(alloc);
+        stack.deinit(alloc);
     }
-    try walk(alloc, root, suffix, &out);
-    return out.toOwnedSlice(alloc);
-}
-
-const Entry = struct { name: []const u8, is_dir: bool };
-const Collect = struct {
-    alloc: std.mem.Allocator,
-    list: *std.ArrayList(Entry),
-    failed: bool = false,
-};
-
-fn collect(context: *Collect, name: []const u8, is_dir: bool) void {
-    // What calls.each_entry passes on: never an empty name, "." or ".."
-    assert(name.len > 0);
-    assert(!std.mem.eql(u8, name, "."));
-    assert(!std.mem.eql(u8, name, ".."));
-    const copy = context.alloc.dupe(u8, name) catch {
-        context.failed = true;
-        return;
-    };
-    context.list.append(context.alloc, .{ .name = copy, .is_dir = is_dir }) catch {
-        context.failed = true;
-    };
-}
-
-/// A folder being walked: its path, its entries, and the next entry to look at.
-const Frame = struct {
-    path: [:0]u8,
-    entries: std.ArrayList(Entry) = .empty,
-    entry_next: u32 = 0,
-};
-
-/// Walks the folders under `root` depth first, in the order each folder lists them,
-/// with a stack of one frame per folder open, as deep as `depth_max`.
-fn walk(
-    alloc: std.mem.Allocator,
-    root: []const u8,
-    suffix: []const u8,
-    out: *std.ArrayList([:0]u8),
-) !void {
-    var stack: [depth_max + 1]Frame = undefined;
-    var stack_count: u32 = 0;
-    defer for (stack[0..stack_count]) |*frame| walk_frame_free(alloc, frame);
-    stack[0] = try walk_frame(alloc, root);
-    stack_count = 1;
+    try stack.append(alloc, try Frame.open(alloc, root, suffix, &walked, context, each));
     for (0..steps_max) |_| {
-        if (stack_count == 0) return;
-        assert(stack_count <= stack.len);
-        const top = &stack[stack_count - 1];
-        if (top.entry_next == top.entries.items.len) {
-            walk_frame_free(alloc, top);
-            stack_count -= 1;
+        const top = &stack.items[stack.items.len - 1];
+        if (top.folder_next == top.folders.items.len) {
+            top.free(alloc);
+            stack.items.len -= 1;
+            if (stack.items.len == 0) return walked;
             continue;
         }
-        assert(top.entry_next < top.entries.items.len);
-        const entry = top.entries.items[top.entry_next];
-        top.entry_next += 1;
-        if (entry.name[0] == '.') continue;
-        const full = try std.fmt.allocPrint(alloc, "{s}/{s}", .{ top.path, entry.name });
-        defer alloc.free(full);
-        if (entry.is_dir) {
-            // Its depth is the number of folders open above it
-            if (std.mem.endsWith(u8, entry.name, ".sdr")) continue;
-            if (stack_count > depth_max) continue;
-            stack[stack_count] = try walk_frame(alloc, full);
-            stack_count += 1;
-        } else if (std.ascii.endsWithIgnoreCase(entry.name, suffix)) {
-            try out.append(alloc, try alloc.dupeSentinel(u8, full, 0));
-        }
+        const name = top.folders.items[top.folder_next];
+        top.folder_next += 1;
+        var path_buffer: [path_bytes_max]u8 = undefined;
+        const path = std.fmt.bufPrint(&path_buffer, "{s}/{s}", .{ top.path, name }) catch
+            continue; // Longer than Linux opens: it can't hold a book either
+        assert(stack.items.len <= depth_max); // Each level adds to a path that fits
+        const frame = Frame.open(alloc, path, suffix, &walked, context, each) catch {
+            walked.cut_short = true;
+            continue;
+        };
+        stack.append(alloc, frame) catch {
+            var dropped = frame;
+            dropped.free(alloc);
+            walked.cut_short = true;
+        };
     }
-    return error.TooManyFiles;
+    walked.cut_short = true;
+    return walked;
 }
 
-/// Lists the folder at `dir`, for walking.
-fn walk_frame(alloc: std.mem.Allocator, dir: []const u8) !Frame {
-    assert(dir.len > 0);
-    var frame = Frame{ .path = try alloc.dupeSentinel(u8, dir, 0) };
-    var context = Collect{ .alloc = alloc, .list = &frame.entries };
-    sys.each_entry(frame.path, &context, collect);
-    if (context.failed) {
-        walk_frame_free(alloc, &frame);
-        return error.OutOfMemory;
+/// The paths of the files under `root` whose names end with `suffix`, in `alloc`.
+pub fn find_files(alloc: std.mem.Allocator, root: []const u8, suffix: []const u8) ![][:0]u8 {
+    assert(root.len > 0);
+    assert(suffix.len > 0);
+    var found: Found = .{ .alloc = alloc };
+    errdefer {
+        for (found.list.items) |path| alloc.free(path);
+        found.list.deinit(alloc);
     }
-    assert(frame.entry_next == 0);
-    return frame;
+    const walked = try walk(alloc, root, suffix, &found, Found.add);
+    if (found.failed) return error.OutOfMemory;
+    // What was found is listed; that it isn't everything is said
+    if (walked.cut_short) std.debug.print("walk: {s} only partly listed\n", .{root});
+    assert(found.list.items.len == walked.files);
+    return found.list.toOwnedSlice(alloc);
 }
 
-fn walk_frame_free(alloc: std.mem.Allocator, frame: *Frame) void {
-    assert(frame.entry_next <= frame.entries.items.len);
-    for (frame.entries.items) |entry| alloc.free(entry.name);
-    frame.entries.deinit(alloc);
-    alloc.free(frame.path);
+const Found = struct {
+    alloc: std.mem.Allocator,
+    list: std.ArrayList([:0]u8) = .empty,
+    failed: bool = false,
+
+    fn add(found: *Found, path: [:0]const u8) void {
+        assert(path.len > 0);
+        const copy = found.alloc.dupeSentinel(u8, path, 0) catch {
+            found.failed = true;
+            return;
+        };
+        found.list.append(found.alloc, copy) catch {
+            found.alloc.free(copy);
+            found.failed = true;
+            return;
+        };
+        assert(found.list.items.len > 0);
+    }
+};
+
+/// A folder being walked: its path, and the names of its folders still to walk. Its
+/// files were passed on as it was listed.
+const Frame = struct {
+    path: [:0]u8,
+    folders: std.ArrayList([]u8) = .empty,
+    folder_next: u32 = 0,
+
+    /// Lists the folder at `dir`, passing on its files and keeping its folders' names.
+    fn open(
+        alloc: std.mem.Allocator,
+        dir: []const u8,
+        suffix: []const u8,
+        walked: *Walked,
+        context: anytype,
+        comptime each: fn (@TypeOf(context), [:0]const u8) void,
+    ) !Frame {
+        assert(dir.len > 0);
+        assert(dir.len < path_bytes_max);
+        var frame = Frame{ .path = try alloc.dupeSentinel(u8, dir, 0) };
+        errdefer frame.free(alloc);
+        const Listing = struct {
+            alloc: std.mem.Allocator,
+            frame: *Frame,
+            suffix: []const u8,
+            walked: *Walked,
+            context: @TypeOf(context),
+            failed: bool = false,
+
+            fn entry(l: *@This(), name: []const u8, is_dir: bool) void {
+                assert(name.len > 0); // What calls.each_entry passes on: never "." or ".."
+                if (name[0] == '.') return;
+                if (is_dir) {
+                    if (std.mem.endsWith(u8, name, ".sdr")) return;
+                    const copy = l.alloc.dupe(u8, name) catch {
+                        l.failed = true;
+                        return;
+                    };
+                    l.frame.folders.append(l.alloc, copy) catch {
+                        l.alloc.free(copy);
+                        l.failed = true;
+                    };
+                    return;
+                }
+                if (!std.ascii.endsWithIgnoreCase(name, l.suffix)) return;
+                var path_buffer: [path_bytes_max]u8 = undefined;
+                const format = "{s}/{s}";
+                const path = std.fmt.bufPrintSentinel(&path_buffer, format, .{
+                    l.frame.path,
+                    name,
+                }, 0) catch return; // Longer than Linux opens
+                l.walked.files += 1;
+                each(l.context, path);
+            }
+        };
+        var listing: Listing = .{
+            .alloc = alloc,
+            .frame = &frame,
+            .suffix = suffix,
+            .walked = walked,
+            .context = context,
+        };
+        sys.each_entry(frame.path, &listing, Listing.entry);
+        if (listing.failed) return error.OutOfMemory;
+        assert(frame.folder_next == 0);
+        return frame;
+    }
+
+    fn free(frame: *Frame, alloc: std.mem.Allocator) void {
+        assert(frame.folder_next <= frame.folders.items.len);
+        for (frame.folders.items) |name| alloc.free(name);
+        frame.folders.deinit(alloc);
+        alloc.free(frame.path);
+    }
+};
+
+test "files are found however deep their folders are, past the six levels once walked" {
+    const linux = sys;
+    var root_buffer: [64]u8 = undefined;
+    const root = try std.fmt.bufPrintSentinel(&root_buffer, "/tmp/noface-dir-test-{d}", .{
+        linux.getpid(),
+    }, 0);
+    var path_buffer: [path_bytes_max]u8 = undefined;
+    @memcpy(path_buffer[0..root.len], root);
+    var len: u32 = @intCast(root.len);
+    path_buffer[len] = 0;
+    _ = linux.mkdir(path_buffer[0..len :0], 0o755); // Ignored: the walk below says
+    // Twenty folders deep, an EPUB at each level
+    for (0..20) |level| {
+        const name = try std.fmt.bufPrintSentinel(path_buffer[len..], "/b{d}.epub", .{level}, 0);
+        const rc = linux.open(path_buffer[0 .. len + name.len :0], .{
+            .ACCMODE = .WRONLY,
+            .CREAT = true,
+        }, 0o644);
+        try std.testing.expect(!@import("os.zig").failed(rc));
+        _ = linux.close(@intCast(rc));
+        const folder = try std.fmt.bufPrintSentinel(path_buffer[len..], "/d{d}", .{level}, 0);
+        len += @intCast(folder.len);
+        _ = linux.mkdir(path_buffer[0..len :0], 0o755);
+    }
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const found = try find_files(arena.allocator(), root, ".EPUB");
+    try std.testing.expectEqual(@as(usize, 20), found.len);
+    const argv = [_:null]?[*:0]const u8{ "/bin/rm", "-rf", root };
+    var out: [64]u8 = undefined;
+    _ = @import("process.zig").run(&argv, &out); // Ignored: only /tmp is left fuller
 }

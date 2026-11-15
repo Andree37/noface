@@ -4,7 +4,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const Page = @import("page.zig").Page;
 const truetype = @import("truetype.zig");
-const decoder_memory = @import("decoder_memory.zig");
+const glyph_cache = @import("glyph_cache.zig");
 
 /// The font file's first bytes: its version, which says what kind of font it is.
 const sfnt_version_truetype = 0x00010000;
@@ -35,23 +35,17 @@ fn is_combining(code_point: u32) bool {
     return code_point >= combining_first and code_point <= combining_last;
 }
 
-const Glyph = struct {
-    index: u32,
-    advance: f32,
-    width: i32,
-    height: i32,
-    x_offset: i32,
-    y_offset: i32,
-    pixels: ?[]u8,
-};
+const Glyph = glyph_cache.Drawn;
+const Metrics = glyph_cache.Metrics;
 
+/// A typeface at a size. Its glyphs are kept in the glyph cache (`glyph_cache.zig`),
+/// under its id, which every copy of it shares: a copy draws the same glyphs.
 pub const Font = struct {
     info: truetype.Info,
     scale: f32,
     ascent: i32,
     line_height: i32,
-    glyphs: std.AutoHashMapUnmanaged(u32, Glyph) = .empty,
-    alloc: std.mem.Allocator,
+    id: u32,
 
     /// Whether `ttf` is a font that can set text: it opens, and has letters. Any file
     /// can be named .ttf, so its table directory is checked first: every table inside
@@ -94,7 +88,7 @@ pub const Font = struct {
         return true;
     }
 
-    pub fn init(alloc: std.mem.Allocator, ttf: []const u8, px: f32, line_spacing: f32) !Font {
+    pub fn init(ttf: []const u8, px: f32, line_spacing: f32) !Font {
         // Sizes and spacings are noface's own, from its tables, never a book's
         assert(px > 0);
         assert(line_spacing >= 1);
@@ -109,53 +103,41 @@ pub const Font = struct {
             .scale = scale,
             .ascent = @intFromFloat(@as(f32, @floatFromInt(ascent)) * scale),
             .line_height = @intFromFloat(px * line_spacing),
-            .alloc = alloc,
+            .id = glyph_cache.new_font_id(),
         };
     }
 
-    fn glyph(f: *Font, code_point: u32) !Glyph {
+    fn reference(f: *const Font) glyph_cache.FontRef {
+        assert(f.id > 0);
+        assert(std.math.isFinite(f.scale));
+        return .{ .id = f.id, .info = &f.info, .scale = f.scale };
+    }
+
+    /// A character's glyph and advance, for measuring.
+    fn metrics(f: *const Font, cache: *glyph_cache.Cache, code_point: u32) Metrics {
         // Code points come from decoding UTF-8, which yields only these
         assert(code_point <= code_point_max);
-        if (f.glyphs.get(code_point)) |g| return g;
-        const index = truetype.glyph_index(&f.info, code_point);
-        const advance = truetype.horizontal_metrics(&f.info, index).advance;
-        // Kept as long as the font: glyphs are drawn once, from the decoders' budget.
-        // With no room left there, a glyph is drawn blank, as stb_truetype drew it.
-        const decoders = decoder_memory.allocator();
-        const bitmap = truetype.glyph_bitmap(&f.info, decoders, f.scale, index) catch
-            truetype.glyph_bitmap_box(&f.info, f.scale, index);
-        const g = Glyph{
-            .index = index,
-            .advance = @as(f32, @floatFromInt(advance)) * f.scale,
-            .width = bitmap.width,
-            .height = bitmap.height,
-            .x_offset = bitmap.x_offset,
-            .y_offset = bitmap.y_offset,
-            .pixels = bitmap.pixels,
-        };
-        // Paired with `blit`, which reads `width` times `height` pixels
-        if (g.pixels) |pixels| {
-            assert(pixels.len == @as(u64, @intCast(g.width)) * @as(u64, @intCast(g.height)));
-        }
-        try f.glyphs.put(f.alloc, code_point, g);
-        return g;
+        const m = cache.metrics(f.reference(), code_point);
+        assert(std.math.isFinite(m.advance));
+        return m;
     }
 
-    fn kern(f: *Font, a: *const Glyph, b: *const Glyph) f32 {
+    fn kern(f: *const Font, a: u32, b: u32) f32 {
         assert(std.math.isFinite(f.scale));
         assert(f.scale != 0);
-        const units = truetype.kern_advance(&f.info, a.index, b.index);
+        const units = truetype.kern_advance(&f.info, a, b);
         return @as(f32, @floatFromInt(units)) * f.scale;
     }
 
     pub fn measure(f: *Font, word: []const u8) !f32 {
+        const cache = try glyph_cache.get();
         var width: f32 = 0;
-        var previous: ?Glyph = null;
+        var previous: ?Metrics = null;
         var it = (std.unicode.Utf8View.init(word) catch return 0).iterator();
         while (it.nextCodepoint()) |code_point| {
             if (is_combining(code_point)) continue;
-            const g = try f.glyph(code_point);
-            if (previous) |p| width += f.kern(&p, &g);
+            const g = f.metrics(cache, code_point);
+            if (previous) |p| width += f.kern(p.index, g.index);
             width += g.advance;
             previous = g;
         }
@@ -168,8 +150,9 @@ pub const Font = struct {
     pub fn fit(f: *Font, word: []const u8, avail: f32) !u32 {
         // Words are pieces of a paragraph or of noface's own text, far under 4 GB
         assert(word.len <= std.math.maxInt(u32));
+        const cache = try glyph_cache.get();
         var width: f32 = 0;
-        var previous: ?Glyph = null;
+        var previous: ?Metrics = null;
         var last: u32 = 0;
         var it = (std.unicode.Utf8View.init(word) catch return @intCast(word.len)).iterator();
         while (it.nextCodepoint()) |code_point| {
@@ -177,8 +160,8 @@ pub const Font = struct {
                 last = @intCast(it.i);
                 continue;
             }
-            const g = try f.glyph(code_point);
-            if (previous) |p| width += f.kern(&p, &g);
+            const g = f.metrics(cache, code_point);
+            if (previous) |p| width += f.kern(p.index, g.index);
             width += g.advance;
             if (width > avail and last > 0) break;
             last = @intCast(it.i);
@@ -189,16 +172,21 @@ pub const Font = struct {
         return last;
     }
 
+    /// Draws `word` with its first letter's pen at `x_start`. Each glyph is drawn as
+    /// soon as the cache hands it over, before the cache is used again: what it hands
+    /// over is good until then.
     pub fn draw(f: *Font, page: Page, x_start: f32, baseline: i32, word: []const u8) !void {
         // Positions come from layout, which never makes one that isn't a number
         assert(std.math.isFinite(x_start));
         assert(page.holds_rows());
+        const cache = try glyph_cache.get();
         var x = x_start;
-        var previous: ?Glyph = null;
+        var previous: ?Metrics = null;
         var it = (std.unicode.Utf8View.init(word) catch return).iterator();
         var base_x = x;
         while (it.nextCodepoint()) |code_point| {
-            const g = try f.glyph(code_point);
+            assert(code_point <= code_point_max);
+            const g = cache.drawn(f.reference(), code_point);
             if (is_combining(code_point)) {
                 // Centred over the letter it belongs to.
                 const letter = if (previous) |p| p.advance else 0;
@@ -207,11 +195,11 @@ pub const Font = struct {
                 blit(page, &g, mark_x, baseline + g.y_offset);
                 continue;
             }
-            if (previous) |p| x += f.kern(&p, &g);
+            if (previous) |p| x += f.kern(p.index, g.index);
             blit(page, &g, @as(i32, @intFromFloat(x)) + g.x_offset, baseline + g.y_offset);
             base_x = x;
             x += g.advance;
-            previous = g;
+            previous = .{ .index = g.index, .advance = g.advance };
         }
     }
 };
@@ -222,7 +210,7 @@ fn blit(p: Page, g: *const Glyph, x: i32, y: i32) void {
     const source = g.pixels orelse return;
     // Checked once here, not per pixel: the rows clipped to the page lie in its buffer
     assert(p.holds_rows());
-    // Paired with `glyph`, which keeps `width` times `height` pixels
+    // Paired with the glyph cache, which hands over `width` times `height` pixels
     assert(source.len == @as(u64, @intCast(g.width)) * @as(u64, @intCast(g.height)));
     // In 64 bits, so a glyph placed far off the page can't overflow its edges
     const left: i64 = x;
@@ -346,13 +334,12 @@ test "a font with no height is turned down, not scaled by infinity" {
         const ascent = flat[offset + 4 ..][0..2].*;
         flat[offset + 6 ..][0..2].* = ascent;
     }
-    try std.testing.expectError(error.BadFont, Font.init(std.testing.allocator, &flat, 30, 1.2));
+    try std.testing.expectError(error.BadFont, Font.init(&flat, 30, 1.2));
 }
 
 test "words fit by whole characters, at least one" {
     const go = @embedFile("../testdata/fonts/Go-Regular.ttf");
-    var font = try Font.init(std.testing.allocator, go, 40, 1.2);
-    defer font.glyphs.deinit(std.testing.allocator);
+    var font = try Font.init(go, 40, 1.2);
     try std.testing.expectEqual(@as(u32, 1), try font.fit("wide", 0));
     try std.testing.expectEqual(@as(u32, 4), try font.fit("wide", 10_000));
     try std.testing.expectEqual(@as(u32, 0), try font.fit("", 10));

@@ -315,6 +315,7 @@ fn play_on(kindle: Kindle, steps: []const Step) !Outcome {
     // so a picture with no room there has none here
     const decoders_budget = try setup.decoders();
     decoder_memory.use(decoders_budget);
+    try setup.use_glyph_cache();
     defer decoder_memory.use_default();
 
     const kept = try play_on_kept(alloc, dir);
@@ -412,7 +413,7 @@ const Kept = struct { kit: *setup.Kit, files: *setup.DataFiles };
 fn play_on_kept(alloc: std.mem.Allocator, dir: [:0]const u8) !Kept {
     assert(dir.len > 0);
     const kit = try alloc.create(setup.Kit);
-    kit.* = try setup.Kit.init(alloc, .{
+    kit.* = try setup.Kit.init(.{
         .book = go_regular,
         .book_bold = go_bold,
         .ui = go_regular,

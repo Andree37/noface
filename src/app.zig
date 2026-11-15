@@ -219,7 +219,7 @@ pub const App = struct {
             if (file_slot.* == null) {
                 file_slot.* = file.map(fonts_db.path(@intCast(i), false, false)) catch continue;
             }
-            a.family_samples[i] = Font.init(a.alloc, file_slot.*.?, 36, 1.2) catch continue;
+            a.family_samples[i] = Font.init(file_slot.*.?, 36, 1.2) catch continue;
             a.family_sample_ptrs[i] = &a.family_samples[i].?;
         }
         return a.family_sample_ptrs[0..families_count];
@@ -241,7 +241,7 @@ pub const App = struct {
         const scale = book_model.size_scales[size];
         const slot = &a.face_fonts[a.settings.font][which][a.settings.size][size];
         if (slot.* == null) {
-            slot.* = try Font.init(a.alloc, file_slot.*.?, a.settings.px() * scale, 1);
+            slot.* = try Font.init(file_slot.*.?, a.settings.px() * scale, 1);
         }
         // Spacing can change without the font changing, so set it every time.
         const line_height_px: f32 = @floatFromInt(a.settings.line_height());

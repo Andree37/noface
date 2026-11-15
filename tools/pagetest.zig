@@ -90,8 +90,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
     const size = screen.pixels.len;
 
     // 10pt at the panel's 300 ppi is about 42 px.
-    var font = try Font.init(allocator, font_file, 46, 1.35);
-    var label_font = try Font.init(allocator, font_file, 30, 1.2);
+    var font = try Font.init(font_file, 46, 1.35);
+    var label_font = try Font.init(font_file, 30, 1.2);
     const layout = text.Layout{
         .margin_x = 100,
         .margin_top = 90,

@@ -75,6 +75,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     // In the region the Kindle has, so a picture with no room there has none here
     const decoders_budget = try setup.decoders();
     decoder_memory.use(decoders_budget);
+    try setup.use_glyph_cache();
     const a_alloc = app_budget.allocator();
 
     var screen = try hwtcon.Screen.fake(a_alloc, width_px, height_px);
@@ -91,7 +92,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         .remote = pipe[0],
     };
 
-    var kit = try setup.Kit.init(a_alloc, .{
+    var kit = try setup.Kit.init(.{
         .book = go_regular,
         .book_bold = go_bold,
         .ui = go_regular,

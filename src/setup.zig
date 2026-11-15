@@ -15,6 +15,7 @@ const style = @import("ui/style.zig");
 const text = @import("layout/text.zig");
 const books = @import("screens/books.zig");
 const image = @import("gfx/image.zig");
+const glyph_cache = @import("gfx/glyph_cache.zig");
 
 /// What each memory region reserves, taken once at startup (`memory.Region`). Pages
 /// come in as they're first touched, so a region costs what's used, not its size.
@@ -25,7 +26,14 @@ pub const region_bytes = struct {
     /// eight pictures and hyphenation: 16 to 24 MB measured, so 64 leaves room for
     /// glyphs of many sizes and a full picture cache.
     pub const app: u32 = 64 << 20;
-    /// Glyph bitmaps and pictures being decoded: 15 MB for a large cover, but kept at
+    /// The glyph cache: its table and its log of bitmaps (`glyph_cache.Config`), at
+    /// most 16 MB however many glyphs, fonts and sizes are drawn.
+    pub const glyphs: u32 =
+        std.mem.alignForward(u32, glyph_cache.Config.default.bytes(), memory.unit_bytes);
+    /// Where a glyph is drawn before it's kept: its outline, the lines its curves are
+    /// cut into, and its bitmap. Emptied before each glyph.
+    pub const glyph_scratch: u32 = glyph_cache.scratch_bytes;
+    /// Pictures being decoded: 15 MB for a large cover, but kept at
     /// the 128 MB the stb C libraries had, so every picture they decoded still decodes.
     /// The Zig decoders need less for any picture than stb did (no copy of the picture
     /// data beside the pixels, only the samples the gray is made of), and a block takes
@@ -63,8 +71,11 @@ comptime {
     // Every region fits in the ~480 MB a Kindle has free beside Amazon's services
     const b = region_bytes;
     const reading_bytes = b.library + b.library_scratch + b.book + b.scratch;
-    assert(b.app + b.decoders + reading_bytes < 480 << 20);
+    const glyphs_bytes = b.glyphs + b.glyph_scratch;
+    assert(b.app + b.decoders + glyphs_bytes + reading_bytes < 480 << 20);
     // Regions are whole units
+    assert(b.glyphs % memory.unit_bytes == 0);
+    assert(b.glyph_scratch % memory.unit_bytes == 0);
     assert(b.library % memory.unit_bytes == 0);
     assert(b.library_scratch % memory.unit_bytes == 0);
     // A book's region holds the largest book measured, with room to spare
@@ -134,6 +145,25 @@ pub fn decoders() !*memory.Budget {
     return &decoders_budget;
 }
 
+/// The glyph cache and its regions, made by the first call and kept for good, as the
+/// decoders' are: the Kindle, the simulator and the scenario tests draw through the
+/// same one.
+var glyphs: glyph_cache.Reserved = undefined;
+var glyphs_reserved = false;
+
+/// Gives every font the glyph cache, reserved by the first call: before any text is
+/// measured or drawn.
+pub fn use_glyph_cache() !void {
+    if (!glyphs_reserved) {
+        try glyphs.reserve(.default, region_bytes.glyphs, region_bytes.glyph_scratch);
+        glyphs_reserved = true;
+    }
+    // The cache took its table and cells once, and nothing since
+    assert(glyphs.budgets[0].live <= region_bytes.glyphs);
+    assert(glyphs.cache.scratch == &glyphs.budgets[1]);
+    glyph_cache.use(&glyphs.cache);
+}
+
 /// The font files the interface and a book's fallback text are drawn with.
 pub const FontFiles = struct {
     book: []const u8, // The book's regular face, for text with no typeface of its own
@@ -154,17 +184,17 @@ pub const Kit = struct {
     hero: Font,
     cover_type: Font,
 
-    pub fn init(alloc: std.mem.Allocator, files: FontFiles) !Kit {
+    pub fn init(files: FontFiles) !Kit {
         const kit: Kit = .{
-            .body = try Font.init(alloc, files.book, 46, 1.35),
-            .note_font = try Font.init(alloc, files.book, 36, 1.3),
-            .footer = try Font.init(alloc, files.ui, 28, 1.2),
-            .reference = try Font.init(alloc, files.book, 28, 1.2),
-            .title = try Font.init(alloc, files.ui_bold, 34, 1.2),
-            .small = try Font.init(alloc, files.ui, 34, 1.2),
-            .caption = try Font.init(alloc, files.ui, 26, 1.2),
-            .hero = try Font.init(alloc, files.book_bold, 56, 1.2),
-            .cover_type = try Font.init(alloc, files.book_bold, 36, 1.2),
+            .body = try Font.init(files.book, 46, 1.35),
+            .note_font = try Font.init(files.book, 36, 1.3),
+            .footer = try Font.init(files.ui, 28, 1.2),
+            .reference = try Font.init(files.book, 28, 1.2),
+            .title = try Font.init(files.ui_bold, 34, 1.2),
+            .small = try Font.init(files.ui, 34, 1.2),
+            .caption = try Font.init(files.ui, 26, 1.2),
+            .hero = try Font.init(files.book_bold, 56, 1.2),
+            .cover_type = try Font.init(files.book_bold, 36, 1.2),
         };
         // Line heights come from the sizes above: a note sets smaller than the page,
         // and the footer smaller still

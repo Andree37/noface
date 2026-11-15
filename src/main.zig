@@ -45,7 +45,7 @@ pub const panic = std.debug.FullPanic(struct {
 fn sets_text(data: []const u8) bool {
     if (!Font.usable(data)) return false;
     assert(Font.tables_inside(data)); // Checked by usable, before opening it
-    var font = Font.init(std.heap.page_allocator, data, 30, 1.2) catch return false;
+    var font = Font.init(data, 30, 1.2) catch return false;
     assert(font.line_height > 0); // Set from the size asked for
     _ = font.measure("Aa Bb Gg Qq yj 0123 .,;!?") catch return false;
     return true;
@@ -86,6 +86,7 @@ fn main_reader(init: std.process.Init.Minimal) !void {
     const alloc = app_budget.allocator();
     const decoders_budget = try setup.decoders();
     decoder_memory.use(decoders_budget);
+    try setup.use_glyph_cache();
 
     const state_dir = std.mem.sliceTo(argv[6], 0);
 
@@ -96,7 +97,7 @@ fn main_reader(init: std.process.Init.Minimal) !void {
         _ = doctor.report(2);
         return err;
     };
-    var kit = try setup.Kit.init(alloc, font_files);
+    var kit = try setup.Kit.init(font_files);
 
     var input = try input_mod.open(screen.width, screen.height);
     defer input_mod.release(&input);

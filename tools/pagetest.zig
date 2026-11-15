@@ -83,6 +83,9 @@ pub fn main(init: std.process.Init.Minimal) !void {
     if (argv.len != 3) return error.Usage;
 
     const allocator = std.heap.page_allocator;
+    // A tool takes its memory from the system as it goes: its decoders too
+    var decoders = core.memory.Budget{ .name = "decoders", .child = allocator, .limit = 256 << 20 };
+    core.decoder_memory.use(&decoders);
     const book = try kfx.parse(allocator, try file.map(argv[1]));
     const font_file = try file.map(argv[2]);
 

@@ -23,6 +23,7 @@ const library_ui = @import("ui/library.zig");
 const card = @import("ui/card.zig");
 const style = @import("ui/style.zig");
 const toolbar = @import("ui/toolbar.zig");
+const aa = @import("ui/aa.zig");
 const dictionary = @import("model/dictionary.zig");
 const FakeKindle = @import("testing/fake_kindle.zig").FakeKindle;
 const wifi_saver = @import("kindle/wifi_saver.zig");
@@ -123,6 +124,9 @@ const Outcome = struct {
     finished: [2]bool, // Whether they were marked finished
     highlights: u32, // Highlights and bookmarks saved for the book
     bookmarks: u32,
+    // The most of the book's region, and of the pages', in use at once
+    book_peak: u64,
+    pages_peak: u64,
 };
 
 /// The most books a scenario puts in the documents folder.
@@ -275,26 +279,29 @@ fn play(steps: []const Step) !Outcome {
 }
 
 /// Opens the scenario book in a fresh app on a pretend Kindle, plays `steps`, and
-/// returns what was saved and what the Kindle was asked to do.
+/// returns what was saved and what the Kindle was asked to do. The app's memory is
+/// reserved and sealed as on the Kindle, so one asked of the system as it runs fails
+/// the scenario; the harness's own (the pretend Kindle, the folder) is apart from it.
 fn play_on(kindle: Kindle, steps: []const Step) !Outcome {
     assert(kindle.books.len > 0);
     assert(kindle.books.len <= books_max);
     if (kindle.read_before) |i| assert(i < kindle.books.len);
-    const budget_limit = 256 << 20;
-    var budget = memory.Budget{
-        .name = "scenario",
-        .child = std.heap.smp_allocator,
-        .limit = budget_limit,
-    };
-    var arena = std.heap.ArenaAllocator.init(budget.allocator());
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    var harness_arena = std.heap.ArenaAllocator.init(std.heap.smp_allocator);
+    defer harness_arena.deinit();
+    const harness = harness_arena.allocator();
+    const app_budget = try app_memory();
+    var app_arena = std.heap.ArenaAllocator.init(app_budget.allocator());
+    defer {
+        app_arena.deinit();
+        assert(app_budget.live == 0); // The next scenario's app starts with all of it
+    }
+    const alloc = app_arena.allocator();
 
     var dir_buf: [96]u8 = undefined;
     const dir = try play_on_dir(&dir_buf);
     defer clean_up(dir);
     var book_paths: [books_max][:0]const u8 = undefined;
-    try play_on_folder(alloc, kindle, dir, &book_paths);
+    try play_on_folder(harness, kindle, dir, &book_paths);
     var library_buf: [128]u8 = undefined;
     const library_path = try std.fmt.bufPrintSentinel(&library_buf, "{s}/library.tsv", .{dir}, 0);
 
@@ -303,24 +310,24 @@ fn play_on(kindle: Kindle, steps: []const Step) !Outcome {
 
     // Nothing reaches the real Kindle: its tools are answered by a pretend one, and
     // the Wi-Fi saver's note goes in this folder
-    var fake = try play_on_fake(alloc, kindle);
+    var fake = try play_on_fake(harness, kindle);
     fake.install();
     defer fake.release();
     wifi_saver.use_data_dir(dir);
     defer wifi_saver.use_data_dir(paths.data_dir);
 
-    const devices = try play_on_devices(alloc, steps);
+    const devices = try play_on_devices(harness, steps);
 
     // Before any font: the decoders allocate through it, in the region the Kindle has,
     // so a picture with no room there has none here
     const decoders_budget = try setup.decoders();
     decoder_memory.use(decoders_budget);
-    defer decoder_memory.use_default();
+    defer decoder_memory.stop_using(decoders_budget);
 
     const kept = try play_on_kept(alloc, dir);
     var a = try setup.assemble(.{
         .alloc = alloc,
-        .app_budget = &budget,
+        .app_budget = app_budget,
         .decoders_budget = decoders_budget,
         .screen = devices.screen,
         .input = devices.input,
@@ -330,14 +337,50 @@ fn play_on(kindle: Kindle, steps: []const Step) !Outcome {
         .library_path = library_path,
     });
     try play_on_start(&a, kindle, dir, &book_paths);
-    const ms = try play_on_run(&a, kindle, book_paths[0]);
+    const ms = try play_on_sealed(&a, kindle, book_paths[0]);
     assert(devices.script.ended); // Every step was played
     return play_on_outcome(&a, kindle, &book_paths, .{
-        .alloc = alloc,
+        .alloc = harness,
         .fake = &fake,
         .last_screen = devices.last_screen,
         .ms = ms,
     });
+}
+
+/// The app's region in the scenarios, reserved by the first and kept for good. Twice
+/// the Kindle's, the most a heap region holds: each scenario's app takes its memory
+/// through an arena, emptied whole when it ends, and an arena keeps what's freed.
+var app_region: memory.Region = undefined;
+var app_budget_kept: memory.Budget = undefined;
+var app_reserved = false;
+
+comptime {
+    assert(2 * setup.region_bytes.app <= 128 << 20); // What a heap region holds at most
+}
+
+fn app_memory() !*memory.Budget {
+    if (!app_reserved) {
+        const size = 2 * setup.region_bytes.app;
+        app_region = try .reserve("app", .heap, size);
+        app_budget_kept = .{ .name = "app", .region = &app_region, .limit = size };
+        app_reserved = true;
+    }
+    assert(app_budget_kept.region == &app_region);
+    assert(app_budget_kept.live == 0); // The last scenario's app gave all of it back
+    return &app_budget_kept;
+}
+
+/// Plays the script with memory sealed, as the Kindle runs: any memory asked of the
+/// system from here on fails the scenario.
+fn play_on_sealed(a: *app.App, kindle: Kindle, book_path: [:0]const u8) !u64 {
+    assert(!memory.sealed);
+    assert(a.app_budget.region != null); // The app's memory comes from a region
+    const late_before = memory.late_requests;
+    memory.seal();
+    defer memory.sealed = false;
+    const ms = try play_on_run(a, kindle, book_path);
+    try expect(memory.late_requests == late_before, "memory was asked of the system after startup");
+    return ms;
 }
 
 /// A new folder for a scenario under /tmp, named for this process and run.
@@ -473,7 +516,10 @@ fn play_on_start(
     assert(a.screen.width == width);
     assert(a.screen.height == height);
     a.documents = dir;
-    // Each run starts as a new reader: nothing read before, every setting as shipped
+    // Each run starts as a new reader: nothing read before, every setting as shipped,
+    // and the regions' peaks its own
+    a.book_region.end_peak = 0;
+    a.pages_budget.peak = 0;
     a.settings = .{};
     a.speed = .{};
     a.journal = .{};
@@ -581,6 +627,8 @@ fn play_on_outcome(
         .offers_dictionary = a.settings.offer_dictionary,
         .highlights = count_notes(state_path, "highlight"),
         .bookmarks = count_notes(state_path, "bookmark"),
+        .book_peak = a.book_region.end_peak,
+        .pages_peak = a.pages_budget.peak,
         .updates = a.screen.updates,
         .airplane_asked_on = ran.fake.was_set(wifi_key ++ " 0"),
         .airplane_at_end = std.mem.eql(u8, ran.fake.get(wifi_key), "0"),
@@ -865,6 +913,24 @@ const scenarios = [_]Scenario{
                 });
                 try expect(r.finished[0], "the first wasn't marked finished");
                 try expect(r.opened[1], "the next one didn't open");
+            }
+        }.run,
+    },
+    .{
+        .name = "changing the text size again and again takes no more memory",
+        .run = struct {
+            fn run() !void {
+                const sheet = [_]Step{ top, tap(696, toolbar_button_y) };
+                // The slider's smallest step, then its largest, each a tap and a lift
+                const change = [_]Step{
+                    tap(100, aa.size_row.top + 90),  lift,
+                    tap(1172, aa.size_row.top + 90), lift,
+                };
+                const twice = try play(&(sheet ++ change));
+                const often = try play(&(sheet ++ change ++ change ++ change ++ change));
+                try expect(often.book_peak == twice.book_peak, "the book's memory grew");
+                try expect(twice.pages_peak > 0, "the pages weren't laid out again");
+                try expect(often.pages_peak <= twice.pages_peak, "the pages' memory grew");
             }
         }.run,
     },

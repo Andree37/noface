@@ -51,8 +51,7 @@ pub fn write(
     assert((s.notes_path.len > 0) == entry.is_epub());
     if (annotation_db.dry_run()) return true;
     if (s.notes_path.len > 0) {
-        const allocator = std.heap.smp_allocator;
-        return local_notes.put(allocator, s.notes_path, kind, id, start.short, end.short);
+        return local_notes.put(s.notes_path, kind, id, start.short, end.short);
     }
     if (!safe.safe_id(entry.key) or !safe.safe_id(entry.kind)) return false;
     if (!safe.safe_id(id) or !safe.safe_guid(entry.guid)) return false;
@@ -80,7 +79,7 @@ pub fn delete(
 ) bool {
     assert((s.notes_path.len > 0) == entry.is_epub());
     if (annotation_db.dry_run()) return true;
-    if (s.notes_path.len > 0) return local_notes.remove(std.heap.smp_allocator, s.notes_path, id);
+    if (s.notes_path.len > 0) return local_notes.remove(s.notes_path, id);
     if (!safe.safe_id(id) or !safe.safe_id(entry.key)) return false;
     var buffer: [900]u8 = undefined;
     const now_ms = os.unix_time() * 1000;

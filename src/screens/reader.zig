@@ -139,8 +139,10 @@ pub fn read_book(a: *app.App, entry: *catalog.Entry) !Outcome {
         // Emptied for the next book, the pages touched handed back
         scratch_budget.reset(.give_back);
         book_budget.reset(.give_back);
+        a.pages_budget.reset(.give_back); // The pages of layouts after settings changes
         assert(a.book_region.empty());
         book_budget.report();
+        a.pages_budget.report();
         scratch_budget.report();
         a.library_budget.report();
         a.app_budget.report();
@@ -760,7 +762,7 @@ const Reader = struct {
                 try r.draw_toolbar(true);
             },
             .scrub => try controls.drag_scrub(a, s, r.entry.title, r.sheet_open, t.x),
-            .sheet => try controls.tap_sheet(a, r.alloc, s, r.entry.title, t.x, t.y),
+            .sheet => try controls.tap_sheet(a, s, r.entry.title, t.x, t.y),
         }
         return null;
     }

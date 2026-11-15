@@ -351,6 +351,16 @@ test "a font with no height is turned down, not scaled by infinity" {
 
 test "words fit by whole characters, at least one" {
     const go = @embedFile("../testdata/fonts/Go-Regular.ttf");
+    // The glyphs' bitmaps are kept as long as the font, so the arena takes them back
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var decoders = @import("../base/memory.zig").Budget{
+        .name = "decoders",
+        .child = arena.allocator(),
+        .limit = 16 << 20,
+    };
+    decoder_memory.use(&decoders);
+    defer decoder_memory.stop_using(&decoders);
     var font = try Font.init(std.testing.allocator, go, 40, 1.2);
     defer font.glyphs.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u32, 1), try font.fit("wide", 0));

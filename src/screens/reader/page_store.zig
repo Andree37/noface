@@ -47,9 +47,11 @@ const layout_sources = [_][]const u8{
 };
 
 /// Files the layout sources import that don't move a break: checks, the pixels a page
-/// is drawn into, the font decoder's memory, and the library's series numbers.
+/// is drawn into, the font decoder's memory and the budgets it's counted by, and the
+/// library's series numbers.
 const not_layout = [_][]const u8{
     "base/check.zig",
+    "base/memory.zig",
     "gfx/page.zig",
     "gfx/decoder_memory.zig",
     "model/catalog.zig",

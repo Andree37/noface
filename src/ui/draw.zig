@@ -214,7 +214,7 @@ test "a line keeps a word that fits just before the space that overflows" {
     defer arena.deinit(); // Fonts are kept for the app's life, so nothing frees them
     var budget = memory.Budget{ .name = "test", .child = arena.allocator(), .limit = 16 << 20 };
     decoder_memory.use(&budget);
-    defer decoder_memory.use_default();
+    defer decoder_memory.stop_using(&budget);
     const go_regular = @embedFile("../testdata/fonts/Go-Regular.ttf");
     var font = try Font.init(arena.allocator(), go_regular, 40, 1.2);
     const s = "abc def ghi";

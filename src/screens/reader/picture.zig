@@ -19,6 +19,9 @@ const os = @import("../../sys/os.zig");
 
 /// Bigger than this and it isn't worth the memory: a page-sized scan is ~5M.
 const pixels_max = 24 * 1000 * 1000;
+/// The most the viewer takes of the book's region: the page underneath, and the
+/// largest picture's grays with room to spare.
+const viewer_bytes_max = 64 << 20;
 /// Zoom steps after fitting the screen: twice, then four times as close.
 const steps = [_]f32{ 1, 2, 4 };
 /// The close button, top right, a fingertip across.
@@ -34,6 +37,8 @@ const double_tap_reach = 120;
 comptime {
     // A picture worth decoding fits a 32-bit size, as the Kindle's usize is
     assert(pixels_max <= std.math.maxInt(u32));
+    // The page underneath and the largest picture fit what the viewer may take
+    assert(style.screen_width * style.screen_height + pixels_max < viewer_bytes_max);
     // The first step is the fit itself, and each one after comes closer
     assert(steps[0] == 1);
     for (steps[1..], steps[0 .. steps.len - 1]) |step, previous| assert(step > previous);
@@ -307,19 +312,28 @@ const Viewer = struct {
 };
 
 /// Shows the picture until it's closed, then puts the page back as it was.
+/// The page underneath and the picture's grays sit on top of the open book's memory,
+/// in its region, and are let go of as the viewer closes: nothing else takes from that
+/// region while the viewer is open, so what it took is the last there.
 pub fn show(a: *app.App, img: book_model.Image) !void {
+    assert(a.book_region.kind == .bump);
+    assert(!a.book_region.empty()); // The book the picture is in is open
     var budget = memory.Budget{
         .name = "picture",
-        .child = std.heap.smp_allocator,
-        .limit = 64 << 20,
+        .region = a.book_region,
+        .limit = viewer_bytes_max,
     };
-    var arena = std.heap.ArenaAllocator.init(budget.allocator());
+    const book_end = a.book_region.end;
+    const start = budget.mark();
     defer {
-        arena.deinit();
         budget.report();
+        budget.rewind(start);
+        a.book_region.give_back_past_end();
+        assert(a.book_region.end == book_end); // The book's memory as it was
     }
-    const saved = try arena.allocator().dupe(u8, a.screen.pixels);
-    const picture = decode(arena.allocator(), img) orelse {
+    const alloc = budget.allocator();
+    const saved = try alloc.dupe(u8, a.screen.pixels);
+    const picture = decode(alloc, img) orelse {
         try app.show_notice(a, "This picture can't be shown larger.");
         // The notice was drawn over the page: put the page back
         try a.present(saved, .page);

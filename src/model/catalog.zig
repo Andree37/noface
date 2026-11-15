@@ -115,6 +115,12 @@ comptime {
     assert(order.next() == .recent);
 }
 
+/// Whether `a` sorts before `b` in `order`, their series times set (`sort` sets them).
+// Assertions: another name for `before`, whose comparisons assert what they rely on.
+pub fn before_in(order: Order, a: Entry, b: Entry) bool {
+    return before(order, a, b);
+}
+
 fn before(order: Order, a: Entry, b: Entry) bool {
     // A series stays together, downloaded or not
     if (order == .series) return by_series(a, b);
@@ -152,7 +158,7 @@ fn by_series(a: Entry, b: Entry) bool {
 
 /// A book's place in its series, for comparing: one that isn't a number (an EPUB can
 /// say "nan") goes after every numbered place, so sorting is a strict weak order.
-fn series_place(e: Entry) f32 {
+pub fn series_place(e: Entry) f32 {
     const place = if (std.math.isNan(e.series_index)) std.math.inf(f32) else e.series_index;
     assert(!std.math.isNan(place));
     if (!std.math.isNan(e.series_index)) assert(place == e.series_index);
@@ -177,7 +183,7 @@ pub fn next_in_series(entries: []const Entry, e: *const Entry) ?u32 {
 
 /// Where a book stands, for sorting by progress: under way first, then not started,
 /// then finished.
-fn stage(e: Entry) u2 {
+pub fn stage(e: Entry) u2 {
     if (e.in_progress()) {
         assert(!e.is_read()); // Under way and finished are told apart
         return 0;
@@ -199,7 +205,7 @@ fn by_progress(a: Entry, b: Entry) bool {
 
 /// What a book sorts under alphabetically: its series, so a series stays together,
 /// or else its title.
-fn title_key(e: Entry) []const u8 {
+pub fn title_key(e: Entry) []const u8 {
     const key = if (e.series.len > 0) without_the(e.series) else e.title;
     // A series' name sorts without its "The", and never as nothing
     if (e.series.len > 0) assert(key.len > 0);
@@ -342,7 +348,7 @@ pub fn same_series(a: []const u8, b: []const u8) bool {
     return a.len > 0 and std.ascii.eqlIgnoreCase(without_the(a), without_the(b));
 }
 
-fn without_the(name: []const u8) []const u8 {
+pub fn without_the(name: []const u8) []const u8 {
     const has_the = name.len > 4 and std.ascii.eqlIgnoreCase(name[0..4], "the ");
     const bare = if (has_the) name[4..] else name;
     assert(bare.len > 0 or name.len == 0);
@@ -418,7 +424,7 @@ fn series_last_set(entries: []Entry) void {
 }
 
 /// The name a series is grouped under: without its "The", ignoring case.
-fn series_key(e: Entry) []const u8 {
+pub fn series_key(e: Entry) []const u8 {
     const key = without_the(e.series);
     assert(key.len <= e.series.len);
     if (e.series.len > 0) assert(key.len > 0);
@@ -484,7 +490,7 @@ pub fn select(
 }
 
 /// Whether a book's title, author or series has `query` in it.
-fn matches_query(e: Entry, query: []const u8) bool {
+pub fn matches_query(e: Entry, query: []const u8) bool {
     assert(query.len > 0);
     return search.contains(e.title, query) or search.contains(e.author, query) or
         search.contains(e.series, query);

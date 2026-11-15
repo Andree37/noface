@@ -13,7 +13,7 @@ const assert = std.debug.assert;
 const files = @import("files.zig");
 
 /// The longest key an item may have.
-pub const key_bytes_max: u32 = 1024;
+pub const key_bytes_max: u32 = 1536;
 /// Bytes an item takes in the buffer and in a run: its key's length, its key, its value.
 const item_overhead_bytes: u32 = 2 + 8;
 /// The most runs one sort may write, merges included. A run holds a buffer's worth, so

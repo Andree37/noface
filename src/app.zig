@@ -77,8 +77,10 @@ pub const App = struct {
     app_budget: *memory.Budget,
     decoders_budget: *memory.Budget,
     // Reserved at startup, like the app's: the library's list and covers (a budget
-    // that outlives each list), the open book's memory, and one action's
+    // that outlives each list), what each EPUB is read for while the library is found,
+    // the open book's memory, and one action's
     library_budget: *memory.Budget,
+    library_scratch_region: *memory.Region,
     book_region: *memory.Region,
     scratch_region: *memory.Region,
     screen: *hwtcon.Screen,

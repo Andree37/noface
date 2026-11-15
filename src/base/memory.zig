@@ -423,6 +423,27 @@ pub const Budget = struct {
         assert(region.empty());
     }
 
+    /// Where a budget on a bump region has got to, for `rewind`.
+    pub const Mark = struct { end: u32, live: u64 };
+
+    pub fn mark(budget: *const Budget) Mark {
+        const region = budget.region.?;
+        assert(region.kind == .bump);
+        assert(budget.live <= region.end); // What's live lies before the end
+        return .{ .end = region.end, .live = budget.live };
+    }
+
+    /// Forgets what the budget handed out since `at`, as `reset` forgets all of it:
+    /// for a loop that needs memory for each turn, on top of what it keeps throughout.
+    pub fn rewind(budget: *Budget, at: Mark) void {
+        const region = budget.region.?;
+        assert(region.kind == .bump);
+        assert(at.end <= region.end); // Marked before what's handed out since
+        assert(at.live <= budget.live);
+        region.end = at.end;
+        budget.live = at.live;
+    }
+
     /// The system's allocator, for a budget without a region: never after `seal`. One
     /// asked for after it is a bug, a crash in a debug build; elsewhere it's counted,
     /// and named in the log the first time, so the budget can be given a region.
@@ -662,6 +683,16 @@ test "a bump region is an arena: in turn, the last given back, all emptied at on
     b.reset(.keep);
     try std.testing.expect(region.empty());
     try std.testing.expectEqual(@as(u64, 0), b.live);
+    // A loop's memory for each turn, on top of what it keeps throughout
+    const kept = try a.alloc(u8, 1000);
+    const each_turn = b.mark();
+    for (0..10) |_| {
+        b.rewind(each_turn);
+        _ = try a.alloc(u8, 100_000);
+    }
+    try std.testing.expectEqual(@as(u64, 1000 + 100_000), b.live);
+    try std.testing.expectEqual(@as(u32, 1000 + 100_000), region.end);
+    try std.testing.expect(kept.ptr == region.bytes.ptr); // Kept where it was put
     _ = try a.alloc(u8, 1 << 20);
     b.reset(.give_back);
     try std.testing.expectEqual(@as(u32, 0), region.touched);

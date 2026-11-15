@@ -515,7 +515,7 @@ pub fn run_root(a: *app.App, root: anytype) !Ending(@TypeOf(root.*).Result) {
     }
     var ending: ?Ending(R) = null;
     var stack = Stack{ .input = a.input };
-    try stack.push(a, open(root, &ending));
+    try stack.settle(a, .{ .push = open(root, &ending) });
     stack.shown_us = os.now_us();
     // Unbounded: noface's event loop, which runs for as long as the reader reads
     while (true) {

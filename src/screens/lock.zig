@@ -39,10 +39,6 @@ comptime {
     assert(title_lines_max > 0);
 }
 
-/// How a lock ended: the Kindle woke, or noface is leaving (plugged into a computer,
-/// or told to stop), with the screen left as it is for whatever comes next.
-pub const Woke = enum { woke, leaving };
-
 /// `restore` puts the screen from before back on waking; a caller that redraws
 /// everything anyway passes false, saving a whole-screen refresh.
 pub const Options = struct { restore: bool = true };
@@ -60,7 +56,7 @@ pub fn make(a: *app.App, entry: ?*const catalog.Entry, options: Options) Lock {
 }
 
 pub const Lock = struct {
-    pub const Result = void; // Woke
+    pub const Result = void; // Done when the Kindle wakes
     /// Another lock while asleep changes nothing.
     pub const takes = screen.Takes{ .lock = true };
     a: *app.App,
@@ -145,37 +141,6 @@ pub const Lock = struct {
         return .stay; // A touch while asleep does nothing
     }
 };
-
-/// Shows the book's cover while the Kindle sleeps, then puts the screen back: the lock
-/// screen for a book, which waits in a loop of its own.
-pub fn lock_screen(a: *app.App, entry: ?*const catalog.Entry, options: Options) Woke {
-    var l = make(a, entry, options);
-    l.show();
-    const was = a.input.enter(a.input.modes(), lock_redraw_us);
-    defer a.input.leave(was);
-    a.input.locked = true;
-    defer a.input.locked = false;
-    // Unbounded: the Kindle sleeps for as long as the reader leaves it
-    while (true) {
-        const action = a.input.next();
-        switch (action) {
-            .tick => {
-                l.repaint();
-                if (l.redraws == lock_redraws) a.input.tick_us = 0;
-            },
-            .unlock => break,
-            .computer, .stop => {
-                // Leaving: no point lighting up the old screen first
-                a.input.hold_back(action);
-                return .leaving;
-            },
-            else => {},
-        }
-    }
-    assert(a.input.locked);
-    l.wake();
-    return .woke;
-}
 
 /// Draws what the lock screen shows into `a.lock_cover`, unless it's there already:
 /// the reader's own picture, if they chose it and it's there; else the book's cover.

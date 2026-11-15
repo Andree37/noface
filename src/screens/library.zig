@@ -209,9 +209,12 @@ const Browser = struct {
     sheet_ending: ?screen.Ending(actions.Change) = null,
     offer: actions.UpNext = .{}, // While `over` is .up_next
     offered: ?*catalog.Entry = null, // The book it offers
+    book: reader.Reader = undefined, // While `over` is .book
+    book_ending: ?screen.Ending(reader.Outcome) = null,
+    book_was_read: bool = false, // The book open was read before it was opened
 
     /// The screens the library opens over itself.
-    const Over = enum { none, stats, battery, lock, panel, search, sheet, up_next };
+    const Over = enum { none, stats, battery, lock, panel, search, sheet, up_next, book };
 
     pub const Result = void;
     /// The home screen: under every other, it takes the lock and leaving.
@@ -297,6 +300,7 @@ const Browser = struct {
             b.search_ending != null,
             b.sheet_ending != null,
             b.offer.ending != null,
+            b.book_ending != null,
         };
         assert(std.mem.count(bool, &endings, &.{true}) == 1);
         const over = b.over;
@@ -322,6 +326,11 @@ const Browser = struct {
                 return step(b.acted(change));
             },
             .up_next => return step(try b.offer_ended()),
+            .book => {
+                // A book takes the lock and leaving, so it only ever ends itself
+                const outcome = b.book_ending.?.done;
+                return step(try b.book_closed(b.book.entry, outcome));
+            },
         }
     }
 
@@ -343,7 +352,7 @@ const Browser = struct {
             .lock => screen.open(&b.lock, &b.over_ending),
             .panel => screen.open(&b.panel, &b.over_ending),
             .search => screen.open(&b.search, &b.search_ending),
-            .none, .sheet, .up_next => unreachable, // Opened by what starts them
+            .none, .sheet, .up_next, .book => unreachable, // Opened by what starts them
         });
     }
 
@@ -357,6 +366,7 @@ const Browser = struct {
         b.search_ending = null;
         b.sheet_ending = null;
         b.offer.ending = null;
+        b.book_ending = null;
         return .{ .open = f };
     }
 
@@ -597,21 +607,29 @@ const Browser = struct {
     /// Reads a book, and on finishing one of a series offers the next, to go straight
     /// on with. Each next book is further on in its series, so none comes round twice.
     fn open_book(b: *Browser, entry: *catalog.Entry) !Next {
-        const a = b.a;
         // Only books on the Kindle are opened: the hero, a book on it, a match, or the
         // next of a series
         assert(entry.is_local());
         assert(b.lib.entries.len > 0);
-        const was_read = entry.is_read();
-        const outcome = reader.read_book(a, entry) catch |err| blk: {
+        b.book_was_read = entry.is_read();
+        reader.open(&b.book, b.a, entry) catch |err| {
             std.debug.print("could not open book: {s}\n", .{@errorName(err)});
-            b.notice = "This book can't be opened here.";
-            break :blk reader.Outcome.library;
+            return b.book_closed(entry, .failed);
         };
+        return b.open_frame(.book, screen.open(&b.book, &b.book_ending));
+    }
+
+    /// The book ended, `outcome` saying how: noface leaves, or the library is back,
+    /// offering the next of a series just finished.
+    fn book_closed(b: *Browser, entry: *catalog.Entry, outcome: reader.Outcome) !Next {
+        const a = b.a;
+        assert(entry.is_local());
+        assert(b.over == .none);
+        if (outcome == .failed) b.notice = "This book can't be opened here.";
         if (outcome == .quit) return .leave;
         a.slots[0].page = -1;
         b.status_until = now_us() + status_watch_us; // Wi-Fi coming back, and the like
-        if (was_read or !entry.is_read()) return .everything;
+        if (b.book_was_read or !entry.is_read()) return .everything;
         const next_index = catalog.next_in_series(b.lib.entries, entry) orelse
             return .everything;
         const next = &b.lib.entries[next_index];

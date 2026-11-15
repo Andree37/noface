@@ -34,6 +34,8 @@ test {
     _ = @import("screens/lock.zig");
     _ = @import("testing/fake_kindle.zig");
     _ = @import("screens/screen.zig");
+    _ = @import("screens/drag.zig");
+    _ = @import("screens/card.zig");
     _ = @import("sys/process.zig");
     _ = @import("app.zig");
     _ = @import("kindle/paths.zig");

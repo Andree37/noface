@@ -1,6 +1,7 @@
 //! The quick panel: light, warmth, airplane mode, Bluetooth and sync, over a book or the library.
 const std = @import("std");
 const assert = std.debug.assert;
+const drag = @import("drag.zig");
 const menu = @import("../ui/menu.zig");
 const wifi_saver = @import("../kindle/wifi_saver.zig");
 const lipc = @import("../kindle/lipc.zig");
@@ -84,7 +85,7 @@ const SliderDrag = struct {
     row: menu.Row = undefined,
     knob: u32 = 0,
     path: [2]u32 = .{ 0, 0 }, // Leftmost and rightmost knob positions shown
-    drag: app.Drag(SliderFollow) = undefined,
+    drag: drag.Drag(SliderFollow) = undefined,
     ending: ?screen.Ending(void) = null,
 };
 
@@ -137,7 +138,7 @@ fn drag_row(a: *app.App, sd: *SliderDrag, row: menu.Row, first_x: i32) !screen.F
 /// The finger lifted from a slider (or the Kindle locked): settles the stretch the
 /// knob crossed back to smooth edges.
 fn slider_ended(a: *app.App, sd: *SliderDrag) !void {
-    _ = try app.drag_ended(&sd.drag, sd.ending.?);
+    _ = try drag.ended(&sd.drag, sd.ending.?);
     const row = sd.row;
     assert(sd.path[0] <= sd.path[1]);
     try menu.draw_slider(a.ui, a.page(a.screen.pixels), row, row_value(a, row), false);

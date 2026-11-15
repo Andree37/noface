@@ -3,6 +3,7 @@
 //! downloads over Wi-Fi, showing how far it's got, and can be cancelled.
 const std = @import("std");
 const assert = std.debug.assert;
+const card_screen = @import("../card.zig");
 const input_mod = @import("../../kindle/input.zig");
 const app = @import("../../app.zig");
 const card = @import("../../ui/card.zig");
@@ -49,7 +50,12 @@ pub const Answer = enum { download, not_now, dismissed };
 
 /// The first time, the card asking whether to download it, to open over `background`
 /// (`screen.open`), its text in `ask`. Once it has ended, `asked` says the answer.
-pub fn ask(a: *app.App, background: []const u8, lang: hyphen.Lang, asking: *Asking) app.Card {
+pub fn ask(
+    a: *app.App,
+    background: []const u8,
+    lang: hyphen.Lang,
+    asking: *Asking,
+) card_screen.Card {
     assert(background.len == a.screen.pixels.len);
     const l = language_of(lang);
     const title = std.fmt.bufPrint(&asking.title_buffer, "Get the {s} dictionary?", .{
@@ -61,14 +67,14 @@ pub fn ask(a: *app.App, background: []const u8, lang: hyphen.Lang, asking: *Aski
         .{ l.download_mb, l.size_mb },
     ) catch "";
     assert(title.len > 0);
-    return app.card_over(a, background, title, subtitle, &ask_rows, null);
+    return card_screen.over(a, background, title, subtitle, &ask_rows, null);
 }
 
 /// The answer to the card from `ask`, which has ended. "Not now" stops the asking; the
 /// sheet still offers it.
 pub fn asked(a: *app.App, background: []const u8, ending: screen.Ending(u32)) !Answer {
     assert(background.len == a.screen.pixels.len);
-    try app.card_closed(a, background);
+    try card_screen.closed(a, background);
     const picked = switch (ending) {
         .done => |picked| picked,
         .closed, .interrupted => return .dismissed,
@@ -113,7 +119,7 @@ pub const Getting = struct {
     downloads_until: u64 = 0, // What kept Wi-Fi on before
     progress: Progress = undefined,
     progress_ending: ?screen.Ending(Waited) = null,
-    told: app.Card = undefined,
+    told: card_screen.Card = undefined,
     told_ending: ?screen.Ending(u32) = null,
 
     /// Never shown itself: its cards are.
@@ -176,7 +182,7 @@ pub const Getting = struct {
                 return g.after_waiting(waited);
             },
             .telling => {
-                try app.card_closed(g.a, g.background);
+                try card_screen.closed(g.a, g.background);
                 return g.finish(false);
             },
         }
@@ -216,7 +222,7 @@ pub const Getting = struct {
         assert(title.len > 0);
         assert(g.phase != .telling);
         g.phase = .telling;
-        g.told = app.card_over(g.a, g.background, title, subtitle, &ok_rows, null);
+        g.told = card_screen.over(g.a, g.background, title, subtitle, &ok_rows, null);
         return .{ .push = screen.open(&g.told, &g.told_ending) };
     }
 

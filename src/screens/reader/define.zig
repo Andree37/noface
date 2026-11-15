@@ -1,6 +1,7 @@
 //! Holding a word without dragging: its definition, in a sheet over the page.
 const std = @import("std");
 const assert = std.debug.assert;
+const card_screen = @import("../card.zig");
 const input_mod = @import("../../kindle/input.zig");
 const definition = @import("../../ui/definition.zig");
 const dictionary = @import("../../model/dictionary.zig");
@@ -135,7 +136,7 @@ pub const Define = struct {
     found: definition.Found,
     phase: enum { asking, getting, sheet } = .asking,
     asking: dict_get.Asking = .{},
-    ask_card: app.Card = undefined,
+    ask_card: card_screen.Card = undefined,
     ask_ending: ?screen.Ending(u32) = null,
     getting: dict_get.Getting = undefined,
     getting_ending: ?screen.Ending(bool) = null,

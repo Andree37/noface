@@ -2,7 +2,6 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const paths = @import("kindle/paths.zig");
-const card = @import("ui/card.zig");
 const memory = @import("base/memory.zig");
 const typefaces = @import("typefaces.zig");
 const Typefaces = typefaces.Typefaces;
@@ -16,14 +15,13 @@ const draw = @import("ui/draw.zig");
 const state = @import("sys/state.zig");
 const Fonts = @import("ui/fonts.zig").Fonts;
 const input_mod = @import("kindle/input.zig");
-const screen = @import("screens/screen.zig");
 const aa = @import("ui/aa.zig");
 const file = @import("sys/file.zig");
 const calls = @import("sys/calls.zig");
 const hwtcon = @import("kindle/hwtcon.zig");
 const library = @import("ui/library.zig");
 const covers_ui = @import("ui/covers.zig");
-const books = @import("screens/books.zig");
+const library_view = @import("library/view.zig");
 const clock = @import("sys/clock.zig");
 const jpegxr = @import("kindle/jpegxr.zig");
 const quick_model = @import("model/quick.zig");
@@ -95,7 +93,7 @@ pub const App = struct {
     // the open book's memory, and one action's
     library_budget: *memory.Budget,
     covers: *covers_ui.Pool, // The library's, in its region, kept for good
-    library_shared: *books.Shared, // The library's buffers, in its region, kept for good
+    library_shared: *library_view.Shared, // The library's buffers, in its region, kept for good
     library_scratch_region: *memory.Region,
     book_region: *memory.Region,
     // An open book's pages after a settings change, emptied before each layout
@@ -429,66 +427,6 @@ pub const App = struct {
     }
 };
 
-/// A card of rows over `background`, to open over a screen (`screen.open`): it ends
-/// with the row tapped, or closes with a tap above it. Once it has ended, whatever
-/// way, `card_closed` puts back what was under it.
-pub fn card_over(
-    a: *App,
-    background: []const u8,
-    title: []const u8,
-    subtitle: []const u8,
-    rows: []const card.Row,
-    book_cover: ?card.Cover,
-) Card {
-    assert(background.len == a.screen.pixels.len); // Put back over the whole screen
-    assert(a.overlay.len == a.screen.pixels.len); // The card is drawn there first
-    return .{
-        .a = a,
-        .background = background,
-        .title = title,
-        .subtitle = subtitle,
-        .rows = rows,
-        .cover = book_cover,
-    };
-}
-
-/// What was under a card, back on the whole screen.
-pub fn card_closed(a: *App, background: []const u8) !void {
-    assert(background.len == a.screen.pixels.len);
-    assert(background.ptr != a.screen.pixels.ptr); // Kept apart from what's shown
-    @memcpy(a.screen.pixels, background);
-    try a.show_band(0, a.screen.height);
-}
-
-/// A card of rows over a dimmed screen: the row tapped, or closed by a tap above it.
-pub const Card = struct {
-    a: *App,
-    background: []const u8,
-    title: []const u8,
-    subtitle: []const u8,
-    rows: []const card.Row,
-    cover: ?card.Cover,
-
-    pub const Result = u32;
-    pub const touches = input_mod.Input.Modes.sheet;
-
-    pub fn draw(c: *Card, _: screen.Part) !void {
-        const a = c.a;
-        assert(a.overlay.len == a.screen.pixels.len);
-        assert(c.background.len == a.overlay.len); // Both a whole screen
-        @memcpy(a.overlay, c.background);
-        try card.render_with(a.ui, a.page(a.overlay), c.title, c.subtitle, c.rows, c.cover);
-        @memcpy(a.screen.pixels, a.overlay);
-        try a.show_band(0, a.screen.height); // The whole screen dims behind it
-    }
-
-    pub fn on_tap(c: *Card, t: screen.Tap) !screen.Step(Result) {
-        const rows: u32 = @intCast(c.rows.len);
-        const index = card.hit_with(t.x, t.y, rows, c.cover) orelse return .close; // Above it
-        return if (index < c.rows.len) .{ .done = index } else .stay; // Its title: nothing
-    }
-};
-
 /// Says something went wrong, over the page, for a moment.
 pub fn show_notice(a: *App, message: []const u8) !void {
     const screen_page = a.page(a.screen.pixels);
@@ -522,69 +460,6 @@ pub fn clean_rect(a: *App, left: u32, top: u32, width: u32, height: u32) !void {
     assert(left + width <= a.screen.width);
     assert(top + height <= a.screen.height);
     try a.screen.wait_complete(try a.screen.show_region(left, top, width, height, .clean));
-}
-
-/// Follows the dragged finger until it lifts, as a screen over the one the drag began
-/// on (`screen.open`), made with the update that drew where it began (`marker`).
-/// `follow.moved(x, y)` redraws for a new position and returns the update to wait on,
-/// or null when nothing changed. Only one update runs at a time: overlapping ones
-/// smear on the panel. Done when the finger lifts; interrupted when the Kindle locks.
-/// Once it has ended, `drag_ended` waits for its last update.
-pub fn Drag(comptime Follow: type) type {
-    return struct {
-        const D = @This();
-        pub const Result = void;
-        a: *App,
-        follow: Follow,
-        marker: ?u32,
-
-        /// The finger of the touch that opened it is the one followed from now on.
-        pub fn on_open(d: *D) !screen.Step(void) {
-            d.a.input.begin_drag();
-            if (d.marker) |m| assert(m < d.a.screen.next_marker);
-            return .stay;
-        }
-
-        /// Where it began is drawn as it begins.
-        pub fn draw(d: *D, part: screen.Part) !void {
-            assert(part == .all);
-            if (d.marker) |m| assert(m < d.a.screen.next_marker);
-        }
-
-        /// A tap while a finger is followed: nothing to do.
-        pub fn on_tap(d: *D, _: screen.Tap) !screen.Step(void) {
-            if (d.marker) |m| assert(m < d.a.screen.next_marker);
-            assert(d.a.input.tick_us == 0); // It never ticks
-            return .stay;
-        }
-
-        pub fn on_action(d: *D, action: input_mod.Action) !screen.Step(void) {
-            switch (action) {
-                .drag => |first| {
-                    if (d.marker) |m| try d.a.screen.wait_complete(m);
-                    const at = d.a.input.latest_drag() orelse first;
-                    d.marker = try d.follow.moved(at.x, at.y);
-                    if (d.marker) |m| assert(m < d.a.screen.next_marker);
-                    return .stay;
-                },
-                .drag_end => return .{ .done = {} },
-                else => return .stay,
-            }
-        }
-    };
-}
-
-/// A drag that has ended: its last update waited for. True when the finger lifted,
-/// false when the drag was cut short (the Kindle locking, say).
-pub fn drag_ended(d: anytype, ending: screen.Ending(void)) !bool {
-    if (d.marker) |m| {
-        assert(m < d.a.screen.next_marker);
-        try d.a.screen.wait_complete(m);
-    }
-    d.marker = null;
-    // A drag ends when the finger lifts, or the Kindle locks or noface leaves
-    assert(ending != .closed);
-    return ending == .done;
 }
 
 /// The journal saved at `path`: every day is in the file, which is mapped, never read

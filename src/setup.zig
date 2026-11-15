@@ -14,6 +14,7 @@ const Fonts = @import("ui/fonts.zig").Fonts;
 const style = @import("ui/style.zig");
 const text = @import("layout/text.zig");
 const books = @import("screens/books.zig");
+const library_view = @import("library/view.zig");
 const covers = @import("ui/covers.zig");
 const book_model = @import("model/book.zig");
 const glyph_cache = @import("gfx/glyph_cache.zig");
@@ -117,7 +118,7 @@ const Reading = struct {
     library: memory.Region,
     covers: covers.Pool, // In the library's region, for good
     covers_bytes: u64, // What the pool and the shared buffers take of the library's budget
-    library_shared: books.Shared, // In the library's region, for good
+    library_shared: library_view.Shared, // In the library's region, for good
     library_budget: memory.Budget, // Shared by a library list and the one reloaded after it
     library_scratch: memory.Region,
     book: memory.Region,

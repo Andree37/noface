@@ -40,23 +40,9 @@ pub const library_bytes = @sizeOf(State);
 /// What the shared buffers take of the library's region, at most.
 pub const shared_bytes_max: u32 = builder.Work.bytes_max;
 
-/// What every library shares, taken once at startup: the buffers its builds and passes
-/// use, and the bits of which books a look lets through.
-pub const Shared = struct {
-    work: builder.Work,
-    bits: view.Bits,
-
-    pub fn init(s: *Shared, budget: *memory.Budget) !void {
-        s.work = try builder.Work.init(budget);
-        s.bits = .{ .words = s.work.bits };
-        assert(s.bits.words.len * 64 >= books_max);
-        assert(s.bits.generation == 0);
-    }
-};
-
 /// Where a library is read from, and the memory it's read into.
 pub const Sources = struct {
-    shared: *Shared,
+    shared: *view.Shared,
     budget: *memory.Budget, // The library's: outlives it, and holds two during a reload
     scratch: *memory.Region, // Bump: each EPUB as it's read, and a walk's folders
     catalog_path: [*:0]const u8, // The Kindle's catalog, exported
@@ -128,7 +114,7 @@ const State = struct {
 };
 
 pub const Library = struct {
-    shared: *Shared,
+    shared: *view.Shared,
     sources: Sources,
     state: *State, // In the library's region, on its budget
 
@@ -713,7 +699,7 @@ const TestLibrary = struct {
     region: memory.Region,
     budget: memory.Budget,
     scratch: memory.Region,
-    shared: *Shared,
+    shared: *view.Shared,
     paths: [3][320]u8,
     sources: Sources,
 
@@ -722,7 +708,7 @@ const TestLibrary = struct {
         t.region = try .reserve("library", .heap, setup.region_bytes.library);
         t.budget = .{ .name = "library", .region = &t.region, .limit = t.region.bytes.len };
         t.scratch = try .reserve("library scratch", .bump, setup.region_bytes.library_scratch);
-        t.shared = try t.budget.allocator().create(Shared);
+        t.shared = try t.budget.allocator().create(view.Shared);
         try t.shared.init(&t.budget);
         t.sources = .{
             .shared = t.shared,
@@ -737,7 +723,7 @@ const TestLibrary = struct {
 
     fn deinit(t: *TestLibrary) void {
         assert(t.scratch.empty());
-        assert(t.budget.live >= @sizeOf(Shared));
+        assert(t.budget.live >= @sizeOf(view.Shared));
         t.scratch.release();
         t.region.release();
     }

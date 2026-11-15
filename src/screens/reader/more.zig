@@ -2,6 +2,7 @@
 //! a screen refresh, and marking the book finished or unread.
 const std = @import("std");
 const assert = std.debug.assert;
+const card_screen = @import("../card.zig");
 const card = @import("../../ui/card.zig");
 const catalog = @import("../../model/catalog.zig");
 const stats = @import("../../model/stats.zig");
@@ -62,7 +63,7 @@ pub const More = struct {
     phase: enum { menu, page_number, details } = .menu,
     list: [5]Option = undefined,
     rows: [5]card.Row = undefined,
-    card: app.Card = undefined,
+    card: card_screen.Card = undefined,
     card_ending: ?screen.Ending(u32) = null,
     page_entry: page_number.PageEntry = undefined,
     page_ending: ?screen.Ending(u32) = null,
@@ -98,14 +99,14 @@ pub const More = struct {
     ) screen.Step(Outcome) {
         assert(rows.len > 0);
         assert(m.phase != .page_number);
-        m.card = app.card_over(m.a, m.background, title, subtitle, rows, null);
+        m.card = card_screen.over(m.a, m.background, title, subtitle, rows, null);
         return .{ .push = screen.open(&m.card, &m.card_ending) };
     }
 
     pub fn on_resume(m: *More) !screen.Step(Outcome) {
         switch (m.phase) {
             .menu => {
-                try app.card_closed(m.a, m.background);
+                try card_screen.closed(m.a, m.background);
                 const picked = switch (m.card_ending.?) {
                     .done => |picked| picked,
                     .closed, .interrupted => return .{ .done = .stay },
@@ -122,7 +123,7 @@ pub const More = struct {
                 return .{ .done = .{ .page = index } };
             },
             .details => {
-                try app.card_closed(m.a, m.background);
+                try card_screen.closed(m.a, m.background);
                 return .{ .done = .stay };
             },
         }

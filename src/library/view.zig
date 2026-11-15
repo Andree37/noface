@@ -13,10 +13,25 @@ const keys = @import("keys.zig");
 const sorter = @import("sorter.zig");
 const index = @import("index.zig");
 const builder = @import("builder.zig");
+const memory = @import("../base/memory.zig");
 
 /// The most places an arrangement remembers in its order: past them, it keeps every
 /// other and remembers half as often, so a page is found from at most `count / 512`
 /// books before it.
+/// What every library shares, taken once at startup: the buffers its builds and passes
+/// use, and the bits of which books a look lets through.
+pub const Shared = struct {
+    work: builder.Work,
+    bits: Bits,
+
+    pub fn init(s: *Shared, budget: *memory.Budget) !void {
+        s.work = try builder.Work.init(budget);
+        s.bits = .{ .words = s.work.bits };
+        assert(s.bits.words.len * 64 >= index.books_max);
+        assert(s.bits.generation == 0);
+    }
+};
+
 const checkpoints_max: u32 = 1024;
 
 /// What a filter and a search let through, in an order, and where they are in it.

@@ -1,6 +1,7 @@
 //! Making, extending and deleting highlights on the page.
 const std = @import("std");
 const assert = std.debug.assert;
+const drag = @import("../drag.zig");
 const book_model = @import("../../model/book.zig");
 const draw = @import("../../ui/draw.zig");
 const style = @import("../../ui/style.zig");
@@ -135,7 +136,7 @@ pub const Selecting = struct {
     moving: u32 = 0, // Where the head began
     head: u32 = 0,
     previous: selection.Band = .{ .top = 0, .height = 0 },
-    drag: app.Drag(SelectionFollow) = undefined,
+    drag: drag.Drag(SelectionFollow) = undefined,
     ending: ?screen.Ending(void) = null,
     /// A highlight's end being dragged: which highlight, all of it, and which end.
     id: []const u8 = "",
@@ -197,7 +198,7 @@ fn drag_selection(
 /// Where the selection stopped; null when it was cut short, by the Kindle locking
 /// say, and isn't one.
 fn drag_selection_ended(sel: *Selecting) !?u32 {
-    if (!try app.drag_ended(&sel.drag, sel.ending.?)) return null;
+    if (!try drag.ended(&sel.drag, sel.ending.?)) return null;
     assert(sel.head < sel.words.len);
     assert(sel.fixed < sel.words.len);
     return sel.head;

@@ -260,7 +260,7 @@ fn log_ending(name: []const u8, how: []const u8, c: Frame.Call) void {
 }
 
 /// The last part of a type's name: `Stats` of `screens.stats.Stats`, and `Drag` of
-/// `app.Drag(screens.panel.Follow)`.
+/// `drag.Drag(screens.panel.Follow)`.
 fn short_name(comptime full: []const u8) []const u8 {
     const plain = comptime full[0 .. std.mem.indexOfScalar(u8, full, '(') orelse full.len];
     const dot = comptime std.mem.lastIndexOfScalar(u8, plain, '.');

@@ -1,6 +1,8 @@
 //! The reading toolbar and its Aa sheet.
 const std = @import("std");
 const assert = std.debug.assert;
+const card_screen = @import("../card.zig");
+const drag = @import("../drag.zig");
 const autostart = @import("../../kindle/autostart.zig");
 const card = @import("../../ui/card.zig");
 const aa = @import("../../ui/aa.zig");
@@ -87,10 +89,10 @@ pub const Pending = struct {
     started: u32 = 0,
     toggle: u32 = 0, // The switch a card asks about
     background: []const u8 = &.{}, // The page under a card
-    scrub: app.Drag(ScrubFollow) = undefined,
-    setting: app.Drag(SettingFollow) = undefined,
+    scrub: drag.Drag(ScrubFollow) = undefined,
+    setting: drag.Drag(SettingFollow) = undefined,
     drag_ending: ?screen.Ending(void) = null,
-    card: app.Card = undefined,
+    card: card_screen.Card = undefined,
     card_ending: ?screen.Ending(u32) = null,
 };
 
@@ -290,7 +292,7 @@ fn ask_first(
             p.background = try s.ensure(s.current, s.current);
             const title = "Open noface when the Kindle starts";
             const subtitle = "This adds one small startup file to the Kindle's system.";
-            p.card = app.card_over(a, p.background, title, subtitle, &turn_on_rows, null);
+            p.card = card_screen.over(a, p.background, title, subtitle, &turn_on_rows, null);
         },
         .lock_picture => {
             // Turning it on needs a picture to show
@@ -300,7 +302,7 @@ fn ask_first(
             const title = "Add your picture first";
             const subtitle = "Name it lockscreen.jpg or lockscreen.png, and put it in the " ++
                 "noface-data folder.";
-            p.card = app.card_over(a, p.background, title, subtitle, &ok_rows, null);
+            p.card = card_screen.over(a, p.background, title, subtitle, &ok_rows, null);
         },
     }
     return screen.open(&p.card, &p.card_ending);
@@ -320,14 +322,14 @@ pub fn resumed(
     const sheet_only: Drawn = .{ .sheet_open = true, .whole_page = false };
     switch (p.kind) {
         .scrub => {
-            _ = try app.drag_ended(&p.scrub, p.drag_ending.?);
+            _ = try drag.ended(&p.scrub, p.drag_ending.?);
             s.set_page(p.target);
             assert(s.current == p.target);
             try draw_toolbar(a, s, title, .{ .sheet_open = sheet_open, .whole_page = true });
             try app.clean_band(a, toolbar.scrub_top, a.screen.height - toolbar.scrub_top);
         },
         .setting => {
-            _ = try app.drag_ended(&p.setting, p.drag_ending.?);
+            _ = try drag.ended(&p.setting, p.drag_ending.?);
             if (p.value != p.started) {
                 row_value_set(a, p.row, p.value);
                 try sess.relayout(a, s);
@@ -336,14 +338,14 @@ pub fn resumed(
             try app.clean_band(a, p.row.top, aa.row_height);
         },
         .autostart => {
-            try app.card_closed(a, p.background);
+            try card_screen.closed(a, p.background);
             if (p.card_ending.? != .done) return draw_toolbar(a, s, title, sheet_only);
             if (autostart.install()) return flip(a, s, title, p.toggle);
             try draw_toolbar(a, s, title, sheet_only);
             try app.show_notice(a, "Couldn't set up starting with the Kindle.");
         },
         .lock_picture => {
-            try app.card_closed(a, p.background);
+            try card_screen.closed(a, p.background);
             try draw_toolbar(a, s, title, sheet_only);
         },
     }

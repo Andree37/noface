@@ -2,6 +2,7 @@
 //! remove, mark read), and the card offering the next of a series.
 const std = @import("std");
 const assert = std.debug.assert;
+const card_screen = @import("card.zig");
 const card = @import("../ui/card.zig");
 const catalog = @import("../model/catalog.zig");
 const book_actions = @import("../ui/book_actions.zig");
@@ -105,7 +106,7 @@ pub const Sheet = struct {
     row_buffer: [4]card.Row = undefined,
     subtitle_buffer: [320]u8 = undefined,
     list: []const book_actions.Option = &.{},
-    card: app.Card = undefined,
+    card: card_screen.Card = undefined,
     card_ending: ?screen.Ending(u32) = null,
     series: series_screen.Series = undefined,
     series_ending: ?screen.Ending(bool) = null,
@@ -139,7 +140,7 @@ pub const Sheet = struct {
         if (e.availability != .downloading) assert(s.list.len > 0);
         const subtitle = book_actions.subtitle(&s.subtitle_buffer, e, confirming);
         const rows = book_actions.rows(s.list, &s.row_buffer);
-        s.card = app.card_over(s.a, s.background, e.title, subtitle, rows, null);
+        s.card = card_screen.over(s.a, s.background, e.title, subtitle, rows, null);
         s.phase = .card;
         return .{ .push = screen.open(&s.card, &s.card_ending) };
     }
@@ -147,7 +148,7 @@ pub const Sheet = struct {
     pub fn on_resume(s: *Sheet) !screen.Step(Change) {
         switch (s.phase) {
             .card => {
-                try app.card_closed(s.a, s.background);
+                try card_screen.closed(s.a, s.background);
                 const picked = switch (s.card_ending.?) {
                     .done => |picked| picked,
                     .closed, .interrupted => return .{ .done = .none },
@@ -249,7 +250,7 @@ pub fn up_next(
         book_cover = .{ .pixels = pixels, .width = cover_width, .height = cover_height };
     }
     const rows = &up_next_rows;
-    offer.card = app.card_over(a, background, next.title, offer.subtitle, rows, book_cover);
+    offer.card = card_screen.over(a, background, next.title, offer.subtitle, rows, book_cover);
     return screen.open(&offer.card, &offer.ending);
 }
 
@@ -257,7 +258,7 @@ pub fn up_next(
 pub fn up_next_closed(a: *app.App, background: []const u8, offer: *UpNext) !bool {
     if (offer.small) |pixels| a.alloc.free(pixels);
     offer.small = null;
-    try app.card_closed(a, background);
+    try card_screen.closed(a, background);
     const chosen = offer.ending.? == .done;
     if (chosen) assert(offer.ending.?.done < up_next_rows.len);
     return chosen;
@@ -271,6 +272,6 @@ pub const UpNext = struct {
     subtitle_buffer: [200]u8 = undefined,
     subtitle: []const u8 = "",
     small: ?[]u8 = null, // Its cover, half the grid's size
-    card: app.Card = undefined,
+    card: card_screen.Card = undefined,
     ending: ?screen.Ending(u32) = null,
 };

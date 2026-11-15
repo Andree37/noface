@@ -157,7 +157,10 @@ pub fn run_all(
     for (0..argvs.len) |index| {
         const child = children[index] orelse continue;
         _ = linux.close(child.out); // Our end of the pipe: nothing to do if it fails
-        if (open[index] or !reap(child.pid, deadline)) lens[index] = null; // Not finished in time
+        // Reaped whether or not it finished printing: one still running at the deadline
+        // is killed here, so none is left behind as a zombie
+        const reaped = reap(child.pid, deadline);
+        if (open[index] or !reaped) lens[index] = null; // Not finished in time
         if (lens[index]) |count| assert(count <= outs[index].len);
     }
 }
@@ -274,4 +277,24 @@ test "a check that crashes only ends its child" {
     }.check;
     try std.testing.expect(survives({}, ok));
     try std.testing.expect(!survives({}, crashes));
+}
+
+test "a command still printing at the deadline is killed and reaped" {
+    var status: i32 = 0;
+    // No child of this test process is left over from another test
+    try std.testing.expect(failed(linux.waitpid(-1, &status, linux.W.NOHANG)));
+    const argvs = [_][*:null]const ?[*:0]const u8{
+        &.{ "/bin/sleep", "5" },
+        &.{ "/bin/echo", "done" },
+    };
+    var buffers: [2][16]u8 = undefined;
+    var outs = [_][]u8{ &buffers[0], &buffers[1] };
+    var lens: [2]?u32 = undefined;
+    const started = os.now_us();
+    run_all(&argvs, &outs, &lens, started + 300 * 1000);
+    try std.testing.expect(os.now_us() - started < 2_000_000);
+    try std.testing.expectEqual(@as(?u32, null), lens[0]);
+    try std.testing.expectEqualStrings("done\n", buffers[1][0..lens[1].?]);
+    // The sleeper is gone, not left running or as a zombie
+    try std.testing.expect(failed(linux.waitpid(-1, &status, linux.W.NOHANG)));
 }

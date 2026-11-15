@@ -547,6 +547,62 @@ pub fn clean_rect(a: *App, left: u32, top: u32, width: u32, height: u32) !void {
     try a.screen.wait_complete(try a.screen.show_region(left, top, width, height, .clean));
 }
 
+/// Follows the dragged finger until it lifts, as a screen over the one the drag began
+/// on (`screen.open`), made with the update that drew where it began (`marker`).
+/// `follow.moved(x, y)` redraws for a new position and returns the update to wait on,
+/// or null when nothing changed. Only one update runs at a time: overlapping ones
+/// smear on the panel. Done when the finger lifts; interrupted when the Kindle locks.
+/// Once it has ended, `drag_ended` waits for its last update.
+pub fn Drag(comptime Follow: type) type {
+    return struct {
+        const D = @This();
+        pub const Result = void;
+        a: *App,
+        follow: Follow,
+        marker: ?u32,
+
+        /// Where it began is drawn as it begins.
+        pub fn draw(d: *D, part: screen.Part) !void {
+            assert(part == .all);
+            if (d.marker) |m| assert(m < d.a.screen.next_marker);
+        }
+
+        /// A tap while a finger is followed: nothing to do.
+        pub fn on_tap(d: *D, _: screen.Tap) !screen.Step(void) {
+            if (d.marker) |m| assert(m < d.a.screen.next_marker);
+            assert(d.a.input.tick_us == 0); // It never ticks
+            return .stay;
+        }
+
+        pub fn on_action(d: *D, action: input_mod.Action) !screen.Step(void) {
+            switch (action) {
+                .drag => |x0| {
+                    if (d.marker) |m| try d.a.screen.wait_complete(m);
+                    const x = d.a.input.latest_drag() orelse x0;
+                    d.marker = try d.follow.moved(x, d.a.input.drag_y);
+                    if (d.marker) |m| assert(m < d.a.screen.next_marker);
+                    return .stay;
+                },
+                .drag_end => return .{ .done = {} },
+                else => return .stay,
+            }
+        }
+    };
+}
+
+/// A drag that has ended: its last update waited for. True when the finger lifted,
+/// false when the drag was cut short (the Kindle locking, say).
+pub fn drag_ended(d: anytype, ending: screen.Ending(void)) !bool {
+    if (d.marker) |m| {
+        assert(m < d.a.screen.next_marker);
+        try d.a.screen.wait_complete(m);
+    }
+    d.marker = null;
+    // A drag ends when the finger lifts, or the Kindle locks or noface leaves
+    assert(ending != .closed);
+    return ending == .done;
+}
+
 /// Follows the dragged finger until it lifts. `follow.moved(x, y)` redraws for a
 /// new position and returns the update to wait on, or null when nothing changed.
 /// Only one update runs at a time: overlapping ones smear on the panel. False when

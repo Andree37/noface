@@ -442,10 +442,24 @@ pub const Reader = struct {
     define: define.Define = undefined,
     define_ending: ?screen.Ending(define.Choice) = null,
     held: hl.Held = undefined, // The words held, looked up while the definition is open
+    slider: panel.SliderDrag = .{}, // A panel slider followed
+    pending: controls.Pending = .{}, // The scrubber, an Aa slider, or a card from Aa
+    selecting: hl.Selecting = .{}, // Words being selected, or a highlight's end dragged
 
     /// The screens a book opens over itself: the lock screen, the ⋮ menu, search and
     /// Go To.
-    const Over = enum { none, lock, menu, searching, going, define };
+    const Over = enum {
+        none,
+        lock,
+        menu,
+        searching,
+        going,
+        define,
+        slider,
+        controls,
+        selecting,
+        extending,
+    };
 
     /// The page the book opens at, its place saved as it opens.
     pub fn draw(r: *Reader, part: screen.Part) !void {
@@ -529,6 +543,16 @@ pub const Reader = struct {
                 .closed, .interrupted => try r.draw_toolbar(true),
             },
             .define => try r.defined(),
+            .slider => try panel.slider_ended(r.a, &r.slider),
+            .selecting => try r.held_ended(),
+            .extending => {
+                try hl.extend_ended(&r.selecting, r.a, s, r.alloc, r.entry);
+                try r.show_highlight_page(r.active.?);
+            },
+            .controls => {
+                const title = r.entry.title;
+                try controls.resumed(&r.pending, r.a, r.alloc, s, title, r.sheet_open);
+            },
             .searching, .going => switch (r.page_ending.?) {
                 .done => |target| {
                     assert(target < s.pages.len);
@@ -838,7 +862,16 @@ pub const Reader = struct {
             a.input.drag_slot = null;
             return r.select_highlight(id);
         }
-        const held = try hl.select_from_hold(a, r.s, x, y) orelse return;
+        const f = try hl.select_from_hold(&r.selecting, a, r.s, x, y) orelse return;
+        r.open_over(.selecting, f);
+    }
+
+    /// The hold lifted: a word held still is looked up, words dragged over highlighted.
+    fn held_ended(r: *Reader) !void {
+        assert(r.view == .page);
+        assert(r.active == null);
+        const a = r.a;
+        const held = try hl.hold_ended(&r.selecting, a, r.s) orelse return;
         r.held = held;
         if (held.head == held.fixed) { // Held without moving: look it up, highlight only if asked
             const words = hl.page_words(a, r.s);
@@ -958,8 +991,12 @@ pub const Reader = struct {
                 s.set_page(toolbar.chapter_target(sections, s.current, forward));
                 try r.draw_toolbar(true);
             },
-            .scrub => try controls.drag_scrub(a, s, r.entry.title, r.sheet_open, t.x),
-            .sheet => try controls.tap_sheet(a, r.alloc, s, r.entry.title, t.x, t.y),
+            .scrub => r.open_over(.controls, try controls.drag_scrub(&r.pending, a, s, t.x)),
+            .sheet => {
+                const title = r.entry.title;
+                const f = try controls.tap_sheet(&r.pending, a, r.alloc, s, title, t.x, t.y);
+                if (f) |opened| r.open_over(.controls, opened);
+            },
         }
         return null;
     }
@@ -1014,7 +1051,11 @@ pub const Reader = struct {
             const grab_start = selection.near_handle(selection.start_handle(chosen), t.x, t.y);
             const grab_end = selection.near_handle(selection.end_handle(chosen), t.x, t.y);
             if (grab_start or grab_end) {
-                try hl.extend_highlight(a, r.s, r.alloc, r.entry, id, grab_start);
+                const f = try hl.extend_highlight(&r.selecting, a, r.s, id, grab_start);
+                if (f) |opened| {
+                    r.open_over(.extending, opened);
+                    return null;
+                }
                 try r.show_highlight_page(id);
                 return null;
             }
@@ -1056,7 +1097,14 @@ pub const Reader = struct {
         const a = r.a;
         const choice = menu.hit(t.x, t.y);
         const page = try r.s.ensure(r.s.current, r.s.current);
-        if (try panel.panel_control(a, page, choice, t.x)) return null;
+        switch (try panel.panel_control(a, page, choice, t.x, &r.slider)) {
+            .not_one => {},
+            .ran => return null,
+            .drag => |f| {
+                r.open_over(.slider, f);
+                return null;
+            },
+        }
         switch (choice) {
             .settings => {
                 lipc.open_settings();

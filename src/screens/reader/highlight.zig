@@ -12,6 +12,7 @@ const annotation_db = @import("../../kindle/annotation_db.zig");
 const lipc = @import("../../kindle/lipc.zig");
 const failed = os.failed;
 const app = @import("../../app.zig");
+const screen = @import("../screen.zig");
 const sess = @import("session.zig");
 const records = @import("records.zig");
 
@@ -127,49 +128,79 @@ pub fn in_delete_bubble(a: *app.App, top: u32, x: i32, y: i32) bool {
     return x >= left and x < left + bubble_width and y >= t and y < t + bubble_height;
 }
 
-/// Follows a finger, keeping `fixed` in place, and returns where it stopped; null
-/// when the selection was cut short, by the Kindle locking say, and isn't one.
-pub fn drag_selection(
+/// A selection following a finger, kept while it's open over the page: `fixed` stays
+/// in place, and `head` is the word the finger is on.
+pub const Selecting = struct {
+    words: []const book_model.Word = &.{},
+    fixed: u32 = 0,
+    moving: u32 = 0, // Where the head began
+    head: u32 = 0,
+    previous: selection.Band = .{ .top = 0, .height = 0 },
+    drag: app.Drag(SelectionFollow) = undefined,
+    ending: ?screen.Ending(void) = null,
+    /// A highlight's end being dragged: which highlight, all of it, and which end.
+    id: []const u8 = "",
+    whole: highlights.Span = undefined,
+    grab_start: bool = false,
+};
+
+const SelectionFollow = struct {
+    a: *app.App,
+    words: []const book_model.Word,
+    fixed: u32,
+    head: *u32,
+    previous: *selection.Band,
+
+    pub fn moved(f: SelectionFollow, x: i32, y: i32) !?u32 {
+        assert(f.fixed < f.words.len);
+        const next = selection.word_at(f.words, x, y) orelse return null;
+        assert(next < f.words.len);
+        if (next == f.head.*) return null;
+        f.head.* = next;
+        f.previous.* = try paint_selection(f.a, f.words, f.fixed, f.head.*, f.previous.*);
+        return f.a.screen.next_marker - 1;
+    }
+};
+
+/// Starts following a finger, keeping `fixed` in place: the screen to open over the
+/// page. `drag_selection_ended` says where it stopped.
+fn drag_selection(
+    sel: *Selecting,
     a: *app.App,
     words: []const book_model.Word,
     fixed: u32,
     moving: u32,
-) !?u32 {
+) !screen.Frame {
     assert(fixed < words.len);
     assert(moving < words.len);
-    var head = moving;
+    sel.words = words;
+    sel.fixed = fixed;
+    sel.moving = moving;
+    sel.head = moving;
     @memcpy(a.lock_cover, a.screen.pixels);
     a.page(a.lock_cover).threshold(0, a.screen.height); // Pure black and white for A2
-    var previous = try paint_selection(a, words, fixed, head, .{ .top = 0, .height = 0 });
-    const Follow = struct {
-        a: *app.App,
-        words: []const book_model.Word,
-        fixed: u32,
-        head: *u32,
-        previous: *selection.Band,
-        pub fn moved(f: @This(), x: i32, y: i32) !?u32 {
-            assert(f.fixed < f.words.len);
-            const next = selection.word_at(f.words, x, y) orelse return null;
-            assert(next < f.words.len);
-            if (next == f.head.*) return null;
-            f.head.* = next;
-            f.previous.* = try paint_selection(f.a, f.words, f.fixed, f.head.*, f.previous.*);
-            return f.a.screen.next_marker - 1;
-        }
-    };
+    const none = selection.Band{ .top = 0, .height = 0 };
+    sel.previous = try paint_selection(a, words, fixed, sel.head, none);
     a.lock_cover_key = 0; // Used as scratch above: the lock screen's cover is gone
-    const follow = Follow{
+    const follow = SelectionFollow{
         .a = a,
         .words = words,
         .fixed = fixed,
-        .head = &head,
-        .previous = &previous,
+        .head = &sel.head,
+        .previous = &sel.previous,
     };
-    if (!try app.follow_drag(a, a.screen.next_marker - 1, follow)) return null;
-    assert(head < words.len);
-    return head;
+    sel.drag = .{ .a = a, .follow = follow, .marker = a.screen.next_marker - 1 };
+    return screen.open(&sel.drag, &sel.ending);
 }
 
+/// Where the selection stopped; null when it was cut short, by the Kindle locking
+/// say, and isn't one.
+fn drag_selection_ended(sel: *Selecting) !?u32 {
+    if (!try app.drag_ended(&sel.drag, sel.ending.?)) return null;
+    assert(sel.head < sel.words.len);
+    assert(sel.fixed < sel.words.len);
+    return sel.head;
+}
 /// Underlines from `first` to `last`, redrawing the band the old and new selections cover.
 fn paint_selection(
     a: *app.App,
@@ -197,23 +228,30 @@ fn paint_selection(
 /// The words a press and hold covered: the one held, and the one it reached.
 pub const Held = struct { fixed: u32, head: u32 };
 
-/// Press and hold: follows the finger from the word held, and says which words it
-/// covered when it lifted. Null when the hold wasn't on a word.
+/// Press and hold: follows the finger from the word held, the screen to open over the
+/// page; null when the hold wasn't on a word. `hold_ended` says which words it covered.
 pub fn select_from_hold(
+    sel: *Selecting,
     a: *app.App,
     s: *sess.Session,
     hold_x: i32,
     hold_y: i32,
-) !?Held {
+) !?screen.Frame {
     const words = page_words(a, s);
     const fixed = selection.word_at(words, hold_x, hold_y) orelse return null;
     assert(fixed < words.len);
-    const head = try drag_selection(a, words, fixed, fixed) orelse {
+    return try drag_selection(sel, a, words, fixed, fixed);
+}
+
+/// The words a hold covered when it lifted; null when it was cut short.
+pub fn hold_ended(sel: *Selecting, a: *app.App, s: *sess.Session) !?Held {
+    const head = try drag_selection_ended(sel) orelse {
         _ = try show_page(a, s, null); // Takes the unfinished selection off
         return null;
     };
-    assert(head < words.len);
-    return .{ .fixed = fixed, .head = head };
+    assert(head < sel.words.len);
+    assert(sel.fixed == sel.moving); // A hold starts and stays from one word
+    return .{ .fixed = sel.fixed, .head = head };
 }
 
 /// Makes a new highlight of the page's words from `fixed` to `head`, either way round.
@@ -253,30 +291,50 @@ pub fn new_highlight(
     return id;
 }
 
-/// Drags one end of a highlight. The record keeps its ID, so it extends in place.
+/// Drags one end of a highlight: the screen to open over the page, or null when it
+/// isn't on the page. The record keeps its ID, so it extends in place
+/// (`extend_ended`).
 pub fn extend_highlight(
+    sel: *Selecting,
+    a: *app.App,
+    s: *sess.Session,
+    id: []const u8,
+    grab_start: bool,
+) !?screen.Frame {
+    const words = page_words(a, s);
+    const range = highlights.word_range(words, s.highlights.items, id) orelse return null;
+    const whole = highlights.extent(s.highlights.items, id) orelse return null;
+    assert(range.lo <= range.hi);
+    assert(range.hi < words.len);
+    a.input.begin_drag();
+    sel.id = id;
+    sel.whole = whole;
+    sel.grab_start = grab_start;
+    const fixed = if (grab_start) range.hi else range.lo;
+    const moving = if (grab_start) range.lo else range.hi;
+    return try drag_selection(sel, a, words, fixed, moving);
+}
+
+/// A highlight's end dragged, saved where it stopped.
+pub fn extend_ended(
+    sel: *Selecting,
     a: *app.App,
     s: *sess.Session,
     alloc: std.mem.Allocator,
     entry: *const catalog.Entry,
-    id: []const u8,
-    grab_start: bool,
 ) !void {
-    const words = page_words(a, s);
-    const range = highlights.word_range(words, s.highlights.items, id) orelse return;
-    const whole = highlights.extent(s.highlights.items, id) orelse return;
-    assert(range.lo <= range.hi);
-    assert(range.hi < words.len);
-    a.input.begin_drag();
-    const fixed = if (grab_start) range.hi else range.lo;
-    const moving = if (grab_start) range.lo else range.hi;
-    const head = try drag_selection(a, words, fixed, moving) orelse {
+    const id = sel.id;
+    assert(id.len > 0);
+    const head = try drag_selection_ended(sel) orelse {
         _ = try show_page(a, s, id); // Back to the highlight as it was
         return;
     };
-    if (head == moving) return; // Touched without moving, so nothing changed
+    if (head == sel.moving) return; // Touched without moving, so nothing changed
+    const fixed = sel.fixed;
+    const words = sel.words;
+    const grab_start = sel.grab_start;
     const crossed = if (grab_start) head > fixed else head < fixed;
-    const span = highlights.dragged(whole, words[fixed], words[head], grab_start, crossed);
+    const span = highlights.dragged(sel.whole, words[fixed], words[head], grab_start, crossed);
     const saved = save_highlight(s, entry, id, span);
     if (saved) records.sync();
     std.debug.print("highlight extended: saved {}\n", .{saved});

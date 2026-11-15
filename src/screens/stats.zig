@@ -57,15 +57,15 @@ pub fn summarize(a: *const app.App, entries: []const catalog.Entry) stats_ui.Sum
     return s;
 }
 
-/// Shows the stats over the library until a tap.
-pub fn run(a: *app.App, entries: []const catalog.Entry) !void {
-    var stats = Stats{ .a = a, .summary = summarize(a, entries) };
+/// The stats, to show over the library until a tap.
+pub fn make(a: *app.App, entries: []const catalog.Entry) Stats {
+    const stats = Stats{ .a = a, .summary = summarize(a, entries) };
     assert(stats.summary.books == entries.len);
     assert(stats.summary.week >= stats.summary.today);
-    _ = try screen.run(a, &stats);
+    return stats;
 }
 
-const Stats = struct {
+pub const Stats = struct {
     pub const Result = void;
     a: *app.App,
     summary: stats_ui.Summary,

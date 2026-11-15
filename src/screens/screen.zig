@@ -182,6 +182,7 @@ fn Kinds(comptime S: type) type {
                 .@"resume" => if (@hasDecl(S, "on_resume")) try s.on_resume() else unreachable,
                 .interrupt => |action| {
                     e.* = .{ .interrupted = action };
+                    log_ending(kind.name, "interrupted", c);
                     return .end;
                 },
             };
@@ -197,6 +198,7 @@ fn Kinds(comptime S: type) type {
                 .close => e.* = .closed,
             }
             assert(e.* != null);
+            log_ending(kind.name, @tagName(e.*.?), c);
             return .end;
         }
 
@@ -209,6 +211,24 @@ fn Kinds(comptime S: type) type {
             return scope;
         }
     };
+}
+
+/// Logs how screen `name` ended, and by what: a tap's place, so a log tells which
+/// screen each tap went to.
+fn log_ending(name: []const u8, how: []const u8, c: Frame.Call) void {
+    assert(name.len > 0);
+    assert(how.len > 0);
+    const action = switch (c) {
+        .act, .interrupt => |action| action,
+        .draw, .@"resume" => {
+            std.debug.print("screen: {s} {s}\n", .{ name, how });
+            return;
+        },
+    };
+    switch (action) {
+        .tap => |t| std.debug.print("screen: {s} {s} by tap {d},{d}\n", .{ name, how, t.x, t.y }),
+        else => std.debug.print("screen: {s} {s} by {s}\n", .{ name, how, @tagName(action) }),
+    }
 }
 
 /// The last part of a type's name: `Stats` of `screens.stats.Stats`.
@@ -360,7 +380,7 @@ const Stack = struct {
         assert(stack.depth > 0);
         const f = stack.top().*;
         stack.depth -= 1;
-        std.debug.print("screen: {s} ended\n", .{f.kind.name});
+        assert(stack.depth < depth_max);
         return f;
     }
 

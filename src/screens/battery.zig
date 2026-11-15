@@ -71,30 +71,36 @@ pub fn lines(
     return .{ .title = title, .detail = detail };
 }
 
-pub fn show(a: *app.App) !void {
+/// Makes the bubble in place, its lines in its own buffer, and keeps the library under
+/// it to put back (`put_back`) once it closes.
+pub fn open(a: *app.App, bubble: *Bubble) void {
     var samples: [2048]battery.Sample = undefined;
     const log = battery_log.load(a.battery_path, &samples);
     assert(log.len <= samples.len);
     const per_day = a.journal.seconds_over(a.today(), usual_days) / usual_days;
-    var buffer: [160]u8 = undefined;
-    const said = lines(&buffer, log, battery_log.now(), per_day);
-    assert(said.title.len > 0);
-    assert(said.detail.len > 0);
-    std.debug.print("battery: {s} ({d} samples)\n", .{ said.title, log.len });
-
+    bubble.a = a;
+    bubble.said = lines(&bubble.buffer, log, battery_log.now(), per_day);
+    assert(bubble.said.title.len > 0);
+    assert(bubble.said.detail.len > 0);
+    std.debug.print("battery: {s} ({d} samples)\n", .{ bubble.said.title, log.len });
     assert(a.overlay.len == a.screen.pixels.len);
     @memcpy(a.overlay, a.screen.pixels); // The library under it, put back after
-    var bubble = Bubble{ .a = a, .said = said };
-    _ = try screen.run(a, &bubble);
+}
+
+/// The library as it was under the bubble, back on the screen.
+pub fn put_back(a: *app.App) !void {
+    assert(a.overlay.len == a.screen.pixels.len);
+    assert(left + width <= a.screen.width);
     @memcpy(a.screen.pixels, a.overlay);
     try a.show_rect(left, top, width, height);
 }
 
 /// The estimate, in a bubble by the battery. Any tap closes it.
-const Bubble = struct {
+pub const Bubble = struct {
     pub const Result = void;
     a: *app.App,
-    said: Lines,
+    said: Lines, // In `buffer`, so the bubble stays where `open` made it
+    buffer: [160]u8,
 
     pub fn draw(b: *Bubble, _: screen.Part) !void {
         assert(b.said.title.len > 0);

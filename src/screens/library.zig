@@ -170,8 +170,8 @@ fn show_with_covers(
 
 /// What the library does after an action: nothing, draw the page again (a new filter,
 /// a page turn, a notice), draw everything again with a flash (back from a book, a
-/// reloaded library), or leave noface.
-const Next = enum { nothing, page, everything, leave };
+/// reloaded library), leave noface, or open a screen over it.
+const Next = union(enum) { nothing, page, everything, leave, open: screen.Frame };
 
 pub fn run_library(a: *app.App) !void {
     var b = Browser{ .a = a, .lib = try load_library(a), .buf = a.slots[0].buf };
@@ -208,6 +208,14 @@ const Browser = struct {
     watch_until: u64 = 0,
     /// After a book, Wi-Fi takes a while to come back: the status is read again until then.
     status_until: u64 = 0,
+    /// The screen open over the library, if one is, and how it ended once it has.
+    over: Over = .none,
+    over_ending: ?screen.Ending(void) = null,
+    stats: stats_screen.Stats = undefined, // While `over` is .stats
+    bubble: battery_screen.Bubble = undefined, // While `over` is .battery
+
+    /// The screens the library opens over itself.
+    const Over = enum { none, stats, battery };
 
     pub const Result = void;
     /// The home screen: under every other, it takes the lock and leaving.
@@ -275,7 +283,37 @@ const Browser = struct {
             .page => .{ .redraw = .changing },
             .everything => .{ .redraw = .all },
             .leave => .{ .done = {} },
+            .open => |f| .{ .push = f },
         };
+    }
+
+    /// Back in front, the screen over it ended: whatever way, what it covered comes back.
+    pub fn on_resume(b: *Browser) !screen.Step(void) {
+        // Only a screen the library opened ends back to it
+        assert(b.over != .none);
+        assert(b.over_ending != null);
+        const over = b.over;
+        b.over = .none;
+        switch (over) {
+            .none => unreachable,
+            .stats => return .{ .redraw = .changing },
+            .battery => {
+                try battery_screen.put_back(b.a);
+                return .stay;
+            },
+        }
+    }
+
+    /// Opens `over` over the library.
+    fn open_over(b: *Browser, over: Over) Next {
+        assert(over != .none);
+        assert(b.over == .none);
+        b.over = over;
+        return .{ .open = switch (over) {
+            .none => unreachable,
+            .stats => screen.open(&b.stats, &b.over_ending),
+            .battery => screen.open(&b.bubble, &b.over_ending),
+        } };
     }
 
     // Drawing
@@ -417,13 +455,13 @@ const Browser = struct {
                 return .page;
             },
             .stats => {
-                try stats_screen.run(a, b.lib.entries);
-                return .page;
+                b.stats = stats_screen.make(a, b.lib.entries);
+                return b.open_over(.stats);
             },
             .menu => return if (try panel.library_menu(a, b.buf)) .leave else .nothing,
             .battery => {
-                try battery_screen.show(a);
-                return .nothing;
+                battery_screen.open(a, &b.bubble);
+                return b.open_over(.battery);
             },
             .hero => {
                 const h = b.hero orelse return .nothing;

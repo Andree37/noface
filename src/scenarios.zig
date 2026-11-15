@@ -854,6 +854,23 @@ const scenarios = [_]Scenario{
                     same_place(read_on.saved, skipped.saved),
                     "Back didn't follow a chapter skip",
                 );
+                // The ⋮ menu's Go to beginning is a jump too, so it can be undone
+                const menu = tap(1176, toolbar_button_y);
+                const beginning = tap(636, 1265); // Its second row
+                const started_over = try play(&.{
+                    forward, forward, forward, top, menu, beginning,
+                });
+                try expect(
+                    !same_place(read_on.saved, started_over.saved),
+                    "Go to beginning didn't move the place",
+                );
+                const undone = try play(&.{
+                    forward, forward, forward, top, menu, beginning, back_button,
+                });
+                try expect(
+                    same_place(read_on.saved, undone.saved),
+                    "Back didn't follow Go to beginning",
+                );
             }
         }.run,
     },

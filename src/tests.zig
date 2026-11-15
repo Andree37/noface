@@ -73,6 +73,7 @@ test {
     _ = @import("ui/book_actions.zig");
     _ = @import("ui/slider.zig");
     _ = @import("sys/state.zig");
+    _ = @import("sys/calls.zig");
     _ = @import("layout/text.zig");
     _ = @import("ui/toolbar.zig");
     _ = @import("kindle/touch.zig");

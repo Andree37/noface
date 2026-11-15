@@ -301,6 +301,28 @@ fn check(comptime S: type) void {
     }
 }
 
+/// A screen opened over another, kept by the one under it together with how it ended:
+/// what a parent holds of each screen it opens, in one place, so the two can't part.
+pub fn Child(comptime S: type) type {
+    return struct {
+        const C = @This();
+        screen: S,
+        ending: ?Ending(S.Result) = null,
+
+        /// The frame to open it with: its ending is written here.
+        pub fn frame(c: *C) Frame {
+            const f = open(&c.screen, &c.ending);
+            assert(c.ending == null);
+            return f;
+        }
+
+        /// How it ended, once it has.
+        pub fn ended(c: *const C) Ending(S.Result) {
+            return c.ending orelse unreachable; // Only asked once its parent resumes
+        }
+    };
+}
+
 /// How a screen ended.
 pub fn Ending(comptime Result: type) type {
     return union(enum) {

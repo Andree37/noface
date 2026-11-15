@@ -406,36 +406,26 @@ pub const Reader = struct {
     last_place: u32 = 0,
     wifi_try_at: ?u64 = null, // When to turn Wi-Fi off; null once that's settled
     battery_minute: u64 = 0, // The battery is noted once a minute at most
-    /// What's open over the book, if anything: each in a place of its own, and how it
-    /// ended once it has. `opening` is one a handler has just made, to open.
+    /// What's open over the book, if anything, with how it ended once it has; those
+    /// that keep their state across openings (a picture, words being selected, Aa's
+    /// controls) keep it in their own fields. `opening` is one a handler has just made,
+    /// to open.
     over: Over = .none,
     opening: ?screen.Frame = null,
-    lock: lock.Lock = undefined,
-    lock_ending: ?screen.Ending(void) = null,
-    menu: more.More = undefined,
-    menu_ending: ?screen.Ending(more.Outcome) = null,
-    searching: search.Search = undefined,
-    going: goto.GoTo = undefined,
-    page_ending: ?screen.Ending(u32) = null, // Of search or Go To: a page to show
-    define: define.Define = undefined,
-    define_ending: ?screen.Ending(define.Choice) = null,
     held: hl.Held = undefined, // The words held, looked up while the definition is open
-    panel: panel.Panel = undefined, // The quick panel, pulled down over the page
-    panel_ending: ?screen.Ending(void) = null,
     pending: controls.Pending = .{}, // The scrubber, an Aa slider, or a card from Aa
     selecting: hl.Selecting = .{}, // Words being selected, or a highlight's end dragged
     picture: picture_view.Viewer = undefined, // A picture held, shown whole
 
-    /// The screens a book opens over itself: the lock screen, the ⋮ menu, search and
-    /// Go To.
-    const Over = enum {
+    /// The screens a book opens over itself.
+    const Over = union(enum) {
         none,
-        lock,
-        menu,
-        searching,
-        going,
-        define,
-        panel,
+        lock: screen.Child(lock.Lock),
+        menu: screen.Child(more.More),
+        searching: screen.Child(search.Search),
+        going: screen.Child(goto.GoTo),
+        define: screen.Child(define.Define),
+        panel: screen.Child(panel.Panel),
         controls,
         selecting,
         extending,
@@ -514,8 +504,8 @@ pub const Reader = struct {
         switch (over) {
             .none => unreachable,
             // Leaving: what comes next takes the stop
-            .lock => if (r.lock_ending.? == .done) try r.woken(),
-            .menu => switch (r.menu_ending.?) {
+            .lock => |c| if (c.ended() == .done) try r.woken(),
+            .menu => |c| switch (c.ended()) {
                 .done => |result| switch (result) {
                     .stay => try r.draw_toolbar(true),
                     .page => |target| try r.to_page(target),
@@ -523,10 +513,9 @@ pub const Reader = struct {
                 },
                 .closed, .interrupted => try r.draw_toolbar(true),
             },
-            .define => try r.defined(),
-            .panel => {
-                const background = r.panel.background;
-                if (try panel.ended(r.a, background, r.panel_ending.?)) return .{ .done = .quit };
+            .define => |c| try r.defined(c.ended()),
+            .panel => |c| {
+                if (try panel.ended(r.a, c.screen.background, c.ended())) return .{ .done = .quit };
                 try r.a.update_clock();
             },
             .selecting => try r.held_ended(),
@@ -539,15 +528,39 @@ pub const Reader = struct {
                 const title = r.entry.title;
                 try controls.resumed(&r.pending, r.a, s, title, r.sheet_open);
             },
-            .searching, .going => switch (r.page_ending.?) {
-                .done => |target| {
-                    assert(target < s.pages.len);
-                    try r.to_page(target);
-                },
-                .closed, .interrupted => try r.draw_toolbar(true),
-            },
+            .searching => |c| try r.paged(c.ended()),
+            .going => |c| try r.paged(c.ended()),
         }
         return r.after();
+    }
+
+    /// After search or Go To: the page chosen, or the toolbar back.
+    fn paged(r: *Reader, ending: screen.Ending(u32)) !void {
+        switch (ending) {
+            .done => |target| {
+                assert(target < r.s.pages.len);
+                try r.to_page(target);
+            },
+            .closed, .interrupted => try r.draw_toolbar(true),
+        }
+    }
+
+    /// Opens `child`, kept in `over`, over the book as the handler ends.
+    fn open_child(r: *Reader, over: Over) void {
+        assert(over != .none);
+        assert(r.over == .none);
+        r.over = over;
+        r.open_placed();
+    }
+
+    /// Opens the child already in `over`, made there in place, as the handler ends.
+    fn open_placed(r: *Reader) void {
+        assert(r.over != .none);
+        assert(r.opening == null);
+        r.opening = switch (r.over) {
+            // Every child's frame, from where it's kept; the rest keep their own
+            inline else => |*c| if (@TypeOf(c.*) == void) unreachable else c.frame(),
+        };
     }
 
     /// Opens `f`, the screen `over`, over the book, as the handler ends.
@@ -753,9 +766,8 @@ pub const Reader = struct {
         r.s.pause_clock(); // Asleep isn't reading
         assert(r.s.shown_us == 0);
         r.save(); // A lock is a natural stop, and anything after it may end noface
-        r.lock = lock.make(r.a, r.entry, .{});
         assert(r.since_save == 0);
-        r.open_over(.lock, screen.open(&r.lock, &r.lock_ending));
+        r.open_child(.{ .lock = .{ .screen = lock.make(r.a, r.entry, .{}) } });
         return r.after();
     }
 
@@ -809,8 +821,8 @@ pub const Reader = struct {
             .hold => |h| try r.hold_page(h.x, h.y),
             .swipe => |direction| try r.turn_by(direction + r.a.input.take_turns(), null),
             .pull => {
-                r.panel = panel.open(r.a, try r.s.ensure(r.s.current, r.s.current));
-                r.open_over(.panel, screen.open(&r.panel, &r.panel_ending));
+                const page = try r.s.ensure(r.s.current, r.s.current);
+                r.open_child(.{ .panel = .{ .screen = panel.open(r.a, page) } });
             },
             else => {},
         }
@@ -864,8 +876,10 @@ pub const Reader = struct {
         if (held.head == held.fixed) { // Held without moving: look it up, highlight only if asked
             const words = hl.page_words(a, r.s);
             assert(held.fixed < words.len);
-            try define.begin(&r.define, a, r.s, words[held.fixed], r.lang);
-            return r.open_over(.define, screen.open(&r.define, &r.define_ending));
+            // Made in place: it points into itself
+            r.over = .{ .define = .{ .screen = undefined } };
+            try define.begin(&r.over.define.screen, a, r.s, words[held.fixed], r.lang);
+            return r.open_placed();
         }
         try r.highlight_held();
     }
@@ -880,10 +894,9 @@ pub const Reader = struct {
     }
 
     /// The definition closed: the underline off, or Highlight pressed.
-    fn defined(r: *Reader) !void {
+    fn defined(r: *Reader, ending: screen.Ending(define.Choice)) !void {
         assert(r.view == .page); // A word on the page was held
-        assert(r.define_ending != null);
-        const choice: define.Choice = switch (r.define_ending.?) {
+        const choice: define.Choice = switch (ending) {
             .done => |choice| choice,
             .closed, .interrupted => .close,
         };
@@ -957,16 +970,17 @@ pub const Reader = struct {
                 try r.draw_toolbar(!r.sheet_open);
             },
             .more => {
-                try more.begin(&r.menu, a, s, r.entry);
-                r.open_over(.menu, screen.open(&r.menu, &r.menu_ending));
+                // Made in place: it points into itself
+                r.over = .{ .menu = .{ .screen = undefined } };
+                try more.begin(&r.over.menu.screen, a, s, r.entry);
+                r.open_placed();
             },
             .search => {
-                r.searching = search.make(a, s, r.scratch);
-                r.open_over(.searching, screen.open(&r.searching, &r.page_ending));
+                r.open_child(.{ .searching = .{ .screen = search.make(a, s, r.scratch) } });
             },
             .goto => {
-                r.going = try goto.make(a, s, r.scratch, r.chapters);
-                r.open_over(.going, screen.open(&r.going, &r.page_ending));
+                const going = try goto.make(a, s, r.scratch, r.chapters);
+                r.open_child(.{ .going = .{ .screen = going } });
             },
             .bookmark => {
                 try bookmark.toggle(a, s, r.alloc);

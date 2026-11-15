@@ -187,27 +187,24 @@ const Browser = struct {
     watch_until: u64 = 0,
     /// After a book, Wi-Fi takes a while to come back: the status is read again until then.
     status_until: u64 = 0,
-    /// The screen open over the library, if one is, and how it ended once it has.
+    /// The screen open over the library, if one is, with how it ended once it has.
     over: Over = .none,
-    over_ending: ?screen.Ending(void) = null,
-    stats: stats_screen.Stats = undefined, // While `over` is .stats
-    bubble: battery_screen.Bubble = undefined, // While `over` is .battery
-    lock: lock.Lock = undefined, // While `over` is .lock
-    panel: panel.Panel = undefined, // While `over` is .panel
-    search: LibrarySearch = undefined, // While `over` is .search
-    search_ending: ?screen.Ending(SearchEnd) = null,
     query_kept: search.Query = .{}, // The search before the sheet, kept if it's cancelled
-
-    sheet: actions.Sheet = undefined, // While `over` is .sheet
-    sheet_ending: ?screen.Ending(actions.Change) = null,
-    offer: actions.UpNext = .{}, // While `over` is .up_next
-    offered: ?*catalog.Entry = null, // The book it offers
-    book: reader.Reader = undefined, // While `over` is .book
-    book_ending: ?screen.Ending(reader.Outcome) = null,
+    offered: ?*catalog.Entry = null, // The book the up-next card offers
     book_was_read: bool = false, // The book open was read before it was opened
 
-    /// The screens the library opens over itself.
-    const Over = enum { none, stats, battery, lock, panel, search, sheet, up_next, book };
+    /// The screens the library opens over itself, each kept with its ending.
+    const Over = union(enum) {
+        none,
+        stats: screen.Child(stats_screen.Stats),
+        battery: screen.Child(battery_screen.Bubble),
+        lock: screen.Child(lock.Lock),
+        panel: screen.Child(panel.Panel),
+        search: screen.Child(LibrarySearch),
+        sheet: screen.Child(actions.Sheet),
+        up_next: actions.UpNext,
+        book: screen.Child(reader.Reader),
+    };
 
     pub const Result = void;
     /// The home screen: under every other, it takes the lock and leaving.
@@ -284,45 +281,50 @@ const Browser = struct {
     }
 
     /// Back in front, the screen over it ended: whatever way, what it covered comes back.
+    /// What's needed of it is taken before it's let go of, as the handler may open
+    /// another in its place.
     pub fn on_resume(b: *Browser) !screen.Step(void) {
         // Only a screen the library opened ends back to it
         assert(b.over != .none);
-        // It wrote how it ended in its own place, and only there
-        const endings = [_]bool{
-            b.over_ending != null,
-            b.search_ending != null,
-            b.sheet_ending != null,
-            b.offer.ending != null,
-            b.book_ending != null,
-        };
-        assert(std.mem.count(bool, &endings, &.{true}) == 1);
-        const over = b.over;
-        b.over = .none;
-        switch (over) {
+        switch (b.over) {
             .none => unreachable,
-            .stats => return .{ .redraw = .changing },
+            .stats => {
+                b.over = .none;
+                return .{ .redraw = .changing };
+            },
             .battery => {
+                b.over = .none;
                 try battery_screen.put_back(b.a);
                 return .stay;
             },
-            .lock => return step(b.on_woken(b.over_ending.?)),
-            .panel => {
-                const leave = try panel.ended(b.a, b.buf, b.over_ending.?);
+            .lock => |c| {
+                b.over = .none;
+                return step(b.on_woken(c.ended()));
+            },
+            .panel => |c| {
+                b.over = .none;
+                const leave = try panel.ended(b.a, b.buf, c.ended());
                 return step(if (leave) .leave else .nothing);
             },
-            .search => return step(try b.searched(b.search_ending.?)),
-            .sheet => {
-                const change: actions.Change = switch (b.sheet_ending.?) {
+            .search => |c| {
+                b.over = .none;
+                return step(try b.searched(c.ended()));
+            },
+            .sheet => |c| {
+                b.over = .none;
+                const change: actions.Change = switch (c.ended()) {
                     .done => |change| change,
                     .closed, .interrupted => .none,
                 };
                 return step(b.acted(change));
             },
             .up_next => return step(try b.offer_ended()),
-            .book => {
+            .book => |*c| {
                 // A book takes the lock and leaving, so it only ever ends itself
-                const outcome = b.book_ending.?.done;
-                return step(try b.book_closed(b.book.entry, outcome));
+                const outcome = c.ended().done;
+                const entry = c.screen.entry;
+                b.over = .none;
+                return step(try b.book_closed(entry, outcome));
             },
         }
     }
@@ -331,36 +333,8 @@ const Browser = struct {
     fn open_panel(b: *Browser) Next {
         assert(b.over == .none);
         assert(b.buf.len == b.a.screen.pixels.len);
-        b.panel = panel.open(b.a, b.buf);
-        return b.open_over(.panel);
-    }
-
-    /// Opens `over` over the library.
-    fn open_over(b: *Browser, over: Over) Next {
-        assert(over != .none);
-        assert(b.over == .none);
-        return b.open_frame(over, switch (over) {
-            .stats => screen.open(&b.stats, &b.over_ending),
-            .battery => screen.open(&b.bubble, &b.over_ending),
-            .lock => screen.open(&b.lock, &b.over_ending),
-            .panel => screen.open(&b.panel, &b.over_ending),
-            .search => screen.open(&b.search, &b.search_ending),
-            .none, .sheet, .up_next, .book => unreachable, // Opened by what starts them
-        });
-    }
-
-    /// Opens `f`, the screen `over`, over the library, every ending of the screens before
-    /// let go of, so how it ends is the one ending there is.
-    fn open_frame(b: *Browser, over: Over, f: screen.Frame) Next {
-        assert(over != .none);
-        assert(b.over == .none);
-        b.over = over;
-        b.over_ending = null;
-        b.search_ending = null;
-        b.sheet_ending = null;
-        b.offer.ending = null;
-        b.book_ending = null;
-        return .{ .open = f };
+        b.over = .{ .panel = .{ .screen = panel.open(b.a, b.buf) } };
+        return .{ .open = b.over.panel.frame() };
     }
 
     // Drawing
@@ -483,8 +457,8 @@ const Browser = struct {
             .search => {
                 assert(b.query.len <= b.query.buf.len);
                 b.query_kept = b.query;
-                b.search = .{ .a = a, .lib = &b.lib, .q = &b.query };
-                return b.open_over(.search);
+                b.over = .{ .search = .{ .screen = .{ .a = a, .lib = &b.lib, .q = &b.query } } };
+                return .{ .open = b.over.search.frame() };
             },
             .clear_search => {
                 b.query = .{};
@@ -502,13 +476,14 @@ const Browser = struct {
                 return .page;
             },
             .stats => {
-                b.stats = stats_screen.make(a, &b.lib);
-                return b.open_over(.stats);
+                b.over = .{ .stats = .{ .screen = stats_screen.make(a, &b.lib) } };
+                return .{ .open = b.over.stats.frame() };
             },
             .menu => return b.open_panel(),
             .battery => {
-                battery_screen.open(a, &b.bubble);
-                return b.open_over(.battery);
+                b.over = .{ .battery = .{ .screen = undefined } };
+                battery_screen.open(a, &b.over.battery.screen);
+                return .{ .open = b.over.battery.frame() };
             },
             .hero => {
                 const h = b.lib.hero() orelse return .nothing;
@@ -598,11 +573,13 @@ const Browser = struct {
         assert(entry.is_local());
         assert(b.lib.local_count() > 0);
         b.book_was_read = entry.is_read();
-        reader.open(&b.book, b.a, entry) catch |err| {
+        b.over = .{ .book = .{ .screen = undefined } };
+        reader.open(&b.over.book.screen, b.a, entry) catch |err| {
             std.debug.print("could not open book: {s}\n", .{@errorName(err)});
+            b.over = .none;
             return b.book_closed(entry, .failed);
         };
-        return b.open_frame(.book, screen.open(&b.book, &b.book_ending));
+        return .{ .open = b.over.book.frame() };
     }
 
     /// The book ended, `outcome` saying how: noface leaves, or the library is back,
@@ -621,19 +598,24 @@ const Browser = struct {
         // The next is one not read yet, so never the book just finished
         assert(!next.is_read());
         assert(next != entry);
-        const offer = actions.up_next(a, next, b.buf, &b.offer) orelse return .everything;
+        b.over = .{ .up_next = .{} };
+        const offer = actions.up_next(a, next, b.buf, &b.over.up_next) orelse {
+            b.over = .none;
+            return .everything;
+        };
         b.offered = next;
-        return b.open_frame(.up_next, offer);
+        return .{ .open = offer };
     }
 
     /// The up-next card ended: the next book now, or the library back.
     fn offer_ended(b: *Browser) !Next {
         const next = b.offered orelse unreachable; // Set as the card opened
         b.offered = null;
-        assert(b.offer.ending != null);
-        assert(b.over == .none); // Back in front
+        assert(b.over.up_next.ending != null);
         assert(next.is_local());
-        if (!try actions.up_next_closed(b.a, b.buf, &b.offer)) return .everything;
+        const chosen = try actions.up_next_closed(b.a, b.buf, &b.over.up_next);
+        b.over = .none;
+        if (!chosen) return .everything;
         return b.open_book(next);
     }
 
@@ -641,8 +623,9 @@ const Browser = struct {
     fn act_on(b: *Browser, entry: *catalog.Entry) Next {
         assert(b.buf.len == b.a.screen.pixels.len);
         assert(b.over == .none);
-        actions.begin_sheet(&b.sheet, b.a, entry, &b.lib, b.buf);
-        return b.open_frame(.sheet, screen.open(&b.sheet, &b.sheet_ending));
+        b.over = .{ .sheet = .{ .screen = undefined } };
+        actions.begin_sheet(&b.over.sheet.screen, b.a, entry, &b.lib, b.buf);
+        return .{ .open = b.over.sheet.frame() };
     }
 
     /// The book's actions ended, having changed `change`.
@@ -710,8 +693,8 @@ const Browser = struct {
         const hero: ?*const catalog.Entry = b.lib.hero();
         // Not put back on waking: it's all drawn again, fresh
         assert(b.over == .none);
-        b.lock = lock.make(b.a, hero, .{ .restore = false });
-        return b.open_over(.lock);
+        b.over = .{ .lock = .{ .screen = lock.make(b.a, hero, .{ .restore = false }) } };
+        return .{ .open = b.over.lock.frame() };
     }
 
     /// Woken, or the lock screen ended as noface leaves (which goes on to leave).

@@ -75,50 +75,162 @@ pub const facts = if (is_linux) facts_linux else portable.facts;
 /// it can't be read.
 pub const free_bytes = if (is_linux) free_bytes_linux else portable.free_bytes;
 
-/// Where fstat's struct keeps the size (an i64 at 48 on every Linux noface runs on)
-/// and the change time's seconds (32 bits at 80 in ARM's stat64, 64 at 88 elsewhere).
-const stat_size_at = 48;
-const stat_modified_at = if (builtin.target.ptrBitWidth() == 32) 80 else 88;
-const stat_bytes = 256; // Larger than struct stat or stat64 on any of them
+/// What fstat fills, as the kernel lays it out: `struct stat64` on 32-bit ARM
+/// (arch/arm/include/uapi/asm/stat.h, EABI alignment), `struct stat` on x86-64
+/// (arch/x86/include/uapi/asm/stat.h) and on 64-bit ARM (asm-generic/stat.h). Zig's
+/// std has no fstat for Linux, so these are written out, and their sizes and the
+/// places of what's read checked against the kernel's below.
+const KernelStat = switch (builtin.cpu.arch) {
+    .arm, .thumb => extern struct {
+        dev: u64,
+        pad0: [4]u8,
+        ino_low: u32,
+        mode: u32,
+        nlink: u32,
+        uid: u32,
+        gid: u32,
+        rdev: u64,
+        pad3: [4]u8,
+        size: i64,
+        blksize: u32,
+        blocks: u64,
+        atime: u32,
+        atime_nsec: u32,
+        mtime: u32,
+        mtime_nsec: u32,
+        ctime: u32,
+        ctime_nsec: u32,
+        ino: u64,
+    },
+    .x86_64 => extern struct {
+        dev: u64,
+        ino: u64,
+        nlink: u64,
+        mode: u32,
+        uid: u32,
+        gid: u32,
+        pad0: u32,
+        rdev: u64,
+        size: i64,
+        blksize: i64,
+        blocks: i64,
+        atime: i64,
+        atime_nsec: i64,
+        mtime: i64,
+        mtime_nsec: i64,
+        ctime: i64,
+        ctime_nsec: i64,
+        unused: [3]i64,
+    },
+    .aarch64 => extern struct {
+        dev: u64,
+        ino: u64,
+        mode: u32,
+        nlink: u32,
+        uid: u32,
+        gid: u32,
+        rdev: u64,
+        pad1: u64,
+        size: i64,
+        blksize: i32,
+        pad2: i32,
+        blocks: i64,
+        atime: i64,
+        atime_nsec: u64,
+        mtime: i64,
+        mtime_nsec: u64,
+        ctime: i64,
+        ctime_nsec: u64,
+        unused: [2]u32,
+    },
+    else => @compileError("noface reads fstat on ARM, x86-64 and 64-bit ARM only"),
+};
+
+/// What statfs fills: `struct statfs64` on 32-bit ARM (asm-generic/statfs.h, packed
+/// to 4-byte alignment by arch/arm/include/uapi/asm/statfs.h: 84 bytes, a size the
+/// kernel checks), `struct statfs` of 64-bit words on the 64-bit ones.
+const KernelStatfs = if (builtin.target.ptrBitWidth() == 32) extern struct {
+    kind: u32,
+    block_bytes: u32,
+    blocks: u64 align(4),
+    blocks_free: u64 align(4),
+    blocks_available: u64 align(4),
+    files: u64 align(4),
+    files_free: u64 align(4),
+    fsid: [2]i32,
+    name_bytes_max: u32,
+    fragment_bytes: u32,
+    flags: u32,
+    spare: [4]u32,
+} else extern struct {
+    kind: i64,
+    block_bytes: i64,
+    blocks: u64,
+    blocks_free: u64,
+    blocks_available: u64,
+    files: u64,
+    files_free: u64,
+    fsid: [2]i32,
+    name_bytes_max: i64,
+    fragment_bytes: i64,
+    flags: i64,
+    spare: [4]i64,
+};
+
+comptime {
+    // The kernel's layouts, as its headers give them
+    if (is_linux) {
+        switch (builtin.cpu.arch) {
+            .arm, .thumb => {
+                assert(@sizeOf(KernelStat) == 104);
+                assert(@offsetOf(KernelStat, "size") == 48);
+                assert(@offsetOf(KernelStat, "mtime") == 80);
+                assert(@sizeOf(KernelStatfs) == 84);
+                assert(@offsetOf(KernelStatfs, "blocks_available") == 24);
+            },
+            .x86_64 => {
+                assert(@sizeOf(KernelStat) == 144);
+                assert(@offsetOf(KernelStat, "size") == 48);
+                assert(@offsetOf(KernelStat, "mtime") == 88);
+            },
+            .aarch64 => {
+                assert(@sizeOf(KernelStat) == 128);
+                assert(@offsetOf(KernelStat, "size") == 48);
+                assert(@offsetOf(KernelStat, "mtime") == 88);
+            },
+            else => {},
+        }
+        if (builtin.target.ptrBitWidth() == 64) {
+            assert(@sizeOf(KernelStatfs) == 120);
+            assert(@offsetOf(KernelStatfs, "blocks_available") == 32);
+        }
+    }
+}
 
 fn facts_linux(fd: i32) ?Facts {
     assert(fd >= 0);
-    comptime assert(builtin.cpu.arch == .arm or builtin.cpu.arch == .thumb or
-        builtin.cpu.arch == .x86_64 or builtin.cpu.arch == .aarch64);
-    var buffer: [stat_bytes]u8 align(8) = undefined;
+    var st: KernelStat = undefined;
     const number = if (builtin.target.ptrBitWidth() == 32) linux.SYS.fstat64 else linux.SYS.fstat;
-    const rc = linux.syscall2(number, @as(u32, @bitCast(fd)), @intFromPtr(&buffer));
+    const rc = linux.syscall2(number, @as(u32, @bitCast(fd)), @intFromPtr(&st));
     if (failed(rc)) return null;
-    const size = std.mem.readInt(i64, buffer[stat_size_at..][0..8], .little);
-    if (size < 0) return null;
-    const modified_s: i64 = if (builtin.target.ptrBitWidth() == 32)
-        std.mem.readInt(i32, buffer[stat_modified_at..][0..4], .little)
-    else
-        std.mem.readInt(i64, buffer[stat_modified_at..][0..8], .little);
-    const result: Facts = .{ .size = @intCast(size), .modified_s = modified_s };
-    assert(result.size == size);
+    if (st.size < 0) return null;
+    const result: Facts = .{ .size = @intCast(st.size), .modified_s = st.mtime };
+    assert(result.size == st.size);
     return result;
 }
 
-/// Read with statfs64 on 32-bit ARM (its struct is packed to 84 bytes, which the kernel
-/// checks), statfs on 64-bit: either way the block size, then the counts of blocks, free blocks
-/// and blocks free to anyone. 32-bit puts the size in 32 bits at 4, the free count at
-/// 24; 64-bit in 64 bits at 8, and at 32.
+/// Read with statfs64 on 32-bit ARM, given its struct's size, statfs on 64-bit.
 fn free_bytes_linux(path: [*:0]const u8) ?u64 {
     assert(path[0] != 0);
-    var buffer: [stat_bytes]u8 align(8) = undefined;
-    const narrow = builtin.target.ptrBitWidth() == 32;
-    const rc = if (narrow)
-        linux.syscall3(.statfs64, @intFromPtr(path), 84, @intFromPtr(&buffer))
+    var fs: KernelStatfs = undefined;
+    const rc = if (builtin.target.ptrBitWidth() == 32)
+        linux.syscall3(.statfs64, @intFromPtr(path), @sizeOf(KernelStatfs), @intFromPtr(&fs))
     else
-        linux.syscall2(.statfs, @intFromPtr(path), @intFromPtr(&buffer));
+        linux.syscall2(.statfs, @intFromPtr(path), @intFromPtr(&fs));
     if (failed(rc)) return null;
-    const block_bytes: u64 = if (narrow)
-        std.mem.readInt(u32, buffer[4..8], .little)
-    else
-        std.mem.readInt(u64, buffer[8..16], .little);
-    const available = std.mem.readInt(u64, buffer[if (narrow) 24 else 32..][0..8], .little);
-    return std.math.mul(u64, block_bytes, available) catch std.math.maxInt(u64);
+    if (fs.block_bytes < 0) return null;
+    const block_bytes: u64 = @intCast(fs.block_bytes);
+    return std.math.mul(u64, block_bytes, fs.blocks_available) catch std.math.maxInt(u64);
 }
 
 test "a file's size and change time, and the room left beside it" {

@@ -72,13 +72,26 @@ pub const Facts = portable.Facts;
 /// The size and change time of the file open on `fd`, or null if it can't be read.
 pub const facts = if (is_linux) facts_linux else portable.facts;
 
-/// Read with statx, which the kernel lays out the same on every architecture (Linux
-/// 4.11 and later; the Kindle runs 5.15), so nothing here depends on which one.
+/// The size and change time of the file at `path`, or null if it isn't there: read
+/// without opening it, which on the user drive's FUSE file system costs a round trip.
+pub const facts_at = if (is_linux) facts_at_linux else portable.facts_at;
+
 fn facts_linux(fd: i32) ?Facts {
     assert(fd >= 0);
+    return statx_facts(fd, "", linux.AT.EMPTY_PATH);
+}
+
+fn facts_at_linux(path: [*:0]const u8) ?Facts {
+    assert(path[0] != 0);
+    return statx_facts(linux.AT.FDCWD, path, 0);
+}
+
+/// Read with statx, which the kernel lays out the same on every architecture (Linux
+/// 4.11 and later; the Kindle runs 5.15), so nothing here depends on which one.
+fn statx_facts(fd: i32, path: [*:0]const u8, flags: u32) ?Facts {
     var st: linux.Statx = undefined;
     const mask: linux.STATX = .{ .SIZE = true, .MTIME = true };
-    const rc = linux.statx(fd, "", linux.AT.EMPTY_PATH, mask, &st);
+    const rc = linux.statx(fd, path, flags, mask, &st);
     if (failed(rc)) return null;
     const result: Facts = .{ .size = st.size, .modified_s = st.mtime.sec };
     assert(result.size == st.size);
@@ -98,6 +111,7 @@ test "a file's size and change time" {
     try std.testing.expectEqual(@as(usize, 5), write(fd, "hello", 5));
     const got = facts(fd) orelse return error.NoFacts;
     try std.testing.expectEqual(@as(u64, 5), got.size);
+    try std.testing.expectEqual(got, facts_at(path) orelse return error.NoFacts);
     // Written just now: within a day of the clock, whatever the file system's rounding
     var now: timespec = undefined;
     _ = clock_gettime(.REALTIME, &now);

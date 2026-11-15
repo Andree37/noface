@@ -1,7 +1,9 @@
 //! Building the library's index (index.zig) from what's on the Kindle: the catalog the
 //! launcher exports, a line per Kindle book; the EPUBs under the documents folder; and
-//! the series set by hand. Every book is read and written one at a time, through the
-//! fixed buffers of `Work`, so a build takes the same memory for ten books or millions.
+//! the series set by hand. Every book is written one at a time, through fixed buffers,
+//! so a build takes the same memory for ten books or millions; finding books again (an
+//! EPUB in the last build, a book by its state file) sorts their ids in memory, 8 bytes
+//! a book, and looks them up by halves.
 //!
 //! What noface keeps of each book it has opened (its state file: place, time read) is
 //! merged into the records at every load, from one listing of the data folder.
@@ -20,87 +22,35 @@ const epub = @import("../epub/epub.zig");
 const catalog_db = @import("../kindle/catalog.zig");
 const kfx = @import("../kindle/kfx.zig");
 const files = @import("files.zig");
-const sorter = @import("sorter.zig");
-const epub_cache = @import("epub_cache.zig");
 const index = @import("index.zig");
 
-/// The buffers a build, a merge and the library's passes over the index use: taken
-/// once, at startup, and the same for any number of books.
-pub const Work = struct {
-    sort: sorter.Memory,
-    sort_second: sorter.Memory, // The second pass by series, beside the first
-    epubs: epub_cache.Memory,
-    out_records: []u8,
-    out_text: []u8,
-    out_keys: []u8,
+const Item = index.Item;
+
+/// The buffers a build writes and reads its files through: taken once, at startup, and
+/// the same for any number of books.
+pub const Buffers = struct {
+    records: []u8,
+    text: []u8,
     lines: []u8, // The catalog and the series file, a line at a time
     row: []u8, // One catalog row's texts, as parsed
-    in_records: []u8,
-    in_text: []u8,
-    in_keys: []u8,
-    in_order: []u8,
-    /// A bit per book: which the filter and search let through.
-    bits: []u64,
-    slot: *index.Slot, // One book being built, merged or sorted
-    blob: *[index.blob_bytes_max]u8,
+    blob: *[index.blob_bytes_max]u8, // One book's texts, as written
 
     const stream_bytes: u32 = 64 << 10;
-    const sort_items_bytes: u32 = 2 << 20;
-    const sort_inputs: u32 = 8;
 
     /// What `init` takes, at most, its blocks rounded up to whole units of the region.
-    pub const bytes_max: u64 = 2 * (sort_items_bytes + sort_items_bytes / 16 +
-        (sort_inputs + 1) * stream_bytes) + (1 << 20) + 13 * stream_bytes +
-        index.books_max / 8 + 2 * @sizeOf(index.Slot) + (64 << 10) * 48;
+    pub const bytes_max: u64 = 7 * stream_bytes + index.blob_bytes_max + 5 * memory.unit_bytes;
 
-    pub fn init(budget: *memory.Budget) !Work {
-        const work: Work = .{
-            .sort = try sort_memory(budget, sort_items_bytes),
-            .sort_second = try sort_memory(budget, sort_items_bytes),
-            .epubs = try epub_memory(budget),
-            .out_records = try budget.untouched(u8, stream_bytes),
-            .out_text = try budget.untouched(u8, stream_bytes),
-            .out_keys = try budget.untouched(u8, stream_bytes),
+    // Assertions: it takes blocks of the budget, each of a size fixed above.
+    pub fn init(budget: *memory.Budget) !Buffers {
+        const buffers: Buffers = .{
+            .records = try budget.untouched(u8, stream_bytes),
+            .text = try budget.untouched(u8, stream_bytes),
             .lines = try budget.untouched(u8, stream_bytes),
             .row = try budget.untouched(u8, 4 * stream_bytes),
-            .in_records = try budget.untouched(u8, stream_bytes),
-            .in_text = try budget.untouched(u8, stream_bytes),
-            .in_keys = try budget.untouched(u8, 4 << 10),
-            .in_order = try budget.untouched(u8, stream_bytes),
-            .bits = try budget.untouched(u64, index.books_max / 64),
-            .slot = try budget.untouched_one(index.Slot),
             .blob = try budget.untouched_one([index.blob_bytes_max]u8),
         };
-        work.epubs.invariants();
-        assert(work.in_text.len >= index.blob_bytes_max);
-        return work;
-    }
-
-    fn sort_memory(budget: *memory.Budget, items_bytes: u32) !sorter.Memory {
-        const alloc = budget.allocator(); // Only for the list of inputs
-        assert(items_bytes >= sorter.key_bytes_max + 10);
-        const inputs = try alloc.alloc([]u8, sort_inputs);
-        for (inputs) |*input| input.* = try budget.untouched(u8, stream_bytes);
-        const result: sorter.Memory = .{
-            .items = try budget.untouched(u8, items_bytes),
-            .offsets = try budget.untouched(u32, items_bytes / 64),
-            .inputs = inputs,
-            .output = try budget.untouched(u8, stream_bytes),
-        };
-        assert(result.inputs.len == sort_inputs);
-        return result;
-    }
-
-    fn epub_memory(budget: *memory.Budget) !epub_cache.Memory {
-        const result: epub_cache.Memory = .{
-            .sort = try sort_memory(budget, 1 << 20),
-            .lines_out = try budget.untouched(u8, stream_bytes),
-            .index_in = try budget.untouched(u8, 4 << 10),
-            .lines_in = try budget.untouched(u8, epub_cache.line_bytes_max),
-        };
-        result.invariants();
-        assert(result.sort.items.len == 1 << 20);
-        return result;
+        assert(buffers.row.len > buffers.lines.len); // A row's texts, from a line
+        return buffers;
     }
 };
 
@@ -167,128 +117,96 @@ fn places_hash(places: Places) u64 {
 
 /// A build under way: its files, and what it has counted.
 const Build = struct {
-    work: *const Work,
+    buffers: *const Buffers,
     scratch: *memory.Budget,
     places: Places,
-    generation: u64,
     records: files.Writer,
     text: files.Writer,
-    keys: sorter.Sorter,
-    cache: epub_cache.Cache,
+    last: ?EpubsRead, // What the last build read of each EPUB
     count: u32 = 0,
     local: u32 = 0,
-    read: u32 = 0,
     downloading: u32 = 0,
     left_out: u32 = 0, // Past `index.books_max`, or the text file's most
     epubs: u64 = 0, // The EPUBs found, as `EpubHash` adds them
 
-    /// Adds book `e` to the index, as the next id.
-    fn add(b: *Build, e: *const catalog.Entry) void {
+    /// Adds book `e` to the index, as the next id; an EPUB with its file's `facts`.
+    fn add(b: *Build, e: *const catalog.Entry, facts: calls.Facts) void {
         assert(b.count <= index.books_max);
         if (b.count == index.books_max) {
             b.left_out += 1;
             return;
         }
-        const len = index.write_blob(b.work.blob, e);
+        const len = index.write_blob(b.buffers.blob, e);
         if (b.text.size + len > index.text_file_bytes_max) {
             b.left_out += 1;
             return;
         }
-        const r = index.record_of(e, b.text.size, len);
-        b.text.write(b.work.blob[0..len]);
+        var r = index.record_of(e, b.text.size, len);
+        r.file_size = facts.size;
+        r.file_modified = facts.modified_s;
+        r.seal();
+        b.text.write(b.buffers.blob[0..len]);
         b.records.write(std.mem.asBytes(&r));
-        if (e.is_local() and e.path.len > 0) {
-            var key: [8]u8 = undefined;
-            std.mem.writeInt(u64, &key, state.key_for(e.path), .big);
-            b.keys.add(&key, b.count) catch {
-                b.records.broken = true; // The build fails at its end, and is tried again
-            };
-        }
         b.count += 1;
         if (e.is_local()) b.local += 1;
-        if (e.is_read()) b.read += 1;
         if (e.availability == .downloading) b.downloading += 1;
         assert(b.local <= b.count);
     }
 };
 
-/// Builds the index in `places.dir` from the sources, afresh: every file written beside
-/// the old, and put in its place only once all are whole, the header last.
+/// Builds the index in `places.dir` from the sources, afresh, and opens it: every file
+/// written beside the old, and put in its place only once all are whole, the header
+/// last. `last`, the index built before, is read for the EPUBs it has, then closed.
 pub fn build(
-    work: *const Work,
+    buffers: *const Buffers,
+    items: []Item,
     scratch: *memory.Budget,
     places: Places,
     sources: index.Sources,
-) !void {
+    last: ?*index.Index,
+) !index.Index {
     assert(scratch.region.?.kind == .bump);
     assert(places.dir.len > 0);
+    const generation = std.hash.Wyhash.hash(os.now_us(), std.mem.asBytes(&sources)) | 1;
     var b: Build = .{
-        .work = work,
+        .buffers = buffers,
         .scratch = scratch,
         .places = places,
-        .generation = std.hash.Wyhash.hash(os.now_us(), std.mem.asBytes(&sources)) | 1,
         .records = undefined,
         .text = undefined,
-        .keys = .init(&work.sort, places.dir, "keys"),
-        .cache = .open(&work.epubs, places.dir),
+        .last = if (last) |ix| EpubsRead.sort(ix, items) else null,
     };
-    b.records = try create_data(places.dir, "records.new", b.generation, work.out_records);
+    // Closed before the new files are put in place: a mapped file renamed over faults
+    defer if (last) |ix| if (ix.records_file.len > 0) ix.close();
+    b.records = try create_data(places.dir, "records.new", generation, buffers.records);
     errdefer b.records.abandon();
-    b.text = try create_data(places.dir, "text.new", b.generation, work.out_text);
+    b.text = try create_data(places.dir, "text.new", generation, buffers.text);
     errdefer b.text.abandon();
     add_kindle_books(&b);
     add_epubs(&b);
-    b.cache.finish();
     if (b.left_out > 0) log("library: {d} books past the most kept\n", .{b.left_out});
-    try finish_build(&b, sources);
-}
-
-fn finish_build(b: *Build, sources: index.Sources) !void {
-    assert(b.count <= index.books_max);
     _ = try b.records.finish();
     _ = try b.text.finish();
-    try write_keys(b);
-    var header: index.Header = .{
-        .generation = b.generation,
-        .count = b.count,
-        .local = b.local,
-        .read = b.read,
-        .downloading = b.downloading,
-        .stale = index.all_orders, // Sorted when first shown
-        .sources = sources,
-        .text_size = b.text.size,
-    };
-    try apply_overrides(b, &header);
-    for ([_][]const u8{ "records", "text", "keys" }) |name| {
+    if (last) |ix| ix.close();
+    for ([_][]const u8{ "records", "text" }) |name| {
         var from: [files.path_bytes_max]u8 = undefined;
         var to: [files.path_bytes_max]u8 = undefined;
-        const new = try std.fmt.bufPrintSentinel(&from, "{s}/{s}.new", .{ b.places.dir, name }, 0);
-        try files.replace(new, try files.path_in(&to, b.places.dir, name));
+        const new = try std.fmt.bufPrintSentinel(&from, "{s}/{s}.new", .{ places.dir, name }, 0);
+        try files.replace(new, try files.path_in(&to, places.dir, name));
     }
-    try index.write_header_to(b.places.dir, &header);
-    assert(header.valid());
-}
-
-fn write_keys(b: *Build) !void {
-    assert(b.records.fd < 0); // Finished
-    var w = try create_data(b.places.dir, "keys.new", b.generation, b.work.out_keys);
-    b.keys.finish(&w, write_key) catch |err| {
-        w.abandon();
-        return err;
-    };
-    const size = try w.finish();
-    assert(size == index.file_head_bytes + @as(u64, b.keys.items_total) * key_entry_bytes);
-}
-
-/// An entry of the keys file: a state key, then the id of a book with it.
-const key_entry_bytes: u32 = 16;
-
-fn write_key(w: *files.Writer, key: []const u8, id: u64) !void {
-    assert(key.len == 8);
-    assert(id < index.books_max);
-    w.write_int(u64, std.mem.readInt(u64, key[0..8], .big));
-    w.write_int(u32, @intCast(id));
-    w.write_int(u32, 0);
+    var ix = try index.Index.open_as(places.dir, .{
+        .generation = generation,
+        .count = b.count,
+        .local = b.local,
+        .downloading = b.downloading,
+        .sources = sources,
+        .text_size = b.text.size,
+    });
+    errdefer ix.close();
+    try apply_overrides(&ix, buffers, items, places);
+    try ix.write_header();
+    assert(ix.header.valid());
+    return ix;
 }
 
 /// A new data file, its head written.
@@ -306,20 +224,20 @@ fn create_data(folder: []const u8, name: []const u8, generation: u64, buffer: []
 fn add_kindle_books(b: *Build) void {
     assert(b.count == 0);
     var lines: files.Lines = .{
-        .reader = files.Reader.open(b.places.catalog_path, b.work.lines) catch return,
+        .reader = files.Reader.open(b.places.catalog_path, b.buffers.lines) catch return,
     };
     defer lines.close();
     // Each line moves on through the file, so there are fewer than it has bytes
     for (0..lines_max(&lines)) |_| {
         const line = (lines.next() catch break) orelse break;
         if (line.len == 0) continue;
-        var row_memory = std.heap.FixedBufferAllocator.init(b.work.row);
+        var row_memory = std.heap.FixedBufferAllocator.init(b.buffers.row);
         // A row whose texts don't fit (longer than the line, many times over) is passed
         var e = (catalog_db.parse_line(row_memory.allocator(), line) catch continue) orelse
             continue;
         // The catalog's flag can stay set long after a download ended: the file decides
         if (e.availability == .downloading and is_complete_book(e.path)) e.availability = .local;
-        b.add(&e);
+        b.add(&e, .{ .size = 0, .modified_s = 0 });
     }
     if (lines.skipped > 0) log("library: {d} catalog lines too long\n", .{lines.skipped});
     assert(lines.at <= lines.reader.size);
@@ -343,7 +261,7 @@ pub fn is_complete_book(path: [:0]const u8) bool {
 }
 
 /// EPUBs copied over the cable, which the Kindle's catalog doesn't list: found under the
-/// documents folder, and read (or what was read of them kept) one at a time.
+/// documents folder, and read (or what the last build read of them kept) one at a time.
 fn add_epubs(b: *Build) void {
     assert(b.places.documents.len > 0);
     const start = b.scratch.mark();
@@ -365,14 +283,23 @@ fn add_epub(b: *Build, path: [:0]const u8) void {
     const cover_path = state.sibling(&cover_buffer, state_path, "cover") catch return;
     const each = b.scratch.mark();
     defer b.scratch.rewind(each);
-    const about = b.cache.find(path, facts) orelse read_epub(b, path, cover_path) orelse return;
-    b.cache.add(path, facts, about);
+    const known = if (b.last) |*last| last.find(path, facts) else null;
+    const about = known orelse read_epub(b, path, cover_path) orelse return;
     const e = epub_entry(path, &about, if (about.has_cover) cover_path else "");
-    b.add(&e);
+    b.add(&e, facts);
 }
 
+/// What the library keeps of an EPUB, read from the book or from the last build.
+const About = struct {
+    title: []const u8,
+    author: []const u8,
+    series: []const u8,
+    series_index: f32,
+    has_cover: bool, // Its cover was saved beside its state once
+};
+
 /// What an EPUB says of itself, read from the book, its cover saved the first time.
-fn read_epub(b: *Build, path: [:0]const u8, cover_path: [:0]const u8) ?epub_cache.About {
+fn read_epub(b: *Build, path: [:0]const u8, cover_path: [:0]const u8) ?About {
     assert(path.len > 0);
     const data = file.map(path) catch return null;
     defer file.unmap(data);
@@ -406,11 +333,7 @@ fn read_about(scratch: *memory.Budget, data: []const u8, with_cover: bool) ?epub
 }
 
 /// An EPUB's entry: the book's own title and series, else its file name's.
-fn epub_entry(
-    path: [:0]const u8,
-    about: *const epub_cache.About,
-    cover: [:0]const u8,
-) catalog.Entry {
+fn epub_entry(path: [:0]const u8, about: *const About, cover: [:0]const u8) catalog.Entry {
     assert(path.len > 0);
     const from_file_name = catalog.series_from_file_name(path);
     const from_book = about.series.len > 0;
@@ -431,198 +354,179 @@ fn epub_entry(
     return e;
 }
 
-/// The series set by hand, each over the book it names: its texts again with the
-/// series, at the text file's end, and its record pointing to them.
-fn apply_overrides(b: *Build, header: *index.Header) !void {
-    assert(b.text.fd < 0); // Finished, so it reads whole
-    var series_buffer: [files.path_bytes_max]u8 = undefined;
-    const series_path = try files.path_in(&series_buffer, b.places.state_dir, "series");
-    var lines: files.Lines = .{
-        .reader = files.Reader.open(series_path, b.work.lines) catch return, // None set
-    };
-    defer lines.close();
-    var found = try Found.open(b.places.dir, b.generation, b.work, true);
-    defer found.close();
-    var text = try files.Writer.append(try found.text_path(), b.work.out_text);
-    errdefer text.abandon();
-    // Each line moves on through the file, so there are fewer than it has bytes
-    for (0..lines_max(&lines)) |_| {
-        const line = (try lines.next()) orelse break;
-        var one = std.heap.FixedBufferAllocator.init(b.work.row);
-        const list = overrides.parse(one.allocator(), line) catch continue;
-        if (list.len != 1) continue; // Not a line of the file's
-        try found.set_series(&text, list[0]);
-    }
-    header.text_size = try text.finish();
-    assert(header.text_size >= b.text.size);
-}
+/// The EPUBs of the last build, their ids sorted by their path's hash, to find each by
+/// halves: what was read of a book whose file hasn't changed needn't be read again.
+const EpubsRead = struct {
+    ix: *const index.Index,
+    sorted: []Item,
 
-/// A new index's files, open to find books by their state key and change them, while
-/// it's built: records and texts read and written in place.
-const Found = struct {
-    work: *const Work,
-    folder: []const u8,
-    keys: files.Reader,
-    records: files.Reader,
-    text: files.Reader,
-    keys_count: u32,
-    suffix: []const u8, // ".new" while built
-    path_buffer: [files.path_bytes_max]u8 = undefined,
-
-    fn open(folder: []const u8, generation: u64, work: *const Work, new: bool) !Found {
-        assert(folder.len > 0);
-        const suffix: []const u8 = if (new) ".new" else "";
-        var name_buffer: [32]u8 = undefined;
-        const keys_name = try std.fmt.bufPrint(&name_buffer, "keys{s}", .{suffix});
-        var keys_reader = try index.open_data(folder, keys_name, generation, work.in_keys);
-        errdefer keys_reader.close();
-        const records_name = try std.fmt.bufPrint(&name_buffer, "records{s}", .{suffix});
-        var records = try index.open_data(folder, records_name, generation, work.in_records);
-        errdefer records.close();
-        const text_name = try std.fmt.bufPrint(&name_buffer, "text{s}", .{suffix});
-        const text = try index.open_data(folder, text_name, generation, work.in_text);
-        const entries = (keys_reader.size - index.file_head_bytes) / key_entry_bytes;
-        assert(entries <= index.books_max);
-        return .{
-            .work = work,
-            .folder = folder,
-            .keys = keys_reader,
-            .records = records,
-            .text = text,
-            .keys_count = @intCast(entries),
-            .suffix = suffix,
-        };
-    }
-
-    fn close(f: *Found) void {
-        assert(f.keys.fd >= 0);
-        f.keys.close();
-        f.records.close();
-        f.text.close();
-        assert(f.text.fd < 0);
-    }
-
-    fn text_path(f: *Found) ![:0]const u8 {
-        assert(f.folder.len > 0);
-        const path = try std.fmt.bufPrintSentinel(&f.path_buffer, "{s}/text{s}", .{
-            f.folder,
-            f.suffix,
-        }, 0);
-        assert(std.mem.endsWith(u8, path, f.suffix));
-        return path;
-    }
-
-    /// The first entry of the keys file whose key isn't below `key`.
-    fn first_at_least(f: *Found, key: u64) !u32 {
-        var low: u32 = 0;
-        var high: u32 = f.keys_count;
-        // Halves the range each time round
-        for (0..64) |_| {
-            if (low == high) break;
-            const middle = low + (high - low) / 2;
-            if (try f.key_at(middle) < key) low = middle + 1 else high = middle;
+    fn sort(ix: *const index.Index, items: []Item) EpubsRead {
+        assert(items.len >= ix.header.count);
+        var count: u32 = 0;
+        for (0..ix.header.count) |i| {
+            const id: u32 = @intCast(i);
+            const r = ix.record(id);
+            // One whose series was set by hand no longer says what the book does
+            if (r.flags & index.Record.epub == 0 or r.flags & index.Record.series_by_hand != 0) {
+                continue;
+            }
+            items[count] = .{ .id = id, .key = path_key(ix.entry(id).path) };
+            count += 1;
         }
-        assert(low == high);
-        assert(low <= f.keys_count);
-        return low;
+        assert(count <= ix.header.count);
+        const sorted = items[0..count];
+        std.mem.sort(Item, sorted, {}, by_key);
+        assert(std.sort.isSorted(Item, sorted, {}, by_key));
+        return .{ .ix = ix, .sorted = sorted };
     }
 
-    fn key_at(f: *Found, at: u32) !u64 {
-        assert(f.keys.fd >= 0);
-        assert(at < f.keys_count);
-        const offset = index.file_head_bytes + @as(u64, at) * key_entry_bytes;
-        const bytes = try f.keys.read_at(offset, key_entry_bytes);
-        return std.mem.readInt(u64, bytes[0..8], .little);
-    }
-
-    fn id_at(f: *Found, at: u32) !u32 {
-        assert(f.keys.fd >= 0);
-        assert(at < f.keys_count);
-        const offset = index.file_head_bytes + @as(u64, at) * key_entry_bytes;
-        const bytes = try f.keys.read_at(offset, key_entry_bytes);
-        const id = std.mem.readInt(u32, bytes[8..12], .little);
-        if (id >= index.books_max) return error.Damaged;
-        return id;
-    }
-
-    fn record(f: *Found, id: u32) !index.Record {
-        assert(id < index.books_max);
-        assert(f.records.fd >= 0);
-        const offset = index.file_head_bytes + @as(u64, id) * @sizeOf(index.Record);
-        return index.Record.decode(try f.records.read_at(offset, @sizeOf(index.Record)));
-    }
-
-    fn write_record(f: *Found, id: u32, r: *index.Record) !void {
-        assert(id < index.books_max);
-        assert(f.folder.len > 0);
-        r.seal();
-        var path_buffer: [files.path_bytes_max]u8 = undefined;
-        const path = try std.fmt.bufPrintSentinel(&path_buffer, "{s}/records{s}", .{
-            f.folder,
-            f.suffix,
-        }, 0);
-        const offset = index.file_head_bytes + @as(u64, id) * @sizeOf(index.Record);
-        if (!files.write_at(path, offset, std.mem.asBytes(r))) return error.CantWrite;
-        f.records.len = 0; // What it holds may be from before
-    }
-
-    /// Sets the series of the book at the override's path, if there is one.
-    fn set_series(f: *Found, text: *files.Writer, o: overrides.Override) !void {
-        assert(f.keys_count <= index.books_max);
-        assert(o.path.len > 0);
-        const key = state.key_for(o.path);
-        var at = try f.first_at_least(key);
-        // Books with the same file name share a key: each is looked at
-        for (0..f.keys_count) |_| {
-            if (at == f.keys_count or try f.key_at(at) != key) return;
-            const id = try f.id_at(at);
-            at += 1;
-            var r = try f.record(id);
-            const slot = f.work.slot;
-            const blob = try f.text.read_at(r.text_offset, r.text_len);
-            @memcpy(slot.text[0..blob.len], blob);
-            var e = try index.entry_of(&r, slot.text[0..blob.len]);
-            if (!std.mem.eql(u8, e.path, o.path)) continue;
-            e.series = o.name;
-            e.series_index = o.index;
-            const len = index.write_blob(f.work.blob, &e);
-            const offset = text.size;
-            text.write(f.work.blob[0..len]);
-            r.text_offset = offset;
-            r.text_len = len;
-            r.series_index = o.index;
-            r.series_hash = index.series_hash(o.name);
-            try f.write_record(id, &r);
+    /// What the last build read of the EPUB at `path`, if its file is as it was then.
+    fn find(read: *const EpubsRead, path: []const u8, facts: calls.Facts) ?About {
+        assert(path.len > 0);
+        assert(read.sorted.len <= read.ix.header.count);
+        const key = path_key(path);
+        for (read.sorted[first_with(read.sorted, key)..]) |item| {
+            if (item.key != key) return null;
+            const r = read.ix.record(item.id);
+            const e = read.ix.entry(item.id);
+            if (!std.mem.eql(u8, e.path, path)) continue; // Another path, the same hash
+            if (r.file_size != facts.size or r.file_modified != facts.modified_s) return null;
+            return .{
+                .title = e.title,
+                .author = e.author,
+                .series = e.series,
+                .series_index = e.series_index,
+                .has_cover = e.thumbnail.len > 0,
+            };
         }
+        return null;
+    }
+
+    fn path_key(path: []const u8) u32 {
+        assert(path.len > 0);
+        return @truncate(std.hash.Wyhash.hash(0x70, path));
     }
 };
 
+fn by_key(_: void, a: Item, b: Item) bool {
+    return a.key < b.key;
+}
+
+/// The first of `sorted` (by key) whose key isn't below `key`.
+fn first_with(sorted: []const Item, key: u32) u32 {
+    const at = std.sort.lowerBound(Item, sorted, key, struct {
+        fn order(k: u32, item: Item) std.math.Order {
+            return std.math.order(k, item.key);
+        }
+    }.order);
+    assert(at <= sorted.len);
+    if (at < sorted.len) assert(sorted[at].key >= key);
+    return @intCast(at);
+}
+
+/// The books on this Kindle, their ids sorted by their state file's key, to find each
+/// by halves: books with the same file name share one.
+fn by_state_key(ix: *const index.Index, items: []Item) []Item {
+    assert(items.len >= ix.header.count);
+    var count: u32 = 0;
+    for (0..ix.header.count) |i| {
+        const id: u32 = @intCast(i);
+        const e = ix.entry(id);
+        if (!e.is_local() or e.path.len == 0) continue;
+        items[count] = .{ .id = id, .key = @truncate(state.key_for(e.path) >> 32) };
+        count += 1;
+    }
+    const sorted = items[0..count];
+    std.mem.sort(Item, sorted, {}, by_key);
+    assert(count <= ix.header.local);
+    return sorted;
+}
+
+/// The series set by hand, each over the book it names: its texts again with the
+/// series, at the text file's end, and its record pointing to them.
+fn apply_overrides(
+    ix: *index.Index,
+    buffers: *const Buffers,
+    items: []Item,
+    places: Places,
+) !void {
+    var series_buffer: [files.path_bytes_max]u8 = undefined;
+    const series_path = try files.path_in(&series_buffer, places.state_dir, "series");
+    var lines: files.Lines = .{
+        .reader = files.Reader.open(series_path, buffers.lines) catch return, // None set
+    };
+    defer lines.close();
+    const sorted = by_state_key(ix, items);
+    assert(sorted.len <= ix.header.local);
+    // Each line moves on through the file, so there are fewer than it has bytes
+    for (0..lines_max(&lines)) |_| {
+        const line = (try lines.next()) orelse break;
+        var one = std.heap.FixedBufferAllocator.init(buffers.row);
+        const list = overrides.parse(one.allocator(), line) catch continue;
+        if (list.len != 1) continue; // Not a line of the file's
+        try set_series(ix, buffers, sorted, list[0]);
+    }
+    assert(ix.text_file.len == ix.header.text_size); // Mapped again for each one set
+}
+
+/// Sets the series of the book at the override's path, if it's here: its texts written
+/// again at the text file's end, mapped, and then its record pointed at them.
+fn set_series(
+    ix: *index.Index,
+    buffers: *const Buffers,
+    sorted: []const Item,
+    o: overrides.Override,
+) !void {
+    assert(o.path.len > 0);
+    const key = state.key_for(o.path);
+    const high: u32 = @truncate(key >> 32);
+    for (sorted[first_with(sorted, high)..]) |item| {
+        if (item.key != high) return;
+        var e = ix.entry(item.id);
+        if (!std.mem.eql(u8, e.path, o.path)) continue;
+        e.series = o.name;
+        e.series_index = o.index;
+        const len = index.write_blob(buffers.blob, &e);
+        var path_buffer: [files.path_bytes_max]u8 = undefined;
+        var text = try files.Writer.append(
+            try files.path_in(&path_buffer, ix.dir, "text"),
+            buffers.text,
+        );
+        const offset = text.size;
+        text.write(buffers.blob[0..len]);
+        try ix.grow_text(try text.finish());
+        var r = ix.record(item.id);
+        r.text_offset = offset;
+        r.text_len = len;
+        r.series_index = o.index;
+        r.flags |= index.Record.series_by_hand;
+        try ix.write_record(item.id, &r);
+        assert(std.mem.eql(u8, ix.entry(item.id).series, index.clip(o.name)));
+    }
+}
+
 /// Merges what noface keeps of each book it opened (place, time read, marked read) into
 /// the index's records, from one listing of the data folder: only the books with a
-/// state file are read. A record that changes marks the orders it moves as stale.
-pub fn merge_states(ix: *index.Index, work: *const Work, state_dir: []const u8) !void {
+/// state file are read.
+pub fn merge_states(ix: *const index.Index, items: []Item, state_dir: []const u8) !void {
     assert(state_dir.len > 0);
-    var found = try Found.open(ix.dir, ix.header.generation, work, false);
-    defer found.close();
-    var merge: Merge = .{ .ix = ix, .found = &found, .state_dir = state_dir };
+    var merge: Merge = .{ .ix = ix, .sorted = by_state_key(ix, items), .state_dir = state_dir };
     var folder_buffer: [files.path_bytes_max]u8 = undefined;
     const folder = try std.fmt.bufPrintSentinel(&folder_buffer, "{s}", .{state_dir}, 0);
     calls.each_entry(folder.ptr, &merge, Merge.entry);
     if (merge.failed) return error.CantMerge;
-    if (merge.changed > 0) try ix.write_header();
-    assert(ix.header.valid());
+    assert(merge.sorted.len <= ix.header.local);
 }
 
 const Merge = struct {
-    ix: *index.Index,
-    found: *Found,
+    ix: *const index.Index,
+    sorted: []const Item,
     state_dir: []const u8,
-    changed: u32 = 0,
     failed: bool = false,
 
     fn entry(m: *Merge, name: []const u8, is_dir: bool) void {
-        assert(m.changed <= m.ix.header.count);
         assert(name.len > 0);
+        assert(m.sorted.len <= m.ix.header.local);
         if (is_dir or m.failed) return;
         const key = state.key_of_name(name, "state") orelse return;
         m.merge_key(key, name) catch {
@@ -637,47 +541,18 @@ const Merge = struct {
         const format = "{s}/{s}";
         const path = try std.fmt.bufPrintSentinel(&path_buffer, format, .{ m.state_dir, name }, 0);
         const saved = state.load(path);
-        var at = try m.found.first_at_least(key);
+        const high: u32 = @truncate(key >> 32);
         // Books with the same file name share a state file: each is merged
-        for (0..m.found.keys_count) |_| {
-            if (at == m.found.keys_count or try m.found.key_at(at) != key) return;
-            const id = try m.found.id_at(at);
-            at += 1;
-            var r = try m.ix.record(id);
+        for (m.sorted[first_with(m.sorted, high)..]) |item| {
+            if (item.key != high) return;
+            if (state.key_for(m.ix.entry(item.id).path) != key) continue; // Same high half
+            var r = m.ix.record(item.id);
             const before = r;
             merged(&r, saved);
-            if (std.meta.eql(before, r)) continue;
-            try m.ix.write_record(id, &r);
-            m.note_change(&before, &r);
+            if (!std.meta.eql(before, r)) try m.ix.write_record(item.id, &r);
         }
     }
-
-    fn note_change(m: *Merge, before: *const index.Record, after: *const index.Record) void {
-        assert(!std.meta.eql(before.*, after.*));
-        const h = &m.ix.header;
-        const was_read = record_is_read(before);
-        const is_read = record_is_read(after);
-        if (is_read and !was_read) h.read += 1;
-        if (was_read and !is_read) h.read -= 1;
-        h.stale |= index.reading_orders;
-        m.changed += 1;
-        assert(h.read <= h.count);
-    }
 };
-
-// Assertions: it reads a record from the drive: outside data, checked by `invariants`.
-pub fn record_is_read(r: *const index.Record) bool {
-    r.invariants();
-    const e: catalog.Entry = .{
-        .path = "",
-        .title = "",
-        .author = "",
-        .percent = r.percent,
-        .last = r.last,
-        .finished = r.flags & index.Record.finished != 0,
-    };
-    return e.is_read();
-}
 
 /// A local book's record with what noface saved of it, as the library has always
 /// merged them: an EPUB's place is noface's; a Kindle book's is the Kindle's unless

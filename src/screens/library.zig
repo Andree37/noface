@@ -444,13 +444,10 @@ const Browser = struct {
 
     /// The library read again from the Kindle's catalog (after `export`, which has the
     /// Kindle write it out afresh) and the EPUBs, in place of what was shown.
-    fn reload(b: *Browser, how: enum { export_first, as_is }) bool {
+    fn reload(b: *Browser, how: enum { export_first, as_is }) void {
         assert(b.buf.len == b.a.screen.pixels.len);
         if (how == .export_first) catalog_db.export_library();
-        const fresh = load_library(b.a) catch return false;
-        b.lib.deinit();
-        b.lib = fresh;
-        return true;
+        b.lib.reload();
     }
 
     // Actions
@@ -640,14 +637,14 @@ const Browser = struct {
         switch (change) {
             .none => return .nothing,
             .redraw => return .everything,
-            .reload => _ = b.reload(.as_is),
-            .other => _ = b.reload(.export_first),
+            .reload => b.reload(.as_is),
+            .other => b.reload(.export_first),
             .downloading => {
                 // Only a download finishes later, so only it is watched
                 b.watch_until = now_us() + download_watch_us;
                 b.a.downloads_until = b.watch_until; // Wi-Fi stays on for it while reading
                 assert(b.watch_until > 0);
-                _ = b.reload(.export_first);
+                b.reload(.export_first);
             },
         }
         return .everything;
@@ -680,15 +677,10 @@ const Browser = struct {
         // Only what's downloading is looked at, until it says the catalog moved on
         if (b.lib.watch_download() == .waiting) return .nothing;
         catalog_db.export_library();
-        var fresh = load_library(b.a) catch return .nothing;
-        if (fresh.same_shelf(&b.lib)) {
-            b.lib.state.catalog_seen = fresh.state.catalog_seen; // Nothing to show for it
-            fresh.deinit();
-            return .nothing;
-        }
-        if (fresh.local_count() != b.lib.local_count()) b.watch_until = 0;
-        b.lib.deinit();
-        b.lib = fresh;
+        const before = b.lib.shelf();
+        b.lib.reload();
+        if (std.meta.eql(before, b.lib.shelf())) return .nothing; // Nothing to show for it
+        if (before.local != b.lib.local_count()) b.watch_until = 0;
         return .everything;
     }
 
@@ -710,7 +702,7 @@ const Browser = struct {
         a.note_battery(); // What sleeping (or charging) did
         a.quick = lipc.read(a.quick); // The clock and battery may be hours old
         // A download may have finished while the Kindle slept
-        if (b.lib.downloading_count() > 0) _ = b.reload(.export_first);
+        if (b.lib.downloading_count() > 0) b.reload(.export_first);
         return .everything;
     }
 };

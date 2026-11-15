@@ -20,7 +20,9 @@ pub fn map(path: [*:0]const u8) ![]const u8 {
         null,
         size,
         .{ .READ = true },
-        .{ .TYPE = .PRIVATE },
+        // Shared: a write to the file later, in place, shows in the mapping (on every
+        // system, where a private mapping's is unspecified)
+        .{ .TYPE = .SHARED },
         @intCast(fd),
         0,
     );
@@ -45,14 +47,10 @@ pub fn exists(path: [*:0]const u8) bool {
     return true;
 }
 
-/// The size and change time of the file at `path`, or null when it can't be opened.
+/// The size and change time of the file at `path`, or null when it isn't there.
 pub fn facts_of(path: [*:0]const u8) ?linux.Facts {
     assert(path[0] != 0);
-    const fd = linux.open(path, .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0);
-    if (failed(fd)) return null;
-    assert(fd <= std.math.maxInt(i32)); // A descriptor, as every call taking one expects
-    defer _ = linux.close(@intCast(fd)); // Only read: nothing is lost if closing fails
-    return linux.facts(@intCast(fd));
+    return linux.facts_at(path);
 }
 
 /// How many bytes `path` holds now, or 0 when it can't be opened.

@@ -1,38 +1,37 @@
-//! The library's index: every book as a record of fixed size and its text, kept on the
-//! user drive in the data folder's "library" folder, read through fixed buffers. The
-//! index is a cache, never the truth: it's built from the Kindle's catalog, the EPUBs
-//! found and the series set by hand (builder.zig), and built again whenever they change
-//! or any of its files doesn't read as whole.
+//! The library's index: every book as a record of fixed size and its texts, kept on the
+//! user drive in the data folder's "library" folder and mapped whole. The index is a
+//! cache, never the truth: it's built from the Kindle's catalog, the EPUBs found and the
+//! series set by hand (builder.zig), and built again whenever they change or any of its
+//! files doesn't read as whole.
 //!
 //! Files, each starting with a head naming the build it belongs to:
 //!   records   one `Record` per book, by id (the order the builder found them in)
 //!   text      each book's texts, which its record points to
-//!   keys      (state key, id) for every local book, sorted: finds a book's record by
-//!             the files kept beside its state
-//!   order-*   the ids in each order, sorted when first shown after a change
 //!   header    the build's number, its counts, what it was built from, and a checksum:
 //!             written last, so a build cut short leaves the old header, or none
 //!
-//! No file in use is ever cut short: each is written beside, then renamed over it.
+//! A file is checked whole once, as it's mapped; after that only noface writes it, a
+//! record at a time and sealed. None mapped is ever replaced: the user drive's FUSE
+//! file system faults on a mapped file renamed over, so the index is closed first.
 const std = @import("std");
 const assert = std.debug.assert;
 const catalog = @import("../model/catalog.zig");
+const file = @import("../sys/file.zig");
 const files = @import("files.zig");
-const keys = @import("keys.zig");
 
-/// The most books the library takes: a statement about the hardware, not a limit on
-/// the reader. Each is a file on the user drive (32 GB holds 2^24 files of 2 KB, less
-/// than any book) or a row of the Kindle's catalog on its small system partition. Ids
-/// stay u32, and the records file stays under 1 GB, as FAT32 needs. A build that finds
-/// more stops there and says so in the log.
-pub const books_max: u32 = 1 << 24;
+/// The most books the library takes: past what a Kindle holds, not a limit on the
+/// reader. Its catalog is a database on a 500 MB partition, and a row takes more than
+/// 125 bytes; an EPUB is a file, 4 KB at the least, on a drive of 12 GB. The index is
+/// mapped whole, and this many books' records and texts take at most 1.3 GB of the 3 GB
+/// a program has. A build that finds more stops there and says so in the log.
+pub const books_max: u32 = 1 << 22;
 
 /// A text field kept: a title, author or series is cut to this, at a whole character.
-pub const text_bytes_max: u32 = keys.text_bytes_max;
+pub const text_bytes_max: u32 = 256;
 /// The texts of a book: two paths, six other texts, their lengths, and a 0 after each.
 pub const blob_bytes_max: u32 = 8 * 2 + 2 * (files.path_bytes_max + 1) + 6 * (text_bytes_max + 1);
-/// How long the text file may grow: under FAT32's 4 GB a file.
-pub const text_file_bytes_max: u64 = (4 << 30) - 1;
+/// How long the text file may grow, mapped whole beside the records.
+pub const text_file_bytes_max: u64 = 1 << 30;
 
 pub const Record = extern struct {
     last: u64,
@@ -40,9 +39,12 @@ pub const Record = extern struct {
     kindle_last: u64,
     seconds_read: u64,
     text_offset: u64, // Where its texts start in the text file
+    /// An EPUB's file as it was read, so the next build needn't open it again; 0 for a
+    /// Kindle book, which the catalog describes.
+    file_size: u64,
+    file_modified: i64,
     text_len: u32,
     series_index: f32,
-    series_hash: u32, // `series_hash` of its series, 0 for none
     percent: u8,
     kindle_percent: u8,
     availability: u8, // A `catalog.Availability`
@@ -50,10 +52,11 @@ pub const Record = extern struct {
     /// Of every byte before it: a record torn by a crash while written in place
     /// doesn't read as whole, and the index is built again.
     checksum: u32 = 0,
-    reserved: [4]u8 = @splat(0),
 
     pub const finished: u8 = 1;
     pub const epub: u8 = 2;
+    /// Its series was set by hand: what the book itself says is no longer kept.
+    pub const series_by_hand: u8 = 4;
 
     /// Sets the checksum, as the record is now: last, before it's written.
     pub fn seal(r: *Record) void {
@@ -64,30 +67,14 @@ pub const Record = extern struct {
 
     /// Whether the checksum matches what the record holds.
     pub fn sound(r: *const Record) bool {
-        comptime assert(@offsetOf(Record, "checksum") == 56);
-        comptime assert(@offsetOf(Record, "reserved") == 60);
+        comptime assert(@offsetOf(Record, "checksum") == @sizeOf(Record) - 4);
         return r.checksum == r.checksum_now();
     }
 
     fn checksum_now(r: *const Record) u32 {
         const bytes = std.mem.asBytes(r)[0..@offsetOf(Record, "checksum")];
-        assert(bytes.len == 56);
-        assert(bytes.len < @sizeOf(Record)); // Never over itself
+        assert(bytes.len == @sizeOf(Record) - 4);
         return @truncate(std.hash.Wyhash.hash(0x7265, bytes));
-    }
-
-    /// The record in `bytes`, read from the drive: an error when it doesn't read as
-    /// whole (torn, or damaged), which means building the index again.
-    pub fn decode(bytes: []const u8) !Record {
-        assert(bytes.len == @sizeOf(Record));
-        const r = std.mem.bytesToValue(Record, bytes);
-        if (!r.sound()) return error.Damaged;
-        if (r.percent > 100 or r.text_len > blob_bytes_max) return error.Damaged;
-        if (r.availability > @backingInt(catalog.Availability.downloading)) {
-            return error.Damaged;
-        }
-        r.invariants();
-        return r;
     }
 
     pub fn invariants(r: *const Record) void {
@@ -98,8 +85,8 @@ pub const Record = extern struct {
 };
 
 comptime {
-    assert(@sizeOf(Record) == 64);
-    assert(@as(u64, books_max) * @sizeOf(Record) <= 1 << 30);
+    assert(@sizeOf(Record) == 72);
+    assert(@as(u64, books_max) * @sizeOf(Record) + text_file_bytes_max <= 1400 << 20);
     assert(blob_bytes_max < std.math.maxInt(u16) * 8);
 }
 
@@ -113,16 +100,14 @@ pub const file_head_bytes: u32 = @sizeOf(FileHead);
 
 /// Its version: an index written by a noface that wrote records differently is built
 /// again.
-pub const header_magic = "NFLIB002".*;
+pub const header_magic = "NFLIB003".*;
 
 pub const Header = extern struct {
     magic: [8]u8 = header_magic,
     generation: u64,
     count: u32,
     local: u32,
-    read: u32,
     downloading: u32,
-    stale: u32, // A bit per order whose file is out of date
     reserved: u32 = 0,
     sources: Sources,
     text_size: u64,
@@ -139,9 +124,8 @@ pub const Header = extern struct {
     pub fn valid(h: *const Header) bool {
         if (!std.mem.eql(u8, &h.magic, &header_magic)) return false;
         if (h.checksum != checksum_of(h)) return false;
-        if (h.count > books_max) return false;
-        if (h.local > h.count or h.read > h.count or h.downloading > h.count) return false;
-        return h.stale < 1 << order_count;
+        if (h.count > books_max or h.text_size > text_file_bytes_max) return false;
+        return h.local <= h.count and h.downloading <= h.count;
     }
 
     fn checksum_of(h: *const Header) u64 {
@@ -149,12 +133,6 @@ pub const Header = extern struct {
         const bytes = std.mem.asBytes(h)[0..@offsetOf(Header, "checksum")];
         assert(bytes.len == @sizeOf(Header) - 8);
         return std.hash.Wyhash.hash(0x6e66, bytes);
-    }
-
-    pub fn is_stale(h: *const Header, order: catalog.Order) bool {
-        assert(h.count <= books_max);
-        assert(h.stale < 1 << order_count);
-        return h.stale & order_bit(order) != 0;
     }
 };
 
@@ -168,32 +146,9 @@ pub const Sources = extern struct {
     places: u64 = 0, // Where the books are, and this format
 };
 
-pub const order_count: u32 = @typeInfo(catalog.Order).@"enum".field_names.len;
-
-pub fn order_bit(order: catalog.Order) u32 {
-    const bit = @as(u32, 1) << @intCast(@backingInt(order));
-    assert(bit < 1 << order_count);
-    assert(bit != 0);
-    return bit;
-}
-
-/// The orders that change when a book's place or reading time does.
-pub const reading_orders: u32 =
-    order_bit_comptime(.recent) | order_bit_comptime(.progress) | order_bit_comptime(.series);
-pub const all_orders: u32 = (1 << order_count) - 1;
-
-fn order_bit_comptime(comptime order: catalog.Order) u32 {
-    comptime assert(@backingInt(order) < order_count);
-    comptime assert(order_count <= 32);
-    return @as(u32, 1) << @backingInt(order);
-}
-
-pub fn order_name(buffer: []u8, order: catalog.Order) ![]const u8 {
-    const name = try std.fmt.bufPrint(buffer, "order-{s}", .{@tagName(order)});
-    assert(name.len > "order-".len);
-    assert(std.mem.startsWith(u8, name, "order-"));
-    return name;
-}
+/// A book of the index, by id, with a number to sort it by: what the library sorts in
+/// memory, 8 bytes a book, for an order or to find books by a key.
+pub const Item = struct { id: u32, key: u32 };
 
 /// A book read back: its entry, with its texts in `text`, and which record it is.
 pub const Slot = struct {
@@ -207,62 +162,110 @@ pub const Slot = struct {
     }
 };
 
-/// Buffers for reading an index's records and texts one at a time.
-pub const Buffers = struct {
-    records: []u8, // A record at least
-    text: []u8, // A blob at least
-};
-
-/// An index open for reading: its header, and its records and texts.
+/// An index open: its header, and its records and texts mapped.
 pub const Index = struct {
     dir: []const u8,
     header: Header,
-    records: files.Reader,
-    text: files.Reader,
+    records_file: []const u8,
+    text_file: []const u8,
 
     /// The index in `dir`, or an error when it's missing or doesn't read as whole.
-    pub fn open(dir: []const u8, buffers: Buffers) !Index {
-        assert(buffers.records.len >= @sizeOf(Record));
-        assert(buffers.text.len >= blob_bytes_max);
-        const header = try read_header(dir);
-        var records = try open_data(dir, "records", header.generation, buffers.records);
-        errdefer records.close();
-        if (records.size != file_head_bytes + @as(u64, header.count) * @sizeOf(Record)) {
+    pub fn open(dir: []const u8) !Index {
+        return open_as(dir, try read_header(dir));
+    }
+
+    /// The index in `dir` as `header` says it is: for a build, before its header is
+    /// written.
+    pub fn open_as(dir: []const u8, header: Header) !Index {
+        assert(header.count <= books_max);
+        const records_file = try map_data(dir, "records", header.generation);
+        errdefer file.unmap(records_file);
+        const text_file = try map_data(dir, "text", header.generation);
+        errdefer file.unmap(text_file);
+        const ix: Index = .{
+            .dir = dir,
+            .header = header,
+            .records_file = records_file,
+            .text_file = text_file,
+        };
+        if (records_file.len != file_head_bytes + @as(u64, header.count) * @sizeOf(Record)) {
             return error.Damaged;
         }
-        var text = try open_data(dir, "text", header.generation, buffers.text);
-        errdefer text.close();
-        if (text.size != header.text_size) return error.Damaged;
-        return .{ .dir = dir, .header = header, .records = records, .text = text };
+        if (text_file.len != header.text_size) return error.Damaged;
+        for (0..header.count) |id| try ix.check(@intCast(id));
+        assert(ix.records_file.len >= file_head_bytes);
+        return ix;
     }
 
     pub fn close(ix: *Index) void {
-        assert(ix.records.fd >= 0);
-        ix.records.close();
-        ix.text.close();
-        assert(ix.text.fd < 0);
+        assert(ix.records_file.len >= file_head_bytes);
+        file.unmap(ix.records_file);
+        file.unmap(ix.text_file);
+        ix.records_file = &.{};
     }
 
-    pub fn record(ix: *Index, id: u32) !Record {
+    /// Whether book `id`'s record and texts read as whole: once, as it's opened.
+    fn check(ix: *const Index, id: u32) !void {
+        const r = ix.record_unchecked(id);
+        if (!r.sound()) return error.Damaged;
+        if (r.percent > 100 or r.kindle_percent > 100) return error.Damaged;
+        if (r.availability > @backingInt(catalog.Availability.downloading)) {
+            return error.Damaged;
+        }
+        if (r.text_len > blob_bytes_max) return error.Damaged;
+        if (r.text_offset < file_head_bytes) return error.Damaged;
+        if (r.text_offset + r.text_len > ix.text_file.len) return error.Damaged;
+        var texts: [8][:0]const u8 = undefined;
+        if (!split_blob(ix.blob(&r), &texts)) return error.Damaged;
+        assert(texts[@backingInt(Field.path)].len <= files.path_bytes_max);
+    }
+
+    fn record_unchecked(ix: *const Index, id: u32) Record {
         assert(id < ix.header.count);
-        assert(ix.records.fd >= 0);
         const offset = file_head_bytes + @as(u64, id) * @sizeOf(Record);
-        return Record.decode(try ix.records.read_at(offset, @sizeOf(Record)));
+        // usize: a slice's index, which the records' size, mapped, fits
+        const at: usize = @intCast(offset);
+        return std.mem.bytesToValue(Record, ix.records_file[at..][0..@sizeOf(Record)]);
     }
 
-    /// Book `id` read into `slot`: its record and its texts.
-    pub fn read(ix: *Index, id: u32, slot: *Slot) !void {
-        assert(id < ix.header.count);
-        const r = try ix.record(id);
-        const blob = try ix.text.read_at(r.text_offset, r.text_len);
-        @memcpy(slot.text[0..blob.len], blob);
-        slot.entry = try entry_of(&r, slot.text[0..blob.len]);
+    pub fn record(ix: *const Index, id: u32) Record {
+        const r = ix.record_unchecked(id);
+        assert(r.sound()); // Checked as opened, and sealed by every write since
+        r.invariants();
+        return r;
+    }
+
+    fn blob(ix: *const Index, r: *const Record) []const u8 {
+        assert(r.text_offset + r.text_len <= ix.text_file.len);
+        const at: usize = @intCast(r.text_offset); // usize: as the text file, mapped, fits
+        return ix.text_file[at..][0..r.text_len];
+    }
+
+    /// Book `id`, its texts in the mapping: valid while the index is open.
+    pub fn entry(ix: *const Index, id: u32) catalog.Entry {
+        const r = ix.record(id);
+        var texts: [8][:0]const u8 = undefined;
+        const whole = split_blob(ix.blob(&r), &texts);
+        assert(whole); // Checked as opened, and never written since
+        return entry_of(&r, &texts);
+    }
+
+    /// Book `id` read into `slot`, its texts copied: valid after the index is closed.
+    pub fn read(ix: *const Index, id: u32, slot: *Slot) void {
+        const r = ix.record(id);
+        const bytes = ix.blob(&r);
+        assert(bytes.len <= slot.text.len);
+        @memcpy(slot.text[0..bytes.len], bytes);
+        var texts: [8][:0]const u8 = undefined;
+        const whole = split_blob(slot.text[0..bytes.len], &texts);
+        assert(whole); // Checked as opened, and never written since
+        slot.entry = entry_of(&r, &texts);
         slot.id = id;
         assert(slot.holds());
     }
 
-    /// Writes book `id`'s record over the old one, in place.
-    pub fn write_record(ix: *Index, id: u32, r: *Record) !void {
+    /// Writes book `id`'s record over the old one, in place: the mapping sees it.
+    pub fn write_record(ix: *const Index, id: u32, r: *Record) !void {
         assert(id < ix.header.count);
         assert(ix.dir.len > 0);
         r.seal();
@@ -270,7 +273,20 @@ pub const Index = struct {
         const path = try files.path_in(&path_buffer, ix.dir, "records");
         const offset = file_head_bytes + @as(u64, id) * @sizeOf(Record);
         if (!files.write_at(path, offset, std.mem.asBytes(r))) return error.CantWrite;
-        ix.records.len = 0; // What it holds may be from before
+        assert(std.meta.eql(ix.record(id), r.*));
+    }
+
+    /// The text file mapped again, grown to `size` by texts written at its end: for a
+    /// build, before its header is written.
+    pub fn grow_text(ix: *Index, size: u64) !void {
+        assert(size >= ix.text_file.len);
+        const text_file = try map_data(ix.dir, "text", ix.header.generation);
+        file.unmap(ix.text_file);
+        ix.text_file = text_file;
+        if (text_file.len != size) return error.Damaged;
+        if (size > text_file_bytes_max) return error.TooLarge;
+        ix.header.text_size = size;
+        assert(ix.text_file.len == ix.header.text_size);
     }
 
     /// Writes the header afresh, beside the old one and then over it.
@@ -303,75 +319,69 @@ fn read_header(dir: []const u8) !Header {
     assert(dir.len > 0);
     var path_buffer: [files.path_bytes_max]u8 = undefined;
     const path = try files.path_in(&path_buffer, dir, "header");
-    var buffer: [@sizeOf(Header)]u8 = undefined;
-    var r = try files.Reader.open(path, &buffer);
-    defer r.close();
-    if (r.size != @sizeOf(Header)) return error.Damaged;
-    const header = std.mem.bytesToValue(Header, try r.read_at(0, @sizeOf(Header)));
+    var buffer: [@sizeOf(Header) + 1]u8 = undefined;
+    const bytes = file.read_small(path, &buffer);
+    if (bytes.len != @sizeOf(Header)) return error.Damaged;
+    const header = std.mem.bytesToValue(Header, bytes[0..@sizeOf(Header)]);
     if (!header.valid()) return error.Damaged;
     assert(header.count <= books_max);
     return header;
 }
 
-/// A data file of the index, checked to be of the build `generation`.
-pub fn open_data(dir: []const u8, name: []const u8, generation: u64, buffer: []u8) !files.Reader {
-    assert(buffer.len >= file_head_bytes);
+/// A data file of the index mapped whole, checked to be of the build `generation`.
+fn map_data(dir: []const u8, name: []const u8, generation: u64) ![]const u8 {
+    assert(generation != 0);
     var path_buffer: [files.path_bytes_max]u8 = undefined;
-    var r = try files.Reader.open(try files.path_in(&path_buffer, dir, name), buffer);
-    errdefer r.close();
-    const head = std.mem.bytesToValue(FileHead, try r.read_at(0, file_head_bytes));
+    const data = try file.map(try files.path_in(&path_buffer, dir, name));
+    errdefer file.unmap(data);
+    if (data.len < file_head_bytes) return error.Damaged;
+    const head = std.mem.bytesToValue(FileHead, data[0..file_head_bytes]);
     if (!std.mem.eql(u8, &head.magic, &file_magic)) return error.Damaged;
     if (head.generation != generation) return error.Damaged; // Another build's
-    assert(r.size >= file_head_bytes);
-    return r;
+    assert(data.len >= file_head_bytes);
+    return data;
 }
 
-/// The entry of a book whose record is `r` and texts `blob` (which it points into).
-pub fn entry_of(r: *const Record, blob: []const u8) !catalog.Entry {
+/// The entry of a book whose record is `r` and texts `texts`.
+fn entry_of(r: *const Record, texts: *const [8][:0]const u8) catalog.Entry {
     r.invariants();
-    var texts: [8][:0]const u8 = undefined;
-    try split_blob(blob, &texts);
-    const t = struct {
-        fn get(all: *const [8][:0]const u8, field: Field) [:0]const u8 {
-            return all[@backingInt(field)];
-        }
-    };
     const e: catalog.Entry = .{
-        .path = t.get(&texts, .path),
-        .title = t.get(&texts, .title),
-        .author = t.get(&texts, .author),
+        .path = texts[@backingInt(Field.path)],
+        .title = texts[@backingInt(Field.title)],
+        .author = texts[@backingInt(Field.author)],
         .percent = r.percent,
         .last = r.last,
         .finished = r.flags & Record.finished != 0,
         .seconds_read = r.seconds_read,
         .kindle_percent = r.kindle_percent,
         .kindle_last = r.kindle_last,
-        .thumbnail = t.get(&texts, .thumbnail),
+        .thumbnail = texts[@backingInt(Field.thumbnail)],
         .added = r.added,
         .availability = @fromBackingInt(@intCast(r.availability)),
-        .key = t.get(&texts, .key),
-        .kind = t.get(&texts, .kind),
-        .guid = t.get(&texts, .guid),
-        .series = t.get(&texts, .series),
+        .key = texts[@backingInt(Field.key)],
+        .kind = texts[@backingInt(Field.kind)],
+        .guid = texts[@backingInt(Field.guid)],
+        .series = texts[@backingInt(Field.series)],
         .series_index = r.series_index,
     };
     assert(e.percent <= 100);
     return e;
 }
 
-/// The eight texts of a blob: their lengths (u16 each), then each followed by a 0.
-fn split_blob(blob: []const u8, out: *[8][:0]const u8) !void {
-    assert(blob.len <= blob_bytes_max);
-    if (blob.len < 16) return error.Damaged;
+/// The eight texts of a blob (their lengths, u16 each, then each followed by a 0) into
+/// `out`: false when it doesn't read as whole.
+fn split_blob(bytes: []const u8, out: *[8][:0]const u8) bool {
+    assert(bytes.len <= blob_bytes_max);
+    if (bytes.len < 16) return false;
     var at: u32 = 16;
     for (out, 0..) |*text, i| {
-        const len = std.mem.readInt(u16, blob[i * 2 ..][0..2], .little);
-        if (at + len + 1 > blob.len or blob[at + len] != 0) return error.Damaged;
-        text.* = blob[at .. at + len :0];
+        const len = std.mem.readInt(u16, bytes[i * 2 ..][0..2], .little);
+        if (at + len + 1 > bytes.len or bytes[at + len] != 0) return false;
+        text.* = bytes[at .. at + len :0];
         at += len + 1;
     }
-    if (at != blob.len) return error.Damaged;
-    assert(at == blob.len);
+    assert(at <= bytes.len);
+    return at == bytes.len;
 }
 
 /// Writes `e`'s texts as a blob into `out`, each cut to what's kept: its length.
@@ -423,19 +433,6 @@ pub fn clip(text: []const u8) []const u8 {
     return text[0..end];
 }
 
-/// A series' name as a number, the same for every way of writing it that
-/// `catalog.same_series` takes as one; 0 for none.
-pub fn series_hash(series: []const u8) u32 {
-    assert(series.len <= std.math.maxInt(u32));
-    if (series.len == 0) return 0;
-    const name = catalog.without_the(series);
-    var hasher = std.hash.Wyhash.init(0x7365);
-    for (name) |c| hasher.update(&.{std.ascii.toLower(c)});
-    const hash: u32 = @truncate(hasher.final() | 1); // Never 0, which is none
-    assert(hash != 0);
-    return hash;
-}
-
 /// The record of entry `e`, its texts at `text_offset` (`text_len` long).
 pub fn record_of(e: *const catalog.Entry, text_offset: u64, text_len: u32) Record {
     assert(text_len <= blob_bytes_max);
@@ -446,9 +443,10 @@ pub fn record_of(e: *const catalog.Entry, text_offset: u64, text_len: u32) Recor
         .kindle_last = e.kindle_last,
         .seconds_read = e.seconds_read,
         .text_offset = text_offset,
+        .file_size = 0,
+        .file_modified = 0,
         .text_len = text_len,
         .series_index = if (finite) e.series_index else 0,
-        .series_hash = series_hash(e.series),
         .percent = @intCast(@min(e.percent, 100)),
         .kindle_percent = @intCast(@min(e.kindle_percent, 100)),
         .availability = @backingInt(e.availability),
@@ -479,10 +477,12 @@ test "a book's record and texts read back as the entry they were made from" {
         .series = "The Dune Saga",
         .series_index = 1.5,
     };
-    var blob: [blob_bytes_max]u8 = undefined;
-    const len = write_blob(&blob, &e);
+    var bytes: [blob_bytes_max]u8 = undefined;
+    const len = write_blob(&bytes, &e);
     const r = record_of(&e, 0, len);
-    const back = try entry_of(&r, blob[0..len]);
+    var texts: [8][:0]const u8 = undefined;
+    try std.testing.expect(split_blob(bytes[0..len], &texts));
+    const back = entry_of(&r, &texts);
     const info = @typeInfo(catalog.Entry).@"struct";
     inline for (info.field_names, info.field_types) |name, T| {
         if (T == []const u8 or T == [:0]const u8) {
@@ -491,8 +491,7 @@ test "a book's record and texts read back as the entry they were made from" {
             try std.testing.expectEqual(@field(e, name), @field(back, name));
         }
     }
-    try std.testing.expectEqual(series_hash("dune saga"), r.series_hash);
-    try std.testing.expectError(error.Damaged, entry_of(&r, blob[0 .. len - 1]));
+    try std.testing.expect(!split_blob(bytes[0 .. len - 1], &texts));
 }
 
 test "a header that changed after it was sealed doesn't read as whole" {
@@ -500,9 +499,7 @@ test "a header that changed after it was sealed doesn't read as whole" {
         .generation = 7,
         .count = 3,
         .local = 2,
-        .read = 1,
         .downloading = 0,
-        .stale = all_orders,
         .sources = .{},
         .text_size = 100,
     };
@@ -512,5 +509,4 @@ test "a header that changed after it was sealed doesn't read as whole" {
     try std.testing.expect(!h.valid());
     h.seal();
     try std.testing.expect(h.valid());
-    try std.testing.expect(h.is_stale(.series));
 }

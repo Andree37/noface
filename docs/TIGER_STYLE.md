@@ -87,11 +87,11 @@ on outside data to avoid one either.
   sizes set in `setup.zig`: the app (64 MB) in `main.zig`, the picture decoders
   (128 MB) by `setup.decoders`, the glyphs fonts draw (a fixed cache of ~17 MB that
   gives up the least recently drawn, and 1 MB each glyph is drawn in) by
-  `setup.use_glyph_cache`; the library (22 MB: the buffers its index on the user drive
-  is built and read through, two libraries' pages of books, and a pool of 68 covers;
-  the same for any number of books), what each EPUB is read for while the library is
+  `setup.use_glyph_cache`; the library (44 MB: 8 bytes for each book it can hold, sorted
+  there, the buffers its index on the user drive is built through, a page of books
+  read back, and a pool of 68 covers), what each EPUB is read for while the library is
   found (32 MB), an open book (128 MB), its pages after a settings change (32 MB) and
-  one action's scratch (8 MB) by `setup.assemble`; ~430 MB of address space in all, of which only
+  one action's scratch (8 MB) by `setup.assemble`; ~450 MB of address space in all, of which only
   what's touched is memory. Then `memory.seal()`, and nothing more is asked of the
   system: a region that runs out is an error the caller handles (a book too big shows
   a notice), never a crash. The app's, the decoders' and the library's regions free

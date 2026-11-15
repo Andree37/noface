@@ -272,6 +272,17 @@ pub fn facts(fd: i32) ?Facts {
     return result;
 }
 
+/// The size and change time of the file at `path`, or null if it isn't there.
+pub fn facts_at(path: [*:0]const u8) ?Facts {
+    assert(path[0] != 0);
+    var st: c.Stat = undefined;
+    if (c.stat(path, &st) != 0) return null;
+    if (st.size < 0) return null;
+    const result: Facts = .{ .size = @intCast(st.size), .modified_s = st.mtime().sec };
+    assert(result.size == st.size);
+    return result;
+}
+
 pub fn getpid() i32 {
     const pid = c.getpid();
     assert(pid > 0);

@@ -2,10 +2,10 @@
 //! copied over the cable, found here.
 //!
 //! They're kept in an index on the user drive (library/index.zig), built when what
-//! it's built from changes, and looked through a page at a time: the library's memory
-//! is the same for ten books or millions. The screens see a `Library`: an arrangement
-//! (order, filter, search), the page shown, the book to continue, and a few books read
-//! back for an action, each an entry with its texts beside it.
+//! it's built from changes, and mapped; their ids are sorted in memory, 8 bytes a book,
+//! so there's no number of books the library won't list. The screens see a `Library`:
+//! an arrangement (order, filter, search), the page shown, the book to continue, and a
+//! few books read back for an action, each an entry with its texts beside it.
 const std = @import("std");
 const builtin = @import("builtin");
 const assert = std.debug.assert;
@@ -22,7 +22,6 @@ const paths = @import("../kindle/paths.zig");
 const files = @import("../library/files.zig");
 const index = @import("../library/index.zig");
 const builder = @import("../library/builder.zig");
-const sorter = @import("../library/sorter.zig");
 const view = @import("../library/view.zig");
 const library_ui = @import("../ui/library.zig");
 const covers = @import("../ui/covers.zig");
@@ -33,17 +32,17 @@ const setup = @import("../setup.zig");
 /// The most books the library takes: past any Kindle's storage (see index.zig).
 pub const books_max = index.books_max;
 
-/// What one library takes of the library's region, beside the shared buffers: its
+/// What the library takes of the library's region, beside the shared buffers: its
 /// books read back, a page and a few more, each with its texts.
 pub const library_bytes = @sizeOf(State);
 
 /// What the shared buffers take of the library's region, at most.
-pub const shared_bytes_max: u32 = builder.Work.bytes_max;
+pub const shared_bytes_max: u64 = view.Shared.bytes_max;
 
 /// Where a library is read from, and the memory it's read into.
 pub const Sources = struct {
     shared: *view.Shared,
-    budget: *memory.Budget, // The library's: outlives it, and holds two during a reload
+    budget: *memory.Budget, // The library's: outlives it
     scratch: *memory.Region, // Bump: each EPUB as it's read, and a walk's folders
     catalog_path: [*:0]const u8, // The Kindle's catalog, exported
     documents: []const u8, // Where EPUBs are found
@@ -75,29 +74,38 @@ pub const Download = enum {
     catalog_changed,
 };
 
-/// A library's books read back, and its index open: one block of the library's region.
+/// What tells two readings of the library apart on screen: the build, and how many
+/// books are on the Kindle and coming down.
+pub const Shelf = struct { generation: u64, local: u32, downloading: u32 };
+
+const none = std.math.maxInt(u32);
+
+/// A library's index open, its arrangement, and its books read back: one block of the
+/// library's region.
 const State = struct {
     ix: index.Index = undefined,
     open: bool = false, // `ix` is open: false for a library whose index won't read
+    rebuilt: bool = false, // Built again once since loaded, after none was found
     dir_buffer: [files.path_bytes_max]u8 = undefined,
     dir_len: u32 = 0,
-    records_buffer: [4 << 10]u8 = undefined,
-    text_buffer: [index.blob_bytes_max]u8 = undefined,
-    v: view.View = .{},
+    catalog_seen: CatalogFacts = .{},
+    order: catalog.Order = .recent,
     filter: catalog.Filter = .all,
     words: search.Query = .{},
+    /// The shared items hold every book in `order`: false once they're sorted otherwise,
+    /// or a book saved may have moved.
+    sorted: bool = false,
+    count: u32 = 0, // Books let through
+    hero_slot: index.Slot = .{},
     page_slots: [library_ui.page_books_max]index.Slot = @splat(.{}),
     page_entries: [library_ui.page_books_max]catalog.Entry = undefined,
     page_filled: u32 = 0,
-    hero_slot: index.Slot = .{},
-    cover_slot: index.Slot = .{},
+    page_read: u32 = none, // The page last read, read again after a reload
     next_slots: [2]index.Slot = @splat(.{}), // The book after the one just read, by turns
     next_turn: u1 = 0,
     search_slots: [search_sheet.max_rows]index.Slot = @splat(.{}),
     search_entries: [search_sheet.max_rows]catalog.Entry = undefined,
     search_filled: u32 = 0,
-    catalog_seen: CatalogFacts = .{},
-    rebuilt: bool = false, // Built again once since loaded, after damage was found
 
     fn dir(s: *const State) []const u8 {
         assert(s.dir_len > 0);
@@ -107,9 +115,7 @@ const State = struct {
 
     fn look(s: *const State) view.Look {
         assert(s.words.len <= s.words.buf.len);
-        const words = s.words.words();
-        assert(words.len <= s.words.len);
-        return .{ .filter = s.filter, .words = words };
+        return .{ .filter = s.filter, .words = s.words.words() };
     }
 };
 
@@ -120,46 +126,36 @@ pub const Library = struct {
 
     pub fn deinit(l: *Library) void {
         assert(l.sources.budget.live >= @sizeOf(State));
-        assert(l.state.dir_len > 0);
+        assert(l.shared.in_use);
         if (l.state.open) l.state.ix.close();
         l.sources.budget.allocator().destroy(l.state);
+        l.shared.in_use = false;
     }
 
     pub fn count(l: *const Library) u32 {
-        l.state.v.invariants();
-        assert(l.state.v.count <= books_max);
-        return l.state.v.count;
+        assert(l.state.count <= books_max);
+        assert(!l.state.sorted or l.state.count <= l.state.ix.header.count);
+        return l.state.count;
     }
 
     pub fn local_count(l: *const Library) u32 {
-        if (!l.state.open) return 0;
-        const header = &l.state.ix.header;
-        assert(header.count <= books_max);
-        assert(header.local <= header.count);
-        return header.local;
+        return l.shelf().local;
     }
 
     pub fn downloading_count(l: *const Library) u32 {
-        if (!l.state.open) return 0;
-        const header = &l.state.ix.header;
-        assert(header.count <= books_max);
-        assert(header.downloading <= header.count);
-        return header.downloading;
+        return l.shelf().downloading;
     }
 
-    /// Whether two libraries have the same books on the Kindle and the same coming
-    /// down, so one can stand for the other on screen.
-    pub fn same_shelf(l: *const Library, other: *const Library) bool {
-        assert(l.state != other.state);
-        assert(l.shared == other.shared);
-        // Built again on the drive: the other's open files are of a build that's gone,
-        // and a book it saved would land on another's record
-        if (l.state.open != other.state.open) return false;
-        if (l.state.open and l.state.ix.header.generation != other.state.ix.header.generation) {
-            return false;
-        }
-        if (l.local_count() != other.local_count()) return false;
-        return l.downloading_count() == other.downloading_count();
+    pub fn shelf(l: *const Library) Shelf {
+        if (!l.state.open) return .{ .generation = 0, .local = 0, .downloading = 0 };
+        const header = &l.state.ix.header;
+        assert(header.local <= header.count);
+        assert(header.downloading <= header.count);
+        return .{
+            .generation = header.generation,
+            .local = header.local,
+            .downloading = header.downloading,
+        };
     }
 
     /// Whether a download watched has arrived, looking only at what's downloading: the
@@ -168,21 +164,19 @@ pub const Library = struct {
     /// The whole catalog is exported and read again only once either says so.
     pub fn watch_download(l: *Library) Download {
         const s = l.state;
+        assert(l.shared.in_use);
         if (!s.open) return .catalog_changed; // Nothing to watch by: read it again
-        assert(s.ix.header.count <= books_max);
         assert(s.ix.header.downloading <= s.ix.header.count);
         if (s.ix.header.downloading > 0) {
-            const work = &l.shared.work;
-            const arrived = view.each_downloading(&s.ix, work, &s.cover_slot, {}, is_whole) catch
-                return .arrived; // Can't tell: read it again
-            return if (arrived) .arrived else .waiting;
+            for (0..s.ix.header.count) |id| {
+                const e = s.ix.entry(@intCast(id));
+                if (e.availability != .downloading) continue;
+                if (builder.is_complete_book(e.path)) return .arrived;
+            }
+            return .waiting;
         }
         if (std.meta.eql(CatalogFacts.read(), s.catalog_seen)) return .waiting;
         return .catalog_changed;
-    }
-
-    fn is_whole(_: void, e: *const catalog.Entry) bool {
-        return e.path.len > 0 and builder.is_complete_book(e.path);
     }
 
     /// Arranges the books for an order, a filter and a search (`words`, empty for none):
@@ -194,65 +188,63 @@ pub const Library = struct {
         words: []const u8,
     ) void {
         assert(words.len <= l.state.words.buf.len);
+        assert(l.shared.in_use);
         const s = l.state;
+        // Another filter or search lets other books through, in the same order
+        if (order != s.order) s.sorted = false;
+        s.order = order;
         s.filter = filter;
         @memcpy(s.words.buf[0..words.len], words);
         s.words.len = @intCast(words.len);
-        s.hero_slot.id = std.math.maxInt(u32);
-        // An index found damaged (a record torn, a file cut short) is built again now,
-        // once: a drive that won't take it leaves the library empty till the next load
+        l.lay_out();
+    }
+
+    /// Sorts the books, unless they are already, and counts those the look lets through,
+    /// for the arrangement kept.
+    fn lay_out(l: *Library) void {
+        const s = l.state;
+        s.count = 0;
+        s.hero_slot.id = none;
+        // No index found as loaded: built now, once, and a drive that won't take it
+        // leaves the library empty till the next load
         if (!s.open) l.rebuild();
         if (!s.open) return;
-        l.arrange_index(order) catch |err| {
-            l.broken(err);
-            l.rebuild();
-            if (!s.open) return;
-            l.arrange_index(order) catch |again| l.broken(again);
-        };
-        s.v.invariants();
+        const all = l.shared.items[0..s.ix.header.count];
+        const in_order = if (s.sorted) all else view.sort(&s.ix, l.shared.items, s.order);
+        const hero_id = view.hero(&s.ix);
+        if (hero_id) |h| s.ix.read(h, &s.hero_slot);
+        // While searching, every match is listed, the hero too
+        const leave_out = if (s.words.len == 0) hero_id else null;
+        s.count = view.count_through(&s.ix, in_order, s.look(), leave_out);
+        s.sorted = true;
+        assert(s.count <= in_order.len);
+        // The hero leads, ahead of the list, unless a search lists every match
+        if (leave_out != null) assert(s.count < in_order.len);
     }
 
-    fn arrange_index(l: *Library, order: catalog.Order) !void {
+    /// The shared items sorted and counted for this library's arrangement: again, if a
+    /// book saved since may have moved.
+    fn sorted(l: *Library) []const index.Item {
         const s = l.state;
         assert(s.open);
-        try view.arrange(&s.ix, &l.shared.work, &l.shared.bits, &s.v, order, s.look());
-        if (s.v.hero) |h| try s.ix.read(h, &s.hero_slot);
-        s.v.invariants();
+        if (!s.sorted) l.lay_out();
+        assert(s.sorted);
+        return l.shared.items[0..s.ix.header.count];
     }
 
-    /// Builds the index again, in place of one found damaged, the first time only.
+    /// Builds the index, where none was found as the library was loaded: once.
     fn rebuild(l: *Library) void {
         const s = l.state;
         assert(!s.open);
         if (s.rebuilt or !l.sources.scratch.empty()) return;
         s.rebuilt = true;
-        var scratch = memory.Budget{
-            .name = "library scratch",
-            .region = l.sources.scratch,
-            .limit = l.sources.scratch.bytes.len,
-        };
-        defer scratch.reset(.give_back);
-        const places = places_of(l.sources, s);
-        const work = &l.shared.work;
-        const wanted = builder.sources_now(&scratch, places);
-        builder.build(work, &scratch, places, wanted) catch |err| {
-            log("library: index not built again ({s})\n", .{@errorName(err)});
-            return;
-        };
-        const buffers: index.Buffers = .{ .records = &s.records_buffer, .text = &s.text_buffer };
-        s.ix = index.Index.open(s.dir(), buffers) catch return;
-        s.open = true;
-        builder.merge_states(&s.ix, work, l.sources.state_dir) catch |err| {
-            log("library: places not merged ({s})\n", .{@errorName(err)});
-        };
-        assert(s.rebuilt);
+        open_index(l.sources, s);
     }
 
     /// The book to continue, when there is one: always on this Kindle.
     pub fn hero(l: *Library) ?*catalog.Entry {
         const slot = &l.state.hero_slot;
         if (!slot.holds()) return null;
-        assert(slot.id < l.state.ix.header.count);
         assert(slot.entry.is_local()); // A cloud book can't be opened from the hero
         return &slot.entry;
     }
@@ -260,32 +252,26 @@ pub const Library = struct {
     /// The books on library page `page_index` of those let through, read back.
     pub fn page(l: *Library, page_index: u32) []catalog.Entry {
         const s = l.state;
-        assert(page_index < library_ui.page_count(s.v.count));
-        const range = library_ui.page_range(page_index, s.v.count);
-        s.page_filled = l.read_range(range.first, range.end, &s.page_slots) catch |err| blk: {
-            l.broken(err);
-            break :blk 0;
-        };
-        for (s.page_slots[0..s.page_filled], s.page_entries[0..s.page_filled]) |*slot, *e| {
+        assert(page_index < library_ui.page_count(s.count));
+        s.page_read = page_index;
+        s.page_filled = 0;
+        if (!s.open) return &.{};
+        const range = library_ui.page_range(page_index, s.count);
+        var ids: [library_ui.page_books_max]u32 = undefined;
+        const filled = view.page(l.sorted(), range.first, range.end, &ids);
+        for (ids[0..filled], s.page_slots[0..filled], s.page_entries[0..filled]) |id, *slot, *e| {
+            s.ix.read(id, slot);
             e.* = slot.entry;
         }
-        assert(s.page_filled <= range.end - range.first);
-        return s.page_entries[0..s.page_filled];
-    }
-
-    fn read_range(l: *Library, first: u32, end: u32, slots: []index.Slot) !u32 {
-        const s = l.state;
-        assert(first <= end);
-        assert(end - first <= slots.len);
-        if (!s.open) return 0;
-        const range: view.Range = .{ .first = first, .end = end };
-        return view.page(&s.ix, &l.shared.work, &l.shared.bits, &s.v, s.look(), range, slots);
+        s.page_filled = filled;
+        assert(filled == range.end - range.first);
+        return s.page_entries[0..filled];
     }
 
     /// The books of the page last read, as `page` gave them.
     pub fn page_shown(l: *Library) []catalog.Entry {
         assert(l.state.page_filled <= l.state.page_entries.len);
-        assert(l.state.page_filled <= l.state.v.count);
+        assert(l.state.page_read != none); // Read since loaded
         return l.state.page_entries[0..l.state.page_filled];
     }
 
@@ -299,45 +285,37 @@ pub const Library = struct {
     /// Gets the covers of library page `page_index` ready, so turning to it doesn't wait.
     pub fn prepare_covers(l: *Library, pool: *covers.Pool, page_index: u32) void {
         const s = l.state;
-        if (page_index >= library_ui.page_count(s.v.count)) return;
-        const range = library_ui.page_range(page_index, s.v.count);
-        assert(range.first <= range.end);
-        for (range.first..range.end) |i| {
-            const one: u32 = @intCast(i);
-            const read = l.read_range(one, one + 1, (&s.cover_slot)[0..1]) catch return;
-            if (read == 1) _ = pool.grid_cover(s.cover_slot.entry.thumbnail);
-        }
-        assert(range.end <= s.v.count);
+        if (!s.open or page_index >= library_ui.page_count(s.count)) return;
+        const range = library_ui.page_range(page_index, s.count);
+        var ids: [library_ui.page_books_max]u32 = undefined;
+        const filled = view.page(l.sorted(), range.first, range.end, &ids);
+        assert(filled == range.end - range.first);
+        for (ids[0..filled]) |id| _ = pool.grid_cover(s.ix.entry(id).thumbnail);
+        assert(range.end <= s.count);
     }
 
     /// Saves what reading (or marking) a book changed of it, read back from this
-    /// library: its record is written in place, and the orders it moves in are sorted
-    /// again when next shown.
+    /// library: its record is written in place, and the books sorted again when next
+    /// looked through.
     pub fn save(l: *Library, e: *const catalog.Entry) void {
         const s = l.state;
         assert(e.is_local()); // Only a book on the Kindle is read or marked
         if (!s.open) return;
         const id = l.id_of(e) orelse return;
         assert(id < s.ix.header.count);
-        l.save_record(id, e) catch |err| l.broken(err);
-    }
-
-    fn save_record(l: *Library, id: u32, e: *const catalog.Entry) !void {
-        const s = l.state;
-        assert(id < s.ix.header.count);
-        var r = try s.ix.record(id);
-        const was_read = builder.record_is_read(&r);
+        var r = s.ix.record(id);
         r.percent = @intCast(@min(e.percent, 100));
         r.last = e.last;
         r.seconds_read = e.seconds_read;
         if (e.finished) r.flags |= index.Record.finished else r.flags &= ~index.Record.finished;
-        try s.ix.write_record(id, &r);
-        const is_read = builder.record_is_read(&r);
-        if (is_read and !was_read) s.ix.header.read += 1;
-        if (was_read and !is_read) s.ix.header.read -= 1;
-        s.ix.header.stale |= index.reading_orders;
-        try s.ix.write_header();
-        assert(s.ix.header.read <= s.ix.header.count);
+        s.ix.write_record(id, &r) catch |err| {
+            // Read again from its state file at the next load, which builds anew
+            log("library: place not saved ({s}), index built again\n", .{@errorName(err)});
+            s.ix.header.sources.places = 0; // Matches nothing: built again
+            s.ix.write_header() catch {}; // Ignored: the record still reads as it was
+            return;
+        };
+        s.sorted = false;
     }
 
     /// Which record a book read back from this library is, by where it was read into.
@@ -365,11 +343,8 @@ pub const Library = struct {
         s.next_turn +%= 1;
         const slot = &s.next_slots[s.next_turn];
         assert(&slot.entry != e); // Each next goes in the other slot
-        const found = view.next_in_series(&s.ix, &l.shared.work, e, slot) catch |err| {
-            l.broken(err);
-            return null;
-        };
-        if (!found) return null;
+        const id = view.next_in_series(&s.ix, e) orelse return null;
+        s.ix.read(id, slot);
         assert(!slot.entry.is_read());
         return &slot.entry;
     }
@@ -383,17 +358,14 @@ pub const Library = struct {
         assert(words.len > 0);
         s.search_filled = 0;
         if (!s.open) return .{ .entries = &.{}, .more = false };
-        const work = &l.shared.work;
-        const bits = &l.shared.bits;
-        const slots = &s.search_slots;
-        const order = s.v.order;
-        const found = view.first_matches(&s.ix, work, bits, order, words, slots) catch |err| {
-            l.broken(err);
-            return .{ .entries = &.{}, .more = false };
-        };
-        s.search_filled = @min(found, s.search_slots.len);
-        const shown = s.search_filled;
-        for (s.search_slots[0..shown], s.search_entries[0..shown]) |*slot, *e| e.* = slot.entry;
+        var ids: [search_sheet.max_rows]u32 = undefined;
+        const found = view.first_matches(&s.ix, l.sorted(), words, &ids);
+        const shown = @min(found, ids.len);
+        for (ids[0..shown], s.search_slots[0..shown], s.search_entries[0..shown]) |id, *slot, *e| {
+            s.ix.read(id, slot);
+            e.* = slot.entry;
+        }
+        s.search_filled = shown;
         assert(shown <= search_sheet.max_rows);
         return .{ .entries = s.search_entries[0..shown], .more = found > shown };
     }
@@ -402,12 +374,7 @@ pub const Library = struct {
     pub fn totals(l: *Library, year_start: i32, utc_offset: i64) view.Totals {
         const s = l.state;
         if (!s.open) return .{};
-        assert(s.ix.header.count <= books_max);
-        const work = &l.shared.work;
-        const t = view.totals(&s.ix, work, year_start, utc_offset, journal.day_of) catch |err| {
-            l.broken(err);
-            return .{};
-        };
+        const t = view.totals(&s.ix, year_start, utc_offset, journal.day_of);
         assert(t.books == s.ix.header.count);
         return t;
     }
@@ -420,59 +387,39 @@ pub const Library = struct {
         assert(s.ix.header.local <= s.ix.header.count);
         var list: std.ArrayList(catalog.Entry) = .empty;
         try list.ensureTotalCapacity(alloc, s.ix.header.local);
-        var keep: Keep = .{ .alloc = alloc, .list = &list };
-        try view.each_book(&s.ix, &l.shared.work, &keep, Keep.add);
-        if (keep.failed) return error.OutOfMemory;
-        assert(list.items.len <= s.ix.header.local);
+        for (0..s.ix.header.count) |id| {
+            const e = s.ix.entry(@intCast(id));
+            if (!e.is_local()) continue;
+            var copy = e;
+            copy.path = try alloc.dupeSentinel(u8, e.path, 0);
+            copy.title = try alloc.dupe(u8, e.title);
+            copy.author = try alloc.dupe(u8, e.author);
+            copy.series = try alloc.dupe(u8, e.series);
+            copy.thumbnail = "";
+            copy.key = "";
+            copy.kind = "";
+            copy.guid = "";
+            list.appendAssumeCapacity(copy);
+        }
+        assert(list.items.len == s.ix.header.local);
         return list.items;
     }
 
-    /// An index that stops reading as whole while open: built again at the next
-    /// load, and empty till then. Nothing worse: the books are where they were.
-    fn broken(l: *Library, err: anyerror) void {
-        log("library: index unreadable ({s}), rebuilt at the next load\n", .{@errorName(err)});
+    /// Reads the library again, in place: its index built again first if what it's
+    /// built from changed; then arranged as it was, and the page last read read again.
+    pub fn reload(l: *Library) void {
         const s = l.state;
-        if (s.open) {
-            s.ix.header.sources.places = 0; // Matches nothing: built again
-            s.ix.write_header() catch {}; // Ignored: a header that won't write is rebuilt too
-            s.ix.close();
-        }
+        assert(l.shared.in_use);
+        if (s.open) s.ix.close();
         s.open = false;
-        s.v = .{};
-        s.page_filled = 0;
-        s.search_filled = 0;
-        s.hero_slot.id = std.math.maxInt(u32);
-        assert(!s.open);
-        assert(s.v.count == 0);
-    }
-};
-
-/// Copies books into memory of their own, for `Library.local_books`.
-const Keep = struct {
-    alloc: std.mem.Allocator,
-    list: *std.ArrayList(catalog.Entry),
-    failed: bool = false,
-
-    fn add(k: *Keep, e: *const catalog.Entry) void {
-        if (!e.is_local() or k.failed) return;
-        var copy = e.*;
-        copy.path = k.alloc.dupeSentinel(u8, e.path, 0) catch return k.fail();
-        copy.title = k.alloc.dupe(u8, e.title) catch return k.fail();
-        copy.author = k.alloc.dupe(u8, e.author) catch return k.fail();
-        copy.series = k.alloc.dupe(u8, e.series) catch return k.fail();
-        copy.thumbnail = "";
-        copy.key = "";
-        copy.kind = "";
-        copy.guid = "";
-        k.list.append(k.alloc, copy) catch return k.fail();
-        assert(copy.path.len == e.path.len);
-        assert(k.list.items.len > 0);
-    }
-
-    fn fail(k: *Keep) void {
-        assert(!k.failed); // Once: nothing more is copied after
-        k.failed = true;
-        assert(k.failed);
+        s.rebuilt = false;
+        s.sorted = false;
+        open_index(l.sources, s);
+        l.lay_out();
+        assert(s.sorted == s.open);
+        if (s.page_read != none and s.page_read < library_ui.page_count(s.count)) {
+            _ = l.page(s.page_read);
+        }
     }
 };
 
@@ -489,79 +436,68 @@ pub fn load_library(a: *app.App) !Library {
     });
 }
 
-/// The library's index, built again first if what it's built from changed, or it
+/// The library: its index, built again first if what it's built from changed, or it
 /// doesn't read as whole; then what noface saved of each book merged in.
 pub fn load(sources: Sources) !Library {
     assert(sources.scratch.empty());
     assert(sources.state_dir.len > 0);
+    assert(!sources.shared.in_use); // One library at a time: they share the items
     const s = try sources.budget.allocator().create(State);
     errdefer sources.budget.allocator().destroy(s);
     s.* = .{};
-    // Before the list is read, so a change made while it's read shows next time
-    s.catalog_seen = CatalogFacts.read();
     const format = "{s}/library";
     const folder = try std.fmt.bufPrintSentinel(&s.dir_buffer, format, .{sources.state_dir}, 0);
     _ = calls.mkdir(folder, 0o755); // Ignored: there already, or the build says it can't write
     s.dir_len = @intCast(folder.len);
+    sources.shared.in_use = true;
+    open_index(sources, s);
+    return .{ .shared = sources.shared, .sources = sources, .state = s };
+}
+
+/// Opens `s`'s index, built again first if what it's built from changed, or it doesn't
+/// read as whole; then merges in what noface saved of each book.
+fn open_index(sources: Sources, s: *State) void {
+    assert(!s.open);
+    assert(sources.scratch.empty());
+    // Before the list is read, so a change made while it's read shows next time
+    s.catalog_seen = CatalogFacts.read();
     var scratch = memory.Budget{
         .name = "library scratch",
         .region = sources.scratch,
         .limit = sources.scratch.bytes.len,
     };
     defer scratch.reset(.give_back);
-    const places = places_of(sources, s);
-    const work = &sources.shared.work;
-    const wanted = builder.sources_now(&scratch, places);
-    open_or_build(s, work, &scratch, places, wanted) catch |err| {
-        log("library: no index ({s})\n", .{@errorName(err)});
-    };
-    if (s.open) {
-        builder.merge_states(&s.ix, work, sources.state_dir) catch |err| {
-            log("library: places not merged ({s})\n", .{@errorName(err)});
-        };
-    }
-    return .{ .shared = sources.shared, .sources = sources, .state = s };
-}
-
-/// Where the books are, and where `s`'s index is kept.
-fn places_of(sources: Sources, s: *const State) builder.Places {
-    assert(sources.state_dir.len > 0);
     const places: builder.Places = .{
         .catalog_path = sources.catalog_path,
         .documents = sources.documents,
         .state_dir = sources.state_dir,
         .dir = s.dir(),
     };
-    assert(places.dir.len > sources.state_dir.len);
-    return places;
-}
-
-fn open_or_build(
-    s: *State,
-    work: *const builder.Work,
-    scratch: *memory.Budget,
-    places: builder.Places,
-    wanted: index.Sources,
-) !void {
-    assert(!s.open);
-    const buffers: index.Buffers = .{ .records = &s.records_buffer, .text = &s.text_buffer };
-    if (index.Index.open(s.dir(), buffers)) |ix| {
+    const items = sources.shared.items;
+    const wanted = builder.sources_now(&scratch, places);
+    var last: ?index.Index = index.Index.open(places.dir) catch null;
+    if (last) |*ix| {
         if (std.meta.eql(ix.header.sources, wanted)) {
-            s.ix = ix;
+            s.ix = ix.*;
             s.open = true;
-            return;
         }
-        var stale = ix;
-        stale.close();
-    } else |_| {}
-    const t0 = os.now_us();
-    try builder.build(work, scratch, places, wanted);
-    s.ix = try index.Index.open(s.dir(), buffers);
-    s.open = true;
-    log("library: index built, {d} books in {d} ms\n", .{
-        s.ix.header.count,
-        (os.now_us() - t0) / 1000,
-    });
+    }
+    if (!s.open) {
+        const t0 = os.now_us();
+        const buffers = &sources.shared.buffers;
+        const was = if (last) |*ix| ix else null;
+        s.ix = builder.build(buffers, items, &scratch, places, wanted, was) catch |err| {
+            log("library: no index ({s})\n", .{@errorName(err)});
+            return;
+        };
+        s.open = true;
+        const ms = (os.now_us() - t0) / 1000;
+        log("library: index built, {d} books in {d} ms\n", .{ s.ix.header.count, ms });
+    }
+    builder.merge_states(&s.ix, items, sources.state_dir) catch |err| {
+        log("library: places not merged ({s})\n", .{@errorName(err)});
+    };
+    s.sorted = false; // The items were sorted by state key
     assert(s.ix.header.count <= books_max);
 }
 
@@ -723,15 +659,20 @@ const TestLibrary = struct {
 
     fn deinit(t: *TestLibrary) void {
         assert(t.scratch.empty());
-        assert(t.budget.live >= @sizeOf(view.Shared));
+        assert(!t.shared.in_use);
         t.scratch.release();
         t.region.release();
+    }
+
+    /// A path in the test library's data folder.
+    fn data_path(t: *const TestLibrary, buffer: []u8, name: []const u8) ![:0]const u8 {
+        return std.fmt.bufPrintSentinel(buffer, "{s}/{s}", .{ t.sources.state_dir, name }, 0);
     }
 };
 
 /// Every book of `library` in its arrangement, by title, for the tests.
 fn test_titles(library: *Library, alloc: std.mem.Allocator) ![][]const u8 {
-    assert(library.state.open);
+    assert(library.shared.in_use);
     var titles: std.ArrayList([]const u8) = .empty;
     for (0..library_ui.page_count(library.count())) |p| {
         for (library.page(@intCast(p))) |e| try titles.append(alloc, try alloc.dupe(u8, e.title));
@@ -749,29 +690,37 @@ test "hundreds of EPUBs list in memory that doesn't grow with them, read once" {
     try t.init(root);
     defer t.deinit();
     const before = t.budget.live;
-    var first = try load(t.sources);
-    first.arrange(.title, .all, "");
-    const listed = first.count() + @intFromBool(first.hero() != null);
+    var library = try load(t.sources);
+    defer library.deinit();
+    library.arrange(.title, .all, "");
+    const listed = library.count() + @intFromBool(library.hero() != null);
     try std.testing.expectEqual(@as(u32, epubs), listed);
-    try std.testing.expect(first.page(0)[0].thumbnail.len > 0); // Its cover saved, and found
+    try std.testing.expect(library.page(0)[0].thumbnail.len > 0); // Its cover saved, and found
     // A library takes the same, whatever it holds
     try std.testing.expectEqual(before + library_bytes, t.budget.live);
-    // What each said is kept, a line each, so the next load needn't open them
-    var cache_buffer: [320]u8 = undefined;
-    const cache_path = try std.fmt.bufPrintSentinel(&cache_buffer, "{s}/library/epubs.tsv", .{
-        t.sources.state_dir,
+    // Built again (an EPUB more), with every book read before now unreadable: what the
+    // last build read of each is kept, so none is opened again
+    var path_buffer: [320]u8 = undefined;
+    var name_buffer: [32]u8 = undefined;
+    for (0..epubs) |i| {
+        const name = try std.fmt.bufPrint(&name_buffer, "documents/Book {d}.epub", .{i});
+        const path = try std.fmt.bufPrintSentinel(&path_buffer, "{s}/{s}", .{ root, name }, 0);
+        _ = std.c.chmod(path, 0); // Ignored: a book still readable is read again, and listed
+    }
+    const extra = try test_epub(std.testing.allocator, "Extra", 1 << 10);
+    defer std.testing.allocator.free(extra);
+    const extra_path = try std.fmt.bufPrintSentinel(&path_buffer, "{s}/documents/Extra.epub", .{
+        root,
     }, 0);
-    const kept = try file.map(cache_path);
-    try std.testing.expectEqual(@as(usize, epubs), std.mem.count(u8, kept, "\n"));
-    file.unmap(kept);
-    // Reloaded beside it, as after a download: two at once, and no more memory each
-    var again = try load(t.sources);
-    again.arrange(.title, .all, "");
-    try std.testing.expectEqual(first.count(), again.count());
-    try std.testing.expectEqual(before + 2 * library_bytes, t.budget.live);
-    again.deinit();
-    first.deinit();
-    try std.testing.expectEqual(before, t.budget.live);
+    try test_write(extra_path, extra);
+    library.reload();
+    library.arrange(.title, .all, "");
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const titles = try test_titles(&library, arena.allocator());
+    try std.testing.expectEqual(@as(u32, epubs + 1), library.count() + 1); // The hero too
+    for (titles) |title| try std.testing.expect(std.mem.startsWith(u8, title, "Book ") or
+        std.mem.eql(u8, title, "Extra"));
 }
 
 test "a book's place is read from its state file, found by one listing of the folder" {
@@ -868,31 +817,7 @@ test "a download is watched by its own file, not by reading the whole catalog ag
     try std.testing.expectEqual(Download.waiting, library.watch_download());
 }
 
-test "a record torn while written in place is found by its checksum, and the index built again" {
-    var buffer: [64]u8 = undefined;
-    const root = try test_folder(&buffer, 40, 0, 1 << 10);
-    defer test_folder_remove(root);
-    var t: TestLibrary = undefined;
-    try t.init(root);
-    defer t.deinit();
-    var library = try load(t.sources);
-    defer library.deinit();
-    library.arrange(.recent, .all, "");
-    const count = library.count();
-    // Half a record written over, as by power lost in the middle of saving a place
-    var path_buffer: [320]u8 = undefined;
-    const format = "{s}/library/records";
-    const path = try std.fmt.bufPrintSentinel(&path_buffer, format, .{t.sources.state_dir}, 0);
-    const torn: [32]u8 = @splat(0x55);
-    try std.testing.expect(files.write_at(path, index.file_head_bytes + 7 * 64, &torn));
-    library.state.ix.records.len = 0; // Read from the drive again, as after a restart
-    library.state.ix.header.stale = index.all_orders; // Every record read again
-    library.arrange(.title, .all, "");
-    try std.testing.expect(library.state.rebuilt);
-    try std.testing.expectEqual(count, library.count());
-}
-
-test "an index damaged or cut short is built again, and a missing order sorted again" {
+test "an index torn, damaged or cut short is built again as it's loaded" {
     var buffer: [64]u8 = undefined;
     const root = try test_folder(&buffer, 50, 3, 1 << 10);
     defer test_folder_remove(root);
@@ -902,60 +827,94 @@ test "an index damaged or cut short is built again, and a missing order sorted a
     var good = try load(t.sources);
     good.arrange(.author, .all, "");
     const count = good.count();
+    const generation = good.shelf().generation;
     good.deinit();
-    var path_buffer: [320]u8 = undefined;
-    const folder = t.sources.state_dir;
-    // A header changed by a byte: its checksum no longer matches
-    const header_format = "{s}/library/header";
-    const header_path = try std.fmt.bufPrintSentinel(&path_buffer, header_format, .{folder}, 0);
-    try std.testing.expect(files.write_at(header_path, 20, "x"));
-    // Records cut short, as by a crash in the middle of writing them
     var records_buffer: [320]u8 = undefined;
-    const records_format = "{s}/library/records";
-    const records_path =
-        try std.fmt.bufPrintSentinel(&records_buffer, records_format, .{folder}, 0);
+    var header_buffer: [320]u8 = undefined;
+    const records_path = try t.data_path(&records_buffer, "library/records");
+    const header_path = try t.data_path(&header_buffer, "library/header");
+    // Half a record written over, as by power lost in the middle of saving a place; a
+    // header changed by a byte; records cut short, as by a crash writing them
+    const torn: [32]u8 = @splat(0x55);
+    const record_bytes = @sizeOf(index.Record);
+    const damage = [_]struct { path: [:0]const u8, at: u64, bytes: []const u8 }{
+        .{ .path = records_path, .at = index.file_head_bytes + 7 * record_bytes, .bytes = &torn },
+        .{ .path = header_path, .at = 20, .bytes = "x" },
+    };
+    var last = generation;
+    for (damage) |d| {
+        try std.testing.expect(files.write_at(d.path, d.at, d.bytes));
+        var rebuilt = try load(t.sources);
+        defer rebuilt.deinit();
+        rebuilt.arrange(.author, .all, "");
+        try std.testing.expectEqual(count, rebuilt.count());
+        try std.testing.expect(rebuilt.shelf().generation != last);
+        last = rebuilt.shelf().generation;
+    }
     const records = try file.map(records_path);
     const shorter = try std.testing.allocator.dupe(u8, records[0 .. records.len - 10]);
     file.unmap(records);
     defer std.testing.allocator.free(shorter);
     try test_write(records_path, shorter);
-    for (0..2) |_| {
-        var rebuilt = try load(t.sources);
-        defer rebuilt.deinit();
-        rebuilt.arrange(.author, .all, "");
-        try std.testing.expectEqual(count, rebuilt.count());
-        const order_format = "{s}/library/order-author";
-        const order_path =
-            try std.fmt.bufPrintSentinel(&path_buffer, order_format, .{folder}, 0);
-        files.remove(order_path); // Gone: sorted again when next shown
-    }
+    var rebuilt = try load(t.sources);
+    defer rebuilt.deinit();
+    rebuilt.arrange(.author, .all, "");
+    try std.testing.expectEqual(count, rebuilt.count());
 }
 
-test "sorting a library larger than memory, in runs merged on the drive, gives the same order" {
+test "every order lists the books as the catalog sorts the same books in a list" {
     var buffer: [64]u8 = undefined;
-    const root = try test_folder(&buffer, 400, 0, 1 << 10);
+    const root = try test_folder(&buffer, 0, 0, 1 << 10);
     defer test_folder_remove(root);
     var t: TestLibrary = undefined;
     try t.init(root);
     defer t.deinit();
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    var by_memory: [2][][]const u8 = undefined;
-    for (&by_memory, [_]u32{ 2 << 20, sorter_test_bytes }) |*titles, items_bytes| {
-        t.shared.work.sort.items = t.shared.work.sort.items[0..items_bytes];
-        t.shared.work.sort_second.items = t.shared.work.sort_second.items[0..items_bytes];
-        var library = try load(t.sources);
-        defer library.deinit();
-        library.state.ix.header.stale = index.all_orders; // Sorted again, in this memory
-        library.arrange(.author, .all, "");
-        titles.* = try test_titles(&library, arena.allocator());
+    const alloc = arena.allocator();
+    // Series by file name, authors, places and dates mixed, some on the cloud
+    var rows: std.ArrayList(u8) = .empty;
+    for (0..120) |i| {
+        const row = "{s}/documents/T{d} -- A -- Saga {d} #{d} -- Z.kfx\tTitle {d}\t" ++
+            "Author{d}, Some\t{d}\t{d}\t0\t\t{d}\t{d}\n";
+        const percent = (i * 37) % 120;
+        const series = .{ i % 7, i % 5 + 1 };
+        const cloud = @intFromBool(i % 9 == 0);
+        try rows.print(alloc, row, .{
+            root, i, series[0], series[1], i, i % 11, percent, i * 997 % 5000, i * 31, cloud,
+        });
     }
-    try std.testing.expectEqual(by_memory[0].len, by_memory[1].len);
-    for (by_memory[0], by_memory[1]) |a, b| try std.testing.expectEqualStrings(a, b);
+    try test_write(t.sources.catalog_path, rows.items);
+    var library = try load(t.sources);
+    defer library.deinit();
+    const entries = blk: {
+        library.arrange(.recent, .all, "");
+        var all: std.ArrayList(catalog.Entry) = .empty;
+        for (0..library.state.ix.header.count) |id| {
+            const e = library.state.ix.entry(@intCast(id));
+            var copy = e;
+            copy.title = try alloc.dupe(u8, e.title);
+            copy.path = try alloc.dupeSentinel(u8, e.path, 0);
+            copy.author = try alloc.dupe(u8, e.author);
+            copy.series = try alloc.dupe(u8, e.series);
+            try all.append(alloc, copy);
+        }
+        break :blk all.items;
+    };
+    for (std.enums.values(catalog.Order)) |order| {
+        library.arrange(order, .all, "");
+        const listed = try test_titles(&library, alloc);
+        catalog.sort(entries, order);
+        const hero_title = library.hero().?.title;
+        var at: u32 = 0;
+        for (entries) |e| {
+            if (std.mem.eql(u8, e.title, hero_title)) continue; // The hero, ahead of them
+            try std.testing.expectEqualStrings(e.title, listed[at]);
+            at += 1;
+        }
+        try std.testing.expectEqual(listed.len, at);
+    }
 }
-
-/// A sort buffer of a few items: most of a library's sort is then runs merged on the drive.
-const sorter_test_bytes: u32 = sorter.key_bytes_max + 2048;
 
 test "a large library takes the same memory as a small one, and is looked through quickly" {
     var sizes: [2]u64 = undefined;

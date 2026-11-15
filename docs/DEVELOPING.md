@@ -109,8 +109,8 @@ Code is split by who owns it. `zig build check` fails if a file imports across t
 - `src/ui/`: drawing screens and mapping taps to controls.
 - `src/epub/`: the open EPUB format, read into our model.
 - `src/library/`: the library's index on the user drive: built from the catalog, the
-  EPUBs found and the series set by hand, sorted on the drive, and read back a page at
-  a time, in memory of a fixed size for any number of books.
+  EPUBs found and the series set by hand, mapped, and its books' ids sorted in memory
+  (8 bytes a book) by the comparisons `model/catalog.zig` sorts a list with.
 - `src/base/`: building blocks every folder may use: memory budgets, checks.
 - `src/screens/`: the flow of each screen. Of the folders, the only one that calls
   into `kindle/`.

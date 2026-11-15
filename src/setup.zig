@@ -44,12 +44,12 @@ pub const region_bytes = struct {
     /// 8000x6000 JPEG takes 300 KB, where stb needed 120 MB; a progressive one keeps
     /// two bytes a pixel, and one past `workspace.bytes_max` is decoded smaller.
     pub const decoders: u32 = 128 << 20;
-    /// The library: the buffers its index is built and looked through with, two
-    /// libraries' books read back (a reload holds two for a moment), and the pool the
-    /// covers shown are kept in. The same for any number of books: they're on the drive.
+    /// The library: an item for every book it can hold (8 bytes each, touched only for
+    /// the books there are), the buffers its index is built with, its books read back,
+    /// and the pool the covers shown are kept in.
     pub const library: u32 = std.mem.alignForward(
         u32,
-        books.shared_bytes_max + 2 * books.library_bytes + library_covers + library_slack,
+        books.shared_bytes_max + books.library_bytes + library_covers + library_slack,
         memory.unit_bytes,
     );
     /// What an EPUB is read for while the library is found: its zip directory, its

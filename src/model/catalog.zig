@@ -111,11 +111,6 @@ comptime {
     assert(order.next() == .recent);
 }
 
-/// Whether `a` sorts before `b` in `order`, their series times set (`sort` sets them).
-pub fn before_in(order: Order, a: Entry, b: Entry) bool {
-    return before(order, a, b);
-}
-
 fn before(order: Order, a: Entry, b: Entry) bool {
     // A series stays together, downloaded or not
     if (order == .series) return by_series(a, b);
@@ -385,34 +380,68 @@ fn by_author(a: Entry, b: Entry) bool {
 }
 
 pub fn sort(entries: []Entry, order: Order) void {
-    if (order == .series) series_last_set(entries);
-    std.mem.sort(Entry, entries, order, before);
-    assert(std.sort.isSorted(Entry, entries, order, before));
+    sort_by(Entry, entries, order, Listed{});
+}
+
+/// A list of entries, for `sort_by`: each item is its own book.
+const Listed = struct {
+    pub fn entry(_: Listed, e: Entry) Entry {
+        return e;
+    }
+
+    pub fn set_series_last(_: Listed, e: *Entry, last: u64) void {
+        e.series_last = last;
+        assert(e.series_last == last);
+    }
+};
+
+/// Sorts `items`, each standing for a book, as `order` has the books: entries, or ids
+/// of books kept elsewhere. `books.entry(item)` is an item's book, its `series_last` as
+/// `books.set_series_last(&item, last)` last set it.
+pub fn sort_by(comptime T: type, items: []T, order: Order, books: anytype) void {
+    if (order == .series) series_last_set(T, items, books);
+    const Books = @TypeOf(books);
+    const by = struct {
+        books: Books,
+        order: Order,
+
+        fn less(c: @This(), a: T, b: T) bool {
+            return before(c.order, c.books.entry(a), c.books.entry(b));
+        }
+    }{ .books = books, .order = order };
+    std.mem.sort(T, items, by, @TypeOf(by).less);
+    assert(std.sort.isSorted(T, items, by, @TypeOf(by).less));
 }
 
 /// Gives each book of a series when any book of it was last read, for `by_series`.
 /// Sorted by series name first, so each series is one run of books, read in one pass:
 /// N log N, where comparing every book with every other took N squared.
-fn series_last_set(entries: []Entry) void {
-    std.mem.sort(Entry, entries, {}, by_series_name);
+fn series_last_set(comptime T: type, items: []T, books: anytype) void {
+    const Books = @TypeOf(books);
+    const by_name = struct {
+        fn less(b: Books, x: T, y: T) bool {
+            return std.ascii.lessThanIgnoreCase(series_key(b.entry(x)), series_key(b.entry(y)));
+        }
+    }.less;
+    std.mem.sort(T, items, books, by_name);
     var run_first: u32 = 0;
-    for (0..entries.len + 1) |i| {
-        const ends = i == entries.len or
-            !std.ascii.eqlIgnoreCase(series_key(entries[i]), series_key(entries[run_first]));
+    // A run ends where the next book's series differs, or the books do
+    for (1..items.len + 1) |i| {
+        const first = books.entry(items[run_first]);
+        const ends = i == items.len or
+            !std.ascii.eqlIgnoreCase(series_key(books.entry(items[i])), series_key(first));
         if (!ends) continue;
         var latest: u64 = 0;
         // Only books opened: a download's date isn't reading
-        for (entries[run_first..i]) |e| {
+        for (items[run_first..i]) |item| {
+            const e = books.entry(item);
             if (e.was_opened()) latest = @max(latest, e.last);
         }
-        const in_series = entries[run_first].series.len > 0;
-        for (entries[run_first..i]) |*e| e.series_last = if (in_series) latest else 0;
+        const in_series = first.series.len > 0;
+        for (items[run_first..i]) |*item| books.set_series_last(item, if (in_series) latest else 0);
         run_first = @intCast(i);
     }
-    assert(run_first == entries.len);
-    for (entries) |e| {
-        if (e.series.len == 0) assert(e.series_last == 0);
-    }
+    assert(run_first == items.len);
 }
 
 /// The name a series is grouped under: without its "The", ignoring case.
@@ -421,10 +450,6 @@ pub fn series_key(e: Entry) []const u8 {
     assert(key.len <= e.series.len);
     if (e.series.len > 0) assert(key.len > 0);
     return key;
-}
-
-fn by_series_name(_: void, a: Entry, b: Entry) bool {
-    return std.ascii.lessThanIgnoreCase(series_key(a), series_key(b));
 }
 
 /// The book for the hero: the latest one in progress, or else the latest opened.

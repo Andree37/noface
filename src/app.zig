@@ -1,6 +1,5 @@
 //! What every screen shares: the screen, input, fonts, settings and page buffers.
 const std = @import("std");
-const builtin = @import("builtin");
 const assert = std.debug.assert;
 const paths = @import("kindle/paths.zig");
 const card = @import("ui/card.zig");
@@ -194,7 +193,6 @@ pub const App = struct {
     pub fn apply_settings(a: *App) !void {
         // Parsing clamps every setting to its steps: one past them is a bug of ours
         assert(a.settings.margin < settings_model.margins.len);
-        assert(a.settings.font < settings_model.families.len);
         a.body = try a.face(false, false, book_model.normal_size);
         a.layout.faces = .{ .ctx = a, .pick = pick_face };
         a.layout.images = .{ .ctx = a, .draw = draw_image };
@@ -202,7 +200,7 @@ pub const App = struct {
         a.layout.justify = !a.settings.left_align;
         a.layout.bold_starts = a.settings.bold_starts;
         // The Aa sheet shows the page of typefaces with the one chosen
-        a.family_first = aa.family_page_of(a.settings.font);
+        a.family_first = aa.family_page_of(a.settings.family_index());
         assert(a.layout.margin_x > 0);
         assert(a.body.line_height > 0);
     }
@@ -226,13 +224,12 @@ pub const App = struct {
     pub fn face(a: *App, bold_text: bool, italic: bool, size: u8) !*Font {
         assert(size < book_model.size_scales.len);
         // Parsing clamps every setting to its steps: one past them is a bug of ours
-        assert(a.settings.font < settings_model.families.len);
         assert(a.settings.size < settings_model.sizes.len);
         const bold = bold_text or a.settings.bold;
         const which: u2 = @as(u2, @intFromBool(bold)) | @as(u2, @intFromBool(italic)) << 1;
         const scale = book_model.size_scales[size];
         const key: typefaces.FaceKey = .{
-            .family = a.settings.font,
+            .family = a.settings.family_index(),
             .which = which,
             .size = @intCast(a.settings.size),
             .scale = size,
@@ -621,26 +618,19 @@ pub fn load_settings(path: [*:0]const u8) settings_model.Settings {
     const settings = settings_model.parse(file.read_small(path, &buf));
     // Parsing clamps every value to its steps
     assert(settings.size < settings_model.sizes.len);
-    assert(settings.font < settings_model.families.len);
+    assert(settings.font.len > 0);
     return settings;
 }
 
-/// Room for every setting with the longest typeface name a file can give it: 255
-/// characters of up to three bytes each, as a FAT folder holds them.
-const settings_bytes_max = 1024;
+/// Room for every setting with the longest typeface name a setting holds.
+const settings_bytes_max = settings_model.family_bytes_max + 1024;
 
-/// Writes the settings to `path`. A typeface's name comes from its file, so one too
-/// long to write leaves the file as it was, and says so in the log.
 pub fn save_settings(path: [*:0]const u8, s: settings_model.Settings) void {
     assert(path[0] != 0);
     var buf: [settings_bytes_max]u8 = undefined;
     const content = settings_model.format(&buf, s);
-    if (content.len == 0) {
-        const message = "settings: not saved, the typeface's name is too long\n";
-        if (!builtin.is_test) std.debug.print(message, .{});
-        return;
-    }
-    assert(content.len <= buf.len);
+    // Every setting but the name is a word or a number: the name is the only long one
+    assert(content.len > 0);
     file.write_small(path, content);
 }
 
@@ -708,7 +698,7 @@ test "pictures are kept until replaced or cleared" {
     try std.testing.expect(p.get(key.ptr, 2, 1) == null); // Pushed out
 }
 
-test "a typeface's long name saves, and one too long to is left out, never a crash" {
+test "the longest typeface name a setting holds saves and comes back" {
     defer settings_model.reset_families();
     var buffer: [64]u8 = undefined;
     const format = "/tmp/noface-settings-test-{d}";
@@ -723,14 +713,8 @@ test "a typeface's long name saves, and one too long to is left out, never a cra
     const kept = settings_model.builtin_families;
     settings_model.offer_families(&(kept ++ .{&long}));
     var s = settings_model.Settings{};
-    s.font = @intCast(settings_model.families.len - 1);
+    s.font = settings_model.Family.of(&long).?;
     save_settings(path, s);
     try std.testing.expectEqual(s.font, load_settings(path).font);
-    // Longer than any file's name: the settings stay as they were
-    const longer: [2000]u8 = @splat('x');
-    settings_model.offer_families(&(kept ++ .{ &long, &longer }));
-    var other = s;
-    other.font = @intCast(settings_model.families.len - 1);
-    save_settings(path, other);
-    try std.testing.expectEqual(s.font, load_settings(path).font);
+    try std.testing.expect(s.family_index() + 1 == settings_model.families.len);
 }

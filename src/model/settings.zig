@@ -18,6 +18,8 @@ pub fn offer_families(all: []const []const u8) void {
         assert(std.mem.eql(u8, builtin, name));
     }
     families = all;
+    // Each name fits a setting, so whichever is chosen is kept whole
+    for (all) |name| assert(name.len <= family_bytes_max);
     // Each name once, so a name picks one typeface
     for (all, 0..) |name, i| assert(family_named(name).? == i);
 }
@@ -36,9 +38,8 @@ pub const margins = [_]i32{ 60, 100, 150, 210 };
 
 /// Settings that don't move where pages break. Every other one does: the saved page
 /// breaks are keyed by all the rest (screens/reader/page_store.zig), so a new setting
-/// counts unless it's added here. `font` is keyed by its name, as positions can shift.
+/// counts unless it's added here.
 pub const not_layout = [_][]const u8{
-    "font",
     "clock",
     "refresh",
     "time_left",
@@ -56,10 +57,44 @@ pub fn moves_breaks(comptime field: []const u8) bool {
     return true;
 }
 
+/// The longest typeface name a font file's name can give: 255 characters of up to
+/// three bytes each, as a FAT folder holds them.
+pub const family_bytes_max = 255 * 3;
+
+/// A typeface, by its name: the setting keeps the name, so it means the same typeface
+/// whatever fonts are found at a start, and one whose file is gone for a while is
+/// chosen again when it's back.
+pub const Family = struct {
+    bytes: [family_bytes_max]u8 = @splat(0), // Past `len`, zeros: equal names, equal families
+    len: u16 = 0,
+
+    /// `text` as a family; null when it's longer than any font file's name gives.
+    pub fn of(text: []const u8) ?Family {
+        if (text.len == 0 or text.len > family_bytes_max) return null;
+        var f: Family = .{ .len = @intCast(text.len) };
+        @memcpy(f.bytes[0..text.len], text);
+        assert(std.mem.eql(u8, f.name(), text));
+        return f;
+    }
+
+    pub fn name(f: *const Family) []const u8 {
+        assert(f.len > 0); // Every family is made by `of`, from a name
+        return f.bytes[0..f.len];
+    }
+
+    /// Its place among the typefaces on offer, which is the one drawn; the first while
+    /// its file is gone.
+    pub fn index(f: *const Family) u32 {
+        const found = family_named(f.name()) orelse 0;
+        assert(found < families.len);
+        return found;
+    }
+};
+
 pub const Settings = struct {
     size: u32 = 2,
     spacing: u32 = 1,
-    font: u32 = 0,
+    font: Family = Family.of(builtin_families[0]).?,
     margin: u32 = 1,
     bold: bool = false,
     left_align: bool = false,
@@ -92,7 +127,12 @@ pub const Settings = struct {
         check.that(s.size < sizes.len, "the text size is one of its steps");
         check.that(s.spacing < spacings.len, "the spacing is one of its steps");
         check.that(s.margin < margins.len, "the margin is one of its steps");
-        check.that(s.font < families.len, "the typeface is one on offer");
+        check.that(s.font.len > 0, "a typeface is named");
+    }
+
+    /// The chosen typeface's place among those on offer: see `Family.index`.
+    pub fn family_index(s: *const Settings) u32 {
+        return s.font.index();
     }
 };
 
@@ -123,7 +163,7 @@ comptime {
     assert(defaults.size < sizes.len);
     assert(defaults.spacing < spacings.len);
     assert(defaults.margin < margins.len);
-    assert(defaults.font < builtin_families.len);
+    assert(std.mem.eql(u8, defaults.font.name(), builtin_families[0]));
     for (spacings) |spacing| assert(spacing > 1);
 }
 
@@ -157,7 +197,7 @@ pub fn parse(content: []const u8) Settings {
                 if (comptime std.mem.eql(u8, f.field, "font")) {
                     // A name can have spaces ("Open Sans"): the rest of the line
                     const rest = std.mem.trim(u8, line[value.ptr - line.ptr ..], " ");
-                    now.* = family_named(rest) orelse now.*;
+                    now.* = Family.of(rest) orelse now.*;
                 } else switch (@TypeOf(now.*)) {
                     bool => now.* = is_on(value, now.* != f.inverted) != f.inverted,
                     u32 => now.* = step(value, steps_of(f.field), now.*),
@@ -170,17 +210,17 @@ pub fn parse(content: []const u8) Settings {
     assert(s.size < sizes.len);
     assert(s.spacing < spacings.len);
     assert(s.margin < margins.len);
-    assert(s.font < families.len);
+    assert(s.font.len > 0);
     return s;
 }
 
 pub fn format(buf: []u8, s: Settings) []const u8 {
-    assert(s.font < families.len); // Typefaces are only ever added, outside tests
+    assert(s.font.len > 0);
     var w: std.Io.Writer = .fixed(buf);
     inline for (saved) |f| {
         const value = @field(s, f.field);
         if (comptime std.mem.eql(u8, f.field, "font")) {
-            w.print(f.name ++ " {s}\n", .{families[value]}) catch return "";
+            w.print(f.name ++ " {s}\n", .{value.name()}) catch return "";
         } else switch (@TypeOf(value)) {
             bool => w.print(f.name ++ " {s}\n", .{on_off(value != f.inverted)}) catch return "",
             u32 => w.print(f.name ++ " {d}\n", .{value}) catch return "",
@@ -221,7 +261,7 @@ test "settings survive being saved" {
     const s = Settings{
         .size = 4,
         .spacing = 3,
-        .font = 2,
+        .font = Family.of("Baskerville").?,
         .margin = 3,
         .bold = true,
         .left_align = true,
@@ -238,9 +278,12 @@ test "settings survive being saved" {
     try std.testing.expect(std.mem.indexOf(u8, format(&buf, s), "font Baskerville\n") != null);
 }
 
-test "bad or unknown lines change nothing" {
-    const s = parse("size 99\nfont Comic\nbold maybe\ncolour red\nspacing 2\n");
+test "bad or unknown lines change nothing; a typeface not on offer is kept by name" {
+    const s = parse("size 99\nbold maybe\ncolour red\nspacing 2\n");
     try std.testing.expectEqual(Settings{ .spacing = 2 }, s);
+    const comic = parse("font Comic\n");
+    try std.testing.expectEqualStrings("Comic", comic.font.name());
+    try std.testing.expectEqual(@as(u32, 0), comic.family_index()); // The first, meanwhile
 }
 
 test "defaults match the original reader" {
@@ -263,13 +306,14 @@ test "the reader's own typefaces are offered after the Kindle's, by name" {
     all[all.len - 1] = "Open Sans";
     offer_families(&all);
     const s = parse("font Open Sans\n");
-    try std.testing.expectEqual(all.len - 1, s.font);
+    try std.testing.expectEqual(all.len - 1, s.family_index());
     var buf: [256]u8 = undefined;
     try std.testing.expectEqual(s.font, parse(format(&buf, s)).font);
-    try std.testing.expectEqual(builtin_families.len + 7, parse("font Own 7\n").font);
+    try std.testing.expectEqual(builtin_families.len + 7, parse("font Own 7\n").family_index());
     reset_families();
-    // Removed since: the default
-    try std.testing.expectEqual(@as(u32, 0), parse("font Open Sans\n").font);
+    // Its file gone since: the first typeface, and its name kept for when it's back
+    try std.testing.expectEqual(@as(u32, 0), s.family_index());
+    try std.testing.expectEqualStrings("Open Sans", parse(format(&buf, s)).font.name());
 }
 
 test "every name kept out of the page-break key is a setting" {

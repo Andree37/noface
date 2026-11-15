@@ -223,7 +223,7 @@ pub fn tap_sheet(
             const family = a.family_first + cell;
             // The last page may have fewer typefaces than cells
             if (family >= settings_model.families.len) return null;
-            a.settings.font = family;
+            a.settings.font = settings_model.Family.of(settings_model.families[family]).?;
         },
         .more_families => {
             a.family_first = aa.next_family_page(a.family_first);

@@ -229,6 +229,11 @@ pub fn find_own(alloc: std.mem.Allocator, usable_font: *const fn ([]const u8) bo
     offered.appendSlice(alloc, &settings.builtin_families) catch return;
     for (found) |family| {
         if (find_own_offered(offered.items, family.name)) continue;
+        // Its name is what the settings keep: one longer than they hold can't be chosen
+        if (family.name.len > settings.family_bytes_max) {
+            std.debug.print("fonts: {s} left out, its name is too long\n", .{family.name});
+            continue;
+        }
         var full: [4][:0]const u8 = undefined;
         if (!find_own_usable(alloc, &family, usable_font, &full)) {
             std.debug.print("fonts: {s} can't be used\n", .{family.name});

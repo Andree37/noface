@@ -484,7 +484,7 @@ fn draw_font(fonts: Fonts, page: Page, chosen: settings_model.Settings) !void {
         // The name in its own typeface, when it's loaded
         const own = if (cell < fonts.families.len) fonts.families[cell] else null;
         const name = settings_model.families[index];
-        try draw_family(fonts, page, @intCast(cell), name, own, index == chosen.font);
+        try draw_family(fonts, page, @intCast(cell), name, own, index == chosen.family_index());
     }
     if (families_paged()) try draw_family_pager(fonts, page, first);
     try draw_row(fonts, page, size_row, chosen.size, false);

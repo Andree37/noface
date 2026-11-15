@@ -132,7 +132,6 @@ The exact rules are at the top of `tools/check/boundaries.zig`.
   check, `build_dictionary` builds the dictionaries, `pgm2png` converts snapshots,
   `package` packs a release, and `fbrec`, `touchsim` and `xtap` record the screen and
   fake taps, for timing and demos.
-- `third_party/`: stb libraries.
 
 ## How a screen works
 

@@ -81,15 +81,16 @@ on outside data to avoid one either.
 
 - **Memory is reserved at startup.** Each budget (`base/memory.zig`) hands out memory
   from a fixed region of address space taken from the system once, at startup, with
-  sizes set in `setup.zig`: the app (64 MB) and the stb decoders (64 MB) in `main.zig`;
-  the library (32 MB), an open book (128 MB) and one action's scratch (8 MB) by
-  `setup.assemble`. Then `memory.seal()`, and nothing more is asked of the system: a
-  region that runs out is an error the caller handles (a book too big shows a notice),
-  never a crash. The app's, stb's and the library's regions free and reuse blocks in
-  any order; the book's and scratch's hand out one block after another, as arenas, and
-  are emptied whole when the book closes. Pages come in as they're first touched, and
-  an emptied book region hands its pages back (`madvise`), still reserved, so an idle
-  noface holds no more than before. A budget without a region asking the system for
+  sizes set in `setup.zig`: the app (64 MB) and the font and picture decoders (64 MB,
+  a region still named "stb") in `main.zig`; the library (32 MB), an open book
+  (128 MB) and one action's scratch (8 MB) by `setup.assemble`. Then `memory.seal()`,
+  and nothing more is asked of the system: a region that runs out is an error the
+  caller handles (a book too big shows a notice), never a crash. The app's, the
+  decoders' and the library's regions free and reuse blocks in any order; the book's
+  and scratch's hand out one block after another, as arenas, and are emptied whole
+  when the book closes. Pages come in as they're first touched, and an emptied book
+  region hands its pages back (`madvise`), still reserved, so an idle noface holds no
+  more than before. A budget without a region asking the system for
   memory after `seal` is a bug: a crash in a debug build, else counted and logged.
   *Left to do:* the picture viewer's budget (`screens/reader/picture.zig`) still takes
   from the system, and a book's notes (`screens/reader/records.zig`) use
@@ -177,9 +178,9 @@ on outside data to avoid one either.
 
 ## Dependencies and tooling
 
-- **Zero dependencies but the Zig toolchain**, as Tiger Style asks. *Where noface is
-  today:* fonts and pictures are decoded by the stb libraries in `third_party/`; they're
-  to be replaced by our own Zig.
+- **Zero dependencies but the Zig toolchain**, as Tiger Style asks. Fonts and pictures
+  are read by noface's own Zig in `src/gfx/`, ports of stb_truetype and stb_image
+  (see `THIRD_PARTY_NOTICES.md`), with no outside code built in.
 - **Tooling is Zig.** Scripts that aren't Zig are counted **[checked]**, and there are
   none: the tools that run on a computer (`tools/build_dictionary.zig`,
   `tools/pgm2png.zig`, `tools/package.zig`) and everything that runs on the Kindle

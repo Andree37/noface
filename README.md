@@ -73,6 +73,7 @@ Free for personal, noncommercial use under the
 but don't sell it or build it into a commercial product. Contributions are welcome and
 come under the same terms.
 
-noface builds on [stb](https://github.com/nothings/stb), the TeX hyphenation patterns
+noface builds on [stb](https://github.com/nothings/stb) (its font and picture readers
+are Zig ports of stb_truetype and stb_image), the TeX hyphenation patterns
 and [Wiktionary](https://www.wiktionary.org) definitions (CC BY-SA 4.0), each under its
 own license: see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

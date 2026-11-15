@@ -197,11 +197,21 @@ fn panel_control_shortcut(a: *app.App, choice: menu.Hit) !void {
     }
 }
 
-/// The quick panel over the library. Returns true to quit to the stock UI.
-pub fn library_menu(a: *app.App, background: []const u8) !bool {
+/// The quick panel, to open over the library drawn in `background`.
+pub fn library_menu(a: *app.App, background: []const u8) LibraryPanel {
     assert(background.len == a.screen.pixels.len);
-    var panel = LibraryPanel{ .a = a, .background = background };
-    switch (try screen.run_to_end(a, &panel)) {
+    assert(a.overlay.len == background.len);
+    return .{ .a = a, .background = background };
+}
+
+/// Once the panel over the library has ended: true to quit to the stock UI.
+pub fn library_menu_ended(
+    a: *app.App,
+    background: []const u8,
+    ending: screen.Ending(void),
+) !bool {
+    assert(background.len == a.screen.pixels.len);
+    switch (ending) {
         .done => return true,
         // Closed, or the Kindle locking: the library comes back from under it
         .closed => try close_menu(a, background),
@@ -210,13 +220,14 @@ pub fn library_menu(a: *app.App, background: []const u8) !bool {
             if (action == .lock) try close_menu(a, background);
         },
     }
+    assert(ending != .done);
     return false;
 }
 
 /// Touches as they land, as in the reader: a slider follows the finger from there, and
 /// a tap that only arrived on the lift would leave it waiting for a drag. Done when
 /// noface should go to the Kindle's own screens.
-const LibraryPanel = struct {
+pub const LibraryPanel = struct {
     pub const Result = void;
     pub const touches = input_mod.Input.Modes.sheet;
     a: *app.App,

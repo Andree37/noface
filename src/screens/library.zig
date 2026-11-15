@@ -80,23 +80,9 @@ pub fn log_page(lib: *const Library, page_index: u32, count: u32) void {
 /// the hero too.
 const SearchEnd = union(enum) { cancel, search, open: u32 };
 
-/// The search sheet, with books matching what's typed listed as it changes. Ends by
-/// cancelling (what was searched before stays), searching for what's typed (nothing
-/// clears the search), or opening a book from the list, by its entry index.
-fn type_search(a: *app.App, lib: *const Library, q: *search.Query) !SearchEnd {
-    assert(q.len <= q.buf.len);
-    const kept = q.*;
-    var sheet = LibrarySearch{ .a = a, .lib = lib, .q = q };
-    const end = try screen.run(a, &sheet);
-    // Cancelled, locked or leaving: what was searched before stays
-    if (end == null or end.? == .cancel) q.* = kept;
-    const result = end orelse .cancel;
-    // Only a book on the Kindle opens from the list
-    if (result == .open) assert(lib.entries[result.open].is_local());
-    return result;
-}
-
-/// The search sheet, its matches listed as they're typed.
+/// The search sheet, its matches listed as they're typed. Ends by cancelling (what was
+/// searched before stays), searching for what's typed (nothing clears the search), or
+/// opening a book from the list, by its entry index.
 const LibrarySearch = struct {
     pub const Result = SearchEnd;
     a: *app.App,
@@ -214,9 +200,13 @@ const Browser = struct {
     stats: stats_screen.Stats = undefined, // While `over` is .stats
     bubble: battery_screen.Bubble = undefined, // While `over` is .battery
     lock: lock.Lock = undefined, // While `over` is .lock
+    panel: panel.LibraryPanel = undefined, // While `over` is .panel
+    search: LibrarySearch = undefined, // While `over` is .search
+    search_ending: ?screen.Ending(SearchEnd) = null,
+    query_kept: search.Query = .{}, // The search before the sheet, kept if it's cancelled
 
     /// The screens the library opens over itself.
-    const Over = enum { none, stats, battery, lock };
+    const Over = enum { none, stats, battery, lock, panel, search };
 
     pub const Result = void;
     /// The home screen: under every other, it takes the lock and leaving.
@@ -269,7 +259,7 @@ const Browser = struct {
             .tap, .tick => unreachable, // `on_tap` and `on_tick` take those
             .hold => |h| try b.on_hold(h.x, h.y),
             .swipe => |direction| b.turn(direction),
-            .pull => if (try panel.library_menu(b.a, b.buf)) .leave else .nothing,
+            .pull => b.open_panel(),
             .lock => b.on_lock(),
             .power, .computer, .stop => .leave,
             .drag, .drag_end, .unlock => .nothing,
@@ -292,7 +282,8 @@ const Browser = struct {
     pub fn on_resume(b: *Browser) !screen.Step(void) {
         // Only a screen the library opened ends back to it
         assert(b.over != .none);
-        assert(b.over_ending != null);
+        // It wrote how it ended in its own place, and only there
+        assert((b.over_ending != null) != (b.search_ending != null));
         const over = b.over;
         b.over = .none;
         switch (over) {
@@ -303,7 +294,19 @@ const Browser = struct {
                 return .stay;
             },
             .lock => return step(b.on_woken(b.over_ending.?)),
+            .panel => {
+                const leave = try panel.library_menu_ended(b.a, b.buf, b.over_ending.?);
+                return step(if (leave) .leave else .nothing);
+            },
+            .search => return step(try b.searched(b.search_ending.?)),
         }
+    }
+
+    /// The quick panel, pulled down or from the menu button.
+    fn open_panel(b: *Browser) Next {
+        assert(b.buf.len == b.a.screen.pixels.len);
+        b.panel = panel.library_menu(b.a, b.buf);
+        return b.open_over(.panel);
     }
 
     /// Opens `over` over the library.
@@ -311,11 +314,15 @@ const Browser = struct {
         assert(over != .none);
         assert(b.over == .none);
         b.over = over;
+        b.over_ending = null;
+        b.search_ending = null;
         return .{ .open = switch (over) {
             .none => unreachable,
             .stats => screen.open(&b.stats, &b.over_ending),
             .battery => screen.open(&b.bubble, &b.over_ending),
             .lock => screen.open(&b.lock, &b.over_ending),
+            .panel => screen.open(&b.panel, &b.over_ending),
+            .search => screen.open(&b.search, &b.search_ending),
         } };
     }
 
@@ -441,7 +448,12 @@ const Browser = struct {
             .none => return .nothing,
             .next => return b.turn(1),
             .prev => return b.turn(-1),
-            .search => return b.search_books(),
+            .search => {
+                assert(b.query.len <= b.query.buf.len);
+                b.query_kept = b.query;
+                b.search = .{ .a = a, .lib = &b.lib, .q = &b.query };
+                return b.open_over(.search);
+            },
             .clear_search => {
                 b.query = .{};
                 b.index = 0;
@@ -461,7 +473,7 @@ const Browser = struct {
                 b.stats = stats_screen.make(a, b.lib.entries);
                 return b.open_over(.stats);
             },
-            .menu => return if (try panel.library_menu(a, b.buf)) .leave else .nothing,
+            .menu => return b.open_panel(),
             .battery => {
                 battery_screen.open(a, &b.bubble);
                 return b.open_over(.battery);
@@ -517,9 +529,18 @@ const Browser = struct {
         return .nothing;
     }
 
-    fn search_books(b: *Browser) !Next {
+    /// The search sheet ended: cancelled, locked or leaving, what was searched before
+    /// stays.
+    fn searched(b: *Browser, ending: screen.Ending(SearchEnd)) !Next {
         assert(b.query.len <= b.query.buf.len);
-        switch (try type_search(b.a, &b.lib, &b.query)) {
+        const end: SearchEnd = switch (ending) {
+            .done => |end| end,
+            .closed, .interrupted => .cancel,
+        };
+        if (end == .cancel) b.query = b.query_kept;
+        // Only a book on the Kindle opens from the list
+        if (end == .open) assert(b.lib.entries[end.open].is_local());
+        switch (end) {
             .cancel => {
                 try b.a.present(b.buf, .screen); // What was there before the sheet
                 return .nothing;

@@ -74,64 +74,143 @@ pub fn mark_read(a: *app.App, e: *catalog.Entry, done: bool) void {
 /// `redraw` only repaints it (a screen of its own was shown and nothing changed).
 pub const Change = enum { none, downloading, other, reload, redraw };
 
-/// Shows a book's actions.
-pub fn book_sheet(
+/// Starts a book's actions in `s`, where they stay while open (`screen.open`): a card
+/// of them over `background`, then for a removal the question whether to remove it,
+/// or the series lists. Ends with what they changed.
+pub fn begin_sheet(
+    s: *Sheet,
     a: *app.App,
     e: *catalog.Entry,
     entries: []const catalog.Entry,
     background: []const u8,
-) !Change {
-    std.debug.print("sheet: {s}\n", .{e.title});
-    for (0..sheet_rounds_max) |round| {
-        const confirming = round == 1;
-        var list_buffer: [4]book_actions.Option = undefined;
-        var row_buffer: [4]card.Row = undefined;
-        var subtitle_buffer: [320]u8 = undefined;
-        const list = book_actions.options(e, confirming, &list_buffer);
+) void {
+    assert(background.len == a.screen.pixels.len);
+    s.* = .{ .a = a, .e = e, .entries = entries, .background = background };
+    assert(s.round == 0);
+    assert(s.phase == .card);
+}
+
+pub const Sheet = struct {
+    pub const Result = Change;
+    a: *app.App,
+    e: *catalog.Entry,
+    entries: []const catalog.Entry,
+    background: []const u8,
+    round: u32 = 0, // Its actions, then for a removal the question
+    phase: enum { card, series } = .card,
+    list_buffer: [4]book_actions.Option = undefined,
+    row_buffer: [4]card.Row = undefined,
+    subtitle_buffer: [320]u8 = undefined,
+    list: []const book_actions.Option = &.{},
+    card: app.Card = undefined,
+    card_ending: ?screen.Ending(u32) = null,
+    series: series_screen.Series = undefined,
+    series_ending: ?screen.Ending(bool) = null,
+
+    /// Never shown itself: its card is.
+    pub fn draw(s: *Sheet, part: screen.Part) !void {
+        assert(part == .all);
+        assert(s.round == 0);
+    }
+
+    pub fn on_tap(s: *Sheet, _: screen.Tap) !screen.Step(Change) {
+        assert(s.round < sheet_rounds_max);
+        unreachable; // Never in front: its card or the series lists always are
+    }
+
+    pub fn on_open(s: *Sheet) !screen.Step(Change) {
+        std.debug.print("sheet: {s}\n", .{s.e.title});
+        assert(s.round == 0);
+        return s.show_round();
+    }
+
+    /// The card for this round: the book's actions, or the question.
+    fn show_round(s: *Sheet) screen.Step(Change) {
+        assert(s.round < sheet_rounds_max);
+        const confirming = s.round == 1;
+        const e = s.e;
+        s.list = book_actions.options(e, confirming, &s.list_buffer);
         // Only a book being downloaded has nothing to pick: its card says so, and a
         // tap above it closes it
-        if (list.len == 0) assert(e.availability == .downloading);
-        if (e.availability != .downloading) assert(list.len > 0);
-        const subtitle = book_actions.subtitle(&subtitle_buffer, e, confirming);
-        const rows = book_actions.rows(list, &row_buffer);
-        const picked = try app.choose_from_card(a, background, e.title, subtitle, rows) orelse
-            return .none;
-        assert(picked < list.len);
-        switch (list[picked]) {
-            .cancel => return .none,
+        if (s.list.len == 0) assert(e.availability == .downloading);
+        if (e.availability != .downloading) assert(s.list.len > 0);
+        const subtitle = book_actions.subtitle(&s.subtitle_buffer, e, confirming);
+        const rows = book_actions.rows(s.list, &s.row_buffer);
+        s.card = app.card_over(s.a, s.background, e.title, subtitle, rows, null);
+        s.phase = .card;
+        return .{ .push = screen.open(&s.card, &s.card_ending) };
+    }
+
+    pub fn on_resume(s: *Sheet) !screen.Step(Change) {
+        switch (s.phase) {
+            .card => {
+                try app.card_closed(s.a, s.background);
+                const picked = switch (s.card_ending.?) {
+                    .done => |picked| picked,
+                    .closed, .interrupted => return .{ .done = .none },
+                };
+                assert(picked < s.list.len);
+                return s.act(s.list[picked]);
+            },
+            .series => {
+                const changed = switch (s.series_ending.?) {
+                    .done => |changed| changed,
+                    .closed, .interrupted => false,
+                };
+                return .{ .done = if (changed) .reload else .redraw };
+            },
+        }
+    }
+
+    /// What the action picked on the card does.
+    fn act(s: *Sheet, option: book_actions.Option) screen.Step(Change) {
+        const a = s.a;
+        const e = s.e;
+        const confirming = s.round == 1;
+        switch (option) {
+            .cancel => return .{ .done = .none },
             .remove => {
                 assert(!confirming);
-                continue;
+                s.round += 1;
+                return s.show_round();
             },
-            .series => return if (try series_screen.choose(a, entries, e)) .reload else .redraw,
+            .series => {
+                s.phase = .series;
+                series_screen.begin(&s.series, a, s.entries, e);
+                return .{ .push = screen.open(&s.series, &s.series_ending) };
+            },
             .confirm_remove => {
                 assert(confirming);
                 store.remove_download(e.key, e.kind);
                 std.debug.print("removed download: {s}\n", .{e.title});
-                return .other;
+                return .{ .done = .other };
             },
             .download => {
                 store.download_book(e.key, e.kind);
                 std.debug.print("download requested: {s}\n", .{e.title});
-                return .downloading;
+                return .{ .done = .downloading };
             },
             .mark_read, .mark_unread => |choice| {
                 mark_read(a, e, choice == .mark_read);
-                return .other;
+                return .{ .done = .other };
             },
         }
     }
-    // Only removing goes round again, and the question it asks has no removing in it
-    unreachable;
-}
+};
 
-pub fn up_next(a: *app.App, next: *const catalog.Entry, background: []u8) !bool {
-    if (next.availability != .local) return false;
+/// The card offering `next`, the next of a series just finished, to read now, over
+/// `background` (the page just left); null when it isn't on the Kindle. Its small
+/// cover is let go of with `up_next_closed`, and what was under it put back.
+pub fn up_next(
+    a: *app.App,
+    next: *const catalog.Entry,
+    background: []u8,
+    offer: *UpNext,
+) ?screen.Frame {
+    if (next.availability != .local) return null;
     assert(next.is_local());
-    var label_buffer: [160]u8 = undefined;
-    var subtitle_buffer: [200]u8 = undefined;
-    const label = catalog.series_label(&label_buffer, next.*);
-    const subtitle = std.fmt.bufPrint(&subtitle_buffer, "Up next in {s}", .{label}) catch
+    const label = catalog.series_label(&offer.label_buffer, next.*);
+    offer.subtitle = std.fmt.bufPrint(&offer.subtitle_buffer, "Up next in {s}", .{label}) catch
         "Up next";
     std.debug.print("up next: {s}\n", .{next.title});
     // Over the page just left, not whatever the reader last kept in this buffer
@@ -140,24 +219,38 @@ pub fn up_next(a: *app.App, next: *const catalog.Entry, background: []u8) !bool 
     // Its cover beside the title, half the grid's size, when it has one
     const cover_width = cover_image.width / 2;
     const cover_height = cover_image.height / 2;
-    var small: ?[]u8 = null;
+    offer.small = null;
     if (next.thumbnail.len > 0) {
-        small = cover_image.load(a.alloc, next.thumbnail, cover_width, cover_height);
+        offer.small = cover_image.load(a.alloc, next.thumbnail, cover_width, cover_height);
     }
-    defer if (small) |pixels| a.alloc.free(pixels);
     var book_cover: ?card.Cover = null;
-    if (small) |pixels| {
+    if (offer.small) |pixels| {
         assert(pixels.len == cover_width * cover_height);
         book_cover = .{ .pixels = pixels, .width = cover_width, .height = cover_height };
     }
-    const rows = [_]card.Row{.{ .label = "Read it now" }};
-    const chosen = try app.choose_from_card_with(
-        a,
-        background,
-        next.title,
-        subtitle,
-        &rows,
-        book_cover,
-    );
-    return chosen != null;
+    const rows = &up_next_rows;
+    offer.card = app.card_over(a, background, next.title, offer.subtitle, rows, book_cover);
+    return screen.open(&offer.card, &offer.ending);
 }
+
+/// Once the up-next card has ended: whether to read the book now.
+pub fn up_next_closed(a: *app.App, background: []const u8, offer: *UpNext) !bool {
+    if (offer.small) |pixels| a.alloc.free(pixels);
+    offer.small = null;
+    try app.card_closed(a, background);
+    const chosen = offer.ending.? == .done;
+    if (chosen) assert(offer.ending.?.done < up_next_rows.len);
+    return chosen;
+}
+
+const up_next_rows = [_]card.Row{.{ .label = "Read it now" }};
+
+/// The up-next card and what it shows, kept while it's open.
+pub const UpNext = struct {
+    label_buffer: [160]u8 = undefined,
+    subtitle_buffer: [200]u8 = undefined,
+    subtitle: []const u8 = "",
+    small: ?[]u8 = null, // Its cover, half the grid's size
+    card: app.Card = undefined,
+    ending: ?screen.Ending(u32) = null,
+};

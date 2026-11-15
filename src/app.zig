@@ -445,7 +445,27 @@ pub fn choose_from_card_with(
     book_cover: ?card.Cover,
 ) !?u32 {
     assert(background.len == a.screen.pixels.len); // Put back over the whole screen
-    var c = Card{
+    var c = card_over(a, background, title, subtitle, rows, book_cover);
+    const chosen = try screen.run(a, &c);
+    if (chosen) |index| assert(index < rows.len);
+    try card_closed(a, background);
+    return chosen;
+}
+
+/// A card of rows over `background`, to open over a screen (`screen.open`): it ends
+/// with the row tapped, or closes with a tap above it. Once it has ended, whatever
+/// way, `card_closed` puts back what was under it.
+pub fn card_over(
+    a: *App,
+    background: []const u8,
+    title: []const u8,
+    subtitle: []const u8,
+    rows: []const card.Row,
+    book_cover: ?card.Cover,
+) Card {
+    assert(background.len == a.screen.pixels.len); // Put back over the whole screen
+    assert(a.overlay.len == a.screen.pixels.len); // The card is drawn there first
+    return .{
         .a = a,
         .background = background,
         .title = title,
@@ -453,15 +473,18 @@ pub fn choose_from_card_with(
         .rows = rows,
         .cover = book_cover,
     };
-    const chosen = try screen.run(a, &c);
-    if (chosen) |index| assert(index < rows.len);
+}
+
+/// What was under a card, back on the whole screen.
+pub fn card_closed(a: *App, background: []const u8) !void {
+    assert(background.len == a.screen.pixels.len);
+    assert(background.ptr != a.screen.pixels.ptr); // Kept apart from what's shown
     @memcpy(a.screen.pixels, background);
     try a.show_band(0, a.screen.height);
-    return chosen;
 }
 
 /// A card of rows over a dimmed screen: the row tapped, or closed by a tap above it.
-const Card = struct {
+pub const Card = struct {
     a: *App,
     background: []const u8,
     title: []const u8,

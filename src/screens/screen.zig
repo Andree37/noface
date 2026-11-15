@@ -66,6 +66,7 @@ const hooks = [_][]const u8{
     "on_tick",
     "on_action",
     "on_resume",
+    "on_open",
 };
 
 /// The actions that end the screens in front of the one that takes them: the Kindle
@@ -118,13 +119,21 @@ pub const Frame = struct {
         touches: ?input_mod.Input.Modes,
         tick_us: u64,
         resumes: bool, // It has `on_resume`, so it may open others
+        opens: bool, // It has `on_open`, called once it's drawn as it opens
         call: *const fn (screen: *anyopaque, ending: *anyopaque, c: Call) anyerror!Turn,
         setting: ?*const fn (screen: *anyopaque) input_mod.Input.Scope,
     };
 
-    /// What `run_root` asks of a screen: draw it, hand it an action, tell it the one
-    /// over it ended, or end it, interrupted by a lock or a stop it doesn't take.
-    const Call = union(enum) { draw: Part, act: Action, @"resume", interrupt: Action };
+    /// What `run_root` asks of a screen: draw it, hand it an action, tell it it has
+    /// opened or the one over it ended, or end it, interrupted by a lock or a stop it
+    /// doesn't take.
+    const Call = union(enum) {
+        draw: Part,
+        act: Action,
+        open,
+        @"resume",
+        interrupt: Action,
+    };
 
     fn draw(f: *const Frame, part: Part) !void {
         assert(f.kind.name.len > 0);
@@ -159,6 +168,7 @@ fn Kinds(comptime S: type) type {
             .touches = if (@hasDecl(S, "touches")) S.touches else null,
             .tick_us = if (@hasDecl(S, "tick_us")) S.tick_us else 0,
             .resumes = @hasDecl(S, "on_resume"),
+            .opens = @hasDecl(S, "on_open"),
             .call = call,
             .setting = if (@hasDecl(S, "setting")) setting else null,
         };
@@ -181,6 +191,7 @@ fn Kinds(comptime S: type) type {
                     else => if (@hasDecl(S, "on_action")) try s.on_action(action) else .stay,
                 },
                 .@"resume" => if (@hasDecl(S, "on_resume")) try s.on_resume() else unreachable,
+                .open => if (@hasDecl(S, "on_open")) try s.on_open() else unreachable,
                 .interrupt => |action| {
                     e.* = .{ .interrupted = action };
                     log_ending(kind.name, "interrupted", c);
@@ -221,7 +232,7 @@ fn log_ending(name: []const u8, how: []const u8, c: Frame.Call) void {
     assert(how.len > 0);
     const action = switch (c) {
         .act, .interrupt => |action| action,
-        .draw, .@"resume" => {
+        .draw, .open, .@"resume" => {
             std.debug.print("screen: {s} {s}\n", .{ name, how });
             return;
         },
@@ -345,9 +356,9 @@ const Stack = struct {
     /// for it.
     shown_us: u64 = 0,
 
-    /// The most turns settling one action can take: each ends a screen, but for the
-    /// last, so no more than there can be screens.
-    const settle_turns_max = depth_max + 1;
+    /// The most turns settling one action can take: each opens or ends a screen, but
+    /// for the last, and a screen ended may have one opened in its place a few times.
+    const settle_turns_max = 4 * depth_max;
     /// The most turns ending the screens in front of one taking a lock or a stop: a
     /// screen under one ended may open another, which ends at once, a few times.
     const unwind_turns_max = 4 * depth_max;
@@ -430,7 +441,13 @@ const Stack = struct {
             switch (t) {
                 .stay => return,
                 .redraw => |p| return stack.top().draw(p),
-                .push => |f| return stack.push(a, f),
+                .push => |f| {
+                    try stack.push(a, f);
+                    const opened = stack.top().*;
+                    if (!opened.kind.opens) return;
+                    // A screen that only leads to others opens its first at once
+                    t = try opened.kind.call(opened.screen, opened.ending, .open);
+                },
                 .end => {
                     _ = stack.pop();
                     if (stack.depth == 0) return; // The root ended: noface is leaving
@@ -438,7 +455,7 @@ const Stack = struct {
                 },
             }
         }
-        unreachable; // See `settle_turns_max`: every turn but the last ends a screen
+        unreachable; // See `settle_turns_max`: every turn but the last opens or ends one
     }
 
     /// The screen in front again, the one over it ended.

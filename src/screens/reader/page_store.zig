@@ -15,27 +15,50 @@ const app = @import("../../app.zig");
 
 const magic = "NFPG";
 
-/// The source of everything that decides where a page breaks.
+/// Raised by hand when breaks change for a reason no source file below shows (a font
+/// table read differently by a file not listed, say), so old saved breaks are dropped.
+const layout_version: u64 = 1;
+
+/// The source of everything that decides where a page breaks, under `src/`: setting
+/// text, the fonts' advances, kerning and character maps, and reading the books.
+/// Every file these import is here or in `not_layout` (a test checks).
+const layout_sources = [_][]const u8{
+    "layout/text.zig",
+    "layout/hyphen.zig",
+    "layout/hyphen/hyph-en-us.pat.txt",
+    "layout/hyphen/hyph-en-us.hyp.txt",
+    "layout/hyphen/hyph-pt.pat.txt",
+    "gfx/font.zig",
+    "gfx/truetype.zig",
+    "gfx/cff.zig",
+    "gfx/outline.zig",
+    "gfx/raster.zig",
+    "kindle/kfx.zig",
+    "kindle/ion.zig",
+    "model/book.zig",
+    "model/notes.zig",
+    "model/settings.zig",
+    "epub/epub.zig",
+    "epub/xml.zig",
+    "epub/zip.zig",
+    "epub/picture.zig",
+    "app.zig",
+    "screens/reader/paginate.zig",
+};
+
+/// Files the layout sources import that don't move a break: checks, the pixels a page
+/// is drawn into, the font decoder's memory, and the library's series numbers.
+const not_layout = [_][]const u8{
+    "base/check.zig",
+    "gfx/page.zig",
+    "gfx/c_memory.zig",
+    "model/catalog.zig",
+};
+
 const code_fingerprint: u64 = blk: {
-    @setEvalBranchQuota(50_000_000);
-    var h = std.hash.Wyhash.init(0);
-    for (.{
-        @embedFile("../../layout/text.zig"),
-        @embedFile("../../layout/hyphen.zig"),
-        @embedFile("../../layout/hyphen/hyph-en-us.pat.txt"),
-        @embedFile("../../layout/hyphen/hyph-en-us.hyp.txt"),
-        @embedFile("../../layout/hyphen/hyph-pt.pat.txt"),
-        @embedFile("../../gfx/font.zig"),
-        @embedFile("../../kindle/kfx.zig"),
-        @embedFile("../../kindle/ion.zig"),
-        @embedFile("../../model/book.zig"),
-        @embedFile("../../model/notes.zig"),
-        @embedFile("../../model/settings.zig"),
-        @embedFile("../../epub/epub.zig"),
-        @embedFile("../../epub/xml.zig"),
-        @embedFile("../../app.zig"),
-        @embedFile("paginate.zig"),
-    }) |source| h.update(source);
+    @setEvalBranchQuota(100_000_000);
+    var h = std.hash.Wyhash.init(layout_version);
+    for (layout_sources) |source| h.update(@embedFile("../../" ++ source));
     break :blk h.final();
 };
 
@@ -222,4 +245,53 @@ test "pages files sit beside state files" {
     var buf: [128]u8 = undefined;
     const path = try path_for(&buf, "/d/state-0bee89b07a248e27");
     try std.testing.expectEqualStrings("/d/pages-0bee89b07a248e27", path);
+}
+
+/// The files under `src/` that `source` (a path under `src/`) imports, resolved.
+fn imports_of(comptime source: []const u8) []const []const u8 {
+    const text = @embedFile("../../" ++ source);
+    const opening = "@import(\"";
+    const folder = source[0..(std.mem.lastIndexOfScalar(u8, source, '/') orelse 0)];
+    var found: []const []const u8 = &.{};
+    var at: u32 = 0;
+    for (0..text.len) |_| {
+        const start = std.mem.indexOfPos(u8, text, at, opening) orelse break;
+        const name_start = start + opening.len;
+        const name_end = std.mem.indexOfScalarPos(u8, text, name_start, '"').?;
+        at = @intCast(name_end);
+        const name = text[name_start..name_end];
+        if (!std.mem.endsWith(u8, name, ".zig")) continue; // std and build options
+        // Each "../" climbs a folder from the importing file's own
+        var base: []const u8 = folder;
+        var rest: []const u8 = name;
+        for (0..name.len) |_| {
+            if (!std.mem.startsWith(u8, rest, "../")) break;
+            rest = rest[3..];
+            base = base[0 .. std.mem.lastIndexOfScalar(u8, base, '/') orelse 0];
+        }
+        const path = if (base.len == 0) rest else base ++ "/" ++ rest;
+        found = found ++ [_][]const u8{path};
+    }
+    return found;
+}
+
+test "every file the layout sources import is in the fingerprint, or doesn't move breaks" {
+    comptime var missing: []const []const u8 = &.{};
+    comptime {
+        @setEvalBranchQuota(100_000_000);
+        for (layout_sources) |source| {
+            // The App's other imports are its screens and devices, not layout
+            if (!std.mem.endsWith(u8, source, ".zig") or std.mem.eql(u8, source, "app.zig")) {
+                continue;
+            }
+            for (imports_of(source)) |path| {
+                const listed = for (layout_sources ++ not_layout) |known| {
+                    if (std.mem.eql(u8, known, path)) break true;
+                } else false;
+                if (!listed) missing = missing ++ [_][]const u8{path};
+            }
+        }
+    }
+    for (missing) |path| std.debug.print("not fingerprinted: {s}\n", .{path});
+    try std.testing.expectEqual(@as(usize, 0), missing.len);
 }

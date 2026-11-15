@@ -709,8 +709,8 @@ const scenarios = [_]Scenario{
                 const r = try play_on(.{ .radio_slow = true }, &.{ wait(150_000), forward });
                 try expect(r.airplane_asked_on, "airplane mode wasn't turned on");
                 try expect(!r.airplane_at_end, "Wi-Fi was left off");
-                // The note may stay, as Wi-Fi coming back went unconfirmed too: noface.sh
-                // or the next start checks again, so it's kept until Wi-Fi is seen on
+                // The note may stay, as Wi-Fi coming back went unconfirmed too: the
+                // launcher or the next start checks again, so it's kept until Wi-Fi is seen on
             }
         }.run,
     },

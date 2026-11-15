@@ -1,8 +1,8 @@
 //! Opening noface when the Kindle starts needs one small file in the system's startup
 //! folder, /etc/upstart. It ships in noface's folder; switching the setting on copies
 //! it there (after the reader agrees), so nobody edits system files by hand. The file
-//! only runs noface's autostart.sh, which does nothing while the setting is off, so
-//! switching it off leaves the file in place, idle.
+//! only runs `noface-launch autostart` (src/kindle/boot.zig), which does nothing while
+//! the setting is off, so switching it off leaves the file in place, idle.
 const std = @import("std");
 const assert = std.debug.assert;
 const paths = @import("paths.zig");

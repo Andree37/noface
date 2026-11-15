@@ -4,7 +4,8 @@
 //! ships in ReleaseSafe, where they are, but `-Dfast=true` builds without them, and then
 //! the compiler assumes an assertion holds, so a wrong one turns into silent memory
 //! corruption. These checks always run. When one fails, noface stops with a message
-//! saying what broke, and device/noface.sh puts the Kindle back to stock.
+//! saying what broke, and the launcher (src/kindle/supervisor.zig) puts the Kindle
+//! back to stock.
 //!
 //! They state our own invariants. Data from outside (book files, the catalog,
 //! settings, the annotation database) is never checked this way: it's handled as an

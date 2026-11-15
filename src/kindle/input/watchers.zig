@@ -1,6 +1,6 @@
 //! What noface hears besides touches, and owes others while it waits: powerd's lock,
 //! wake and charger news, a computer on USB, the power key, the heartbeat for the
-//! watchdog in device/noface.sh, and a word to powerd now and then. These are
+//! launcher's watchdog (src/kindle/supervisor.zig), and a word to powerd now and then. These are
 //! `Input`'s methods (input.zig names each one); the state they keep is Input's.
 const std = @import("std");
 const assert = std.debug.assert;
@@ -22,8 +22,9 @@ const key_power = evdev.key_power;
 const ev = @import("gestures.zig").ev;
 
 const heartbeat_every_us = 30 * 1000 * 1000;
-const heartbeat_path = paths.heartbeat; // In RAM: device/noface.sh's watchdog reads it
-/// How long device/noface.sh's watchdog waits for a beat before stopping noface.
+const heartbeat_path = paths.heartbeat; // In RAM: the launcher's watchdog reads it
+/// How long the launcher's watchdog (src/kindle/supervisor.zig) waits for a beat before
+/// stopping noface.
 const watchdog_patience_us = 2 * 60 * 1000 * 1000;
 pub const watcher_retry_ms = 5000;
 /// Tell powerd about activity at most once a minute, and only just after a touch:
@@ -60,7 +61,7 @@ pub fn news_waiting(in: *Input) bool {
     return n > 0;
 }
 
-/// Tells the watchdog in device/noface.sh that noface is alive, now.
+/// Tells the launcher's watchdog (src/kindle/supervisor.zig) that noface is alive, now.
 pub fn beat(in: *Input) void {
     in.heartbeat_us = now_us();
     // Room for any u64 and its newline, so the stamp is never the fallback's zero
@@ -103,8 +104,8 @@ pub fn start_watcher(in: *Input) void {
     in.watcher_pid = child.pid;
 }
 
-/// What noface owes others while it waits: a heartbeat for the watchdog in
-/// device/noface.sh, and, as touches are grabbed and powerd can't see them, a word
+/// What noface owes others while it waits: a heartbeat for the launcher's watchdog
+/// (src/kindle/supervisor.zig), and, as touches are grabbed and powerd can't see them, a word
 /// to powerd now and then so it doesn't lock the Kindle ten minutes into a book.
 pub fn keep_alive(in: *Input) void {
     // What powerd heard of is a touch already made, on the same clock

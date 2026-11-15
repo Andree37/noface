@@ -1,5 +1,5 @@
 //! Looking words up in noface's own dictionary files, built from Wiktionary by
-//! tools/build_dictionary.py. A file is:
+//! tools/build_dictionary.zig. A file is:
 //!
 //!   "NFDICT1\n", then the entry count as u32, then count + 1 offsets as u32 (all
 //!   little-endian), then the entries back to back. Entry i runs from offsets[i] to

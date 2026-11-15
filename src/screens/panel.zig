@@ -238,7 +238,7 @@ const LibraryPanel = struct {
                 lipc.open_settings();
                 return .{ .done = {} };
             },
-            .kindle => .{ .done = {} }, // The Kindle's home comes back by noface.sh
+            .kindle => .{ .done = {} }, // The Kindle's home comes back by the launcher
             .close => .close,
             else => .stay,
         };

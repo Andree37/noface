@@ -286,8 +286,8 @@ fn watch_events(comptime publisher: [*:0]const u8, comptime events: [*:0]const u
 /// Locking and waking, from powerd.
 pub fn watch_power_events() ?process.Child {
     // The charger's coming and going too, so the status bar's bolt follows at once.
-    // The script noface.sh finds this watcher by the start of its arguments, which
-    // stays the same
+    // The launcher finds this watcher by the start of its arguments, which stays the
+    // same (src/kindle/stock_ui.zig)
     const events = "goingToScreenSaver,outOfScreenSaver,charging,notCharging";
     const child = watch_events("com.lab126.powerd", events);
     if (child) |c| assert(c.pid > 0); // Its whole group is killed on the way out

@@ -863,7 +863,7 @@ const Reader = struct {
                 lipc.open_settings();
                 return .quit;
             },
-            .kindle => return .quit, // noface.sh brings back the Kindle's home
+            .kindle => return .quit, // The launcher brings back the Kindle's home
             .close => {
                 r.view = .page;
                 try panel.close_menu(a, page);

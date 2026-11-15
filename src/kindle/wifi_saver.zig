@@ -6,8 +6,9 @@
 //! Bluetooth is on, which airplane mode could cut off.
 //!
 //! Only a radio noface turned off is turned back on, which a file on the user drive
-//! remembers. That way it's put back even after a crash or a reboot: noface.sh does it
-//! on the way out, and noface on its way in.
+//! remembers. That way it's put back even after a crash or a reboot: the launcher does
+//! it on the way out (src/kindle/stock_ui.zig) and at boot (src/launch.zig), and noface
+//! on its way in.
 const std = @import("std");
 const assert = std.debug.assert;
 const lipc = @import("lipc.zig");
@@ -96,7 +97,7 @@ pub fn marked() bool {
 }
 
 /// Turns the radio back on, if noface is the one that turned it off. The note stays
-/// until airplane mode is seen off, so noface.sh or the next start can try again.
+/// until airplane mode is seen off, so the launcher or the next start can try again.
 pub fn restore() void {
     assert(marker_is_note());
     if (!marked()) return;

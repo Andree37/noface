@@ -190,8 +190,8 @@ on outside data to avoid one either.
   `launch.sh` and nothing else, so `device/kpm/launch.sh` stays shell. It is a shim:
   comments, then one line that execs `noface-launch`. The check accepts that file by
   its path, and only while it has one line of code; a second line counts it again. The
-  package also ships it as `noface/data.sh` and `noface/autostart.sh`, the names an
-  older install's KPM entry and startup file run, so updating the app folder alone
-  keeps both working (the shim passes `"$0"`, which tells the launcher which way it
+  package also ships it as `noface/start.sh`, `noface/data.sh` and
+  `noface/autostart.sh`, the names an older install's KPM entry and startup file run,
+  so updating the app folder alone keeps both working (the shim passes `"$0"`, which tells the launcher which way it
   was started). The startup file, `device/noface-autostart.conf`, is an upstart job
   rather than a script: its one line runs `noface-launch autostart`.

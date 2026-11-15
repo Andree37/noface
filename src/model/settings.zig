@@ -71,7 +71,7 @@ pub const Settings = struct {
     clock: bool = true,
     refresh: bool = false,
     time_left: bool = true,
-    /// Open noface when the Kindle starts: device/autostart.sh reads it.
+    /// Open noface when the Kindle starts: the launcher reads it (src/kindle/boot.zig).
     autostart: bool = false,
     bold_starts: bool = false, // The first half of each word's letters in bold
     /// Ask to download a missing dictionary; "Not now" stops it.

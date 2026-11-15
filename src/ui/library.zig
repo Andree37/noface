@@ -1,4 +1,4 @@
-//! Book list, read from the tab-separated file start.sh exports from the
+//! Book list, read from the tab-separated file the launcher exports from the
 //! Kindle's own database: path, title, author, percent, last opened.
 const std = @import("std");
 const assert = std.debug.assert;

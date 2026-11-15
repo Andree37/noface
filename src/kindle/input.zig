@@ -74,8 +74,10 @@ comptime {
 }
 
 /// What a scenario test does, in order: an action as the reader's finger or the power
-/// button would give it, or a wait on the virtual clock (os.fake_us).
-pub const Step = union(enum) { act: Action, wait_ms: u64 };
+/// button would give it, one made at the same moment as the one before (a second tap
+/// while the app was still answering the first), or a wait on the virtual clock
+/// (os.fake_us).
+pub const Step = union(enum) { act: Action, act_queued: Action, wait_ms: u64 };
 
 /// A scenario being played back. Waits deliver the ticks the app asked for, at the
 /// times they'd come; once the steps run out the app is told to stop.
@@ -87,6 +89,7 @@ pub const Script = struct {
     /// screen as the script left it, for a test to keep.
     at_end: ?struct { ctx: *anyopaque, call: *const fn (ctx: *anyopaque) void } = null,
     ended: bool = false,
+    touched_us: u64 = 0, // When the finger touched for the last action played
 
     fn next(script: *Script, in: *Input) Action {
         assert(script.at <= script.steps.len);
@@ -108,21 +111,35 @@ pub const Script = struct {
             script.at += 1;
             switch (step) {
                 .act => |action| {
-                    os.fake_us = now_us() + 1000; // A touch takes a moment
-                    // Through the same grip zones as a finger, so a test can't tap what
-                    // a reader couldn't
-                    switch (action) {
-                        .tap => |tap| if (in.ignores(tap.x, tap.y)) continue,
-                        .hold => |hold| if (in.ignores(hold.x, hold.y)) continue,
-                        else => {},
-                    }
-                    in.last_input = now_us();
-                    return action;
+                    if (script.touch(in, action, now_us())) |touched| return touched;
+                },
+                .act_queued => |action| {
+                    if (script.touch(in, action, script.touched_us)) |touched| return touched;
                 },
                 .wait_ms => |ms| script.waiting_us = ms * 1000,
             }
         }
         unreachable; // See `passes_max`: the last pass always returns
+    }
+
+    /// `action` as the panel gives it, a tap stamped with when the finger touched
+    /// (`touched_us`); null when the grip zones ignore it, as they would a finger.
+    fn touch(script: *Script, in: *Input, action: Action, touched_us: u64) ?Action {
+        assert(touched_us <= now_us());
+        script.touched_us = touched_us;
+        os.fake_us = now_us() + 1000; // A touch takes a moment
+        var touched = action;
+        switch (touched) {
+            .tap => |*tap| {
+                if (in.ignores(tap.x, tap.y)) return null;
+                tap.us = touched_us;
+            },
+            .hold => |hold| if (in.ignores(hold.x, hold.y)) return null,
+            else => {},
+        }
+        in.last_input = now_us();
+        assert(in.last_input > touched_us);
+        return touched;
     }
 
     /// Moves the virtual clock on through the current wait: to the next tick, if one
@@ -371,6 +388,11 @@ pub const Input = struct {
         // Whole Actions only are written, each at once (see the comptime check above)
         if (got != @sizeOf(Action)) return null;
         in.last_input = now_us();
+        // The page's click is the finger touching, now
+        switch (action) {
+            .tap => |*tap| tap.us = in.last_input,
+            else => {},
+        }
         return action;
     }
 

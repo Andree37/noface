@@ -846,6 +846,29 @@ const scenarios = [_]Scenario{
         }
     }.run },
     .{
+        .name = "a tap made while the stats were up closes them and never reaches the library",
+        .run = struct {
+            fn run() !void {
+                const stats_button = tap(758, 558);
+                const hero = tap_in(library_ui.hero_rect(width));
+                const hit = library_ui.hit(758, 558, 0, 1, false);
+                try expect(hit == .stats, "the stats button isn't where it was");
+                const kindle: Kindle = .{ .library = true, .read_before = 0 };
+                // The second tap touched as the first closed them, before the library
+                // was back: meant for the stats, it opens nothing
+                const twice = try play_on(kindle, &.{
+                    stats_button, page_middle, .{ .act_queued = hero.act }, wait(2_000),
+                });
+                try expect(!twice.opened[0], "a tap meant for the stats opened the book");
+                // Once the library is back, the same tap opens the book
+                const after = try play_on(kindle, &.{
+                    stats_button, page_middle, hero, wait(2_000),
+                });
+                try expect(after.opened[0], "the book didn't open from the library");
+            }
+        }.run,
+    },
+    .{
         .name = "finishing a book of a series offers the next, and it opens",
         .run = struct {
             fn run() !void {

@@ -31,6 +31,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const app = @import("../app.zig");
 const input_mod = @import("../kindle/input.zig");
+const os = @import("../sys/os.zig");
 
 pub const Tap = input_mod.Tap;
 pub const Action = input_mod.Action;
@@ -338,6 +339,10 @@ pub fn run_to_end(a: *app.App, s: anytype) !Ending(@TypeOf(s.*).Result) {
 const Stack = struct {
     frames: [depth_max]Frame = undefined,
     depth: u32 = 0,
+    changes: u32 = 0, // Screens opened and ended, counting on (wrapping)
+    /// When the screen in front was put up: a tap touched before then wasn't meant
+    /// for it.
+    shown_us: u64 = 0,
 
     /// The most turns settling one action can take: each ends a screen, but for the
     /// last, so no more than there can be screens.
@@ -369,6 +374,7 @@ const Stack = struct {
         stack.frames[stack.depth] = f;
         stack.frames[stack.depth].inherited = a.input.modes(); // Those it opens over
         stack.depth += 1;
+        stack.changes +%= 1;
         assert(stack.top().screen == f.screen);
         std.debug.print("screen: {s} opened\n", .{f.kind.name});
         a.input.apply(stack.scope(), true);
@@ -380,6 +386,7 @@ const Stack = struct {
         assert(stack.depth > 0);
         const f = stack.top().*;
         stack.depth -= 1;
+        stack.changes +%= 1;
         assert(stack.depth < depth_max);
         return f;
     }
@@ -388,11 +395,27 @@ const Stack = struct {
     /// stop the first under it that takes those, the ones in front of it ended first.
     fn route(stack: *Stack, a: *app.App, action: Action) !void {
         assert(stack.depth > 0);
+        const changes_before = stack.changes;
+        defer if (stack.changes != changes_before) {
+            // Another screen is in front, drawn: from now on taps are meant for it
+            stack.shown_us = os.now_us();
+        };
         if (interrupts(action)) try stack.unwind(action);
         if (stack.depth == 0) return; // The root ended as the screens over it did
-        // Exactly one screen gets it: the one in front, and only once
         const f = stack.top().*;
         if (interrupts(action)) assert(takes_it(f.kind.takes, action));
+        switch (action) {
+            .tap => |t| if (t.us < stack.shown_us) {
+                // The finger touched while another screen was in front: the tap was
+                // meant for that one, which has ended, never for this one
+                std.debug.print("tap {d},{d} dropped: touched before {s} was shown\n", .{
+                    t.x, t.y, f.kind.name,
+                });
+                return;
+            },
+            else => {},
+        }
+        // Exactly one screen gets it: the one in front, and only once
         try stack.settle(a, try f.kind.call(f.screen, f.ending, .{ .act = action }));
     }
 
@@ -451,6 +474,7 @@ const Stack = struct {
                     assert(stack.depth < depth_max);
                     stack.frames[stack.depth] = opened;
                     stack.depth += 1;
+                    stack.changes +%= 1;
                 },
                 .end => ended = true,
             }
@@ -472,6 +496,7 @@ pub fn run_root(a: *app.App, root: anytype) !Ending(@TypeOf(root.*).Result) {
     var ending: ?Ending(R) = null;
     var stack = Stack{};
     try stack.push(a, open(root, &ending));
+    stack.shown_us = os.now_us();
     // Unbounded: noface's event loop, which runs for as long as the reader reads
     while (true) {
         a.input.apply(stack.scope(), false);
@@ -515,7 +540,6 @@ const Example = struct {
 test "a screen draws whole, takes taps until done, and gives back its result" {
     // Scripted taps move the test clock: the real one comes back after, for the tests that
     // follow
-    const os = @import("../sys/os.zig");
     defer os.fake_us = null;
     // Clear of the thumb zones
     const middle: input_mod.Step = .{ .act = .{ .tap = .{ .x = 600, .y = 800, .us = 0 } } };

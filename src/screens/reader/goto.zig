@@ -11,17 +11,19 @@ const screen = @import("../screen.zig");
 
 const excerpt_bytes = 160;
 
-pub fn run(
+/// Go To, to open over the page (`screen.open`), its rows in `alloc`: done with the
+/// page of the row tapped.
+pub fn make(
     a: *app.App,
     s: *sess.Session,
     alloc: std.mem.Allocator,
     chapters: []const book_model.Chapter,
-) !?u32 {
+) !GoTo {
     assert(s.current < s.pages.len);
     assert(chapters.len <= std.math.maxInt(u32));
     const reading = goto.current(chapters, s.pages[s.current].para);
     if (reading) |r| assert(r < chapters.len);
-    var go = GoTo{
+    return .{
         .a = a,
         .background = try s.ensure(s.current, s.current),
         .contents = try contents_rows(alloc, s, chapters),
@@ -29,14 +31,11 @@ pub fn run(
         .reading = reading,
         .pages = .{ .page = if (reading) |r| goto.list_page_of(r) else 0 },
     };
-    const page = try screen.run(a, &go) orelse return null;
-    assert(page < s.pages.len);
-    return page;
 }
 
 /// Two lists under the toolbar: the contents, with the chapter being read marked, and
 /// the bookmarks and highlights. The page of the row tapped.
-const GoTo = struct {
+pub const GoTo = struct {
     pub const Result = u32;
     a: *app.App,
     background: []const u8, // The page under it

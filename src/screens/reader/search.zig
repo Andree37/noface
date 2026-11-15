@@ -24,17 +24,16 @@ comptime {
     assert(search_sheet.content_top < goto.list_top);
 }
 
-/// Searching the book: typing on the keyboard, then the results, a page of them at a
-/// time. The page of the result tapped, or null when cancelled.
-pub fn run(a: *app.App, s: *sess.Session, alloc: std.mem.Allocator) !?u32 {
+/// Searching the book, to open over the page (`screen.open`), its results in `alloc`:
+/// typing on the keyboard, then the results, a page of them at a time. Done with the
+/// page of the result tapped; closed when cancelled.
+pub fn make(a: *app.App, s: *sess.Session, alloc: std.mem.Allocator) Search {
     assert(s.pages.len > 0);
-    var search_screen = Search{ .a = a, .s = s, .alloc = alloc };
-    const page = try screen.run(a, &search_screen) orelse return null;
-    assert(page < s.pages.len);
-    return page;
+    assert(s.current < s.pages.len);
+    return .{ .a = a, .s = s, .alloc = alloc };
 }
 
-const Search = struct {
+pub const Search = struct {
     pub const Result = u32;
     a: *app.App,
     s: *sess.Session,

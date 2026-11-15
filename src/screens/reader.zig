@@ -428,9 +428,21 @@ pub const Reader = struct {
     last_place: u32 = 0,
     wifi_try_at: ?u64 = null, // When to turn Wi-Fi off; null once that's settled
     battery_minute: u64 = 0, // The battery is noted once a minute at most
-    /// The lock screen, while the Kindle sleeps over the book.
+    /// What's open over the book, if anything: each in a place of its own, and how it
+    /// ended once it has. `opening` is one a handler has just made, to open.
+    over: Over = .none,
+    opening: ?screen.Frame = null,
     lock: lock.Lock = undefined,
     lock_ending: ?screen.Ending(void) = null,
+    menu: more.More = undefined,
+    menu_ending: ?screen.Ending(more.Outcome) = null,
+    searching: search.Search = undefined,
+    going: goto.GoTo = undefined,
+    page_ending: ?screen.Ending(u32) = null, // Of search or Go To: a page to show
+
+    /// The screens a book opens over itself: the lock screen, the ⋮ menu, search and
+    /// Go To.
+    const Over = enum { none, lock, menu, searching, going };
 
     /// The page the book opens at, its place saved as it opens.
     pub fn draw(r: *Reader, part: screen.Part) !void {
@@ -470,38 +482,82 @@ pub const Reader = struct {
     }
 
     pub fn on_tap(r: *Reader, t: screen.Tap) !screen.Step(Outcome) {
-        assert(r.lock_ending == null); // In front, nothing over it
+        assert(r.over == .none); // In front, nothing over it
         return r.on_act(.{ .tap = t }) catch |err| r.fail(err);
     }
 
     pub fn on_tick(r: *Reader) !screen.Step(Outcome) {
-        assert(r.lock_ending == null); // In front, nothing over it
+        assert(r.over == .none); // In front, nothing over it
         return r.on_act(.tick) catch |err| r.fail(err);
     }
 
     pub fn on_action(r: *Reader, action: input_mod.Action) !screen.Step(Outcome) {
-        assert(r.lock_ending == null); // In front, nothing over it
+        assert(r.over == .none); // In front, nothing over it
         return r.on_act(action) catch |err| r.fail(err);
     }
 
-    /// Back in front, the lock screen over it ended: woken, the status as it is now.
+    /// Back in front, the screen over it ended.
     pub fn on_resume(r: *Reader) !screen.Step(Outcome) {
-        assert(r.lock_ending != null);
+        assert(r.over != .none);
         assert(r.reading_started);
-        const ending = r.lock_ending.?;
-        r.lock_ending = null;
-        // Leaving: what comes next takes the stop
-        if (ending != .done) return .stay;
-        return r.woken() catch |err| r.fail(err);
+        const over = r.over;
+        r.over = .none;
+        return r.resumed(over) catch |err| r.fail(err);
     }
 
-    fn woken(r: *Reader) !screen.Step(Outcome) {
+    /// What follows the screen `over` that has just ended.
+    fn resumed(r: *Reader, over: Over) !screen.Step(Outcome) {
+        const s = r.s;
+        switch (over) {
+            .none => unreachable,
+            // Leaving: what comes next takes the stop
+            .lock => if (r.lock_ending.? == .done) try r.woken(),
+            .menu => switch (r.menu_ending.?) {
+                .done => |result| switch (result) {
+                    .stay => try r.draw_toolbar(true),
+                    .page => |target| try r.to_page(target),
+                    .refresh => try r.to_page(@intCast(s.current)),
+                },
+                .closed, .interrupted => try r.draw_toolbar(true),
+            },
+            .searching, .going => switch (r.page_ending.?) {
+                .done => |target| {
+                    assert(target < s.pages.len);
+                    try r.to_page(target);
+                },
+                .closed, .interrupted => try r.draw_toolbar(true),
+            },
+        }
+        return r.after();
+    }
+
+    /// Opens `f`, the screen `over`, over the book, as the handler ends.
+    fn open_over(r: *Reader, over: Over, f: screen.Frame) void {
+        assert(over != .none);
+        assert(r.over == .none);
+        assert(r.opening == null);
+        r.over = over;
+        r.opening = f;
+    }
+
+    /// After a handler: a screen it made opens over the book, else the book waits for
+    /// the next action.
+    fn after(r: *Reader) screen.Step(Outcome) {
+        if (r.opening) |f| {
+            assert(r.over != .none);
+            r.opening = null;
+            return .{ .push = f };
+        }
+        assert(r.over == .none);
+        return r.ready();
+    }
+
+    fn woken(r: *Reader) !void {
         assert(!r.a.input.locked);
         r.a.note_battery(); // What sleeping cost
         r.a.quick = lipc.read(r.a.quick); // Hours may have passed
         try r.show_status();
         assert(r.since_save == 0);
-        return r.ready();
     }
 
     /// An action: what's the same in every view (locking, the clock's tick, leaving)
@@ -523,7 +579,7 @@ pub const Reader = struct {
                 if (try r.on_touch(action)) |outcome| return r.finish(outcome);
             },
         }
-        return r.ready();
+        return r.after();
     }
 
     /// Ready for the next action, the book still in front: what the last one left in
@@ -673,7 +729,8 @@ pub const Reader = struct {
         r.save(); // A lock is a natural stop, and anything after it may end noface
         r.lock = lock.make(r.a, r.entry, .{});
         assert(r.since_save == 0);
-        return .{ .push = screen.open(&r.lock, &r.lock_ending) };
+        r.open_over(.lock, screen.open(&r.lock, &r.lock_ending));
+        return r.after();
     }
 
     fn on_tick_any(r: *Reader) !void {
@@ -842,18 +899,17 @@ pub const Reader = struct {
                 // Closing it needs the page back under where it was
                 try r.draw_toolbar(!r.sheet_open);
             },
-            .more => switch (try more.run(a, s, r.entry)) {
-                .stay => try r.draw_toolbar(true),
-                .page => |target| try r.to_page(target),
-                .refresh => try r.to_page(@intCast(s.current)),
+            .more => {
+                try more.begin(&r.menu, a, s, r.entry);
+                r.open_over(.menu, screen.open(&r.menu, &r.menu_ending));
             },
             .search => {
-                const found = try search.run(a, s, r.scratch);
-                if (found) |target| try r.to_page(@intCast(target)) else try r.draw_toolbar(true);
+                r.searching = search.make(a, s, r.scratch);
+                r.open_over(.searching, screen.open(&r.searching, &r.page_ending));
             },
             .goto => {
-                const chosen = try goto.run(a, s, r.scratch, r.chapters);
-                if (chosen) |target| try r.to_page(target) else try r.draw_toolbar(true);
+                r.going = try goto.make(a, s, r.scratch, r.chapters);
+                r.open_over(.going, screen.open(&r.going, &r.page_ending));
             },
             .bookmark => {
                 try bookmark.toggle(a, s, r.alloc, r.entry);

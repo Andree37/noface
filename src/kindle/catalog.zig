@@ -95,7 +95,9 @@ fn parse_line(alloc: std.mem.Allocator, line: []const u8) !?library.Entry {
     const path = fields.next() orelse return null;
     const title = fields.next() orelse return null;
     const author = fields.next() orelse return null;
-    const percent = std.fmt.parseFloat(f32, fields.next() orelse "0") catch 0;
+    // A percent that isn't a number counts as none, as one that isn't there does
+    const percent_read = std.fmt.parseFloat(f32, fields.next() orelse "0") catch 0;
+    const percent = if (std.math.isFinite(percent_read)) percent_read else 0;
     const last = std.fmt.parseInt(u64, fields.next() orelse "0", 10) catch 0;
     const read_state = std.fmt.parseInt(u32, fields.next() orelse "0", 10) catch 0;
     const thumbnail = fields.next() orelse "";
@@ -111,6 +113,8 @@ fn parse_line(alloc: std.mem.Allocator, line: []const u8) !?library.Entry {
     const guid = fields.next() orelse "";
     if (path.len == 0 and availability == .local) return null;
     const series = library.series_from_file_name(path);
+    // A place in a series is a number the library can sort by
+    if (series) |s| assert(std.math.isFinite(s.index));
     const percent_whole: u32 = @intFromFloat(std.math.clamp(percent, 0, percent_max));
     return .{
         .path = try alloc.dupeSentinel(u8, path, 0),
@@ -181,6 +185,24 @@ test "cloud books list without a path and never lead" {
     try std.testing.expectEqual(library.Availability.cloud, rows[0].availability);
     try std.testing.expectEqual(library.Availability.downloading, rows[2].availability);
     try std.testing.expectEqual(@as(u32, 1), library.pick_hero(rows).?);
+}
+
+test "a series place or percent that isn't a number counts as none" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const data = "/d/A -- x -- Saga #nan.kfx\tA\tx\tnan\t1\n" ++
+        "/d/B -- x -- Saga #inf.kfx\tB\tx\tinf\t1\n" ++
+        "/d/C -- x -- Saga #2.kfx\tC\tx\t-inf\t1\n";
+    const rows = try parse(arena.allocator(), data);
+    try std.testing.expectEqual(@as(usize, 3), rows.len);
+    for (rows) |row| {
+        try std.testing.expect(std.math.isFinite(row.series_index));
+        try std.testing.expectEqual(@as(u32, 0), row.percent);
+    }
+    try std.testing.expectEqualStrings("", rows[0].series);
+    try std.testing.expectEqualStrings("", rows[1].series);
+    try std.testing.expectEqual(@as(f32, 2), rows[2].series_index);
+    for ([_]library.Order{ .title, .author, .series }) |order| library.sort(rows, order);
 }
 
 test "titles get their colons back and lose a series prefix" {

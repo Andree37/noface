@@ -6,6 +6,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const book = @import("../model/book.zig");
 const notes = @import("../model/notes.zig");
+const catalog = @import("../model/catalog.zig");
 const zip = @import("zip.zig");
 const xml = @import("xml.zig");
 const picture = @import("picture.zig");
@@ -212,11 +213,20 @@ fn read_package_meta(p: *Package, meta: *const xml.Tag) void {
     if (std.mem.eql(u8, name, "cover")) p.cover_id = content;
     if (std.mem.eql(u8, name, "calibre:series")) p.series = content orelse "";
     if (std.mem.eql(u8, name, "calibre:series_index")) {
-        // A series place that isn't a number counts as none
-        p.series_index = std.fmt.parseFloat(f32, content orelse "") catch 0;
+        p.series_index = series_place(content orelse "");
     }
     // Items are gathered aside, and set on the package once it's all read
     assert(p.items.len == 0);
+}
+
+/// Calibre's place in a series: a number from 0 to `catalog.max_index`, as a file name's
+/// or a hand-set one is. Anything else ("nan", "inf", "-3", a word) counts as none.
+// Assertions: it reads a place from the book's metadata, which is outside data.
+fn series_place(text: []const u8) f32 {
+    const place = std.fmt.parseFloat(f32, std.mem.trim(u8, text, " ")) catch return 0;
+    if (!std.math.isFinite(place)) return 0;
+    if (place < 0 or place > catalog.max_index) return 0;
+    return place;
 }
 
 /// Title, author and, if asked for, the cover, for the library.
@@ -809,6 +819,26 @@ test "a note reference ending in a space at a paragraph's end stays inside it" {
         const mark = body.text[body.links[0].start..body.links[0].end];
         try std.testing.expectEqualStrings("1", std.mem.trim(u8, mark, " "));
         try std.testing.expect(b.paragraphs.items[b.paragraphs.items.len - 1].note);
+    }
+}
+
+test "a series place that isn't a number in range counts as none" {
+    const places = [_]struct { []const u8, f32 }{
+        .{ "2", 2 },     .{ "1.5", 1.5 }, .{ "nan", 0 }, .{ "NaN", 0 },
+        .{ "inf", 0 },   .{ "-inf", 0 },  .{ "-3", 0 },  .{ "word", 0 },
+        .{ "99999", 0 }, .{ "", 0 },
+    };
+    for (places) |place| {
+        var p = Package{ .dir = "", .items = &.{}, .spine = &.{} };
+        const attributes = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "name=\"calibre:series_index\" content=\"{s}\"",
+            .{place[0]},
+        );
+        defer std.testing.allocator.free(attributes);
+        const meta = xml.Tag{ .name = "meta", .attributes = attributes, .self_closing = true };
+        read_package_meta(&p, &meta);
+        try std.testing.expectEqual(place[1], p.series_index);
     }
 }
 

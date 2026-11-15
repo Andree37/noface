@@ -148,8 +148,19 @@ fn by_series(a: Entry, b: Entry) bool {
         if (a.series_last != b.series_last) return a.series_last > b.series_last;
         return std.ascii.lessThanIgnoreCase(without_the(a.series), without_the(b.series));
     }
-    if (a.series_index != b.series_index) return a.series_index < b.series_index;
+    const place_a = series_place(a);
+    const place_b = series_place(b);
+    if (place_a != place_b) return place_a < place_b;
     return by_title(a, b);
+}
+
+/// A book's place in its series, for comparing: one that isn't a number (an EPUB can
+/// say "nan") goes after every numbered place, so sorting is a strict weak order.
+fn series_place(e: Entry) f32 {
+    const place = if (std.math.isNan(e.series_index)) std.math.inf(f32) else e.series_index;
+    assert(!std.math.isNan(place));
+    if (!std.math.isNan(e.series_index)) assert(place == e.series_index);
+    return place;
 }
 
 /// The next book of `e`'s series not yet read, by its place in the series.
@@ -159,8 +170,8 @@ pub fn next_in_series(entries: []const Entry, e: *const Entry) ?u32 {
     var best: ?u32 = null;
     for (entries, 0..) |o, i| {
         if (!same_series(o.series, e.series)) continue;
-        if (o.series_index <= e.series_index or o.is_read()) continue;
-        if (best == null or o.series_index < entries[best.?].series_index) best = @intCast(i);
+        if (series_place(o) <= series_place(e.*) or o.is_read()) continue;
+        if (best == null or series_place(o) < series_place(entries[best.?])) best = @intCast(i);
     }
     const found = best orelse return null;
     assert(found < entries.len);
@@ -212,7 +223,7 @@ fn by_title(a: Entry, b: Entry) bool {
     const in_b = b.series.len > 0;
     if (in_a != in_b) return in_b;
     assert(in_a == in_b);
-    if (in_a and a.series_index != b.series_index) return a.series_index < b.series_index;
+    if (in_a and series_place(a) != series_place(b)) return series_place(a) < series_place(b);
     return std.ascii.lessThanIgnoreCase(a.title, b.title);
 }
 
@@ -608,6 +619,40 @@ test "a series stays together and in order when sorted" {
     try std.testing.expectEqualStrings("Mostly Harmless", rows[1].title);
     var buf: [64]u8 = undefined;
     try std.testing.expectEqualStrings("Hitchhiker's Guide #5", series_label(&buf, rows[1]));
+}
+
+test "a series place that isn't a number sorts last and keeps the sort whole" {
+    var rows: [9]Entry = undefined;
+    const titles = [_][]const u8{ "One", "Two", "Three", "Four", "Five", "Six", "Seven" };
+    var prng = std.Random.DefaultPrng.init(42);
+    for (0..200) |_| {
+        for (&rows, 0..) |*row, i| {
+            const in_series = i < titles.len;
+            row.* = .{
+                .path = "/b",
+                .title = if (in_series) titles[i] else "Loose",
+                .author = "Same Author",
+                .percent = 0,
+                .last = 1,
+                .series = if (in_series) "Saga" else "",
+                .series_index = if (i == 3) std.math.nan(f32) else @floatFromInt(i + 1),
+            };
+        }
+        prng.random().shuffle(Entry, &rows);
+        for ([_]Order{ .title, .author, .series }) |order| {
+            sort(&rows, order);
+            var places: [9]f32 = undefined;
+            var count: u32 = 0;
+            for (rows) |row| {
+                if (row.series.len == 0) continue;
+                places[count] = row.series_index;
+                count += 1;
+            }
+            try std.testing.expectEqual(@as(u32, titles.len), count);
+            try std.testing.expect(std.math.isNan(places[count - 1]));
+            for (1..count - 1) |i| try std.testing.expect(places[i - 1] < places[i]);
+        }
+    }
 }
 
 test "sort button cycles" {

@@ -64,8 +64,9 @@ pub const Config = struct {
         var total: u32 = config.entries * (@sizeOf(u64) + @sizeOf(Entry));
         total += config.entries / ways; // A hand per set
         total += config.segments * (segment_bytes + @sizeOf(u32));
-        // Each of the five blocks may start up to 8 bytes on, for its alignment
-        return total + 5 * 8;
+        // Four blocks may start up to 8 bytes on, for their alignment, and the log up
+        // to a page on, as it starts on a page to hand its pages back
+        return total + 4 * 8 + page_bytes;
     }
 };
 
@@ -127,7 +128,7 @@ pub const Cache = struct {
     keys: []u64, // 0 for an empty place
     entries: []Entry,
     hands: []u8, // Per set, the place its hand is at
-    log: []u8, // The segments, one after another
+    log: []align(std.heap.page_size_min) u8, // The segments, one after another
     used: []u32, // Per segment, the bytes written in it
     filling: u32 = 0, // The segment bitmaps are written to
     spare: u32 = 1, // Empty, for the glyphs kept when a segment is emptied
@@ -152,13 +153,14 @@ pub const Cache = struct {
             .keys = try store.alloc(u64, config.entries),
             .entries = try store.alloc(Entry, config.entries),
             .hands = try store.alloc(u8, config.entries / ways),
-            .log = try store.alloc(u8, config.segments * segment_bytes),
+            .log = try store.alignedAlloc(u8, page_alignment, config.segments * segment_bytes),
             .used = try store.alloc(u32, config.segments),
             .scratch = scratch,
         };
         @memset(cache.keys, 0);
         @memset(cache.hands, 0);
         @memset(cache.used, 0);
+        give_back_log(cache.log);
         assert(cache.sets() > 0);
         assert(std.math.isPowerOfTwo(cache.sets()));
     }
@@ -454,6 +456,24 @@ comptime {
     // The largest bitmap kept, and the outline it's drawn from, fit with room to spare
     assert(scratch_bytes >= 16 * segment_bytes);
     assert(scratch_bytes % memory.unit_bytes == 0);
+}
+
+/// The log's pages, page-aligned so whole pages can be handed back.
+const page_alignment: std.mem.Alignment = .fromByteUnits(std.heap.page_size_min);
+const page_bytes: u32 = std.heap.page_size_min;
+
+comptime {
+    assert(segment_bytes % page_bytes == 0); // Whole segments are whole pages
+}
+
+/// Hands the log's pages back to the system, still reserved. A safe build's allocator
+/// fills a new block with 0xaa, which would make all 16 MB resident at startup; the
+/// log means nothing until a glyph is written into it, so its pages come in only as
+/// glyphs fill it, as everywhere else in noface.
+fn give_back_log(log: []align(std.heap.page_size_min) u8) void {
+    assert(log.len % std.heap.page_size_min == 0);
+    assert(log.len >= 3 * segment_bytes);
+    std.posix.madvise(log.ptr, log.len, std.posix.MADV.DONTNEED) catch {}; // Ignored: only advice
 }
 
 /// A cache in two regions of its own, reserved once: one for its table and log, one

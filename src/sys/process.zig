@@ -240,20 +240,40 @@ pub fn exited(pid: i32) ?bool {
 pub fn stop(pid: i32) void {
     assert(pid > 0); // So -pid is its group, not every process
     _ = linux.kill(-pid, linux.SIG.KILL); // Already gone: then there's nothing to stop
+    // And the child itself, in case it hadn't made its group yet: the wait below must
+    // never be for a child still running
+    _ = linux.kill(pid, linux.SIG.KILL); // Already gone, with its group: nothing to do
     var status: i32 = 0;
     _ = linux.waitpid(pid, &status, 0); // Reaped, whatever its status
 }
+
+/// How long `survives` lets a check run before it's called a failure.
+const survives_timeout_ms = 5_000;
 
 /// Runs `check(ctx)` in a child process and says whether it returned true there. For
 /// trying something that could crash (a font file of unknown quality, say): only the
 /// child dies. Under the scenario tests' fake, it runs here instead.
 pub fn survives(ctx: anytype, comptime check: fn (@TypeOf(ctx)) bool) bool {
+    return survives_within(ctx, check, survives_timeout_ms);
+}
+
+/// `survives`, with a check that runs longer than `timeout_ms` killed and a failure.
+fn survives_within(
+    ctx: anytype,
+    comptime check: fn (@TypeOf(ctx)) bool,
+    timeout_ms: u32,
+) bool {
+    assert(timeout_ms > reap_poll_ms);
+    assert(timeout_ms <= command_timeout_ms);
     if (fake != null) return check(ctx);
     const pid = linux.fork();
     if (failed(pid)) return false;
-    if (pid == 0) linux.exit(if (check(ctx)) 0 else 1);
+    if (pid == 0) {
+        _ = linux.setpgid(0, 0); // Its own group, so stop() ends whatever it starts too
+        linux.exit(if (check(ctx)) 0 else 1);
+    }
     assert(pid <= std.math.maxInt(i32)); // A process id
-    const deadline = os.now_us() + 5 * 1_000_000;
+    const deadline = os.now_us() + @as(u64, timeout_ms) * 1000;
     while (os.now_us() < deadline) {
         if (exited(@intCast(pid))) |ok| return ok;
         os.sleep_ms(reap_poll_ms);
@@ -297,4 +317,18 @@ test "a command still printing at the deadline is killed and reaped" {
     try std.testing.expectEqualStrings("done\n", buffers[1][0..lens[1].?]);
     // The sleeper is gone, not left running or as a zombie
     try std.testing.expect(failed(linux.waitpid(-1, &status, linux.W.NOHANG)));
+}
+
+test "a check that hangs is ended at its deadline" {
+    const hangs = struct {
+        fn check(_: void) bool {
+            os.sleep_ms(3_000);
+            return true;
+        }
+    }.check;
+    const started = os.now_us();
+    try std.testing.expect(!survives_within({}, hangs, 200));
+    try std.testing.expect(os.now_us() - started < 1_500_000);
+    var status: i32 = 0;
+    try std.testing.expect(failed(linux.waitpid(-1, &status, linux.W.NOHANG))); // Reaped
 }

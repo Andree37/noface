@@ -1,5 +1,6 @@
 //! What every screen shares: the screen, input, fonts, settings and page buffers.
 const std = @import("std");
+const builtin = @import("builtin");
 const assert = std.debug.assert;
 const paths = @import("kindle/paths.zig");
 const card = @import("ui/card.zig");
@@ -19,6 +20,7 @@ const input_mod = @import("kindle/input.zig");
 const screen = @import("screens/screen.zig");
 const aa = @import("ui/aa.zig");
 const file = @import("sys/file.zig");
+const calls = @import("sys/calls.zig");
 const hwtcon = @import("kindle/hwtcon.zig");
 const library = @import("ui/library.zig");
 const covers_ui = @import("ui/covers.zig");
@@ -635,7 +637,7 @@ pub fn save_settings(path: [*:0]const u8, s: settings_model.Settings) void {
     const content = settings_model.format(&buf, s);
     if (content.len == 0) {
         const message = "settings: not saved, the typeface's name is too long\n";
-        if (!@import("builtin").is_test) std.debug.print(message, .{});
+        if (!builtin.is_test) std.debug.print(message, .{});
         return;
     }
     assert(content.len <= buf.len);
@@ -707,27 +709,26 @@ test "pictures are kept until replaced or cleared" {
 }
 
 test "a typeface's long name saves, and one too long to is left out, never a crash" {
-    const linux = @import("sys/calls.zig");
     defer settings_model.reset_families();
     var buffer: [64]u8 = undefined;
     const format = "/tmp/noface-settings-test-{d}";
-    const path = try std.fmt.bufPrintSentinel(&buffer, format, .{linux.getpid()}, 0);
-    defer _ = linux.unlink(path); // Ignored: only /tmp is left fuller
+    const path = try std.fmt.bufPrintSentinel(&buffer, format, .{calls.getpid()}, 0);
+    defer _ = calls.unlink(path); // Ignored: only /tmp is left fuller
     // The longest a font file's name can make one: 255 characters, three bytes each
     const long: [255 * 3]u8 = comptime blk: {
         var name: [255 * 3]u8 = undefined;
         for (0..255) |i| name[i * 3 ..][0..3].* = "\u{6587}".*;
         break :blk name;
     };
-    const builtin = settings_model.builtin_families;
-    settings_model.offer_families(&(builtin ++ .{&long}));
+    const kept = settings_model.builtin_families;
+    settings_model.offer_families(&(kept ++ .{&long}));
     var s = settings_model.Settings{};
     s.font = @intCast(settings_model.families.len - 1);
     save_settings(path, s);
     try std.testing.expectEqual(s.font, load_settings(path).font);
     // Longer than any file's name: the settings stay as they were
     const longer: [2000]u8 = @splat('x');
-    settings_model.offer_families(&(builtin ++ .{ &long, &longer }));
+    settings_model.offer_families(&(kept ++ .{ &long, &longer }));
     var other = s;
     other.font = @intCast(settings_model.families.len - 1);
     save_settings(path, other);

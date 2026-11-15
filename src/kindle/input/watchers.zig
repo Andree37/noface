@@ -33,9 +33,6 @@ const activity_every_us = 60 * 1000 * 1000;
 const activity_fresh_us = 5 * 1000 * 1000;
 /// How long powerd waits, untold, before it locks the Kindle.
 const powerd_lock_after_us = 10 * 60 * 1000 * 1000;
-/// The most children one look reaps. noface has a couple of watchers and the odd
-/// helper; any left over are reaped the next time.
-const children_reaped_max = 64;
 
 comptime {
     // A beat or two can be late (a long layout) before the watchdog gives up
@@ -185,12 +182,15 @@ pub fn power_watcher_died(in: *Input) void {
     _ = linux.close(in.power_events);
     in.power_events = -1;
     in.watcher_retry_us = now_us() + watcher_retry_ms * 1000;
-    var status: i32 = 0;
-    for (0..children_reaped_max) |_| {
-        const reaped = linux.waitpid(-1, &status, linux.W.NOHANG);
-        if (reaped == 0 or failed(reaped)) break;
+    // Only the watcher is reaped: any other child (a download, a lipc command) is
+    // waited for by whoever started it, which would otherwise find it gone
+    if (in.watcher_pid > 0) {
+        var status: i32 = 0;
+        _ = linux.waitpid(in.watcher_pid, &status, linux.W.NOHANG); // Ignored: gone is gone
+        in.watcher_pid = 0;
     }
     assert(in.power_events < 0);
+    assert(in.watcher_pid == 0);
 }
 
 /// Tell powerd about activity at most once a minute, and only just after a touch:

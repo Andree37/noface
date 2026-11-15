@@ -20,7 +20,7 @@ jobs:
       - run: zig build test
       - run: zig build scenarios
       - name: Package
-        run: tools/package.sh "${GITHUB_REF_NAME#v}"
+        run: zig build package -Dversion="${GITHUB_REF_NAME#v}"
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}

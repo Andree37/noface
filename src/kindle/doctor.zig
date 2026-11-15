@@ -4,6 +4,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const devices = @import("devices.zig");
+const hwtcon = @import("hwtcon.zig");
 const lipc = @import("lipc.zig");
 const state = @import("../sys/state.zig");
 const linux = @import("../sys/calls.zig");
@@ -63,6 +64,26 @@ fn report_input(fd: i32, line_buffer: []u8, comptime label: []const u8, number: 
     });
 }
 
+/// The line for the screen's visible size, and whether noface's interface is laid out
+/// for it.
+fn report_size(fd: i32, line_buffer: []u8) bool {
+    assert(fd >= 0);
+    assert(line_buffer.len > 0);
+    const size = hwtcon.read_size() orelse {
+        report_line(fd, line_buffer, "screen size:  unknown (not supported yet)", .{});
+        return false;
+    };
+    const size_ok = hwtcon.supported_size(size.width, size.height);
+    report_line(fd, line_buffer, "screen size:  {d} x {d} ({s} {d} x {d})", .{
+        size.width,
+        size.height,
+        if (size_ok) "supported:" else "not supported yet: noface is laid out for",
+        hwtcon.width_px,
+        hwtcon.height_px,
+    });
+    return size_ok;
+}
+
 /// Writes the report to `fd`. Returns whether noface should be able to run here.
 pub fn report(fd: i32) bool {
     assert(fd >= 0);
@@ -91,6 +112,7 @@ pub fn report(fd: i32) bool {
         if (driver.len > 0) driver else "unknown",
         if (driver_ok) "supported" else "not supported yet",
     });
+    const size_ok = report_size(fd, &line_buffer);
 
     const found = devices.find_inputs();
     report_input(fd, &line_buffer, "touch:", found.touch);
@@ -110,7 +132,7 @@ pub fn report(fd: i32) bool {
     const bluetooth = if (lipc.bluetooth_on() != null) "yes" else "no";
     report_line(fd, &line_buffer, "bluetooth:    {s}", .{bluetooth});
 
-    const ok = driver_ok and found.touch != null;
+    const ok = driver_ok and size_ok and found.touch != null;
     report_line(fd, &line_buffer, "", .{});
     if (ok) {
         report_line(fd, &line_buffer, "noface should run on this Kindle.", .{});
@@ -127,4 +149,19 @@ test "only MediaTek's display driver is supported" {
     try std.testing.expect(supported_driver("hwtcon_v2"));
     try std.testing.expect(!supported_driver("mxc_epdc_fb"));
     try std.testing.expect(!supported_driver(""));
+}
+
+test "only the screen size the interface is laid out for is supported" {
+    try std.testing.expect(hwtcon.supported_size(1272, 1696));
+    // A Paperwhite 11th gen's panel, an older Kindle's, and the right one on its side
+    try std.testing.expect(!hwtcon.supported_size(1236, 1648));
+    try std.testing.expect(!hwtcon.supported_size(1072, 1448));
+    try std.testing.expect(!hwtcon.supported_size(1696, 1272));
+    // A pretend screen of another size is refused as a real one would be, not drawn on
+    const allocator = std.testing.allocator;
+    const refused = hwtcon.Screen.fake(allocator, 1072, 1448);
+    try std.testing.expectError(error.UnsupportedScreenSize, refused);
+    const screen = try hwtcon.Screen.fake(allocator, 1272, 1696);
+    defer allocator.free(screen.map);
+    try std.testing.expectEqual(@as(u32, 1272), screen.width);
 }

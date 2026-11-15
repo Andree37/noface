@@ -85,6 +85,37 @@ const fbioget_fscreeninfo: u32 = 0x4602;
 /// The first marker sent: any number the driver isn't using itself.
 const marker_first = 0x7000;
 
+/// The one screen noface's interface is laid out for: the Paperwhite 12th gen's panel,
+/// in portrait. Every screen's controls sit at fixed places on it (ui/style.zig's
+/// `screen_width` and `screen_height`), so on another size they'd fall off the edge or
+/// out of reach: noface refuses to start there, and `noface doctor` says why.
+pub const width_px = 1272;
+pub const height_px = 1696;
+
+/// Whether noface's interface is laid out for a screen this size.
+// Assertions: it compares a screen's size, which the driver reports: outside data.
+pub fn supported_size(width: u32, height: u32) bool {
+    return width == width_px and height == height_px;
+}
+
+/// A screen's visible size, as its driver reports it.
+pub const Size = struct { width: u32, height: u32 };
+
+/// The visible size of the screen behind /dev/fb0, or null when it can't be read.
+// Assertions: it only reads the framebuffer's size, outside data, for the doctor.
+pub fn read_size() ?Size {
+    const rc = linux.open("/dev/fb0", .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0);
+    if (failed(rc)) return null;
+    const fd: i32 = @intCast(rc);
+    defer _ = linux.close(fd); // Only read from: a close that fails loses nothing
+    var variable: [160]u8 align(4) = undefined;
+    if (failed(linux.ioctl(fd, fbioget_vscreeninfo, @intFromPtr(&variable)))) return null;
+    return .{
+        .width = std.mem.readInt(u32, variable[0..4], .little),
+        .height = std.mem.readInt(u32, variable[4..8], .little),
+    };
+}
+
 /// The size an ioctl request number carries, in bits 16 to 29.
 fn ioctl_size(request: u32) u32 {
     return (request >> 16) & 0x3fff;
@@ -112,6 +143,8 @@ pub const Screen = struct {
     pub fn fake(alloc: std.mem.Allocator, width: u32, height: u32) !Screen {
         assert(width > 0);
         assert(height > 0);
+        // As a real screen of that size: one the interface isn't laid out for is refused
+        if (!supported_size(width, height)) return error.UnsupportedScreenSize;
         const map = try alloc.alignedAlloc(u8, .fromByteUnits(4096), width * height);
         @memset(map, 0xff);
         const screen: Screen = .{
@@ -151,6 +184,10 @@ pub const Screen = struct {
         const smem_len = std.mem.readInt(u32, fixed[20..24], .little);
         const stride = std.mem.readInt(u32, fixed[44..48], .little);
         if (bpp != 8) return error.UnexpectedDepth;
+        if (!supported_size(width, height)) return error.UnsupportedScreenSize;
+        // The visible page, as the driver says where it is, lies in the memory it maps
+        if (stride < width) return error.UnexpectedStride;
+        if ((@as(u64, yoffset) + height) * stride > smem_len) return error.ScreenOutsideMemory;
 
         const address = linux.mmap(
             null,

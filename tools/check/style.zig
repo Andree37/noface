@@ -55,6 +55,12 @@ pub const Rule = enum {
     /// A `// Unbounded: `, `// usize: ` or `// Assertions: ` marker with nothing below
     /// (or on its line) for it to excuse.
     marker_unused,
+    /// An `@import` inside a function, a test or an expression: a file's imports are all
+    /// at its top, where a reader sees what it depends on. `_ = @import(…)`, which only
+    /// lists a file's tests, is the exception.
+    import_inline,
+    /// A file's import that nothing in it uses.
+    import_unused,
 };
 
 pub const rule_count = @typeInfo(Rule).@"enum".field_names.len;
@@ -225,6 +231,39 @@ fn count_assertions(code: []const u8, expects_assert: bool) u32 {
 /// stop the Kindle's selftest at the first. There, `expect(` is the assertion, and
 /// counts as one, its conditions split as an assertion's are; a scenario that checks
 /// nothing still counts as a function without any.
+/// Whether a line imports somewhere other than at the file's top: an `@import` in
+/// its code (strings are blanked in it), on an indented line or after other code on a
+/// top-level one. `_ = @import(…)` lists a file's tests, and is left alone.
+fn imports_inline(code: []const u8) bool {
+    assert(std.mem.indexOfScalar(u8, code, '\n') == null); // One line of the file
+    const at = std.mem.indexOf(u8, code, "@import(") orelse return false;
+    assert(at < code.len);
+    const start = std.mem.trimStart(u8, code, " ");
+    if (std.mem.startsWith(u8, start, "_ = @import(")) return false;
+    if (start.len != code.len) return true; // Indented: inside a block
+    // At the top level, the import is the whole value of a declaration
+    const declared = std.mem.startsWith(u8, code, "const ") or
+        std.mem.startsWith(u8, code, "pub const ");
+    return !declared;
+}
+
+/// Notes each file-level import (`const name = @import(…)…;`) whose name `code`, the
+/// file with its strings blanked, never mentions again.
+fn note_unused_imports(scan: *Scan, source: []const u8, code: []const u8) !void {
+    assert(code.len == source.len);
+    var line_number: u32 = 1;
+    var lines = std.mem.splitScalar(u8, source, '\n');
+    while (lines.next()) |text| : (line_number += 1) {
+        if (!std.mem.startsWith(u8, text, "const ")) continue; // `pub` ones are used outside
+        const equals = std.mem.indexOf(u8, text, " = @import(") orelse continue;
+        const name = text["const ".len..equals];
+        assert(name.len > 0);
+        // Named once, by its own line, and never again
+        if (count_token(code, name) <= 1) try scan.note(.import_unused, line_number, 1);
+    }
+    assert(line_number > 1);
+}
+
 const expects_assert_path = "src/scenarios.zig";
 
 /// How many times a line calls the function `name` itself: not a method or field of
@@ -378,6 +417,7 @@ const Scan = struct {
 pub fn check_zig(path: []const u8, source: []const u8, gpa: std.mem.Allocator) ![]Break {
     const buffer = try gpa.alloc(u8, source.len);
     defer gpa.free(buffer);
+    @memset(buffer, ' '); // Comments and multiline strings stay blank in it
     assert(path.len > 0);
     var scan: Scan = .{
         .gpa = gpa,
@@ -391,6 +431,7 @@ pub fn check_zig(path: []const u8, source: []const u8, gpa: std.mem.Allocator) !
         const offset = @intFromPtr(text.ptr) - @intFromPtr(source.ptr);
         const line = split_line(text, buffer[offset..]);
         const said = try check_zig_text(&scan, &line, line_number);
+        if (imports_inline(line.code)) try scan.note(.import_inline, line_number, 1);
         const trimmed = std.mem.trimStart(u8, line.code, " ");
         const test_start = std.mem.startsWith(u8, trimmed, "test \"") or
             std.mem.startsWith(u8, trimmed, "test {");
@@ -406,6 +447,9 @@ pub fn check_zig(path: []const u8, source: []const u8, gpa: std.mem.Allocator) !
     }
     // Even an empty file is one line.
     assert(line_number > 1);
+    // Now the whole file's code is in `buffer`, its strings blanked: an import's own path
+    // can't count as a use of its name
+    try note_unused_imports(&scan, source, buffer);
     try marked_for_nothing(&scan, scan.said);
     if (scan.assertions < scan.functions * assertions_per_function_min) {
         // Short on average: each function below two is where to add them
@@ -649,6 +693,8 @@ fn advice(rule: Rule) []const u8 {
         .usize_used => "size it (u32, u64), or `// usize: <why>` where the ABI needs it",
         .script_not_zig => "tooling is Zig",
         .marker_unused => "the marker excuses nothing: remove it",
+        .import_inline => "move the import to the top of the file",
+        .import_unused => "remove the import",
     };
 }
 
@@ -989,4 +1035,23 @@ test "only KPM's launch.sh may stay shell, and only as a one-line shim" {
     try std.testing.expect(!is_kpm_shim("device/start.sh", shim));
     const grown = shim ++ "sleep 2\n";
     try std.testing.expect(!is_kpm_shim("device/kpm/launch.sh", grown));
+}
+
+test "imports are at a file's top, and each is used" {
+    const source =
+        \\const std = @import("std");
+        \\const unused = @import("unused.zig");
+        \\fn f() void {
+        \\    const inner = @import("inner.zig");
+        \\    _ = inner;
+        \\    _ = std;
+        \\    const text = "@import(\\"in a string\\")";
+        \\    _ = text;
+        \\}
+        \\test {
+        \\    _ = @import("listed.zig");
+        \\}
+    ;
+    try std.testing.expectEqual(@as(u32, 1), try count_in(source, .import_inline));
+    try std.testing.expectEqual(@as(u32, 1), try count_in(source, .import_unused));
 }

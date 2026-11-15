@@ -145,6 +145,13 @@ on outside data to avoid one either.
 
 ## Developer experience
 
+### Imports
+
+- **All of a file's imports at its top [checked]**, where a reader sees at once what it
+  depends on: never inside a function, a test or an expression. `_ = @import(…)`, which
+  only lists a file's tests, is the exception.
+- **No import a file doesn't use [checked].**
+
 ### Names
 
 - **snake_case** for functions, variables and files **[checked for functions]**. A

@@ -7,6 +7,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const memory = @import("../base/memory.zig");
+const library_files = @import("../library/files.zig");
 const dir = @import("../sys/dir.zig");
 const epub = @import("../epub/epub.zig");
 const catalog = @import("../model/catalog.zig");
@@ -25,15 +26,19 @@ const series_screen = @import("series.zig");
 pub const books_max: u32 = 5000;
 
 /// The longest title, author or series an EPUB's entry keeps: past it, cut at a whole
-/// character. A path is shorter than `path_size_max`, as every path noface keeps.
+/// character. A path is any Linux can open: shorter than `path_size_max`.
 const text_bytes_max: u32 = 256;
-const path_size_max: u32 = 320;
+const path_size_max: u32 = library_files.path_bytes_max;
+/// What a book's path and its cover's take for the list's room: their usual length,
+/// with plenty to spare. Longer ones take more, and a list that runs out says so.
+const path_bytes_typical: u32 = 320;
 
-/// The most library memory one book takes: its entry, its place in the visible list,
-/// its path and its cover's, and its title, author and series. The catalog is read and
-/// each EPUB opened in the scratch region; only these are copied into the list.
+/// The library memory one book takes, its paths at their usual length: its entry, its
+/// place in the visible list, its path and its cover's, and its title, author and
+/// series. The catalog is read and each EPUB opened in the scratch region; only these
+/// are copied into the list.
 pub const book_bytes_max: u32 = @sizeOf(catalog.Entry) + @sizeOf(u32) +
-    2 * (path_size_max + 1) + 3 * text_bytes_max;
+    2 * (path_bytes_typical + 1) + 3 * text_bytes_max;
 
 /// What one list takes at most, in whole units: its books, the series set by hand
 /// (from a file of 64 KB at most) and the arena's own bookkeeping.
@@ -193,9 +198,12 @@ pub fn load(s: Sources) !Library {
     const capacity = rows.len + @min(found.len, room);
     var list = try std.ArrayList(catalog.Entry).initCapacity(alloc, capacity);
     const visible = try alloc.alloc(u32, capacity);
-    for (rows) |row| {
+    for (rows, 0..) |row, i| {
         // An error is the list's memory running out: it keeps the books that fit
-        var e = keep_kindle_book(alloc, row) catch break orelse continue;
+        var e = keep_kindle_book(alloc, row) catch {
+            log("library: no room for {d} of the Kindle's books\n", .{rows.len - i});
+            break;
+        };
         place_kindle_book(s, &saved, &e);
         list.appendAssumeCapacity(e);
     }
@@ -256,15 +264,14 @@ fn rows_end(data: []const u8, rows: u32) u32 {
 }
 
 /// A Kindle book's entry as the list keeps it: its path, title and cover's path copied
-/// into `alloc`. Null for a book whose path is too long to keep a place for.
-fn keep_kindle_book(alloc: std.mem.Allocator, row: catalog.Entry) !?catalog.Entry {
-    if (row.path.len >= path_size_max) return null;
+/// into `alloc`. A path is any length the catalog gives: one longer than Linux allows
+/// won't open, but the book is still listed.
+fn keep_kindle_book(alloc: std.mem.Allocator, row: catalog.Entry) !catalog.Entry {
+    assert(row.path.len <= std.math.maxInt(u32));
     var e = row;
     e.path = try alloc.dupeSentinel(u8, row.path, 0);
     e.title = try alloc.dupe(u8, clip(row.title));
-    // A cover's path too long to keep is a cover drawn as type
-    const thumbnail = if (row.thumbnail.len < path_size_max) row.thumbnail else "";
-    e.thumbnail = try alloc.dupeSentinel(u8, thumbnail, 0);
+    e.thumbnail = try alloc.dupeSentinel(u8, row.thumbnail, 0);
     // A series from the file's name points into it: into the kept copy now
     const series = catalog.series_from_file_name(e.path);
     if (series) |place| e.series = place.name;
@@ -347,7 +354,7 @@ fn read_epub(
     path: [:0]const u8,
 ) !?catalog.Entry {
     assert(path.len > 0);
-    if (path.len >= path_size_max) return null;
+    assert(path.len < path_size_max); // The folder's walk finds none longer than Linux opens
     const facts = file.facts_of(path) orelse return null;
     var path_buffer: [path_size_max]u8 = undefined;
     var cover_buffer: [path_size_max]u8 = undefined;
@@ -771,6 +778,25 @@ test "a book's place is read from its state file, found by one listing of the fo
         }
     }
     try std.testing.expectEqual(@as(u32, 1), placed);
+}
+
+test "a book with a long path is listed, where one past 320 bytes was silently dropped" {
+    var buffer: [64]u8 = undefined;
+    const root = try test_folder(&buffer, 0, 0, 1 << 10);
+    defer test_folder_remove(root);
+    var t: TestLibrary = undefined;
+    try t.init(root);
+    defer t.deinit();
+    const name: [600]u8 = @splat('x');
+    var row_buffer: [800]u8 = undefined;
+    const row = try std.fmt.bufPrint(&row_buffer, "/mnt/us/documents/{s}.kfx\tLong\tx\n", .{
+        &name,
+    });
+    try test_write(t.sources.catalog_path, row);
+    var library = try load(t.sources);
+    defer library.deinit();
+    try std.testing.expectEqual(@as(usize, 1), library.entries.len);
+    try std.testing.expectEqualStrings("Long", library.entries[0].title);
 }
 
 test "a download is watched by its own file, not by reading the whole catalog again" {

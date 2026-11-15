@@ -76,6 +76,9 @@ pub fn mark_notes(paragraphs: []book.Paragraph) void {
             // Notes themselves are often set smaller than the text, so only larger counts.
             const t = paragraphs[l.target];
             if (l.inside or t.image != null or t.look.size > book.normal_size) continue;
+            // A link comes from the book: one not over this paragraph's text is no mark
+            if (l.start >= l.end or l.end > p.text.len) continue;
+            assert(l.end <= p.text.len);
             const span = l.end - l.start;
             if (span > max_reference_bytes or span * 2 > p.text.len) continue;
             const mark = p.text[l.start..l.end];
@@ -128,6 +131,24 @@ test "short forward references mark their target as a note" {
     try std.testing.expect(paras[2].note);
     try std.testing.expect(!paras[0].note); // Back-link from the note
     try std.testing.expect(!paras[1].note);
+}
+
+test "a link reaching past its paragraph's text is skipped, never read" {
+    var paras = [_]book.Paragraph{
+        .{
+            .text = "Some text, with a note.1",
+            .style = 0,
+            .links = &.{
+                .{ .start = 23, .end = 25, .target = 1 },
+                .{ .start = 30, .end = 31, .target = 1 },
+                .{ .start = 5, .end = 5, .target = 1 },
+            },
+        },
+        .{ .text = "1 The note.", .style = 0 },
+    };
+    mark_notes(&paras);
+    try std.testing.expect(!paras[1].note);
+    try std.testing.expect(!paras[0].note);
 }
 
 test "page numbers that point at headings or into paragraphs hide nothing" {

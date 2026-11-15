@@ -359,12 +359,41 @@ const Builder = struct {
         while (b.text.items.len > 0 and b.text.items[b.text.items.len - 1] == ' ') {
             _ = b.text.pop();
         }
+        b.trim_ranges();
         if (b.text.items.len > 0) try b.flush_paragraph();
         b.text.clearRetainingCapacity();
         b.runs.clearRetainingCapacity();
         b.start_run();
         assert(b.text.items.len == 0);
         assert(b.runs.items.len == 0);
+    }
+
+    /// Ends the runs and links of the paragraph being built where its text now ends: a
+    /// trailing space they took in was trimmed after they ended. One left over no text
+    /// is dropped.
+    fn trim_ranges(b: *Builder) void {
+        const length = b.text_length();
+        const paragraph: u32 = @intCast(b.paragraphs.items.len);
+        var runs_kept: u32 = 0;
+        for (b.runs.items) |r| {
+            if (r.start >= length) continue;
+            b.runs.items[runs_kept] = r;
+            b.runs.items[runs_kept].end = @min(r.end, length);
+            runs_kept += 1;
+        }
+        b.runs.shrinkRetainingCapacity(runs_kept);
+        // This paragraph's links are the last ones added
+        var index: u32 = @intCast(b.links.items.len);
+        for (0..b.links.items.len) |_| {
+            if (index == 0) break;
+            const l = &b.links.items[index - 1];
+            if (l.paragraph != paragraph) break;
+            index -= 1;
+            l.end = @min(l.end, length);
+            if (l.start >= l.end) _ = b.links.orderedRemove(index);
+        }
+        for (b.runs.items) |r| assert(r.end <= length);
+        for (b.links.items[index..]) |l| assert(l.end <= length);
     }
 
     fn flush_paragraph(b: *Builder) !void {
@@ -755,6 +784,32 @@ test "a heading's text after a picture and a line break stays a heading" {
     try std.testing.expectEqualStrings("Chapter I.", b.paragraphs.items[0].text);
     try std.testing.expect(b.paragraphs.items[0].look.size != book.normal_size);
     try std.testing.expectEqual(book.normal_size, b.paragraphs.items[1].look.size);
+}
+
+test "a note reference ending in a space at a paragraph's end stays inside it" {
+    const endings = [_][]const u8{
+        "<a href=\"#fn1\">\n  1\n</a></p>",
+        "<a href=\"#fn1\">1 </a></p>",
+        "<a href=\"#fn1\">1 </a><br/>",
+    };
+    for (endings) |ending| {
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        const alloc = arena.allocator();
+        var b = Builder{ .alloc = alloc, .files = &.{} };
+        const html = try std.fmt.allocPrint(alloc, "<html><body><p>Some text, with a note." ++
+            "{s}<p id=\"fn1\">1 The note.</p></body></html>", .{ending});
+        try b.chapter("c.xhtml", html);
+        try b.flush();
+        try b.resolve_links();
+        notes.mark_notes(b.paragraphs.items);
+        const body = b.paragraphs.items[0];
+        try std.testing.expectEqual(@as(usize, 1), body.links.len);
+        try std.testing.expect(body.links[0].end <= body.text.len);
+        const mark = body.text[body.links[0].start..body.links[0].end];
+        try std.testing.expectEqualStrings("1", std.mem.trim(u8, mark, " "));
+        try std.testing.expect(b.paragraphs.items[b.paragraphs.items.len - 1].note);
+    }
 }
 
 test "an empty link goes nowhere, and doesn't stop the reader" {

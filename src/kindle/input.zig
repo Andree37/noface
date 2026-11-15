@@ -220,8 +220,27 @@ pub const Input = struct {
         }
     };
 
-    /// Everything about taking input that a screen sets for itself while it's open.
-    pub const Scope = struct { modes: Modes, tick_us: u64, grip_exempt: ?Zone };
+    /// Everything about taking input that a screen sets for itself while it's open:
+    /// how touches are taken, how often it ticks (0: never), a control exempt from the
+    /// grip zones, and whether the Kindle is asleep under it (the lock screen).
+    pub const Scope = struct {
+        modes: Modes,
+        tick_us: u64,
+        grip_exempt: ?Zone = null,
+        locked: bool = false,
+    };
+
+    /// Takes input as the screen in front says, from now on. `opened`: it has just come
+    /// to the front, so its ticks count from now.
+    pub fn apply(in: *Input, scope: Scope, opened: bool) void {
+        in.take(scope.modes);
+        in.tick_us = scope.tick_us;
+        in.grip_exempt = scope.grip_exempt;
+        in.locked = scope.locked;
+        if (opened) in.last_tick = now_us();
+        assert(in.tick_us == scope.tick_us);
+        assert(in.locked == scope.locked);
+    }
 
     /// What holds of the input's state between any two calls: the events read are
     /// within the buffer, every finger is one of the panel's slots, and the panel's

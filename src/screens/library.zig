@@ -184,12 +184,14 @@ pub fn run_library(a: *app.App) !void {
     // would sit under a locked Kindle with touch switched off.
     if (lipc.in_screen_saver() == true) a.input.hold_back(.lock);
     a.quick = lipc.read(a.quick); // Once up front, so the first screen never shows blanks
-    try b.run();
+    const ending = try screen.run_root(a, &b);
+    // Only leaving ends it: a lock or a stop goes to it, never past it
+    assert(ending == .done);
 }
 
 /// The library on screen: which books, in what order, which page of them, and what
-/// it's keeping an eye on (a download, the status after a book). `run` draws what the
-/// last action asked for, then hands the next action to its handler.
+/// it's keeping an eye on (a download, the status after a book). The screen at the
+/// root of the stack (screen.zig): each handler says what to draw next.
 const Browser = struct {
     a: *app.App,
     lib: Library,
@@ -207,54 +209,72 @@ const Browser = struct {
     /// After a book, Wi-Fi takes a while to come back: the status is read again until then.
     status_until: u64 = 0,
 
-    fn run(b: *Browser) !void {
-        var next: Next = .everything;
-        // Unbounded: the library is noface's home, open until noface is told to leave
-        while (true) {
-            switch (next) {
-                .nothing => {},
-                .page => try b.show_page(),
-                .everything => try b.show_everything(),
-                .leave => return,
-            }
-            // Whatever was drawn, the page shown is one there is, of the books let through
-            assert(b.count <= b.lib.visible.len);
-            assert(b.index < library.page_count(b.count));
-            b.set_input();
-            next = try b.on_action(b.a.input.next());
+    pub const Result = void;
+    /// The home screen: under every other, it takes the lock and leaving.
+    pub const takes = screen.Takes{ .lock = true, .leave = true };
+
+    /// Everything drawn again with a flash (first, and back from a book or a reload),
+    /// or the page alone (a new filter, a page turn, a notice).
+    pub fn draw(b: *Browser, part: screen.Part) !void {
+        switch (part) {
+            .all => try b.show_everything(),
+            .changing => try b.show_page(),
         }
+        // Whatever was drawn, the page shown is one there is, of the books let through
+        assert(b.count <= b.lib.visible.len);
+        assert(b.index < library.page_count(b.count));
     }
 
     /// The library's `touches`, set each time round as a book changes them. It ticks
     /// often while watching a download or the status, else once a minute for the clock
     /// and the battery.
-    fn set_input(b: *Browser) void {
-        const in = b.a.input;
-        in.take(touches);
+    pub fn setting(b: *const Browser) input_mod.Input.Scope {
         const now = now_us();
+        var tick_us: u64 = idle_tick_us;
         if (now < b.watch_until) {
-            in.tick_us = download_poll_us;
+            tick_us = download_poll_us;
         } else if (now < b.status_until) {
-            in.tick_us = status_poll_us;
-        } else {
-            in.tick_us = idle_tick_us;
+            tick_us = status_poll_us;
         }
-        assert(in.tick_us >= download_poll_us);
-        assert(in.tick_us <= idle_tick_us);
+        assert(tick_us >= download_poll_us);
+        assert(tick_us <= idle_tick_us);
+        return .{ .modes = touches, .tick_us = tick_us };
     }
 
-    fn on_action(b: *Browser, action: input_mod.Action) !Next {
+    pub fn on_tap(b: *Browser, t: screen.Tap) !screen.Step(void) {
+        assert(b.count <= b.lib.visible.len);
+        assert(b.index < library.page_count(b.count));
+        return step(try b.on_tap_at(t.x, t.y));
+    }
+
+    pub fn on_tick(b: *Browser) !screen.Step(void) {
+        assert(b.count <= b.lib.visible.len);
+        assert(b.index < library.page_count(b.count));
+        return step(try b.on_tick_next());
+    }
+
+    pub fn on_action(b: *Browser, action: input_mod.Action) !screen.Step(void) {
         assert(b.buf.len == b.a.screen.pixels.len);
         assert(b.count <= b.lib.visible.len);
-        return switch (action) {
-            .tap => |t| b.on_tap(t.x, t.y),
-            .hold => |h| b.on_hold(h.x, h.y),
+        const next: Next = switch (action) {
+            .tap, .tick => unreachable, // `on_tap` and `on_tick` take those
+            .hold => |h| try b.on_hold(h.x, h.y),
             .swipe => |direction| b.turn(direction),
             .pull => if (try panel.library_menu(b.a, b.buf)) .leave else .nothing,
-            .tick => b.on_tick(),
-            .lock => b.on_lock(),
+            .lock => try b.on_lock(),
             .power, .computer, .stop => .leave,
             .drag, .drag_end, .unlock => .nothing,
+        };
+        return step(next);
+    }
+
+    /// What `Next` asks of the screen.
+    fn step(next: Next) screen.Step(void) {
+        return switch (next) {
+            .nothing => .stay,
+            .page => .{ .redraw = .changing },
+            .everything => .{ .redraw = .all },
+            .leave => .{ .done = {} },
         };
     }
 
@@ -374,7 +394,7 @@ const Browser = struct {
 
     // Actions
 
-    fn on_tap(b: *Browser, x: i32, y: i32) !Next {
+    fn on_tap_at(b: *Browser, x: i32, y: i32) !Next {
         const a = b.a;
         switch (logged_hit(x, y, b.index, b.count, b.query.words().len > 0)) {
             .none => return .nothing,
@@ -526,7 +546,7 @@ const Browser = struct {
         return .everything;
     }
 
-    fn on_tick(b: *Browser) !Next {
+    fn on_tick_next(b: *Browser) !Next {
         const now = now_us();
         // The status: the whole screen while it's settling after a book; else just the
         // strip, once a minute or at once when a charger comes or goes

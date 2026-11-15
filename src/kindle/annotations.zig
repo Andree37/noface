@@ -90,9 +90,9 @@ const insert_format = "insert or replace into local_edit " ++ local_edit_columns
     "{{\"book_data\":{{\"asin\":\"{s}\",\"contentType\":\"{s}\",\"guid\":\"{s}\"," ++
     "\"isOwnedByCustomer\":1,\"isSample\":0}}," ++
     "\"created_time\":{d}," ++
-    "\"end_position\":{{\"long_position\":\"{s}\",\"shortPosition\":{d}}}," ++
+    "\"end_position\":{{\"longPosition\":\"{s}\",\"shortPosition\":{d}}}," ++
     "\"json_metadata\":\"{s}\",\"last_modified\":{d},\"position_type\":0," ++
-    "\"start_position\":{{\"long_position\":\"{s}\",\"shortPosition\":{d}}}," ++
+    "\"start_position\":{{\"longPosition\":\"{s}\",\"shortPosition\":{d}}}," ++
     "\"type\":\"{s}\"}}',0,{d},{d},0,'');";
 
 /// The statement that queues a record for sync.
@@ -181,11 +181,51 @@ test "row matches the one the stock reader wrote" {
     try std.testing.expect(has(sql, "'kindle.highlight-381908',1,1," ++
         "'0123456789ABCDEF0123456789ABCDEF-PDOC-CR!0000000000000000000000000000-1'"));
     try std.testing.expect(has(sql, "\"end_position\":" ++
-        "{\"long_position\":\"AVAAAABhEgAA\",\"shortPosition\":382043}"));
+        "{\"longPosition\":\"AVAAAABhEgAA\",\"shortPosition\":382043}"));
     try std.testing.expect(has(sql, "\"start_position\":" ++
-        "{\"long_position\":\"AVAAAADaEQAA\",\"shortPosition\":381908}"));
+        "{\"longPosition\":\"AVAAAADaEQAA\",\"shortPosition\":381908}"));
     try std.testing.expect(has(sql, "\"json_metadata\":\"{}\""));
     try std.testing.expect(has(sql, "\"type\":\"HIGHLIGHT\"}'"));
+}
+
+/// Every key of the JSON the stock reader queues, in its order and its spelling: a
+/// key spelled any other way is a record its sync doesn't know.
+const stock_payload_keys = [_][]const u8{
+    "book_data",         "asin",           "contentType",   "guid",
+    "isOwnedByCustomer", "isSample",       "created_time",  "end_position",
+    "longPosition",      "shortPosition",  "json_metadata", "last_modified",
+    "position_type",     "start_position", "longPosition",  "shortPosition",
+    "type",
+};
+
+test "every key of the queued record is spelled as the stock reader spells it" {
+    var buf: [1200]u8 = undefined;
+    for ([_]Kind{ .highlight, .bookmark }) |kind| {
+        const sql = try insert_sql(&buf, .{
+            .kind = kind,
+            .id = "kindle.highlight-381908",
+            .key = "0123456789ABCDEF0123456789ABCDEF",
+            .content_type = "PDOC",
+            .guid = "CR!0000000000000000000000000000",
+            .start = .{ .element = 80, .offset = 4570, .short = 381908 },
+            .end = .{ .element = 80, .offset = 4705, .short = 382043 },
+            .now_ms = 1794005896131,
+        });
+        // A key is a quoted name before a colon; the metadata's own keys are escaped
+        var keys: [stock_payload_keys.len + 1][]const u8 = undefined;
+        var count: u32 = 0;
+        for (1..sql.len - 1) |i| {
+            if (sql[i] != '"' or sql[i + 1] != ':' or sql[i - 1] == '\\') continue;
+            const start = std.mem.lastIndexOfScalar(u8, sql[0..i], '"').?;
+            try std.testing.expect(count < keys.len);
+            keys[count] = sql[start + 1 .. i];
+            count += 1;
+        }
+        try std.testing.expectEqual(@as(u32, stock_payload_keys.len), count);
+        for (stock_payload_keys, keys[0..count]) |want, got| {
+            try std.testing.expectEqualStrings(want, got);
+        }
+    }
 }
 
 test "delete clears any unsent row, then queues Amazon's record" {
@@ -229,7 +269,7 @@ test "bookmark row matches the one the stock reader wrote" {
     try std.testing.expect(has(sql, "values ('kindle.bookmark-381741',1,2," ++
         "'0123456789ABCDEF0123456789ABCDEF-PDOC-"));
     try std.testing.expect(has(sql, "\"end_position\":" ++
-        "{\"long_position\":\"AVAAAAAzEQAA\",\"shortPosition\":381741}"));
+        "{\"longPosition\":\"AVAAAAAzEQAA\",\"shortPosition\":381741}"));
     try std.testing.expect(has(sql, "\"json_metadata\":" ++
         "\"{\\\"mchl_color\\\":\\\"dark_blue\\\"}\""));
     try std.testing.expect(has(sql, "\"type\":\"BOOKMARK\"}'"));

@@ -550,19 +550,32 @@ pub fn follow_drag(a: *App, first: ?u32, follow: anytype) !bool {
     return lifted;
 }
 
+/// The journal saved at `path`: every day is in the file, which is mapped, never read
+/// whole into memory; the journal keeps its latest days.
 pub fn load_journal(path: [*:0]const u8) journal_model.Journal {
-    var buf: [journal_model.max_format_bytes]u8 = undefined;
-    const journal = journal_model.parse(state.read_small(path, &buf));
-    assert(journal.len <= journal.days.len); // Parsing keeps what fits, dropping the rest
+    const content = file.map(path) catch return .{};
+    defer file.unmap(content);
+    const journal = journal_model.parse(content);
+    assert(journal.len <= journal.days.len); // The latest days, the rest in the file
     return journal;
 }
 
+/// Saves the journal: the days already in the file and older than memory holds, as
+/// they are, then the days memory holds.
 pub fn save_journal(a: *const App) void {
     var buf: [journal_model.max_format_bytes]u8 = undefined;
     assert(a.journal.len <= a.journal.days.len);
     const content = journal_model.format(&buf, &a.journal);
-    assert(content.len > 0); // The buffer is sized for the longest journal
-    state.write_small(a.journal_path, content);
+    assert(content.len >= journal_model.tag_line_bytes); // Sized for the longest journal
+    const old = file.map(a.journal_path) catch "";
+    defer if (old.len > 0) file.unmap(old);
+    const first_day = if (a.journal.len > 0) a.journal.days[0].day else std.math.maxInt(i32);
+    const parts = [_][]const u8{
+        content[0..journal_model.tag_line_bytes],
+        journal_model.older_lines(old, first_day),
+        content[journal_model.tag_line_bytes..],
+    };
+    state.write_parts(a.journal_path, &parts);
 }
 
 pub fn load_speed(path: [*:0]const u8) stats.Speed {

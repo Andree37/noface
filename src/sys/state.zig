@@ -158,6 +158,15 @@ pub fn read_small(path: [*:0]const u8, buf: []u8) []const u8 {
 /// Writes beside the real file and renames, so a crash can't lose the old contents.
 pub fn write_small(path: [*:0]const u8, data: []const u8) void {
     assert(path[0] != 0);
+    assert(data.len <= std.math.maxInt(u32));
+    write_parts(path, &.{data});
+}
+
+/// Writes `parts`, one after another, beside the real file and renames, as
+/// `write_small`.
+pub fn write_parts(path: [*:0]const u8, parts: []const []const u8) void {
+    assert(path[0] != 0);
+    assert(parts.len > 0);
     var tmp: [320]u8 = undefined;
     const name = std.mem.sliceTo(path, 0);
     const tmp_path = std.fmt.bufPrintSentinel(&tmp, "{s}.tmp", .{name}, 0) catch return;
@@ -169,10 +178,29 @@ pub fn write_small(path: [*:0]const u8, data: []const u8) void {
     );
     if (failed(rc)) return;
     const fd: i32 = @intCast(rc);
-    const written = linux.write(fd, data.ptr, data.len);
-    _ = linux.close(fd); // A failed write shows in `written`; the rename below needs it whole
-    if (failed(written) or written != data.len or data.len == 0) return;
+    var total: u64 = 0;
+    const whole = for (parts) |part| {
+        if (!write_all(fd, part)) break false;
+        total += part.len;
+    } else true;
+    // A failed close may mean a short file: the rename below needs it whole
+    const closed = !failed(linux.close(fd));
+    // Never an empty file in place of the old one
+    if (!whole or !closed or total == 0) return;
     _ = linux.rename(tmp_path, path); // Failed: the old file stays, whole
+}
+
+fn write_all(fd: i32, data: []const u8) bool {
+    assert(fd >= 0);
+    var done: u32 = 0;
+    // Each write moves at least a byte, or fails
+    while (done < data.len) {
+        const wrote = linux.write(fd, data[done..].ptr, data.len - done);
+        if (failed(wrote) or wrote == 0) return false;
+        done += @intCast(wrote);
+    }
+    assert(done == data.len);
+    return true;
 }
 
 /// Writes every value of `s`, by name, one a line.

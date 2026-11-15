@@ -4,6 +4,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const battery = @import("../model/battery.zig");
 const state = @import("../sys/state.zig");
+const file = @import("../sys/file.zig");
 const os = @import("../sys/os.zig");
 const devices = @import("devices.zig");
 const linux = @import("../sys/calls.zig");
@@ -144,10 +145,12 @@ pub fn report(fd: i32, data_dir: []const u8) void {
     const log_path =
         std.fmt.bufPrintSentinel(&path_buffer, "{s}/battery", .{data_dir}, 0) catch return;
     const log = report_samples(log_path, &samples);
-    var journal_buffer: [journal.max_format_bytes]u8 = undefined;
     const journal_path =
         std.fmt.bufPrintSentinel(&path_buffer, "{s}/journal", .{data_dir}, 0) catch return;
-    const reading = journal.parse(state.read_small(journal_path, &journal_buffer));
+    // Mapped: the file keeps every day, however many years
+    const journal_text = file.map(journal_path) catch "";
+    defer if (journal_text.len > 0) file.unmap(journal_text);
+    const reading = journal.parse(journal_text);
 
     report_line(fd, "noface battery report", .{});
     if (log.len < 2) {

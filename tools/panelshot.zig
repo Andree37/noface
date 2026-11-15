@@ -145,8 +145,14 @@ pub fn main(init: std.process.Init.Minimal) !void {
     @memset(pixels, 0xff);
     const mode = if (argv.len > 1) std.mem.sliceTo(argv[1], 0) else "panel";
     var quick = lipc.read(.{});
+    const covers_bytes_max = 64 << 20;
+    var covers_budget = core.memory.Budget{
+        .name = "covers",
+        .child = allocator,
+        .limit = covers_bytes_max,
+    };
     var covers: core.covers.Pool = undefined;
-    try covers.init(allocator);
+    try covers.init(&covers_budget);
     const shot = Shot{
         .allocator = allocator,
         .covers = &covers,

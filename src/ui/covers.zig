@@ -5,6 +5,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const image = @import("../gfx/image.zig");
+const memory = @import("../base/memory.zig");
 
 /// Covers of the grid kept at once: the page shown and those either side (twelve each
 /// at most) are ready together, and as many again stay for paging back and forth.
@@ -28,10 +29,11 @@ pub const Pool = struct {
     grid: Shelf(grid_slots, image.width, image.height),
     hero: Shelf(hero_slots, image.hero_width, image.hero_height),
 
-    /// A pool whose pixels come from `alloc`, kept for good.
-    pub fn init(pool: *Pool, alloc: std.mem.Allocator) !void {
-        pool.grid = .{ .pixels = try alloc.create(@TypeOf(pool.grid).Pixels) };
-        pool.hero = .{ .pixels = try alloc.create(@TypeOf(pool.hero).Pixels) };
+    /// A pool whose pixels come from `budget`, kept for good, and memory only once a
+    /// cover is drawn into them.
+    pub fn init(pool: *Pool, budget: *memory.Budget) !void {
+        pool.grid = .{ .pixels = try budget.untouched_one(@TypeOf(pool.grid).Pixels) };
+        pool.hero = .{ .pixels = try budget.untouched_one(@TypeOf(pool.hero).Pixels) };
         assert(pool.grid.hand == 0);
         assert(pool.hero.hand == 0);
     }
@@ -129,10 +131,12 @@ fn key_of(path: []const u8) u64 {
 }
 
 test "the pool keeps every cover it can and gives back the least lately used" {
+    const alloc = std.testing.allocator;
+    var budget = memory.Budget{ .name = "covers", .child = alloc, .limit = 64 << 20 };
     var pool: Pool = undefined;
-    try pool.init(std.testing.allocator);
-    defer std.testing.allocator.destroy(pool.grid.pixels);
-    defer std.testing.allocator.destroy(pool.hero.pixels);
+    try pool.init(&budget);
+    defer budget.allocator().destroy(pool.grid.pixels);
+    defer budget.allocator().destroy(pool.hero.pixels);
     var names: [grid_slots + 8][32]u8 = undefined;
     var paths: [grid_slots + 8][:0]const u8 = undefined;
     for (&names, &paths, 0..) |*name, *path, i| {

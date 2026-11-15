@@ -46,8 +46,8 @@ pub const Shared = struct {
     work: builder.Work,
     bits: view.Bits,
 
-    pub fn init(s: *Shared, alloc: std.mem.Allocator) !void {
-        s.work = try builder.Work.init(alloc);
+    pub fn init(s: *Shared, budget: *memory.Budget) !void {
+        s.work = try builder.Work.init(budget);
         s.bits = .{ .words = s.work.bits };
         assert(s.bits.words.len * 64 >= books_max);
         assert(s.bits.generation == 0);
@@ -719,7 +719,7 @@ const TestLibrary = struct {
         t.budget = .{ .name = "library", .region = &t.region, .limit = t.region.bytes.len };
         t.scratch = try .reserve("library scratch", .bump, setup.region_bytes.library_scratch);
         t.shared = try t.budget.allocator().create(Shared);
-        try t.shared.init(t.budget.allocator());
+        try t.shared.init(&t.budget);
         t.sources = .{
             .shared = t.shared,
             .budget = &t.budget,

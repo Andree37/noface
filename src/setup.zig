@@ -146,8 +146,8 @@ fn reserve_reading() !*Reading {
         .region = &reading.library,
         .limit = region_bytes.library,
     };
-    try reading.covers.init(reading.library_budget.allocator());
-    try reading.library_shared.init(reading.library_budget.allocator());
+    try reading.covers.init(&reading.library_budget);
+    try reading.library_shared.init(&reading.library_budget);
     reading.covers_bytes = reading.library_budget.live;
     assert(reading.covers_bytes >= covers.bytes);
     reading.library_scratch = try .reserve("library scratch", .bump, region_bytes.library_scratch);

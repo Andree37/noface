@@ -402,6 +402,27 @@ pub const Budget = struct {
         .free = free,
     };
 
+    /// `count` items of `T` kept for good, their contents meaning nothing until written:
+    /// buffers taken at startup. `Allocator.alloc` fills a new block with 0xaa in safe
+    /// builds, which makes every page of it resident at once; these come straight from
+    /// the region instead, so their pages become memory only as they're written.
+    pub fn untouched(budget: *Budget, comptime T: type, count: u32) ![]T {
+        assert(count > 0);
+        assert(budget.live <= budget.limit);
+        const bytes: usize = @as(usize, @sizeOf(T)) * count; // usize: Allocator's interface
+        const raw = budget.allocator().rawAlloc(bytes, .of(T), @returnAddress()) orelse
+            return error.OutOfMemory;
+        const items: [*]T = @ptrCast(@alignCast(raw));
+        return items[0..count];
+    }
+
+    /// One `T` kept for good, as `untouched`.
+    pub fn untouched_one(budget: *Budget, comptime T: type) !*T {
+        const one = try budget.untouched(T, 1);
+        assert(one.len == 1);
+        return &one[0];
+    }
+
     pub fn allocator(budget: *Budget) Allocator {
         assert(budget.name.len > 0); // The log names it
         assert(budget.live <= budget.limit);
@@ -768,4 +789,17 @@ test "after seal, budgets on regions ask the system for nothing" {
     try std.testing.expectEqual(@as(u64, 0), app_budget.live);
     try std.testing.expectEqual(requests, system_requests);
     try std.testing.expectEqual(@as(u32, 0), late_requests);
+}
+
+test "an untouched block leaves its pages out of memory until written" {
+    var region = try Region.reserve("test", .bump, 4 << 20);
+    defer region.release();
+    var b = Budget{ .name = "test", .region = &region, .limit = region.bytes.len };
+    const block = try b.untouched(u8, 1 << 20);
+    try std.testing.expectEqual(@as(u64, 1 << 20), b.live);
+    // Not filled: a fresh region's pages still read as the system gave them
+    if (builtin.os.tag == .linux) try std.testing.expectEqual(@as(u8, 0), block[4096]);
+    const one = try b.untouched_one(u64);
+    one.* = 7;
+    try std.testing.expectEqual(@as(u64, 7), one.*);
 }

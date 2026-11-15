@@ -53,49 +53,50 @@ pub const Work = struct {
         (sort_inputs + 1) * stream_bytes) + (1 << 20) + 13 * stream_bytes +
         index.books_max / 8 + 2 * @sizeOf(index.Slot) + (64 << 10) * 48;
 
-    pub fn init(alloc: std.mem.Allocator) !Work {
+    pub fn init(budget: *memory.Budget) !Work {
         const work: Work = .{
-            .sort = try sort_memory(alloc, sort_items_bytes),
-            .sort_second = try sort_memory(alloc, sort_items_bytes),
-            .epubs = try epub_memory(alloc),
-            .out_records = try alloc.alloc(u8, stream_bytes),
-            .out_text = try alloc.alloc(u8, stream_bytes),
-            .out_keys = try alloc.alloc(u8, stream_bytes),
-            .lines = try alloc.alloc(u8, stream_bytes),
-            .row = try alloc.alloc(u8, 4 * stream_bytes),
-            .in_records = try alloc.alloc(u8, stream_bytes),
-            .in_text = try alloc.alloc(u8, stream_bytes),
-            .in_keys = try alloc.alloc(u8, 4 << 10),
-            .in_order = try alloc.alloc(u8, stream_bytes),
-            .bits = try alloc.alloc(u64, index.books_max / 64),
-            .slot = try alloc.create(index.Slot),
-            .blob = try alloc.create([index.blob_bytes_max]u8),
+            .sort = try sort_memory(budget, sort_items_bytes),
+            .sort_second = try sort_memory(budget, sort_items_bytes),
+            .epubs = try epub_memory(budget),
+            .out_records = try budget.untouched(u8, stream_bytes),
+            .out_text = try budget.untouched(u8, stream_bytes),
+            .out_keys = try budget.untouched(u8, stream_bytes),
+            .lines = try budget.untouched(u8, stream_bytes),
+            .row = try budget.untouched(u8, 4 * stream_bytes),
+            .in_records = try budget.untouched(u8, stream_bytes),
+            .in_text = try budget.untouched(u8, stream_bytes),
+            .in_keys = try budget.untouched(u8, 4 << 10),
+            .in_order = try budget.untouched(u8, stream_bytes),
+            .bits = try budget.untouched(u64, index.books_max / 64),
+            .slot = try budget.untouched_one(index.Slot),
+            .blob = try budget.untouched_one([index.blob_bytes_max]u8),
         };
         work.epubs.invariants();
         assert(work.in_text.len >= index.blob_bytes_max);
         return work;
     }
 
-    fn sort_memory(alloc: std.mem.Allocator, items_bytes: u32) !sorter.Memory {
+    fn sort_memory(budget: *memory.Budget, items_bytes: u32) !sorter.Memory {
+        const alloc = budget.allocator(); // Only for the list of inputs
         assert(items_bytes >= sorter.key_bytes_max + 10);
         const inputs = try alloc.alloc([]u8, sort_inputs);
-        for (inputs) |*input| input.* = try alloc.alloc(u8, stream_bytes);
+        for (inputs) |*input| input.* = try budget.untouched(u8, stream_bytes);
         const result: sorter.Memory = .{
-            .items = try alloc.alloc(u8, items_bytes),
-            .offsets = try alloc.alloc(u32, items_bytes / 64),
+            .items = try budget.untouched(u8, items_bytes),
+            .offsets = try budget.untouched(u32, items_bytes / 64),
             .inputs = inputs,
-            .output = try alloc.alloc(u8, stream_bytes),
+            .output = try budget.untouched(u8, stream_bytes),
         };
         assert(result.inputs.len == sort_inputs);
         return result;
     }
 
-    fn epub_memory(alloc: std.mem.Allocator) !epub_cache.Memory {
+    fn epub_memory(budget: *memory.Budget) !epub_cache.Memory {
         const result: epub_cache.Memory = .{
-            .sort = try sort_memory(alloc, 1 << 20),
-            .lines_out = try alloc.alloc(u8, stream_bytes),
-            .index_in = try alloc.alloc(u8, 4 << 10),
-            .lines_in = try alloc.alloc(u8, epub_cache.line_bytes_max),
+            .sort = try sort_memory(budget, 1 << 20),
+            .lines_out = try budget.untouched(u8, stream_bytes),
+            .index_in = try budget.untouched(u8, 4 << 10),
+            .lines_in = try budget.untouched(u8, epub_cache.line_bytes_max),
         };
         result.invariants();
         assert(result.sort.items.len == 1 << 20);

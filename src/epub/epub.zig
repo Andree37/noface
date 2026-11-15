@@ -10,6 +10,7 @@ const catalog = @import("../model/catalog.zig");
 const zip = @import("zip.zig");
 const xml = @import("xml.zig");
 const picture = @import("picture.zig");
+const memory = @import("../base/memory.zig");
 
 /// What the library shows, read without opening the whole book.
 pub const Info = struct {
@@ -100,6 +101,22 @@ fn read_file(alloc: std.mem.Allocator, files: []const zip.Entry, name: []const u
     const contents = try zip.read(alloc, &e);
     assert(contents.len == e.size);
     return contents;
+}
+
+/// A chapter's markup, read in `scratch`. One too large for it is read into the book's
+/// own memory instead, as every chapter once was, so no book that opened stops opening.
+fn read_chapter(
+    alloc: std.mem.Allocator,
+    scratch: *memory.Budget,
+    files: []const zip.Entry,
+    path: []const u8,
+) ![]const u8 {
+    assert(scratch.region.?.kind == .bump);
+    assert(path.len > 0);
+    return read_file(scratch.allocator(), files, path) catch |err| switch (err) {
+        error.OutOfMemory => read_file(alloc, files, path),
+        else => err,
+    };
 }
 
 /// Joins a relative href onto a folder, resolving "..", and drops any "#fragment".
@@ -348,18 +365,24 @@ const Builder = struct {
     fn add_text(b: *Builder, raw: []const u8) !void {
         assert(b.in_body);
         assert(b.skipping == null);
-        var decoded: std.ArrayList(u8) = .empty;
-        try xml.decode(&decoded, b.alloc, raw);
-        // Whitespace in markup is layout, not text: runs of it become one space.
-        for (decoded.items) |c| {
+        // Decoded onto the paragraph's text, then squeezed where it lies: no copy
+        const start = b.text.items.len;
+        try xml.decode(&b.text, b.alloc, raw);
+        // Whitespace in markup is layout, not text: runs of it become one space. What's
+        // kept never gets ahead of what's read, so it's done in place.
+        var kept = start;
+        for (start..b.text.items.len) |read| {
+            const c = b.text.items[read];
             const space = c == ' ' or c == '\n' or c == '\t' or c == '\r';
             if (space) {
-                if (b.text.items.len == 0 or b.text.items[b.text.items.len - 1] == ' ') continue;
-                try b.text.append(b.alloc, ' ');
+                if (kept == 0 or b.text.items[kept - 1] == ' ') continue;
+                b.text.items[kept] = ' ';
             } else {
-                try b.text.append(b.alloc, c);
+                b.text.items[kept] = c;
             }
+            kept += 1;
         }
+        b.text.shrinkRetainingCapacity(kept);
         if (b.text.items.len > 0) assert(b.text.items[0] != ' ');
     }
 
@@ -472,6 +495,18 @@ const Builder = struct {
         b.bold = 0;
         b.italic = 0;
         assert(b.text.items.len == 0);
+    }
+
+    /// Copies into the book what a chapter's markup leaves waiting for the next: ids
+    /// for its first paragraph, and a link not yet closed. The markup itself goes
+    /// before the next chapter is read.
+    fn keep_pending(b: *Builder) !void {
+        assert(b.text.items.len == 0); // The chapter's text is all in paragraphs
+        for (b.waiting_ids.items) |*id| id.* = try b.alloc.dupe(u8, id.*);
+        if (b.link_start != null) b.link_target = try b.alloc.dupe(u8, b.link_target);
+        // Set again by the next chapter before it's read
+        b.skipping = null;
+        assert(b.skipping == null);
     }
 
     fn open_tag(b: *Builder, tag: *const xml.Tag) !void {
@@ -713,19 +748,34 @@ fn anchor_for(
     return anchors.get(file);
 }
 
-/// Reads a whole EPUB. Everything is allocated from `alloc`, an arena that lives as
-/// long as the book is open; the paragraphs point into it.
-pub fn parse(alloc: std.mem.Allocator, data: []const u8) !book.Book {
+/// Reads a whole EPUB. What the book keeps is allocated from `alloc`, an arena that
+/// lives as long as the book is open; the paragraphs point into it, and its pictures
+/// into `data`, which must stay mapped as long. Each chapter's markup is read in
+/// `scratch`, a bump region, and goes before the next is read: `scratch` is left as
+/// it was found.
+pub fn parse(alloc: std.mem.Allocator, scratch: *memory.Region, data: []const u8) !book.Book {
+    assert(scratch.kind == .bump);
+    const found_end = scratch.end;
+    defer assert(scratch.end == found_end);
+    var markup = memory.Budget{
+        .name = "chapter",
+        .region = scratch,
+        .limit = scratch.bytes.len,
+    };
     const files = try zip.entries(alloc, data);
     const p = try read_package(alloc, files);
     var b = Builder{ .alloc = alloc, .files = files };
+    const each_chapter = markup.mark();
+    defer markup.rewind(each_chapter);
     for (p.spine, 0..) |id, index| {
         const item = p.item(id) orelse continue;
         if (std.mem.indexOf(u8, item.media, "html") == null) continue;
         const path = try resolve(alloc, p.dir, item.href);
-        const xhtml = read_file(alloc, files, path) catch continue;
+        markup.rewind(each_chapter);
+        const xhtml = read_chapter(alloc, &markup, files, path) catch continue;
         b.section = @intCast(index + 1);
         try b.chapter(path, xhtml);
+        try b.keep_pending();
     }
     if (b.paragraphs.items.len == 0) return error.EmptyBook;
     parse_positions(b.paragraphs.items);
@@ -763,7 +813,18 @@ test "a small EPUB reads into paragraphs, styles, links and contents" {
     const about = try info(alloc, sample, true);
     try std.testing.expectEqualStrings("A Test Book", about.title);
     try std.testing.expectEqualStrings("Ann Author", about.author);
-    const b = try parse(alloc, sample);
+    var scratch = try memory.Region.reserve("scratch", .bump, memory.unit_bytes);
+    defer scratch.release();
+    const b = try parse(alloc, &scratch, sample);
+    try std.testing.expect(scratch.empty()); // Each chapter's markup gone
+    try std.testing.expect(scratch.end_peak > 0); // Read there
+    // With no room in `scratch`, the markup is read into the book's memory instead
+    scratch.end = @intCast(scratch.bytes.len - 16);
+    const again = try parse(alloc, &scratch, sample);
+    try std.testing.expectEqual(scratch.bytes.len - 16, scratch.end);
+    try std.testing.expectEqual(b.paragraphs.len, again.paragraphs.len);
+    try std.testing.expectEqualStrings(b.paragraphs[1].text, again.paragraphs[1].text);
+    scratch.end = 0;
     try std.testing.expectEqualStrings("Chapter One", b.paragraphs[0].text);
     try std.testing.expect(b.paragraphs[0].look.bold);
     try std.testing.expect(b.paragraphs[0].look.size == 4);
@@ -875,13 +936,16 @@ test "broken EPUBs are refused, never crash" {
     var prng = std.Random.DefaultPrng.init(0x65707562);
     const random = prng.random();
     var buf: [4096]u8 = undefined;
+    var scratch = try memory.Region.reserve("scratch", .bump, memory.unit_bytes);
+    defer scratch.release();
     for (0..1500) |round| {
         const len = @min(sample.len, buf.len);
         @memcpy(buf[0..len], sample[0..len]);
         for (0..1 + round % 8) |_| buf[random.uintLessThan(usize, len)] = random.int(u8);
         var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
         defer arena.deinit();
-        _ = parse(arena.allocator(), buf[0..len]) catch {};
+        _ = parse(arena.allocator(), &scratch, buf[0..len]) catch {};
+        try std.testing.expect(scratch.empty());
         _ = info(arena.allocator(), buf[0..len], true) catch {};
     }
 }

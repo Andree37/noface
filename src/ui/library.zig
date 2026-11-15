@@ -13,6 +13,7 @@ const text = @import("../layout/text.zig");
 const catalog = @import("../model/catalog.zig");
 const stats = @import("../model/stats.zig");
 const Fonts = @import("fonts.zig").Fonts;
+const covers = @import("covers.zig");
 
 const margin = style.margin;
 const gutter = 40;
@@ -320,20 +321,10 @@ fn type_cover(
     try draw.clipped(fonts.caption, page, left, @intCast(y + h - 34), e.author, avail);
 }
 
-/// Decodes and scales a book's cover the first time it's needed, then keeps it.
-fn load_cover(alloc: std.mem.Allocator, e: *catalog.Entry) void {
-    if (e.cover_tried) return;
-    e.cover_tried = true;
-    if (e.thumbnail.len > 0) e.cover = cover.load(alloc, e.thumbnail, cover.width, cover.height);
-    // Scaled to the grid's size, or none
-    if (e.cover) |c| assert(c.len == cover.width * cover.height);
-    assert(e.cover_tried);
-}
-
 /// Gets the covers of library page `index` ready, so turning to it doesn't wait on
 /// decoding them (about 10 ms each). For idle moments, like a screen refresh.
 pub fn prepare_covers(
-    alloc: std.mem.Allocator,
+    pool: *covers.Pool,
     entries: []catalog.Entry,
     visible: []const u32,
     index: u32,
@@ -344,21 +335,20 @@ pub fn prepare_covers(
     const range = page_range(index, count);
     for (visible[range.first..range.end]) |i| {
         assert(i < entries.len);
-        load_cover(alloc, &entries[i]);
+        _ = pool.grid_cover(entries[i].thumbnail);
     }
 }
 
 fn draw_cover(
-    alloc: std.mem.Allocator,
+    pool: *covers.Pool,
     fonts: Fonts,
     page: Page,
     e: *catalog.Entry,
     x: u32,
     y: u32,
 ) !void {
-    load_cover(alloc, e);
-    assert(e.cover_tried);
-    if (e.cover) |c| {
+    assert(x >= margin);
+    if (pool.grid_cover(e.thumbnail)) |c| {
         assert(c.len == cover.width * cover.height);
         page.copy_image(x, y, c, cover.width, cover.height);
     } else {
@@ -369,19 +359,13 @@ fn draw_cover(
 /// The book to continue: its cover, then beside it its title, author, when it was last
 /// read and how far.
 fn draw_hero(
-    alloc: std.mem.Allocator,
+    pool: *covers.Pool,
     fonts: Fonts,
     page: Page,
     e: *catalog.Entry,
     now: Moment,
 ) !void {
-    if (!e.hero_tried) {
-        e.hero_tried = true;
-        if (e.thumbnail.len > 0) {
-            e.hero = cover.load(alloc, e.thumbnail, cover.hero_width, cover.hero_height);
-        }
-    }
-    if (e.hero) |c| {
+    if (pool.hero_cover(e.thumbnail)) |c| {
         assert(c.len == cover.hero_width * cover.hero_height);
         page.copy_image(margin, hero_top, c, cover.hero_width, cover.hero_height);
     } else {
@@ -482,7 +466,7 @@ fn draw_hero_last_read(
 }
 
 fn draw_cell(
-    alloc: std.mem.Allocator,
+    pool: *covers.Pool,
     fonts: Fonts,
     page: Page,
     e: *catalog.Entry,
@@ -491,7 +475,7 @@ fn draw_cell(
 ) !void {
     assert(x >= margin);
     assert(y >= plain_grid_top);
-    try draw_cover(alloc, fonts, page, e, x, y);
+    try draw_cover(pool, fonts, page, e, x, y);
     const bar_y = y + cover.height + 8;
     const title_y: i32 = @intCast(bar_y + cell_title_below);
     const title_width: f32 = cover.width;
@@ -613,7 +597,7 @@ fn draw_tabs_sort(fonts: Fonts, page: Page, top: i32, order: catalog.Order) !voi
 }
 
 pub fn render(
-    alloc: std.mem.Allocator,
+    pool: *covers.Pool,
     fonts: Fonts,
     page: Page,
     entries: []catalog.Entry,
@@ -637,7 +621,7 @@ pub fn render(
         if (query.len > 0) {
             try draw_search_header(fonts, page, query, @intCast(visible.len));
         } else if (hero) |h| {
-            try draw_hero(alloc, fonts, page, &entries[h], now);
+            try draw_hero(pool, fonts, page, &entries[h], now);
         }
     }
     try draw_tabs(fonts, page, tabs_top(with_hero), filter, order, query.len > 0);
@@ -649,7 +633,7 @@ pub fn render(
     for (shown, 0..) |entry_index, i| {
         assert(entry_index < entries.len);
         const at = cell_origin(@intCast(i), with_hero);
-        try draw_cell(alloc, fonts, page, &entries[entry_index], at.x, at.y);
+        try draw_cell(pool, fonts, page, &entries[entry_index], at.x, at.y);
     }
     if (visible.len == 0) {
         const empty = if (query.len > 0) "No books match." else "No books here yet.";

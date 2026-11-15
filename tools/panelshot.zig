@@ -77,6 +77,7 @@ comptime {
 /// What every shot draws with, and on.
 const Shot = struct {
     allocator: std.mem.Allocator,
+    covers: *core.covers.Pool,
     argv: std.process.Args.Vector,
     fonts: Fonts,
     page: Page,
@@ -141,8 +142,11 @@ pub fn main(init: std.process.Init.Minimal) !void {
     @memset(pixels, 0xff);
     const mode = if (argv.len > 1) std.mem.sliceTo(argv[1], 0) else "panel";
     var quick = lipc.read(.{});
+    var covers: core.covers.Pool = undefined;
+    try covers.init(allocator);
     const shot = Shot{
         .allocator = allocator,
+        .covers = &covers,
         .argv = argv,
         .fonts = .{
             .title = &title,
@@ -193,7 +197,7 @@ fn render_library(shot: *const Shot) !void {
         index = try std.fmt.parseInt(u32, std.mem.sliceTo(shot.argv[2], 0), 10);
     }
     try library.render(
-        shot.allocator,
+        shot.covers,
         shot.fonts,
         shot.page,
         entries,
@@ -221,7 +225,7 @@ fn render_library_search(shot: *const Shot) !void {
     assert(count <= entries.len);
     for (visible[0..count]) |entry_index| assert(entry_index < entries.len);
     try library.render(
-        shot.allocator,
+        shot.covers,
         shot.fonts,
         shot.page,
         entries,
@@ -282,7 +286,7 @@ fn render_sheet(shot: *const Shot) !void {
     assert(count <= entries.len);
     assert(visible[0] < entries.len);
     try library.render(
-        shot.allocator,
+        shot.covers,
         shot.fonts,
         shot.page,
         entries,

@@ -22,10 +22,6 @@ pub const Entry = struct {
     key: []const u8 = "",
     kind: []const u8 = "",
     guid: []const u8 = "",
-    cover: ?[]u8 = null,
-    cover_tried: bool = false,
-    hero: ?[]u8 = null,
-    hero_tried: bool = false,
     series: []const u8 = "", // The series it belongs to, if known
     series_index: f32 = 0, // Its place in that series: 2 for "#2"
     /// When any book of its series was last read, for sorting by series.

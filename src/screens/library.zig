@@ -161,10 +161,9 @@ fn show_with_covers(
     assert(count <= lib.visible.len);
     @memcpy(a.screen.pixels, buffer);
     const marker = try a.screen.show(refresh);
-    const alloc = lib.arena.allocator();
     const visible = lib.visible[0..count];
-    library.prepare_covers(alloc, lib.entries, visible, page_index + 1);
-    if (page_index > 0) library.prepare_covers(alloc, lib.entries, visible, page_index - 1);
+    library.prepare_covers(a.covers, lib.entries, visible, page_index + 1);
+    if (page_index > 0) library.prepare_covers(a.covers, lib.entries, visible, page_index - 1);
     try a.screen.wait_complete(marker);
 }
 
@@ -282,7 +281,7 @@ const Browser = struct {
         assert(b.count <= b.lib.visible.len);
         assert(b.buf.len == a.screen.pixels.len);
         try library.render(
-            b.lib.arena.allocator(),
+            a.covers,
             a.ui,
             a.page(b.buf),
             b.lib.entries,

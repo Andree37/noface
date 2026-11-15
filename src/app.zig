@@ -20,6 +20,7 @@ const aa = @import("ui/aa.zig");
 const file = @import("sys/file.zig");
 const hwtcon = @import("kindle/hwtcon.zig");
 const library = @import("ui/library.zig");
+const covers_ui = @import("ui/covers.zig");
 const clock = @import("sys/clock.zig");
 const jpegxr = @import("kindle/jpegxr.zig");
 const quick_model = @import("model/quick.zig");
@@ -80,6 +81,7 @@ pub const App = struct {
     // that outlives each list), what each EPUB is read for while the library is found,
     // the open book's memory, and one action's
     library_budget: *memory.Budget,
+    covers: *covers_ui.Pool, // The library's, in its region, kept for good
     library_scratch_region: *memory.Region,
     book_region: *memory.Region,
     scratch_region: *memory.Region,

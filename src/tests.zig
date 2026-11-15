@@ -6,6 +6,7 @@ test {
     _ = @import("epub/zip.zig");
     _ = @import("screens/reader/page_number.zig");
     _ = @import("ui/card.zig");
+    _ = @import("ui/covers.zig");
     _ = @import("screens/reader/page_store.zig");
     _ = @import("screens/reader/records.zig");
     _ = @import("base/check.zig");

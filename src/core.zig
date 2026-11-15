@@ -29,6 +29,7 @@ pub const cover = @import("gfx/image.zig");
 pub const font = @import("gfx/font.zig");
 pub const page = @import("gfx/page.zig");
 pub const card = @import("ui/card.zig");
+pub const covers = @import("ui/covers.zig");
 pub const aa = @import("ui/aa.zig");
 pub const fonts = @import("ui/fonts.zig");
 pub const goto = @import("ui/goto.zig");

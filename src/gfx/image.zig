@@ -222,6 +222,21 @@ pub fn load(alloc: std.mem.Allocator, path: [*:0]const u8, dw: u32, dh: u32) ?[]
     return out;
 }
 
+/// Decodes the picture at `path` scaled into `out`, `dw` x `dh`, as `load` does but into
+/// memory the caller keeps. False when it isn't a picture or can't be read.
+pub fn load_into(out: []u8, path: [*:0]const u8, dw: u32, dh: u32) bool {
+    assert(dw > 0);
+    assert(out.len == @as(u64, dw) * dh);
+    const data = file.map(path) catch return false;
+    defer file.unmap(data);
+    const decoder = decoder_memory.allocator();
+    const gray = decode_picture(decoder, data) orelse return false;
+    defer decoder.free(gray.pixels);
+    const picture = Size{ .width = gray.width, .height = gray.height };
+    scale(gray.pixels, picture, out, .{ .width = dw, .height = dh });
+    return true;
+}
+
 /// A decoded picture at its own size, one gray byte per pixel.
 pub const Gray = struct { pixels: []u8, width: u32, height: u32 };
 

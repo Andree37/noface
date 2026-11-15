@@ -32,8 +32,12 @@ fn point_in(p: *const book_model.Paragraph, byte: u32) ?annotations.Point {
     return .{ .element = p.element, .offset = chars, .short = short };
 }
 
-/// Asks Amazon to sync the notes just written (not while writes are off for testing).
-pub fn sync() void {
+/// Asks Amazon to sync the notes just written: only those of a book Amazon keeps notes
+/// for (an EPUB's stay in noface's own file, which no sync sends anywhere), and not
+/// while writes are off for testing.
+pub fn sync(s: *const sess.Session) void {
+    assert(s.pages.len > 0); // A book is open
+    if (s.notes_path.len > 0) return;
     if (!annotation_db.dry_run()) lipc.sync_now();
 }
 

@@ -278,7 +278,7 @@ pub fn new_highlight(
         return null;
     };
     const saved = save_highlight(s, entry, id, highlights.Span.of(lo, hi));
-    if (saved) records.sync();
+    if (saved) records.sync(s);
     const word_count = @max(fixed, head) - @min(fixed, head) + 1;
     std.debug.print("highlight {s}: {d} words, saved {}\n", .{ id, word_count, saved });
     if (!saved) {
@@ -336,7 +336,7 @@ pub fn extend_ended(
     const crossed = if (grab_start) head > fixed else head < fixed;
     const span = highlights.dragged(sel.whole, words[fixed], words[head], grab_start, crossed);
     const saved = save_highlight(s, entry, id, span);
-    if (saved) records.sync();
+    if (saved) records.sync(s);
     std.debug.print("highlight extended: saved {}\n", .{saved});
     if (!saved) return app.show_notice(a, "This highlight couldn't be changed.");
     highlights.remove(&s.highlights, id);
@@ -358,7 +358,7 @@ pub fn remove_highlight(
     const removed = records.delete(s, entry, .highlight, id);
     std.debug.print("highlight removed: {}\n", .{removed});
     if (!removed) return app.show_notice(a, "This highlight couldn't be deleted.");
-    records.sync();
+    records.sync(s);
     highlights.remove(&s.highlights, id);
     try refresh_marks(a, s, alloc);
     assert(highlights.extent(s.highlights.items, id) == null);

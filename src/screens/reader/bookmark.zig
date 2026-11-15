@@ -55,7 +55,7 @@ pub fn toggle(
         assert(s.is_bookmarked(s.current));
         std.debug.print("bookmark added\n", .{});
     }
-    records.sync();
+    records.sync(s);
 }
 
 /// The first place on a page that Amazon numbers. Pages can open on a heading

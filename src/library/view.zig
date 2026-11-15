@@ -77,21 +77,14 @@ pub fn count_through(
     assert(sorted.len == ix.header.count);
     var through: u32 = 0;
     for (sorted) |*item| {
-        if (item.id != leave_out and lets_through(ix.entry(item.id), look)) through += 1;
+        const e = ix.entry(item.id);
+        if (item.id != leave_out and catalog.lets_through(e, look.filter, look.words)) {
+            through += 1;
+        }
         item.key = through;
     }
     assert(through <= sorted.len);
     return through;
-}
-
-fn lets_through(e: catalog.Entry, look: Look) bool {
-    assert(e.percent <= 100);
-    const by_filter = switch (look.filter) {
-        .all => true,
-        .read => e.is_read(),
-        .unread => !e.is_read(),
-    };
-    return by_filter and (look.words.len == 0 or catalog.matches_query(e, look.words));
 }
 
 /// The ids of the books let through from the `first`th to before the `end`th, in order,
@@ -120,32 +113,18 @@ pub fn page(sorted: []const Item, first: u32, end: u32, ids: []u32) u32 {
     return filled;
 }
 
-/// The book to continue: the latest one in progress on this Kindle, or else the latest
-/// opened, as `catalog.pick_hero` picks from a list.
-pub fn hero(ix: *const index.Index) ?u32 {
-    assert(ix.header.local <= ix.header.count);
-    var going: ?u32 = null;
-    var going_last: u64 = 0;
-    var latest: ?u32 = null;
-    var latest_last: u64 = 0;
-    for (0..ix.header.count) |i| {
-        const id: u32 = @intCast(i);
-        const e = ix.entry(id);
-        if (!e.is_local()) continue;
-        if (e.in_progress() and (going == null or e.last > going_last)) {
-            going = id;
-            going_last = e.last;
-        }
-        if (latest == null or e.last > latest_last) {
-            latest = id;
-            latest_last = e.last;
-        }
+/// The books of an index by id, for the catalog's rules that look through books.
+pub const ById = struct {
+    ix: *const index.Index,
+
+    pub fn count(b: ById) u32 {
+        return b.ix.header.count;
     }
-    const found = going orelse latest orelse return null;
-    assert(ix.entry(found).is_local()); // A cloud book can't be opened from the hero
-    if (going) |g| assert(ix.entry(g).in_progress());
-    return found;
-}
+
+    pub fn at(b: ById, id: u32) catalog.Entry {
+        return b.ix.entry(id);
+    }
+};
 
 /// The ids of the first `ids.len` books of `sorted` whose title, author or series has
 /// `words`: how many there are, up to one more than fit.
@@ -198,28 +177,4 @@ pub fn totals(
     assert(t.books == ix.header.count);
     assert(t.finished + t.in_progress <= t.books);
     return t;
-}
-
-/// The next book of `e`'s series not yet read, by its place in the series, as
-/// `catalog.next_in_series` finds it in a list.
-pub fn next_in_series(ix: *const index.Index, e: *const catalog.Entry) ?u32 {
-    assert(ix.header.count <= index.books_max);
-    if (e.series.len == 0) return null;
-    const place = catalog.series_place(e.*);
-    var best: ?u32 = null;
-    var best_place: f32 = 0;
-    for (0..ix.header.count) |i| {
-        const id: u32 = @intCast(i);
-        const o = ix.entry(id);
-        if (!catalog.same_series(o.series, e.series)) continue;
-        const o_place = catalog.series_place(o);
-        if (o_place <= place or o.is_read()) continue;
-        if (best == null or o_place < best_place) {
-            best = id;
-            best_place = o_place;
-        }
-    }
-    const found = best orelse return null;
-    assert(!ix.entry(found).is_read());
-    return found;
 }

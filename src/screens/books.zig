@@ -211,7 +211,7 @@ pub const Library = struct {
         if (!s.open) return;
         const all = l.shared.items[0..s.ix.header.count];
         const in_order = if (s.sorted) all else view.sort(&s.ix, l.shared.items, s.order);
-        const hero_id = view.hero(&s.ix);
+        const hero_id = catalog.pick_hero(view.ById{ .ix = &s.ix });
         if (hero_id) |h| s.ix.read(h, &s.hero_slot);
         // While searching, every match is listed, the hero too
         const leave_out = if (s.words.len == 0) hero_id else null;
@@ -343,7 +343,7 @@ pub const Library = struct {
         s.next_turn +%= 1;
         const slot = &s.next_slots[s.next_turn];
         assert(&slot.entry != e); // Each next goes in the other slot
-        const id = view.next_in_series(&s.ix, e) orelse return null;
+        const id = catalog.next_in_series(view.ById{ .ix = &s.ix }, e) orelse return null;
         s.ix.read(id, slot);
         assert(!slot.entry.is_read());
         return &slot.entry;

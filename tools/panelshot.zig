@@ -220,7 +220,7 @@ fn render_library(shot: *const Shot) !void {
     catalog.sort(entries, .recent);
     const visible = try shot.allocator.alloc(u32, entries.len);
     const filter: catalog.Filter = if (shot.argv.len > 3) .read else .all;
-    const lead = catalog.pick_hero(entries);
+    const lead = catalog.pick_hero(catalog.InList{ .entries = entries });
     const count = catalog.select(entries, filter, lead, "", visible);
     assert(count <= entries.len);
     for (visible[0..count]) |entry_index| assert(entry_index < entries.len);
@@ -255,11 +255,12 @@ fn render_library_search(shot: *const Shot) !void {
     const count = catalog.select(entries, .all, null, query, visible);
     assert(count <= entries.len);
     for (visible[0..count]) |entry_index| assert(entry_index < entries.len);
+    const lead = catalog.pick_hero(catalog.InList{ .entries = entries });
     try library.render(
         shot.covers,
         shot.fonts,
         shot.page,
-        try page_books(entries, catalog.pick_hero(entries), visible[0..count], 0),
+        try page_books(entries, lead, visible[0..count], 0),
         0,
         .all,
         .recent,
@@ -308,7 +309,7 @@ fn render_notes(shot: *const Shot) !void {
 fn render_sheet(shot: *const Shot) !void {
     const entries = try catalog_db.parse(shot.allocator, try file.map(library_path));
     catalog.sort(entries, .recent);
-    const lead = catalog.pick_hero(entries);
+    const lead = catalog.pick_hero(catalog.InList{ .entries = entries });
     const visible = try shot.allocator.alloc(u32, entries.len);
     const count = catalog.select(entries, .all, lead, "", visible);
     if (count == 0) return error.EmptyLibrary;

@@ -187,7 +187,8 @@ test "cloud books list without a path and never lead" {
     try std.testing.expectEqual(@as(usize, 3), rows.len);
     try std.testing.expectEqual(library.Availability.cloud, rows[0].availability);
     try std.testing.expectEqual(library.Availability.downloading, rows[2].availability);
-    try std.testing.expectEqual(@as(u32, 1), library.pick_hero(rows).?);
+    const listed: library.InList = .{ .entries = rows };
+    try std.testing.expectEqual(@as(u32, 1), library.pick_hero(listed).?);
 }
 
 test "a series place or percent that isn't a number counts as none" {

@@ -155,19 +155,38 @@ pub fn series_place(e: Entry) f32 {
     return place;
 }
 
-/// The next book of `e`'s series not yet read, by its place in the series.
-pub fn next_in_series(entries: []const Entry, e: *const Entry) ?u32 {
-    assert(entries.len <= std.math.maxInt(u32));
+/// Books in a list, for the rules below that look through books: `at(i)` is the `i`th
+/// of `count`. The library's index gives its books the same way.
+pub const InList = struct {
+    entries: []const Entry,
+
+    pub fn count(l: InList) u32 {
+        return @intCast(l.entries.len);
+    }
+
+    pub fn at(l: InList, i: u32) Entry {
+        return l.entries[i];
+    }
+};
+
+/// The next book of `e`'s series not yet read, by its place in the series: its index
+/// among `books`.
+pub fn next_in_series(books: anytype, e: *const Entry) ?u32 {
     if (e.series.len == 0) return null;
     var best: ?u32 = null;
-    for (entries, 0..) |o, i| {
+    var best_place: f32 = 0;
+    for (0..books.count()) |i| {
+        const o = books.at(@intCast(i));
         if (!same_series(o.series, e.series)) continue;
         if (series_place(o) <= series_place(e.*) or o.is_read()) continue;
-        if (best == null or series_place(o) < series_place(entries[best.?])) best = @intCast(i);
+        if (best == null or series_place(o) < best_place) {
+            best = @intCast(i);
+            best_place = series_place(o);
+        }
     }
     const found = best orelse return null;
-    assert(found < entries.len);
-    assert(!entries[found].is_read());
+    assert(found < books.count());
+    assert(!books.at(found).is_read());
     return found;
 }
 
@@ -399,6 +418,7 @@ const Listed = struct {
 /// of books kept elsewhere. `books.entry(item)` is an item's book, its `series_last` as
 /// `books.set_series_last(&item, last)` last set it.
 pub fn sort_by(comptime T: type, items: []T, order: Order, books: anytype) void {
+    assert(items.len <= std.math.maxInt(u32)); // A book's place in them is a u32
     if (order == .series) series_last_set(T, items, books);
     const Books = @TypeOf(books);
     const by = struct {
@@ -442,6 +462,10 @@ fn series_last_set(comptime T: type, items: []T, books: anytype) void {
         run_first = @intCast(i);
     }
     assert(run_first == items.len);
+    for (items) |item| {
+        const e = books.entry(item);
+        if (e.series.len == 0) assert(e.series_last == 0);
+    }
 }
 
 /// The name a series is grouped under: without its "The", ignoring case.
@@ -452,23 +476,35 @@ pub fn series_key(e: Entry) []const u8 {
     return key;
 }
 
-/// The book for the hero: the latest one in progress, or else the latest opened.
-pub fn pick_hero(entries: []const Entry) ?u32 {
-    assert(entries.len <= std.math.maxInt(u32));
-    var best: ?u32 = null;
-    for (entries, 0..) |e, i| {
-        if (!e.in_progress() or !e.is_local()) continue;
-        if (best == null or e.last > entries[best.?].last) best = @intCast(i);
-    }
-    if (best) |going| return going;
-    for (entries, 0..) |e, i| {
+/// The book for the hero, as its index among `books`: the latest one in progress on
+/// this Kindle, or else the latest opened. One pass, either way.
+pub fn pick_hero(books: anytype) ?u32 {
+    var going: ?u32 = null;
+    var going_last: u64 = 0;
+    var latest: ?u32 = null;
+    var latest_last: u64 = 0;
+    for (0..books.count()) |i| {
+        const e = books.at(@intCast(i));
         if (!e.is_local()) continue;
-        if (best == null or e.last > entries[best.?].last) best = @intCast(i);
+        if (e.in_progress() and (going == null or e.last > going_last)) {
+            going = @intCast(i);
+            going_last = e.last;
+        }
+        if (latest == null or e.last > latest_last) {
+            latest = @intCast(i);
+            latest_last = e.last;
+        }
     }
-    const hero = best orelse return null;
-    assert(hero < entries.len);
-    assert(entries[hero].is_local()); // A cloud book can't be opened from the hero
+    const hero = going orelse latest orelse return null;
+    assert(hero < books.count());
+    assert(books.at(hero).is_local()); // A cloud book can't be opened from the hero
     return hero;
+}
+
+/// Whether `filter` and a search for `query` (empty for none) let book `e` through.
+pub fn lets_through(e: Entry, filter: Filter, query: []const u8) bool {
+    const by_filter = filter == .all or (filter == .read) == e.is_read();
+    return by_filter and (query.len == 0 or matches_query(e, query));
 }
 
 /// Fills `out` with indexes of matching entries, leaving out the hero, and returns how
@@ -488,13 +524,7 @@ pub fn select(
         if (hero) |h| {
             if (i == h) continue;
         }
-        if (query.len > 0 and !matches_query(e, query)) continue;
-        const matches = switch (filter) {
-            .all => true,
-            .read => e.is_read(),
-            .unread => !e.is_read(),
-        };
-        if (matches) {
+        if (lets_through(e, filter, query)) {
             if (n == out.len) break;
             out[n] = @intCast(i);
             n += 1;
@@ -731,7 +761,7 @@ test "hero is the latest book in progress, and leaves the grid" {
         .{ .path = "/b", .title = "Fresh", .author = "", .percent = 0, .last = 2 },
         .{ .path = "/c", .title = "Now", .author = "", .percent = 34, .last = 1 },
     };
-    const hero = pick_hero(&rows);
+    const hero = pick_hero(InList{ .entries = &rows });
     try std.testing.expectEqual(@as(u32, 2), hero.?);
     var out: [3]u32 = undefined;
     try std.testing.expectEqual(@as(u32, 2), select(&rows, .all, hero, "", &out));
@@ -774,7 +804,7 @@ test "with nothing in progress the hero is the latest opened" {
         .{ .path = "/a", .title = "Old", .author = "", .percent = 0, .last = 1 },
         .{ .path = "/b", .title = "New", .author = "", .percent = 0, .last = 5 },
     };
-    try std.testing.expectEqual(@as(u32, 1), pick_hero(&rows).?);
+    try std.testing.expectEqual(@as(u32, 1), pick_hero(InList{ .entries = &rows }).?);
 }
 
 test "cloud books sort after local ones" {
@@ -821,7 +851,7 @@ test "a new book at one percent is not in progress" {
     try std.testing.expect(!fresh.in_progress());
     try std.testing.expect(going.in_progress());
     const rows = [_]Entry{ fresh, going };
-    try std.testing.expectEqual(@as(u32, 1), pick_hero(&rows).?);
+    try std.testing.expectEqual(@as(u32, 1), pick_hero(InList{ .entries = &rows }).?);
 }
 
 test "by series: the latest series first, each in order, then the rest" {
@@ -909,8 +939,9 @@ test "next in a series skips what's read" {
             .series_index = 2,
         },
     };
-    try std.testing.expectEqual(@as(u32, 1), next_in_series(&entries, &entries[0]).?);
-    try std.testing.expect(next_in_series(&entries, &entries[1]) == null);
+    const listed: InList = .{ .entries = &entries };
+    try std.testing.expectEqual(@as(u32, 1), next_in_series(listed, &entries[0]).?);
+    try std.testing.expect(next_in_series(listed, &entries[1]) == null);
 }
 
 test "sorting by title holds together when one series is named with and without The" {

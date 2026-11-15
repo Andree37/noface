@@ -171,11 +171,9 @@ fn main_reader_configure(
     };
     assert(shared.layout.faces != null); // Set by apply_settings
     assert(shared.body.line_height > 0);
-    // Older files come back in the current format
-    app.save_settings(files.settings, shared.settings);
-    // On, but the system's startup file isn't this version's (an older install's points
-    // somewhere that no longer reads the settings): put the current one back, as the
-    // reader agreed to when they turned it on
+    // On, but the system's startup file isn't the one this version ships (an update
+    // changed it): put the current one back, as the reader agreed to when they turned
+    // it on
     if (shared.settings.autostart and autostart.outdated()) {
         const installed = autostart.install();
         std.debug.print("autostart: startup file out of date, reinstalled: {}\n", .{installed});

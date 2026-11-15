@@ -15,15 +15,6 @@ pub const State = struct {
 
 const failed = @import("os.zig").failed;
 
-/// The order of the values in files from before they were named.
-const old_order = [_][]const u8{ "para", "byte", "percent", "opened", "seconds", "finished" };
-
-comptime {
-    // Every value of a state is in the old order, once
-    assert(old_order.len == @typeInfo(State).@"struct".field_names.len);
-    for (old_order) |name| assert(@hasField(State, name));
-}
-
 /// `<dir>/state-<first 16 hex of md5 of "basename\n">`, matching earlier versions
 /// that named these files with `basename | md5sum`.
 pub fn path_for(buf: []u8, dir: []const u8, book_path: []const u8) ![:0]u8 {
@@ -88,11 +79,8 @@ pub fn sibling(buf: []u8, state_path: []const u8, kind: []const u8) ![:0]u8 {
 
 /// Reads a state file. Each value is on a line of its own, by name ("percent 37"), so a
 /// value added later is simply missing from older files and reads as its default.
-/// Files from before that are numbers in a row, in the order of `old_order`.
 // Assertions: it reads a state file, which is outside data.
 pub fn parse(content: []const u8) State {
-    const first = std.mem.trimStart(u8, content, " \n");
-    if (first.len > 0 and std.ascii.isDigit(first[0])) return parse_old(content);
     var s = State{};
     var lines = std.mem.tokenizeScalar(u8, content, '\n');
     while (lines.next()) |line| {
@@ -117,22 +105,6 @@ fn read_value(comptime T: type, text: []const u8) ?T {
         ?u32 => std.fmt.parseInt(u32, text, 10) catch null,
         else => std.fmt.parseInt(T, text, 10) catch null,
     };
-}
-
-fn parse_old(content: []const u8) State {
-    // The two values a file can't be without come first
-    comptime assert(std.mem.eql(u8, old_order[0], "para"));
-    comptime assert(std.mem.eql(u8, old_order[1], "byte"));
-    var it = std.mem.tokenizeAny(u8, content, " \n");
-    var s = State{};
-    inline for (old_order, 0..) |field, i| {
-        const word = it.next() orelse return if (i < 2) .{} else s;
-        const value = read_value(@TypeOf(@field(s, field)), word);
-        // Place and byte are the least a file holds: without them it's not one
-        if (value == null and i < 2) return .{};
-        if (value) |v| @field(s, field) = v;
-    }
-    return s;
 }
 
 pub fn load(path: [*:0]const u8) State {
@@ -233,19 +205,6 @@ test "state file name matches basename piped to md5sum" {
     try std.testing.expectEqual(@as(?u64, null), key_of_name("state-0BEE89B07A248E27", "state"));
 }
 
-test "old two-field files still load" {
-    const s = parse("8 7957\n");
-    try std.testing.expectEqual(@as(u32, 8), s.para);
-    try std.testing.expectEqual(@as(u32, 7957), s.byte);
-    try std.testing.expect(s.percent == null);
-}
-
-test "new files keep percent and time" {
-    const s = parse("1 2 37 1793990000\n");
-    try std.testing.expectEqual(@as(u32, 37), s.percent.?);
-    try std.testing.expectEqual(@as(u64, 1793990000), s.opened);
-}
-
 test "kindle position wins until we have our own" {
     try std.testing.expect(prefer_kindle(.{}, 100));
     try std.testing.expect(prefer_kindle(.{ .para = 5, .opened = 100 }, 200));
@@ -253,9 +212,11 @@ test "kindle position wins until we have our own" {
     try std.testing.expect(!prefer_kindle(.{ .para = 5 }, 200));
 }
 
-test "reading time is kept, and older files read as none" {
-    try std.testing.expectEqual(@as(u64, 4200), parse("1 2 37 1793990000 4200\n").seconds);
-    try std.testing.expectEqual(@as(u64, 0), parse("1 2 37 1793990000\n").seconds);
+test "a value a file doesn't have reads as its default" {
+    try std.testing.expectEqual(@as(u64, 4200), parse("para 1\nseconds 4200\n").seconds);
+    try std.testing.expectEqual(@as(u64, 0), parse("para 1\n").seconds);
+    try std.testing.expect(parse("para 10\nfinished 1\n").finished);
+    try std.testing.expect(!parse("para 10\n").finished);
 }
 
 test "a book's other files sit beside its state file" {
@@ -263,12 +224,6 @@ test "a book's other files sit beside its state file" {
     const notes = try sibling(&buf, "/d/state-0bee89b07a248e27", "notes");
     try std.testing.expectEqualStrings("/d/notes-0bee89b07a248e27", notes);
     try std.testing.expectError(error.NotAStateFile, sibling(&buf, "/d/other", "notes"));
-}
-
-test "a book marked read stays read, and older files read as not" {
-    const s = parse("10 20 55 1793990000 600 1\n");
-    try std.testing.expect(s.finished);
-    try std.testing.expect(!parse("10 20 55 1793990000 600\n").finished);
 }
 
 test "files are written by name and read back" {

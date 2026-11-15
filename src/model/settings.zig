@@ -130,10 +130,6 @@ comptime {
     assert(defaults.spacing < spacings.len);
     assert(defaults.margin < margins.len);
     assert(defaults.font < builtin_families.len);
-    // The second old file format kept each step in 4 bits.
-    assert(sizes.len <= 16);
-    assert(spacings.len <= 16);
-    assert(margins.len <= 16);
     for (spacings) |spacing| assert(spacing > 1);
 }
 
@@ -155,7 +151,6 @@ fn steps_of(comptime field: []const u8) u32 {
 }
 
 pub fn parse(content: []const u8) Settings {
-    if (looks_old(content)) return from_old_file(content);
     var s = Settings{};
     var lines = std.mem.tokenizeScalar(u8, content, '\n');
     while (lines.next()) |line| {
@@ -227,44 +222,6 @@ fn on_off(on: bool) []const u8 {
     return if (on) "on" else "off";
 }
 
-/// Earlier versions saved settings as numbers in the reading-position file's shape:
-/// "a b c d". They're read once, then saved again in the format above.
-fn looks_old(content: []const u8) bool {
-    const first = std.mem.trimStart(u8, content, " \n");
-    return first.len > 0 and std.ascii.isDigit(first[0]);
-}
-
-fn from_old_file(content: []const u8) Settings {
-    assert(families.len > 0); // So the last typeface is `families.len - 1`
-    var numbers: [4]u32 = @splat(0);
-    var words = std.mem.tokenizeAny(u8, content, " \n");
-    for (&numbers) |*n| n.* = std.fmt.parseInt(u32, words.next() orelse break, 10) catch 0;
-    const a = numbers[0];
-    const b = numbers[1];
-    const version = numbers[3];
-    if (version == 0) return .{};
-    if (version != 2) {
-        // First version: size, spacing, font index.
-        return .{
-            .size = @min(a, sizes.len - 1),
-            .spacing = @min(b, spacings.len - 1),
-            .font = @min(numbers[2], families.len - 1),
-        };
-    }
-    // Second version: size, spacing, font and margin in 4 bits each, toggles as bits.
-    return .{
-        .size = @min(a & 15, sizes.len - 1),
-        .spacing = @min((a >> 4) & 15, spacings.len - 1),
-        .font = @min((a >> 8) & 15, families.len - 1),
-        .margin = @min((a >> 12) & 15, margins.len - 1),
-        .bold = b & 1 != 0,
-        .left_align = b & 2 != 0,
-        .clock = b & 4 == 0,
-        .refresh = b & 8 != 0,
-        .time_left = b & 16 == 0,
-    };
-}
-
 test "settings survive being saved" {
     var buf: [256]u8 = undefined;
     const s = Settings{
@@ -290,20 +247,6 @@ test "settings survive being saved" {
 test "bad or unknown lines change nothing" {
     const s = parse("size 99\nfont Comic\nbold maybe\ncolour red\nspacing 2\n");
     try std.testing.expectEqual(Settings{ .spacing = 2 }, s);
-}
-
-test "settings saved by older versions still load" {
-    const first = parse("3 2 1 1\n");
-    try std.testing.expectEqual(@as(u32, 3), first.size);
-    try std.testing.expectEqual(@as(u32, 2), first.spacing);
-    try std.testing.expectEqual(@as(u32, 1), first.font);
-    try std.testing.expect(first.clock);
-    // The second version, as on the device today: size 3, spacing 1, no flags.
-    const second = parse("19 0 0 2\n");
-    try std.testing.expectEqual(@as(u32, 3), second.size);
-    try std.testing.expectEqual(@as(u32, 1), second.spacing);
-    try std.testing.expectEqual(@as(u32, 0), second.margin);
-    try std.testing.expect(second.clock and second.time_left);
 }
 
 test "defaults match the original reader" {

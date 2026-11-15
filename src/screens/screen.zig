@@ -42,6 +42,9 @@
 //! the screen in front's, set before each wait.
 const std = @import("std");
 const assert = std.debug.assert;
+/// Which screen opened, which ended and what ended it: noface.log on the Kindle, quiet
+/// in the unit tests.
+const log = std.log.scoped(.screen);
 const app = @import("../app.zig");
 const input_mod = @import("../kindle/input.zig");
 const os = @import("../sys/os.zig");
@@ -246,13 +249,13 @@ fn log_ending(name: []const u8, how: []const u8, c: Frame.Call) void {
     const action = switch (c) {
         .act, .interrupt => |action| action,
         .draw, .open, .@"resume" => {
-            std.debug.print("screen: {s} {s}\n", .{ name, how });
+            log.info("screen: {s} {s}", .{ name, how });
             return;
         },
     };
     switch (action) {
-        .tap => |t| std.debug.print("screen: {s} {s} by tap {d},{d}\n", .{ name, how, t.x, t.y }),
-        else => std.debug.print("screen: {s} {s} by {s}\n", .{ name, how, @tagName(action) }),
+        .tap => |t| log.info("screen: {s} {s} by tap {d},{d}", .{ name, how, t.x, t.y }),
+        else => log.info("screen: {s} {s} by {s}", .{ name, how, @tagName(action) }),
     }
 }
 
@@ -353,7 +356,7 @@ const Stack = struct {
         stack.depth += 1;
         stack.changes +%= 1;
         assert(stack.top().screen == f.screen);
-        std.debug.print("screen: {s} opened\n", .{f.kind.name});
+        log.info("screen: {s} opened", .{f.kind.name});
         a.input.apply(stack.scope(), true);
         try f.draw(.all);
     }
@@ -387,7 +390,7 @@ const Stack = struct {
             .tap => |t| if (t.us < stack.shown_us) {
                 // The finger touched while another screen was in front: the tap was
                 // meant for that one, which has ended, never for this one
-                std.debug.print("tap {d},{d} dropped: touched before {s} was shown\n", .{
+                log.info("tap {d},{d} dropped: touched before {s} was shown", .{
                     t.x, t.y, f.kind.name,
                 });
                 return;

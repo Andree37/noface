@@ -27,6 +27,20 @@ const autostart = @import("kindle/autostart.zig");
 const battery_log = @import("kindle/battery_log.zig");
 const dict_download = @import("kindle/dict_download.zig");
 
+/// What noface logs goes to noface.log as plain lines, as its other output does.
+pub const std_options: std.Options = .{ .logFn = plain_log };
+
+fn plain_log(
+    comptime level: std.log.Level,
+    comptime scope: @EnumLiteral(),
+    comptime format: []const u8,
+    arguments: anytype,
+) void {
+    _ = level; // Every level is a line of the same log
+    _ = scope;
+    std.debug.print(format ++ "\n", arguments);
+}
+
 /// The arguments noface is started with to read: its own name, the library, four
 /// fonts and the data folder.
 const reader_arguments_count = 7;

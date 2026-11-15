@@ -215,26 +215,109 @@ pub const Font = struct {
     }
 };
 
-/// Draws a glyph's coverage onto a page, darkening what's already there.
+/// Draws a glyph's coverage onto a page, darkening what's already there. Clipped to
+/// the page once, here, so the rows drawn need no test per pixel.
 fn blit(p: Page, g: *const Glyph, x: i32, y: i32) void {
     const source = g.pixels orelse return;
     // Checked once here, not per pixel: the rows clipped to the page lie in its buffer
     assert(p.holds_rows());
-    assert(p.height <= std.math.maxInt(i32));
-    const height: i32 = @intCast(p.height);
-    const width: i32 = @intCast(p.width);
-    var row: i32 = 0;
-    while (row < g.height) : (row += 1) {
-        const py = y + row;
-        if (py < 0 or py >= height) continue;
-        var col: i32 = 0;
-        while (col < g.width) : (col += 1) {
-            const px = x + col;
-            if (px < 0 or px >= width) continue;
-            const a = source[@intCast(row * g.width + col)];
-            const at = @as(u32, @intCast(py)) * p.stride + @as(u32, @intCast(px));
-            p.buf[at] = @min(p.buf[at], 255 - a);
+    // Paired with `glyph`, which keeps `width` times `height` pixels
+    assert(source.len == @as(u64, @intCast(g.width)) * @as(u64, @intCast(g.height)));
+    // In 64 bits, so a glyph placed far off the page can't overflow its edges
+    const left: i64 = x;
+    const top: i64 = y;
+    const column_start = std.math.clamp(-left, 0, g.width);
+    const column_end = std.math.clamp(@as(i64, p.width) - left, 0, g.width);
+    const row_start = std.math.clamp(-top, 0, g.height);
+    const row_end = std.math.clamp(@as(i64, p.height) - top, 0, g.height);
+    if (column_start >= column_end) return;
+    if (row_start >= row_end) return;
+    // What's left lies on the page
+    assert(left + column_start >= 0);
+    assert(left + column_end <= p.width);
+    assert(top + row_start >= 0);
+    assert(top + row_end <= p.height);
+    const glyph_width: u32 = @intCast(g.width);
+    const target_first: u32 = @intCast((top + row_start) * p.stride + left + column_start);
+    const source_first: u32 = @intCast(row_start * glyph_width + column_start);
+    blit_rows(.{
+        .target = p.buf[target_first..],
+        .target_stride = p.stride,
+        .source = source[source_first..],
+        .source_stride = glyph_width,
+        .rows = @intCast(row_end - row_start),
+        .columns = @intCast(column_end - column_start),
+    });
+}
+
+/// A block of a glyph's coverage and where on a page it goes: `rows` rows of
+/// `columns` pixels, each row `source_stride` after the last in `source` and
+/// `target_stride` after the last in `target`.
+const BlitRows = struct {
+    target: []u8,
+    target_stride: u32,
+    source: []const u8,
+    source_stride: u32,
+    rows: u32,
+    columns: u32,
+};
+
+/// The hot loop of `blit`: each row darkened whole, its bounds checked once a row,
+/// not once a pixel.
+fn blit_rows(b: BlitRows) void {
+    assert(b.rows > 0);
+    assert(b.columns > 0);
+    assert(b.columns <= b.target_stride);
+    assert(b.columns <= b.source_stride);
+    assert(@as(u64, b.rows - 1) * b.target_stride + b.columns <= b.target.len);
+    assert(@as(u64, b.rows - 1) * b.source_stride + b.columns <= b.source.len);
+    var target_at: u32 = 0;
+    var source_at: u32 = 0;
+    for (0..b.rows) |_| {
+        const target = b.target[target_at..][0..b.columns];
+        const source = b.source[source_at..][0..b.columns];
+        for (target, source) |*pixel, coverage| pixel.* = @min(pixel.*, 255 - coverage);
+        target_at += b.target_stride;
+        source_at += b.source_stride;
+    }
+}
+
+test "a glyph drawn across any edge of the page is clipped there, pixel for pixel" {
+    var coverage: [7 * 5]u8 = undefined;
+    for (&coverage, 0..) |*pixel, index| pixel.* = @intCast(index * 7 % 256);
+    const g = Glyph{
+        .index = 1,
+        .advance = 7,
+        .width = 7,
+        .height = 5,
+        .x_offset = 0,
+        .y_offset = 0,
+        .pixels = &coverage,
+    };
+    var drawn: [12 * 9]u8 = undefined;
+    var expected: [12 * 9]u8 = undefined;
+    // Ten columns of twelve in memory, so a row's padding must stay untouched
+    const page = Page{ .buf = &drawn, .width = 10, .height = 9, .stride = 12 };
+    const places = [_][2]i32{
+        .{ 2, 2 },   .{ -3, 1 },  .{ 6, 1 },  .{ 2, -2 },                   .{ 2, 7 },
+        .{ -6, -4 }, .{ 9, 8 },   .{ -7, 0 }, .{ 10, 0 },                   .{ 0, 9 },
+        .{ 0, -5 },  .{ -3, -3 }, .{ 5, 6 },  .{ std.math.minInt(i32), 0 },
+    };
+    for (places) |place| {
+        for (&drawn, &expected, 0..) |*a, *b, index| {
+            a.* = @intCast(255 - index % 200);
+            b.* = a.*;
         }
+        blit(page, &g, place[0], place[1]);
+        // One pixel at a time, each tested against the page's edges
+        for (0..5) |row| for (0..7) |column| {
+            const x = @as(i64, place[0]) + @as(i64, @intCast(column));
+            const y = @as(i64, place[1]) + @as(i64, @intCast(row));
+            if (x < 0 or y < 0 or x >= page.width or y >= page.height) continue;
+            const at: u32 = @intCast(y * page.stride + x);
+            expected[at] = @min(expected[at], 255 - coverage[row * 7 + column]);
+        };
+        try std.testing.expectEqualSlices(u8, &expected, &drawn);
     }
 }
 

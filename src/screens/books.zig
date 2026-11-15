@@ -14,6 +14,7 @@ const file = @import("../sys/file.zig");
 const kfx = @import("../kindle/kfx.zig");
 const state = @import("../sys/state.zig");
 const calls = @import("../sys/calls.zig");
+const epub_cache = @import("../library/epub_cache.zig");
 const paths = @import("../kindle/paths.zig");
 const catalog_db = @import("../kindle/catalog.zig");
 const app = @import("../app.zig");
@@ -180,6 +181,10 @@ pub fn load(s: Sources) !Library {
     defer scratch.reset(.give_back);
     const rows = kindle_books(&scratch, data);
     const saved = list_saved(scratch.allocator(), s.state_dir);
+    var folder_buffer: [path_size_max]u8 = undefined;
+    const folder = try index_folder(&folder_buffer, s.state_dir);
+    const cache_memory = try epub_cache_memory(scratch.allocator());
+    var cache = epub_cache.Cache.open(&cache_memory, folder);
     // A folder that can't be read has no EPUBs to list
     const none: []const [:0]u8 = &.{};
     const found = dir.find_files(scratch.allocator(), s.documents, ".epub") catch none;
@@ -195,7 +200,8 @@ pub fn load(s: Sources) !Library {
         list.appendAssumeCapacity(e);
     }
     const kindle = list.items.len;
-    add_epubs(s, &saved, alloc, &scratch, found, &list);
+    add_epubs(s, .{ .saved = &saved, .cache = &cache }, alloc, &scratch, found, &list);
+    cache.finish();
     assert(list.items.len >= kindle);
     assert(list.items.len <= books_max);
     series_screen.apply(alloc, s.state_dir, list.items); // Series set by hand win
@@ -289,7 +295,7 @@ fn place_kindle_book(s: Sources, listed: *const Saved, e: *catalog.Entry) void {
 /// beside the book's state. Each is read in `scratch`, emptied after it.
 fn add_epubs(
     s: Sources,
-    saved: *const Saved,
+    known: Known,
     alloc: std.mem.Allocator,
     scratch: *memory.Budget,
     found: []const [:0]u8,
@@ -309,7 +315,7 @@ fn add_epubs(
         }
         scratch.rewind(each_book);
         // An error is the list's memory running out: it keeps the books that fit
-        const entry = read_epub(s, saved, alloc, scratch, path) catch {
+        const entry = read_epub(s, known, alloc, scratch, path) catch {
             left_out += 1;
             continue;
         } orelse continue;
@@ -335,28 +341,87 @@ fn log(comptime format: []const u8, args: anytype) void {
 /// book that won't read; an error only when `alloc` has no room.
 fn read_epub(
     s: Sources,
-    saved: *const Saved,
+    known: Known,
     alloc: std.mem.Allocator,
     scratch: *memory.Budget,
     path: [:0]const u8,
 ) !?catalog.Entry {
     assert(path.len > 0);
     if (path.len >= path_size_max) return null;
-    const data = file.map(path) catch return null;
-    defer file.unmap(data);
+    const facts = file.facts_of(path) orelse return null;
     var path_buffer: [path_size_max]u8 = undefined;
     var cover_buffer: [path_size_max]u8 = undefined;
     const state_path = state.path_for(&path_buffer, s.state_dir, path) catch return null;
     const cover_path = state.sibling(&cover_buffer, state_path, "cover") catch return null;
     const key = state.key_for(path);
-    const have_cover = Saved.has(saved.covers, key);
+    const have_cover = Saved.has(known.saved.covers, key);
+    const saved_state = if (Saved.has(known.saved.states, key))
+        state.load(state_path)
+    else
+        state.State{};
+    // Read before, and unchanged since: what was kept of it, without opening it. Read
+    // again only to save its cover, should that file have gone
+    if (known.cache.find(path, facts)) |kept| {
+        if (have_cover or !kept.has_cover) {
+            known.cache.add(path, facts, kept);
+            const about: epub.Info = .{
+                .title = kept.title,
+                .author = kept.author,
+                .series = kept.series,
+                .series_index = kept.series_index,
+            };
+            const thumbnail = if (have_cover) cover_path else "";
+            return try keep_epub(alloc, path, about, saved_state, thumbnail);
+        }
+    }
+    const data = file.map(path) catch return null;
+    defer file.unmap(data);
     const about = read_about(scratch, data, !have_cover) orelse return null;
     if (about.cover) |bytes| state.write_small(cover_path, bytes);
     const has_cover = have_cover or about.cover != null;
     if (about.cover != null) assert(!have_cover); // Read only for a book without one
+    known.cache.add(path, facts, .{
+        .title = about.title,
+        .author = about.author,
+        .series = about.series,
+        .series_index = about.series_index,
+        .has_cover = has_cover,
+    });
     const thumbnail = if (has_cover) cover_path else "";
-    const saved_state = if (Saved.has(saved.states, key)) state.load(state_path) else state.State{};
     return try keep_epub(alloc, path, about, saved_state, thumbnail);
+}
+
+/// What's known of the books before any is opened: the files noface keeps for them,
+/// and what each EPUB said when last read.
+const Known = struct { saved: *const Saved, cache: *epub_cache.Cache };
+
+/// The folder in the data folder the library keeps its own files in, made if missing.
+fn index_folder(buffer: []u8, state_dir: []const u8) ![]const u8 {
+    assert(state_dir.len > 0);
+    const folder = try std.fmt.bufPrintSentinel(buffer, "{s}/library", .{state_dir}, 0);
+    _ = calls.mkdir(folder, 0o755); // Ignored: there already, or the cache can't be kept
+    assert(std.mem.endsWith(u8, folder, "/library"));
+    return folder;
+}
+
+/// The EPUB cache's buffers, in `alloc`: about 2 MB.
+fn epub_cache_memory(alloc: std.mem.Allocator) !epub_cache.Memory {
+    const inputs = try alloc.alloc([]u8, 4);
+    for (inputs) |*input| input.* = try alloc.alloc(u8, 64 << 10);
+    const result: epub_cache.Memory = .{
+        .sort = .{
+            .items = try alloc.alloc(u8, 1 << 20),
+            .offsets = try alloc.alloc(u32, 32 << 10),
+            .inputs = inputs,
+            .output = try alloc.alloc(u8, 64 << 10),
+        },
+        .lines_out = try alloc.alloc(u8, 64 << 10),
+        .index_in = try alloc.alloc(u8, 4 << 10),
+        .lines_in = try alloc.alloc(u8, epub_cache.line_bytes_max),
+    };
+    result.invariants();
+    assert(result.sort.inputs.len == 4);
+    return result;
 }
 
 /// The books noface keeps files for in the data folder, read from one listing of it, so
@@ -663,9 +728,18 @@ test "hundreds of EPUBs list in memory that grows with their count, not their fi
     try std.testing.expectEqual(@as(usize, epubs), first.entries.len);
     try std.testing.expect(first.entries[0].thumbnail.len > 0);
     try std.testing.expect(t.budget.live <= epubs * book_bytes_max);
+    // What each said is kept, a line each, so the next load needn't open them
+    var cache_buffer: [320]u8 = undefined;
+    const cache_path = try std.fmt.bufPrintSentinel(&cache_buffer, "{s}/library/epubs.tsv", .{
+        t.sources.state_dir,
+    }, 0);
+    const kept = try file.map(cache_path);
+    try std.testing.expectEqual(@as(usize, epubs), std.mem.count(u8, kept, "\n"));
+    file.unmap(kept);
     // Reloaded beside it, as after a download: two lists at once
     var again = try load(t.sources);
     try std.testing.expectEqual(@as(usize, epubs), again.entries.len);
+    for (first.entries, again.entries) |a, b| try std.testing.expectEqualStrings(a.title, b.title);
     try std.testing.expect(t.budget.peak <= 2 * epubs * book_bytes_max + list_slack);
     again.deinit();
     first.deinit();

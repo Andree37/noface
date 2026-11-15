@@ -88,12 +88,12 @@ pub const Writer = struct {
 
 fn write_all(fd: i32, data: []const u8) bool {
     assert(fd >= 0);
-    var done: u64 = 0;
+    var done: u32 = 0;
     // Each write moves at least a byte, or fails
     while (done < data.len) {
         const wrote = calls.write(fd, data[done..].ptr, data.len - done);
         if (failed(wrote) or wrote == 0) return false;
-        done += wrote;
+        done += @intCast(wrote);
     }
     assert(done == data.len);
     return true;

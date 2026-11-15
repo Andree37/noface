@@ -19,6 +19,8 @@ const item_overhead_bytes: u32 = 2 + 8;
 /// The most runs one sort may write, merges included. A run holds a buffer's worth, so
 /// this is far past any library: with 4 MB buffers, a quarter of a terabyte of keys.
 const runs_max: u32 = 1 << 16;
+/// The most items one sort may take: far past any library, at a few per book.
+pub const items_max: u32 = 1 << 30;
 
 comptime {
     assert(key_bytes_max < std.math.maxInt(u16)); // Its length fits the length field
@@ -43,7 +45,7 @@ pub const Sorter = struct {
     count: u32 = 0, // Items in the buffer
     runs_first: u32 = 0, // The runs not yet merged are numbered [first, end)
     runs_end: u32 = 0,
-    items_total: u64 = 0,
+    items_total: u32 = 0, // Never past `items_max`
 
     pub fn init(memory: *const Memory, dir: []const u8, name: []const u8) Sorter {
         assert(memory.inputs.len >= 2); // Merging takes two runs at least
@@ -58,6 +60,7 @@ pub const Sorter = struct {
     pub fn add(s: *Sorter, key: []const u8, value: u64) !void {
         assert(key.len <= key_bytes_max);
         assert(s.used <= s.memory.items.len);
+        if (s.items_total == items_max) return error.TooManyItems;
         const size: u32 = @intCast(item_overhead_bytes + key.len);
         const full = s.used + size > s.memory.items.len or s.count == s.memory.offsets.len;
         if (full) try s.spill();

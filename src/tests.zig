@@ -87,4 +87,5 @@ test {
     _ = @import("sys/service.zig");
     _ = @import("library/files.zig");
     _ = @import("library/sorter.zig");
+    _ = @import("library/epub_cache.zig");
 }

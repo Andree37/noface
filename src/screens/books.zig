@@ -14,6 +14,7 @@ const file = @import("../sys/file.zig");
 const kfx = @import("../kindle/kfx.zig");
 const state = @import("../sys/state.zig");
 const calls = @import("../sys/calls.zig");
+const paths = @import("../kindle/paths.zig");
 const catalog_db = @import("../kindle/catalog.zig");
 const app = @import("../app.zig");
 const series_screen = @import("series.zig");
@@ -55,11 +56,23 @@ pub const Library = struct {
     entries: []catalog.Entry,
     /// Indexes into `entries`, one place for each, for `catalog.select` to fill.
     visible: []u32,
+    /// The Kindle's catalog as it was when this list was read, to tell when it changed.
+    catalog_seen: CatalogFacts = .{},
 
     pub fn deinit(l: *Library) void {
         assert(l.visible.len == l.entries.len);
         l.arena.deinit();
         file.unmap(l.data);
+    }
+
+    pub fn downloading_count(l: *const Library) u32 {
+        assert(l.visible.len == l.entries.len);
+        var count: u32 = 0;
+        for (l.entries) |e| {
+            if (e.availability == .downloading) count += 1;
+        }
+        assert(count <= l.entries.len);
+        return count;
     }
 
     pub fn local_count(l: *const Library) u32 {
@@ -94,9 +107,66 @@ pub fn load_library(a: *app.App) !Library {
     });
 }
 
+/// What tells that the Kindle's catalog changed without reading it: the size and change
+/// time of its database and of the log its changes go to first.
+pub const CatalogFacts = struct {
+    database: ?calls.Facts = null,
+    log: ?calls.Facts = null,
+
+    pub fn read() CatalogFacts {
+        const read_now: CatalogFacts = .{
+            .database = file.facts_of(paths.catalog),
+            .log = file.facts_of(paths.catalog ++ "-wal"),
+        };
+        comptime assert(paths.catalog[0] == '/');
+        return read_now;
+    }
+};
+
+/// What a download being watched is up to.
+pub const Download = enum {
+    /// Its file is still partial, or the catalog hasn't changed since the list was read.
+    waiting,
+    /// Its file is whole: read the library again to list it.
+    arrived,
+    /// The catalog changed, and the list says of no book that it's coming: read it
+    /// again to learn which, if any.
+    catalog_changed,
+};
+
+/// Whether a download watched has arrived, looking only at what's downloading: the
+/// files the list says are coming, or, when it names none yet (the catalog may not
+/// have marked it when the list was read), whether the catalog has changed at all. The
+/// whole catalog is exported and read again only once either says so.
+pub fn watch_download(l: *const Library) Download {
+    assert(l.visible.len == l.entries.len);
+    var coming: u32 = 0;
+    for (l.entries) |e| {
+        if (e.availability != .downloading or e.path.len == 0) continue;
+        coming += 1;
+        if (is_complete_book(e.path)) return .arrived;
+    }
+    if (coming > 0) return .waiting;
+    const now = CatalogFacts.read();
+    if (std.meta.eql(now, l.catalog_seen)) return .waiting;
+    assert(coming == 0);
+    return .catalog_changed;
+}
+
+/// Whether two lists have the same books on the Kindle and the same coming down, so
+/// one can stand for the other on screen.
+pub fn same_shelf(a: *const Library, b: *const Library) bool {
+    assert(a.visible.len == a.entries.len);
+    assert(b.visible.len == b.entries.len);
+    if (a.local_count() != b.local_count()) return false;
+    return a.downloading_count() == b.downloading_count();
+}
+
 pub fn load(s: Sources) !Library {
     assert(s.scratch.empty());
     assert(s.state_dir.len > 0);
+    // Before the list is read, so a change made while it's read shows next time
+    const catalog_seen = CatalogFacts.read();
     var arena = std.heap.ArenaAllocator.init(s.budget.allocator());
     errdefer arena.deinit();
     const alloc = arena.allocator();
@@ -132,7 +202,13 @@ pub fn load(s: Sources) !Library {
     // Allocated before the arena is copied into the result: a block it adds after
     // would be known only to this copy, and never freed
     const count = list.items.len;
-    return .{ .arena = arena, .data = data, .entries = list.items, .visible = visible[0..count] };
+    return .{
+        .arena = arena,
+        .data = data,
+        .entries = list.items,
+        .visible = visible[0..count],
+        .catalog_seen = catalog_seen,
+    };
 }
 
 /// The Kindle's books, as its catalog's first `books_max` rows say, read in `scratch`.
@@ -621,6 +697,27 @@ test "a book's place is read from its state file, found by one listing of the fo
         }
     }
     try std.testing.expectEqual(@as(u32, 1), placed);
+}
+
+test "a download is watched by its own file, not by reading the whole catalog again" {
+    var buffer: [64]u8 = undefined;
+    const root = try test_folder(&buffer, 0, 0, 1 << 10);
+    defer test_folder_remove(root);
+    var t: TestLibrary = undefined;
+    try t.init(root);
+    defer t.deinit();
+    var book_buffer: [320]u8 = undefined;
+    const book = try std.fmt.bufPrintSentinel(&book_buffer, "{s}/documents/B.kfx", .{root}, 0);
+    var row_buffer: [400]u8 = undefined;
+    const row = try std.fmt.bufPrint(&row_buffer, "{s}\tB\tx\t0\t0\t0\t\t0\t2\n", .{book});
+    try test_write(t.sources.catalog_path, row);
+    var library = try load(t.sources);
+    defer library.deinit();
+    try std.testing.expectEqual(@as(u32, 1), library.downloading_count());
+    // Its file not there yet, or partial: still coming, and nothing else is read
+    try std.testing.expectEqual(Download.waiting, watch_download(&library));
+    try test_write(book, "not a whole book");
+    try std.testing.expectEqual(Download.waiting, watch_download(&library));
 }
 
 test "a library past its most books lists the first that fit" {

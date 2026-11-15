@@ -44,6 +44,16 @@ pub fn exists(path: [*:0]const u8) bool {
     return true;
 }
 
+/// The size and change time of the file at `path`, or null when it can't be opened.
+pub fn facts_of(path: [*:0]const u8) ?linux.Facts {
+    assert(path[0] != 0);
+    const fd = linux.open(path, .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0);
+    if (failed(fd)) return null;
+    assert(fd <= std.math.maxInt(i32)); // A descriptor, as every call taking one expects
+    defer _ = linux.close(@intCast(fd)); // Only read: nothing is lost if closing fails
+    return linux.facts(@intCast(fd));
+}
+
 /// How many bytes `path` holds now, or 0 when it can't be opened.
 pub fn size_of(path: [*:0]const u8) u64 {
     assert(path[0] != 0);

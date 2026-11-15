@@ -549,16 +549,19 @@ const Browser = struct {
     /// The library read again, kept only if a book has arrived: a swap without a
     /// redraw would leave the screen showing books by places that moved.
     fn reload_if_downloaded(b: *Browser) Next {
+        // Only what's downloading is looked at, until it says the catalog moved on
+        if (books.watch_download(&b.lib) == .waiting) return .nothing;
         catalog_db.export_library();
         var fresh = load_library(b.a) catch return .nothing;
         assert(fresh.visible.len == fresh.entries.len);
-        if (fresh.local_count() == b.lib.local_count()) {
+        if (books.same_shelf(&fresh, &b.lib)) {
+            b.lib.catalog_seen = fresh.catalog_seen; // Nothing to show for the change
             fresh.deinit();
             return .nothing;
         }
+        if (fresh.local_count() != b.lib.local_count()) b.watch_until = 0;
         b.lib.deinit();
         b.lib = fresh;
-        b.watch_until = 0;
         return .everything;
     }
 

@@ -19,7 +19,7 @@ comptime {
 
 /// Shows the panel at once with the last status read, then reads it again (about a
 /// quarter second of lipc calls) and redraws only if something changed.
-pub fn draw_fresh(a: *app.App, background: []const u8) !void {
+fn draw_fresh(a: *app.App, background: []const u8) !void {
     assert(background.len == a.screen.pixels.len);
     try draw_menu(a, background);
     const fresh = lipc.read(a.quick);
@@ -30,7 +30,7 @@ pub fn draw_fresh(a: *app.App, background: []const u8) !void {
 }
 
 /// Draws the quick panel over `background` and shows it.
-pub fn draw_menu(a: *app.App, background: []const u8) !void {
+fn draw_menu(a: *app.App, background: []const u8) !void {
     assert(a.overlay.len == background.len);
     assert(menu.height <= a.screen.height);
     @memcpy(a.overlay, background);
@@ -39,14 +39,14 @@ pub fn draw_menu(a: *app.App, background: []const u8) !void {
     try a.show_band(0, menu.height);
 }
 
-pub fn close_menu(a: *app.App, background: []const u8) !void {
+fn close_menu(a: *app.App, background: []const u8) !void {
     assert(background.len == a.screen.pixels.len);
     assert(menu.height <= a.screen.height);
     @memcpy(a.screen.pixels, background);
     try a.show_band(0, menu.height);
 }
 
-pub fn row_value(a: *app.App, row: menu.Row) u32 {
+fn row_value(a: *app.App, row: menu.Row) u32 {
     assert(row.y == menu.warmth_row.y or row.y == menu.brightness_row.y);
     if (row.y == menu.warmth_row.y) {
         assert(row.max == menu.warmth_row.max);
@@ -56,7 +56,7 @@ pub fn row_value(a: *app.App, row: menu.Row) u32 {
     return a.quick.brightness;
 }
 
-pub fn set_row_value(a: *app.App, row: menu.Row, level: u32) void {
+fn set_row_value(a: *app.App, row: menu.Row, level: u32) void {
     assert(row.y == menu.warmth_row.y or row.y == menu.brightness_row.y);
     if (row.y == menu.warmth_row.y) {
         a.quick.warmth = level;
@@ -80,7 +80,7 @@ fn show_row(a: *app.App, row: menu.Row, level: u32) !void {
 /// while it's open over the panel. The knob slides under the finger; the light
 /// changes a step at a time, after each frame is on its way, so the lipc call never
 /// holds the knob back.
-pub const SliderDrag = struct {
+const SliderDrag = struct {
     row: menu.Row = undefined,
     knob: u32 = 0,
     path: [2]u32 = .{ 0, 0 }, // Leftmost and rightmost knob positions shown
@@ -137,7 +137,7 @@ fn drag_row(a: *app.App, sd: *SliderDrag, row: menu.Row, first_x: i32) !screen.F
 
 /// The finger lifted from a slider (or the Kindle locked): settles the stretch the
 /// knob crossed back to smooth edges.
-pub fn slider_ended(a: *app.App, sd: *SliderDrag) !void {
+fn slider_ended(a: *app.App, sd: *SliderDrag) !void {
     _ = try app.drag_ended(&sd.drag, sd.ending.?);
     const row = sd.row;
     assert(sd.path[0] <= sd.path[1]);
@@ -148,12 +148,12 @@ pub fn slider_ended(a: *app.App, sd: *SliderDrag) !void {
 
 /// What a tap on the panel did: nothing (it wasn't on a control), ran a control, or
 /// began a slider's drag, to open over the panel.
-pub const Control = union(enum) { not_one, ran, drag: screen.Frame };
+const Control = union(enum) { not_one, ran, drag: screen.Frame };
 
 /// Runs a panel control. Each control redraws only its own part of the panel, before
 /// telling the Kindle, so the tap answers at once. A slider follows the finger in
 /// `slider`, opened over the panel.
-pub fn panel_control(
+fn panel_control(
     a: *app.App,
     background: []const u8,
     choice: menu.Hit,
@@ -229,15 +229,15 @@ fn panel_control_shortcut(a: *app.App, choice: menu.Hit) !void {
     }
 }
 
-/// The quick panel, to open over the library drawn in `background`.
-pub fn library_menu(a: *app.App, background: []const u8) LibraryPanel {
+/// The quick panel, to open over the library or a book drawn in `background`.
+pub fn open(a: *app.App, background: []const u8) Panel {
     assert(background.len == a.screen.pixels.len);
     assert(a.overlay.len == background.len);
     return .{ .a = a, .background = background };
 }
 
-/// Once the panel over the library has ended: true to quit to the stock UI.
-pub fn library_menu_ended(
+/// Once the panel has ended: true to go to the Kindle's own screens.
+pub fn ended(
     a: *app.App,
     background: []const u8,
     ending: screen.Ending(void),
@@ -245,7 +245,7 @@ pub fn library_menu_ended(
     assert(background.len == a.screen.pixels.len);
     switch (ending) {
         .done => return true,
-        // Closed, or the Kindle locking: the library comes back from under it
+        // Closed, or the Kindle locking: what was under it comes back
         .closed => try close_menu(a, background),
         .interrupted => |action| {
             // Leaving noface: it needn't
@@ -259,19 +259,19 @@ pub fn library_menu_ended(
 /// Touches as they land, as in the reader: a slider follows the finger from there, and
 /// a tap that only arrived on the lift would leave it waiting for a drag. Done when
 /// noface should go to the Kindle's own screens.
-pub const LibraryPanel = struct {
+pub const Panel = struct {
     pub const Result = void;
     pub const touches = input_mod.Input.Modes.sheet;
     a: *app.App,
     background: []const u8,
     slider: SliderDrag = .{}, // A slider followed, over it
 
-    pub fn draw(p: *LibraryPanel, _: screen.Part) !void {
+    pub fn draw(p: *Panel, _: screen.Part) !void {
         assert(p.background.len == p.a.screen.pixels.len);
         try draw_fresh(p.a, p.background);
     }
 
-    pub fn on_tap(p: *LibraryPanel, t: screen.Tap) !screen.Step(void) {
+    pub fn on_tap(p: *Panel, t: screen.Tap) !screen.Step(void) {
         const choice = menu.hit(t.x, t.y);
         switch (try panel_control(p.a, p.background, choice, t.x, &p.slider)) {
             .not_one => {},
@@ -293,7 +293,7 @@ pub const LibraryPanel = struct {
     }
 
     /// The slider's drag ended.
-    pub fn on_resume(p: *LibraryPanel) !screen.Step(void) {
+    pub fn on_resume(p: *Panel) !screen.Step(void) {
         assert(p.slider.ending != null);
         assert(p.background.len == p.a.screen.pixels.len);
         try slider_ended(p.a, &p.slider);

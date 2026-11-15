@@ -63,7 +63,7 @@ pub const Outcome = enum { library, quit, failed };
 
 /// What the reader shows: the page alone, or something over it. The toolbar may have
 /// its Aa sheet open below it (`Reader.sheet_open`).
-pub const View = enum { page, toolbar, panel, note, highlight };
+pub const View = enum { page, toolbar, note, highlight };
 
 /// What a view means for the rest of the reader. While `reading`, the page alone is in
 /// front of the reader: the reading clock runs, the clock in the corner keeps time,
@@ -78,7 +78,7 @@ fn touches_for(view: View) input_mod.Input.Modes {
         .toolbar => input_mod.Input.Modes.sheet,
         // The handles can sit at the screen edges
         .highlight => .{ .grips = true, .deferred = false, .edge_zones = false },
-        .note, .panel => .{ .grips = true, .deferred = false, .edge_zones = true },
+        .note => .{ .grips = true, .deferred = false, .edge_zones = true },
     };
     // Only the page waits for a lift, as only there a press may become a hold
     assert(modes.deferred == (view == .page));
@@ -420,7 +420,8 @@ pub const Reader = struct {
     define: define.Define = undefined,
     define_ending: ?screen.Ending(define.Choice) = null,
     held: hl.Held = undefined, // The words held, looked up while the definition is open
-    slider: panel.SliderDrag = .{}, // A panel slider followed
+    panel: panel.Panel = undefined, // The quick panel, pulled down over the page
+    panel_ending: ?screen.Ending(void) = null,
     pending: controls.Pending = .{}, // The scrubber, an Aa slider, or a card from Aa
     selecting: hl.Selecting = .{}, // Words being selected, or a highlight's end dragged
     picture: picture_view.Viewer = undefined, // A picture held, shown whole
@@ -434,7 +435,7 @@ pub const Reader = struct {
         searching,
         going,
         define,
-        slider,
+        panel,
         controls,
         selecting,
         extending,
@@ -523,7 +524,11 @@ pub const Reader = struct {
                 .closed, .interrupted => try r.draw_toolbar(true),
             },
             .define => try r.defined(),
-            .slider => try panel.slider_ended(r.a, &r.slider),
+            .panel => {
+                const background = r.panel.background;
+                if (try panel.ended(r.a, background, r.panel_ending.?)) return .{ .done = .quit };
+                try r.a.update_clock();
+            },
             .selecting => try r.held_ended(),
             .picture => try picture_view.ended(&r.picture),
             .extending => {
@@ -696,7 +701,6 @@ pub const Reader = struct {
             .toolbar => r.on_toolbar(action),
             .highlight => r.on_highlight(action),
             .note => r.on_note(action),
-            .panel => r.on_panel(action),
         };
     }
 
@@ -709,7 +713,7 @@ pub const Reader = struct {
         switch (r.view) {
             .page => try r.a.update_clock(),
             .toolbar => try r.draw_toolbar(false),
-            .panel, .note, .highlight => {},
+            .note, .highlight => {},
         }
     }
 
@@ -721,7 +725,7 @@ pub const Reader = struct {
         switch (r.view) {
             .page => try r.s.show_footer(),
             .toolbar => try r.draw_toolbar(false),
-            .panel, .note, .highlight => {},
+            .note, .highlight => {},
         }
     }
 
@@ -805,8 +809,8 @@ pub const Reader = struct {
             .hold => |h| try r.hold_page(h.x, h.y),
             .swipe => |direction| try r.turn_by(direction + r.a.input.take_turns(), null),
             .pull => {
-                r.view = .panel;
-                try panel.draw_fresh(r.a, try r.s.ensure(r.s.current, r.s.current));
+                r.panel = panel.open(r.a, try r.s.ensure(r.s.current, r.s.current));
+                r.open_over(.panel, screen.open(&r.panel, &r.panel_ending));
             },
             else => {},
         }
@@ -1067,42 +1071,6 @@ pub const Reader = struct {
         r.view = .page;
         try note_view.close_note(r.a, s);
         assert(r.reading());
-        return null;
-    }
-
-    // The light and wireless panel, pulled down from the top
-
-    fn on_panel(r: *Reader, action: input_mod.Action) !?Outcome {
-        assert(r.view == .panel);
-        const t = switch (action) {
-            .tap => |t| t,
-            else => return null,
-        };
-        const a = r.a;
-        const choice = menu.hit(t.x, t.y);
-        const page = try r.s.ensure(r.s.current, r.s.current);
-        switch (try panel.panel_control(a, page, choice, t.x, &r.slider)) {
-            .not_one => {},
-            .ran => return null,
-            .drag => |f| {
-                r.open_over(.slider, f);
-                return null;
-            },
-        }
-        switch (choice) {
-            .settings => {
-                lipc.open_settings();
-                return .quit;
-            },
-            .kindle => return .quit, // The launcher brings back the Kindle's home
-            .close => {
-                r.view = .page;
-                try panel.close_menu(a, page);
-                try a.update_clock();
-                assert(r.reading());
-            },
-            else => {},
-        }
         return null;
     }
 };

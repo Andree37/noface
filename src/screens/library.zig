@@ -193,7 +193,7 @@ const Browser = struct {
     stats: stats_screen.Stats = undefined, // While `over` is .stats
     bubble: battery_screen.Bubble = undefined, // While `over` is .battery
     lock: lock.Lock = undefined, // While `over` is .lock
-    panel: panel.LibraryPanel = undefined, // While `over` is .panel
+    panel: panel.Panel = undefined, // While `over` is .panel
     search: LibrarySearch = undefined, // While `over` is .search
     search_ending: ?screen.Ending(SearchEnd) = null,
     query_kept: search.Query = .{}, // The search before the sheet, kept if it's cancelled
@@ -307,7 +307,7 @@ const Browser = struct {
             },
             .lock => return step(b.on_woken(b.over_ending.?)),
             .panel => {
-                const leave = try panel.library_menu_ended(b.a, b.buf, b.over_ending.?);
+                const leave = try panel.ended(b.a, b.buf, b.over_ending.?);
                 return step(if (leave) .leave else .nothing);
             },
             .search => return step(try b.searched(b.search_ending.?)),
@@ -331,7 +331,7 @@ const Browser = struct {
     fn open_panel(b: *Browser) Next {
         assert(b.over == .none);
         assert(b.buf.len == b.a.screen.pixels.len);
-        b.panel = panel.library_menu(b.a, b.buf);
+        b.panel = panel.open(b.a, b.buf);
         return b.open_over(.panel);
     }
 

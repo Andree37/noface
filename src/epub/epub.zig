@@ -435,7 +435,6 @@ const Builder = struct {
         const index: u32 = @intCast(b.paragraphs.items.len);
         try b.paragraphs.append(b.alloc, .{
             .text = try b.alloc.dupe(u8, b.text.items),
-            .style = 0,
             .look = b.look,
             .runs = try b.alloc.dupe(book.Run, b.runs.items),
             .section = b.section,
@@ -469,7 +468,6 @@ const Builder = struct {
         const index: u32 = @intCast(b.paragraphs.items.len);
         try b.paragraphs.append(b.alloc, .{
             .text = "",
-            .style = 0,
             .image = image,
             .section = b.section,
         });

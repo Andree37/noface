@@ -22,12 +22,6 @@ pub fn offer_families(all: []const []const u8) void {
     for (all, 0..) |name, i| assert(family_named(name).? == i);
 }
 
-/// Whether a typeface by this name is offered: a name is offered once.
-pub fn family_offered(name: []const u8) bool {
-    assert(families.len >= builtin_families.len);
-    return family_named(name) != null;
-}
-
 /// Back to the Kindle's typefaces only (for tests).
 pub fn reset_families() void {
     families = &builtin_families;
@@ -257,8 +251,8 @@ test "defaults match the original reader" {
 
 test "the reader's own typefaces are offered after the Kindle's, by name" {
     defer reset_families();
-    try std.testing.expect(family_offered("Bookerly"));
-    try std.testing.expect(!family_offered("Open Sans"));
+    try std.testing.expect(family_named("Bookerly") != null);
+    try std.testing.expect(family_named("Open Sans") == null);
     // Many more than the two there once was room for
     var all: [builtin_families.len + 40][]const u8 = undefined;
     var names: [40][8]u8 = undefined;

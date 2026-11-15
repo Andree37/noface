@@ -94,7 +94,7 @@ pub fn delete(
 
 test "a place past the largest position can't be saved, and never overflows" {
     const max = std.math.maxInt(u32);
-    var p = book_model.Paragraph{ .text = "a damaged paragraph", .style = 0, .position = max };
+    var p = book_model.Paragraph{ .text = "a damaged paragraph", .position = max };
     try std.testing.expectEqual(@as(u32, max), point_in(&p, 0).?.short);
     try std.testing.expectEqual(@as(?annotations.Point, null), point_in(&p, 1));
     try std.testing.expectEqual(@as(?annotations.Point, null), point_in(&p, 19));

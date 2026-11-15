@@ -68,7 +68,6 @@ pub const Image = struct {
 pub const Paragraph = struct {
     image: ?Image = null, // A picture standing alone, in place of text
     text: []const u8,
-    style: u32,
     look: Look = .{},
     runs: []const Run = &.{},
     links: []const Link = &.{},
@@ -163,9 +162,9 @@ pub fn plain_body(paragraphs: []Paragraph) void {
 
 test "a book that is bold throughout reads as regular" {
     var ps = [_]Paragraph{
-        .{ .text = "a", .style = 0, .look = .{ .bold = true } },
-        .{ .text = "b", .style = 0, .look = .{ .bold = true } },
-        .{ .text = "c", .style = 0 },
+        .{ .text = "a", .look = .{ .bold = true } },
+        .{ .text = "b", .look = .{ .bold = true } },
+        .{ .text = "c" },
     };
     plain_body(&ps);
     for (ps) |p| try std.testing.expect(!p.look.bold);
@@ -174,9 +173,9 @@ test "a book that is bold throughout reads as regular" {
 test "a few bold headings stay bold" {
     const runs = [_]Run{.{ .start = 0, .end = 1, .bold = true, .italic = false }};
     var ps = [_]Paragraph{
-        .{ .text = "Chapter", .style = 0, .look = .{ .bold = true } },
-        .{ .text = "b", .style = 0, .runs = &runs },
-        .{ .text = "c", .style = 0 },
+        .{ .text = "Chapter", .look = .{ .bold = true } },
+        .{ .text = "b", .runs = &runs },
+        .{ .text = "c" },
     };
     plain_body(&ps);
     try std.testing.expect(ps[0].look.bold);
@@ -204,9 +203,9 @@ test "book sizes snap to the reader's steps" {
 test "saved positions count text paragraphs only" {
     const img = Image{ .data = "", .width = 1, .height = 1 };
     const paras = [_]Paragraph{
-        .{ .text = "a", .style = 0 },
-        .{ .text = "", .style = 0, .image = img },
-        .{ .text = "b", .style = 0 },
+        .{ .text = "a" },
+        .{ .text = "", .image = img },
+        .{ .text = "b" },
     };
     try std.testing.expectEqual(@as(u32, 1), text_index(&paras, 2));
     try std.testing.expectEqual(@as(u32, 2), from_text_index(&paras, 1));

@@ -281,14 +281,14 @@ fn render_notes(shot: *const Shot) !void {
         .{ .start = mark_reference, .end = mark_reference + mark_reference_size, .target = 2 },
     };
     const paragraphs = [_]book_model.Paragraph{
-        .{ .text = sample, .style = 0, .links = &links },
-        .{ .text = sample_note, .style = 0, .note = true, .note_start = true },
-        .{ .text = sample_note, .style = 0, .note = true, .note_start = true },
+        .{ .text = sample, .links = &links },
+        .{ .text = sample_note, .note = true, .note_start = true },
+        .{ .text = sample_note, .note = true, .note_start = true },
     };
     var layout = body_layout;
     layout.reference = &mark;
     _ = try text.render_page(&body, shot.page, &paragraphs, .{}, layout, null);
-    const parts = [_]book_model.Paragraph{.{ .text = sample_note, .style = 0 }};
+    const parts = [_]book_model.Paragraph{.{ .text = sample_note }};
     const fitted = try notes.fit(&note_font, &parts, .{}, screen_width, screen_width, null);
     assert(fitted.height > 0);
     assert(fitted.height <= screen_height);
@@ -387,12 +387,12 @@ fn render_format(shot: *const Shot) !void {
         .space_after = 4,
     };
     const paragraphs = [_]core.book.Paragraph{
-        .{ .text = "Chapter One", .style = 0, .look = chapter_look },
-        .{ .text = "A subtitle in italics", .style = 0, .look = subtitle_look },
-        .{ .text = format_body, .style = 0, .runs = &format_runs },
-        .{ .text = format_body, .style = 0 },
-        .{ .text = "A Section Heading", .style = 0, .look = heading_look },
-        .{ .text = format_body, .style = 0 },
+        .{ .text = "Chapter One", .look = chapter_look },
+        .{ .text = "A subtitle in italics", .look = subtitle_look },
+        .{ .text = format_body, .runs = &format_runs },
+        .{ .text = format_body },
+        .{ .text = "A Section Heading", .look = heading_look },
+        .{ .text = format_body },
     };
     const base = try PreviewFaces.pick(&faces, false, false, core.book.normal_size);
     assert(base == &faces.fonts[0][core.book.normal_size].?);

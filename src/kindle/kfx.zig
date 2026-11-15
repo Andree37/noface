@@ -476,7 +476,6 @@ const Parser = struct {
         const text = p.content_text(ref) orelse return false;
         try p.paragraphs.append(p.alloc, .{
             .text = text,
-            .style = style,
             .look = p.look_for(style),
         });
         assert(p.paragraphs.items.len == count_before + 1);
@@ -525,7 +524,7 @@ const Parser = struct {
         assert(stack.count <= 2 * depth);
         assert(p.section > 0);
         if (item.text()) |text| {
-            try p.paragraphs.append(p.alloc, .{ .text = text, .style = 0 });
+            try p.paragraphs.append(p.alloc, .{ .text = text });
             return;
         }
         if (item.kind != .struct_) {
@@ -569,7 +568,6 @@ const Parser = struct {
         assert(image.height > 0);
         try p.paragraphs.append(p.alloc, .{
             .text = "",
-            .style = style,
             .look = p.look_for(style),
             .image = image,
             .section = p.section,

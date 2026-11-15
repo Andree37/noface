@@ -366,11 +366,11 @@ test "Portuguese words break, accents and all" {
 
 test "language comes from common words" {
     var en: [30]book_model.Paragraph = undefined;
-    for (&en) |*p| p.* = .{ .text = "the cat and the dog of the house", .style = 0 };
+    for (&en) |*p| p.* = .{ .text = "the cat and the dog of the house" };
     try std.testing.expectEqual(Lang.english, detect(&en).?);
     var pt: [30]book_model.Paragraph = undefined;
-    for (&pt) |*p| p.* = .{ .text = "o gato que não tem uma casa de os", .style = 0 };
+    for (&pt) |*p| p.* = .{ .text = "o gato que não tem uma casa de os" };
     try std.testing.expectEqual(Lang.portuguese, detect(&pt).?);
-    const none = [_]book_model.Paragraph{.{ .text = "hello", .style = 0 }};
+    const none = [_]book_model.Paragraph{.{ .text = "hello" }};
     try std.testing.expect(detect(&none) == null);
 }

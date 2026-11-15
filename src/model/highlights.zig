@@ -294,7 +294,7 @@ pub fn at_word(list: []const Highlight, w: book_model.Word) ?[]const u8 {
 }
 
 fn sample(content: []const u8, position: u32) book_model.Paragraph {
-    return .{ .text = content, .style = 0, .position = position };
+    return .{ .text = content, .position = position };
 }
 
 test "short positions find paragraph and byte" {

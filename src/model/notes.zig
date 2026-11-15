@@ -121,11 +121,10 @@ test "short forward references mark their target as a note" {
     var paras = [_]book.Paragraph{
         .{
             .text = "body text with a reference in it",
-            .style = 0,
             .links = &.{.{ .start = 10, .end = 11, .target = 2 }},
         },
-        .{ .text = "more body", .style = 0 },
-        .{ .text = "the note", .style = 0, .links = &.{.{ .start = 0, .end = 1, .target = 0 }} },
+        .{ .text = "more body" },
+        .{ .text = "the note", .links = &.{.{ .start = 0, .end = 1, .target = 0 }} },
     };
     mark_notes(&paras);
     try std.testing.expect(paras[2].note);
@@ -137,14 +136,13 @@ test "a link reaching past its paragraph's text is skipped, never read" {
     var paras = [_]book.Paragraph{
         .{
             .text = "Some text, with a note.1",
-            .style = 0,
             .links = &.{
                 .{ .start = 23, .end = 25, .target = 1 },
                 .{ .start = 30, .end = 31, .target = 1 },
                 .{ .start = 5, .end = 5, .target = 1 },
             },
         },
-        .{ .text = "1 The note.", .style = 0 },
+        .{ .text = "1 The note." },
     };
     mark_notes(&paras);
     try std.testing.expect(!paras[1].note);
@@ -153,12 +151,12 @@ test "a link reaching past its paragraph's text is skipped, never read" {
 
 test "page numbers that point at headings or into paragraphs hide nothing" {
     var paras = [_]book.Paragraph{
-        .{ .text = "The efforts of his aunt 448", .style = 0, .links = &.{
+        .{ .text = "The efforts of his aunt 448", .links = &.{
             .{ .start = 24, .end = 27, .target = 1 },
             .{ .start = 24, .end = 27, .target = 2, .inside = true },
         } },
-        .{ .text = "Chapter I.", .style = 0, .look = .{ .size = book.normal_size + 1 } },
-        .{ .text = "It is a truth universally acknowledged", .style = 0 },
+        .{ .text = "Chapter I.", .look = .{ .size = book.normal_size + 1 } },
+        .{ .text = "It is a truth universally acknowledged" },
     };
     mark_notes(&paras);
     try std.testing.expect(!paras[1].note);
@@ -169,10 +167,9 @@ test "a contents line does not hide its chapter" {
     var paras = [_]book.Paragraph{
         .{
             .text = "book.Chapter 1",
-            .style = 0,
             .links = &.{.{ .start = 0, .end = 9, .target = 1 }},
         },
-        .{ .text = "book.Chapter 1 begins", .style = 0 },
+        .{ .text = "book.Chapter 1 begins" },
     };
     mark_notes(&paras);
     try std.testing.expect(!paras[1].note);
@@ -182,12 +179,11 @@ test "a number on its own takes the next paragraph with it" {
     var paras = [_]book.Paragraph{
         .{
             .text = "body text with a reference in it",
-            .style = 0,
             .links = &.{.{ .start = 10, .end = 11, .target = 1 }},
         },
-        .{ .text = "12", .style = 0 },
-        .{ .text = "the note text itself, which is much longer", .style = 0 },
-        .{ .text = "body continues here", .style = 0 },
+        .{ .text = "12" },
+        .{ .text = "the note text itself, which is much longer" },
+        .{ .text = "body continues here" },
     };
     mark_notes(&paras);
     try std.testing.expect(paras[1].note);
@@ -197,14 +193,14 @@ test "a number on its own takes the next paragraph with it" {
 
 test "paragraphs between notes stay with their note" {
     var paras = [_]book.Paragraph{
-        .{ .text = "body text with a reference and another one", .style = 0, .links = &.{
+        .{ .text = "body text with a reference and another one", .links = &.{
             .{ .start = 5, .end = 6, .target = 1 },
             .{ .start = 9, .end = 10, .target = 3 },
         } },
-        .{ .text = "first note", .style = 0, .section = 1 },
-        .{ .text = "second paragraph of the first note", .style = 0, .section = 1 },
-        .{ .text = "second note", .style = 0, .section = 1 },
-        .{ .text = "next chapter", .style = 0, .section = 2 },
+        .{ .text = "first note", .section = 1 },
+        .{ .text = "second paragraph of the first note", .section = 1 },
+        .{ .text = "second note", .section = 1 },
+        .{ .text = "next chapter", .section = 2 },
     };
     mark_notes(&paras);
     try std.testing.expect(paras[2].note);
@@ -217,16 +213,14 @@ test "inline notes do not swallow body text with references" {
     var paras = [_]book.Paragraph{
         .{
             .text = "body text with a reference in it",
-            .style = 0,
             .links = &.{.{ .start = 5, .end = 6, .target = 1 }},
         },
-        .{ .text = "inline note", .style = 0 },
+        .{ .text = "inline note" },
         .{
             .text = "more body text with its own reference",
-            .style = 0,
             .links = &.{.{ .start = 5, .end = 6, .target = 3 }},
         },
-        .{ .text = "another inline note", .style = 0 },
+        .{ .text = "another inline note" },
     };
     mark_notes(&paras);
     try std.testing.expect(!paras[2].note);
@@ -246,10 +240,9 @@ test "a linked word does not hide its target" {
     var paras = [_]book.Paragraph{
         .{
             .text = "as argued by Popper in the earlier chapter",
-            .style = 0,
             .links = &.{.{ .start = 13, .end = 19, .target = 1 }},
         },
-        .{ .text = "a heading that must stay visible", .style = 0 },
+        .{ .text = "a heading that must stay visible" },
     };
     mark_notes(&paras);
     try std.testing.expect(!paras[1].note);
@@ -259,10 +252,9 @@ test "a note set smaller than the text is still a note" {
     var paras = [_]book.Paragraph{
         .{
             .text = "See the note.1",
-            .style = 0,
             .links = &.{.{ .start = 13, .end = 14, .target = 1 }},
         },
-        .{ .text = "1 The note itself.", .style = 0, .look = .{ .size = 0 } },
+        .{ .text = "1 The note itself.", .look = .{ .size = 0 } },
     };
     mark_notes(&paras);
     try std.testing.expect(paras[1].note_start);
@@ -272,10 +264,9 @@ test "a smaller caption a list of pictures links to stays in the text" {
     var paras = [_]book.Paragraph{
         .{
             .text = "The castle at dawn 21",
-            .style = 0,
             .links = &.{.{ .start = 19, .end = 21, .target = 1 }},
         },
-        .{ .text = "Plate 3. The castle at dawn.", .style = 0, .look = .{ .size = 0 } },
+        .{ .text = "Plate 3. The castle at dawn.", .look = .{ .size = 0 } },
     };
     mark_notes(&paras);
     try std.testing.expect(!paras[1].note_start);

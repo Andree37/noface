@@ -26,7 +26,7 @@ pub const Summary = struct {
 };
 
 const header_top = style.status_height;
-const back_height = 110; // The whole strip under the status bar takes you back
+const back_height = 110; // The strip under the status bar, where Back is drawn
 const title_y = header_top + back_height + 70;
 const tiles_top = title_y + 60;
 const tile_value_y = tiles_top + 116;
@@ -58,10 +58,6 @@ comptime {
     assert(day_letters.len == @typeInfo(@FieldType(Summary, "last7")).array.len);
     // The three tiles' labels sit side by side without overlapping.
     assert(3 * tile_label_width <= style.screen_width - 2 * style.margin);
-}
-
-pub fn is_back(y: i32) bool {
-    return y >= header_top and y < header_top + back_height;
 }
 
 /// Minutes, to the nearest, in `seconds`.
@@ -261,6 +257,4 @@ test "bars scale to the busiest day, and any reading shows" {
 test "the screen fits, and going back is a fingertip tall" {
     try std.testing.expect(rows_top + 4 * row_height + 70 <= style.screen_height);
     try std.testing.expect(back_height >= 100);
-    try std.testing.expect(is_back(header_top + 50));
-    try std.testing.expect(!is_back(header_top + back_height + 10));
 }

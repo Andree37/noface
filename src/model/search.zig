@@ -177,7 +177,7 @@ pub fn snippet(s: []const u8, byte: u32, max: u32) []const u8 {
 }
 
 fn sample(t: []const u8) book_model.Paragraph {
-    return .{ .text = t, .style = 0 };
+    return .{ .text = t };
 }
 
 test "matching ignores case and accents" {

@@ -142,19 +142,6 @@ pub fn smile(page: Page, cx: f32, cy: f32) void {
     p.line(tip_x, tip_y, tip_x - 3, tip_y + 14, 6);
 }
 
-pub fn gear(page: Page, cx: f32, cy: f32) void {
-    assert(inside(cx, page.width));
-    assert(inside(cy, page.height));
-    const p = Pen{ .page = page, .cx = cx, .cy = cy };
-    p.arc(0, 0, 25, 0, 360, 5);
-    p.arc(0, 0, 11, 0, 360, 4);
-    var i: u32 = 0;
-    while (i < 8) : (i += 1) {
-        const a = @as(f32, @floatFromInt(i)) * pi / 4;
-        p.line(@cos(a) * 26, @sin(a) * 26, @cos(a) * 36, @sin(a) * 36, 9);
-    }
-}
-
 /// Width of the charge bar. Kept in u32: @min with a literal narrows the type.
 pub fn battery_fill(inner: u32, percent: u32) u32 {
     assert(inner > 0);

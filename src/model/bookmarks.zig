@@ -68,8 +68,8 @@ test "bookmark lines become positions" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const paras = [_]book_model.Paragraph{
-        .{ .text = "abcdef", .style = 0, .position = 100 },
-        .{ .text = "ghij", .style = 0, .position = 106 },
+        .{ .text = "abcdef", .position = 100 },
+        .{ .text = "ghij", .position = 106 },
     };
     const list = try parse(arena.allocator(), &paras, "kindle.bookmark-107|107|107\nbad\n");
     try std.testing.expectEqual(@as(usize, 1), list.len);

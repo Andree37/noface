@@ -135,11 +135,6 @@ pub fn prepare(
     return out;
 }
 
-/// Decodes a JPEG or PNG, then prepares it at `w` x `h`.
-pub fn decode_and_prepare(alloc: std.mem.Allocator, encoded: []const u8, w: u32, h: u32) ?[]u8 {
-    return prepare_from(alloc, .{ .bytes = encoded }, w, h);
-}
-
 /// A picture's bytes as its book keeps them: the JPEG or PNG itself, or that deflated
 /// (as an EPUB may keep it), to be inflated to `inflated_size` bytes when it's drawn.
 pub const Encoded = struct {
@@ -669,7 +664,7 @@ test "a deflated picture draws as the same picture kept as it is" {
     };
     decoder_memory.use(&decoders);
     defer decoder_memory.stop_using(&decoders);
-    const plain = decode_and_prepare(alloc, data, 20, 14).?;
+    const plain = prepare_from(alloc, .{ .bytes = data }, 20, 14).?;
     defer alloc.free(plain);
     const source = Encoded{ .bytes = deflated, .deflated = true, .inflated_size = length };
     const from = prepare_from(alloc, source, 20, 14).?;

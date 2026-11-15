@@ -445,6 +445,7 @@ pub const Reader = struct {
     slider: panel.SliderDrag = .{}, // A panel slider followed
     pending: controls.Pending = .{}, // The scrubber, an Aa slider, or a card from Aa
     selecting: hl.Selecting = .{}, // Words being selected, or a highlight's end dragged
+    picture: picture_view.Viewer = undefined, // A picture held, shown whole
 
     /// The screens a book opens over itself: the lock screen, the ⋮ menu, search and
     /// Go To.
@@ -459,6 +460,7 @@ pub const Reader = struct {
         controls,
         selecting,
         extending,
+        picture,
     };
 
     /// The page the book opens at, its place saved as it opens.
@@ -545,6 +547,7 @@ pub const Reader = struct {
             .define => try r.defined(),
             .slider => try panel.slider_ended(r.a, &r.slider),
             .selecting => try r.held_ended(),
+            .picture => try picture_view.ended(&r.picture),
             .extending => {
                 try hl.extend_ended(&r.selecting, r.a, s, r.alloc, r.entry);
                 try r.show_highlight_page(r.active.?);
@@ -856,7 +859,8 @@ pub const Reader = struct {
         if (try r.s.picture_at(x, y)) |img| {
             a.input.drag_slot = null;
             r.s.pause_clock();
-            return picture_view.show(a, img);
+            const f = try picture_view.begin(&r.picture, a, img) orelse return;
+            return r.open_over(.picture, f);
         }
         if (r.highlight_at(x, y)) |id| {
             a.input.drag_slot = null;

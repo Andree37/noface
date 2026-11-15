@@ -296,38 +296,20 @@ pub fn load(alloc: std.mem.Allocator, path: [*:0]const u8, dw: u32, dh: u32) ?[]
 }
 
 /// Decodes the picture at `path` scaled into `out`, `dw` x `dh`, as `load` does but into
-/// memory the caller keeps. False when it isn't a picture or can't be read.
+/// memory the caller keeps: its rows are scaled as they come, straight into `out`.
+/// False when it isn't a picture or can't be read.
 pub fn load_into(out: []u8, path: [*:0]const u8, dw: u32, dh: u32) bool {
     assert(dw > 0);
     assert(out.len == @as(u64, dw) * dh);
-    const data = file.map(path) catch return false;
-    defer file.unmap(data);
-    const decoder = decoder_memory.allocator();
-    const gray = decode_picture(decoder, data) orelse return false;
-    defer decoder.free(gray.pixels);
-    const picture = Size{ .width = gray.width, .height = gray.height };
-    scale(gray.pixels, picture, out, .{ .width = dw, .height = dh });
+    // The scaled picture is all the sink keeps, and it's exactly `out`'s size
+    var into = std.heap.FixedBufferAllocator.init(out);
+    const ready = load(into.allocator(), path, dw, dh) orelse return false;
+    assert(ready.ptr == out.ptr);
     return true;
 }
 
 /// A decoded picture at its own size, one gray byte per pixel.
-pub const Gray = struct { pixels: []u8, width: u32, height: u32 };
-
-/// Decodes a PNG or a JPEG at its own size, all its memory from `alloc`, which owns
-/// the pixels; or null for a file that isn't one, or can't be read.
-fn decode_picture(alloc: std.mem.Allocator, encoded: []const u8) ?decoded.Gray {
-    var sink = scaler.Sink{ .target = .{ .divided = 1 }, .out = alloc };
-    const pixels = decoded_into(&sink, .{ .bytes = encoded }, alloc) orelse return null;
-    const picture = decoded.Gray{
-        .pixels = pixels,
-        .width = sink.size.width,
-        .height = sink.size.height,
-    };
-    // Paired with the callers, which index rows by the width
-    assert(picture.pixels.len == @as(u64, picture.width) * picture.height);
-    assert(picture.width > 0);
-    return picture;
-}
+pub const Gray = decoded.Gray;
 
 /// A view into a picture for zooming: `zoom` screen pixels per picture pixel, with
 /// picture point (`cx`, `cy`) at the middle of a `dw` x `dh` box, white past the
@@ -607,7 +589,7 @@ fn test_picture(comptime name: []const u8) []const u8 {
 
 test "pictures decode to the grays stb_image gave" {
     inline for (test_pictures) |case| {
-        const picture = decode_picture(std.testing.allocator, test_picture(case[0])).?;
+        const picture = test_decode(std.testing.allocator, test_picture(case[0])).?;
         defer std.testing.allocator.free(picture.pixels);
         try std.testing.expectEqual(case[1], picture.width);
         try std.testing.expectEqual(case[2], picture.height);
@@ -622,7 +604,7 @@ test "pictures cut short are turned down" {
         // there, and stb_image showed it
         const kept: u32 = if (png_decoder.is_png(data)) 4 else 2;
         for (0..data.len - kept) |length| {
-            try std.testing.expect(decode_picture(std.testing.allocator, data[0..length]) == null);
+            try std.testing.expect(test_decode(std.testing.allocator, data[0..length]) == null);
         }
     }
 }
@@ -639,7 +621,7 @@ test "damaged pictures decode or are turned down, never crash" {
             for (0..1 + random.uintLessThan(u32, 6)) |_| {
                 damaged[random.uintLessThan(u32, @intCast(data.len))] = random.int(u8);
             }
-            if (decode_picture(std.testing.allocator, damaged)) |picture| {
+            if (test_decode(std.testing.allocator, damaged)) |picture| {
                 std.testing.allocator.free(picture.pixels);
             }
         }
@@ -688,7 +670,7 @@ test "a JPEG decoded smaller looks like the whole picture scaled down" {
     inline for (test_pictures) |case| {
         const data = test_picture(case[0]);
         if (comptime std.mem.endsWith(u8, case[0], ".jpg")) {
-            const whole = decode_picture(alloc, data).?;
+            const whole = test_decode(alloc, data).?;
             defer alloc.free(whole.pixels);
             for ([_]u8{ 2, 4, 8 }) |shrink| {
                 var work = workspace.Workspace.init(alloc, workspace.bytes_max);
@@ -756,4 +738,14 @@ test "a picture too large for the workspace is decoded smaller, not dropped" {
     const small = sink.finish();
     defer alloc.free(small);
     try std.testing.expectEqual(@as(u32, 21), sink.size.width);
+}
+
+/// A picture decoded at its own size, all its memory from `alloc`, for the tests that
+/// compare grays.
+fn test_decode(alloc: std.mem.Allocator, encoded: []const u8) ?Gray {
+    var sink = scaler.Sink{ .target = .{ .divided = 1 }, .out = alloc };
+    const pixels = decoded_into(&sink, .{ .bytes = encoded }, alloc) orelse return null;
+    const picture = Gray{ .pixels = pixels, .width = sink.size.width, .height = sink.size.height };
+    assert(picture.pixels.len == @as(u64, picture.width) * picture.height);
+    return picture;
 }

@@ -389,20 +389,47 @@ fn by_author(a: Entry, b: Entry) bool {
 }
 
 pub fn sort(entries: []Entry, order: Order) void {
-    if (order == .series) {
-        for (entries) |*e| {
-            e.series_last = 0;
-            if (e.series.len == 0) continue;
-            for (entries) |o| {
-                // Only books opened: a download's date isn't reading
-                if (same_series(o.series, e.series) and o.was_opened()) {
-                    e.series_last = @max(e.series_last, o.last);
-                }
-            }
-        }
-    }
+    if (order == .series) series_last_set(entries);
     std.mem.sort(Entry, entries, order, before);
     assert(std.sort.isSorted(Entry, entries, order, before));
+}
+
+/// Gives each book of a series when any book of it was last read, for `by_series`.
+/// Sorted by series name first, so each series is one run of books, read in one pass:
+/// N log N, where comparing every book with every other took N squared.
+fn series_last_set(entries: []Entry) void {
+    std.mem.sort(Entry, entries, {}, by_series_name);
+    var run_first: u32 = 0;
+    for (0..entries.len + 1) |i| {
+        const ends = i == entries.len or
+            !std.ascii.eqlIgnoreCase(series_key(entries[i]), series_key(entries[run_first]));
+        if (!ends) continue;
+        var latest: u64 = 0;
+        // Only books opened: a download's date isn't reading
+        for (entries[run_first..i]) |e| {
+            if (e.was_opened()) latest = @max(latest, e.last);
+        }
+        const in_series = entries[run_first].series.len > 0;
+        for (entries[run_first..i]) |*e| e.series_last = if (in_series) latest else 0;
+        run_first = @intCast(i);
+    }
+    assert(run_first == entries.len);
+    for (entries) |e| {
+        if (e.series.len == 0) assert(e.series_last == 0);
+    }
+}
+
+/// The name a series is grouped under: without its "The", ignoring case.
+fn series_key(e: Entry) []const u8 {
+    const key = without_the(e.series);
+    assert(key.len <= e.series.len);
+    if (e.series.len > 0) assert(key.len > 0);
+    return key;
+}
+
+// Assertions: it compares two series names, from the catalog or a file name: outside data.
+fn by_series_name(_: void, a: Entry, b: Entry) bool {
+    return std.ascii.lessThanIgnoreCase(series_key(a), series_key(b));
 }
 
 /// The book for the hero: the latest one in progress, or else the latest opened.
@@ -920,4 +947,35 @@ test "series with Book inside the name are found, ISBNs after # aren't numbers" 
     try std.testing.expect(series_from_file_name(too_big) == null);
     const isbn = "/mnt/us/documents/Title -- Author -- Saga #9780141439518.kfx";
     try std.testing.expect(series_from_file_name(isbn) == null);
+}
+
+test "series order gives each book its series' latest reading, as comparing all pairs did" {
+    const names = [_][]const u8{ "", "Dune", "the dune", "Saga", "THE SAGA", "Other" };
+    var prng = std.Random.DefaultPrng.init(7);
+    const random = prng.random();
+    var rows: [300]Entry = undefined;
+    for (&rows, 0..) |*row, i| {
+        row.* = .{
+            .path = "/b",
+            .title = "T",
+            .author = "",
+            .percent = random.uintLessThan(u32, 101),
+            .last = random.uintLessThan(u64, 1000),
+            .seconds_read = if (i % 3 == 0) 10 else 0,
+            .series = names[random.uintLessThan(u32, names.len)],
+            .series_index = @floatFromInt(random.uintLessThan(u32, 9)),
+        };
+    }
+    sort(&rows, .series);
+    for (rows) |e| {
+        var latest: u64 = 0;
+        if (e.series.len > 0) {
+            for (rows) |o| {
+                if (same_series(o.series, e.series) and o.was_opened()) {
+                    latest = @max(latest, o.last);
+                }
+            }
+        }
+        try std.testing.expectEqual(latest, e.series_last);
+    }
 }

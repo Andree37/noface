@@ -85,4 +85,6 @@ test {
     _ = @import("kindle/stock_ui.zig");
     _ = @import("kindle/supervisor.zig");
     _ = @import("sys/service.zig");
+    _ = @import("library/files.zig");
+    _ = @import("library/sorter.zig");
 }

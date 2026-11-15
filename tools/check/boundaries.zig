@@ -12,6 +12,9 @@
 //!   ui      Drawing screens and mapping taps. Imports ui, model, layout and gfx.
 //!   kindle  Everything that knows Amazon. Imports kindle, sys and model.
 //!   epub    The open EPUB format, read into our model. Imports epub and model.
+//!   library The library's index on the user drive: its books found, kept, sorted and
+//!           read back in memory of a fixed size. Imports library, sys, model, epub
+//!           and kindle.
 //!   testing What only the tests and the simulator use: the pretend Kindle. Imports
 //!           testing, kindle, sys and model. No folder above may import it.
 //!   screens, and files at the top of src/: may import anything.
@@ -30,6 +33,7 @@ const rules = [_]Rule{
     .{ .folder = "ui", .allowed = &.{ "ui", "model", "layout", "gfx" } },
     .{ .folder = "kindle", .allowed = &.{ "kindle", "sys", "model" } },
     .{ .folder = "epub", .allowed = &.{ "epub", "model" } },
+    .{ .folder = "library", .allowed = &.{ "library", "sys", "model", "epub", "kindle" } },
     .{ .folder = "testing", .allowed = &.{ "testing", "kindle", "sys", "model" } },
 };
 

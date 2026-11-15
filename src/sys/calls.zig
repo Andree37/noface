@@ -20,6 +20,8 @@ pub const open = chosen.open;
 pub const close = chosen.close;
 pub const read = chosen.read;
 pub const write = chosen.write;
+pub const pread = chosen.pread;
+pub const pwrite = chosen.pwrite;
 pub const off_t = chosen.off_t;
 pub const SEEK = chosen.SEEK;
 /// 32-bit Linux seeks with llseek; 64-bit Linux has only lseek, which is wide enough.

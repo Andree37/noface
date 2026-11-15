@@ -91,6 +91,18 @@ pub fn write(fd: i32, buffer: [*]const u8, count: usize) usize { // usize: Linux
     assert(rc <= count); // What was written, or -1
     return linux_result(rc);
 }
+// usize: Linux's syscall ABI
+pub fn pread(fd: i32, buffer: [*]u8, count: usize, offset: off_t) usize {
+    assert(count <= std.math.maxInt(isize)); // C's pread returns the count signed
+    assert(offset >= 0);
+    return linux_result(c.pread(fd, buffer, count, offset));
+}
+// usize: Linux's syscall ABI
+pub fn pwrite(fd: i32, buffer: [*]const u8, count: usize, offset: off_t) usize {
+    assert(count <= std.math.maxInt(isize)); // C's pwrite returns the count signed
+    assert(offset >= 0);
+    return linux_result(c.pwrite(fd, buffer, count, offset));
+}
 pub const off_t = i64;
 pub const SEEK = struct {
     pub const SET = 0;

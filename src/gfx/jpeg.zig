@@ -1087,9 +1087,15 @@ fn finish_progressive(d: *Decoder) Error!void {
     // Which components the gray needs is known for sure now
     const gray_from = gray_components(d);
     for (0..components_max) |index| d.keep[index] = d.needed == .all or index < gray_from.count;
+    // The coefficients of a component left out go before the samples come in, and a
+    // kept one's once transformed: no more than one component's of each at once
+    for (d.component[0..d.channels], 0..) |*component, index| {
+        if (!d.keep[index]) free_coefficients(d, component);
+    }
     try allocate_kept(d);
     for (d.component[0..d.channels], 0..) |*component, index| {
         if (!d.keep[index]) continue;
+        defer free_coefficients(d, component);
         const dequant = &d.tables.dequant[component.quant];
         const blocks_x = (component.x + 7) >> 3;
         const blocks_y = (component.y + 7) >> 3;
@@ -1104,6 +1110,14 @@ fn finish_progressive(d: *Decoder) Error!void {
         }
     }
     assert(d.component[0].data.len > 0);
+    assert(d.component[0].coefficients.len == 0);
+}
+
+fn free_coefficients(d: *Decoder, component: *Component) void {
+    assert(d.progressive); // Only a progressive picture keeps coefficients
+    if (component.coefficients.len > 0) d.alloc.free(component.coefficients);
+    component.coefficients = &.{};
+    assert(component.coefficients.len == 0);
 }
 
 // The inverse DCT: stb_image's integer one, from the IJG's jidctint.
@@ -1257,6 +1271,9 @@ fn assemble(d: *Decoder, gray_from: GrayFrom) Error!Gray {
     assert(gray_from.count <= d.channels);
     const pixel_count = @as(u64, d.width) * d.height;
     assert(pixel_count <= samples_max);
+    const first = &d.component[0];
+    const copied = resample_kind(d.h_max / first.h, d.v_max / first.v) == .copy;
+    if (gray_from.kind == .y and copied) return assemble_in_place(d);
     const pixels = try d.alloc.alloc(u8, @intCast(pixel_count));
     errdefer d.alloc.free(pixels);
     var resamples: [components_max]Resample = undefined;
@@ -1274,6 +1291,26 @@ fn assemble(d: *Decoder, gray_from: GrayFrom) Error!Gray {
         const out = pixels[y * d.width ..][0..d.width];
         gray_row(gray_from, rows[0..gray_from.count], out);
     }
+    return .{ .pixels = pixels, .width = d.width, .height = d.height };
+}
+
+/// The gray when it is the first component's samples as they are (a gray picture, or
+/// most colour ones): its rows moved up to sit end to end, where they are, so a large
+/// picture never needs a second buffer its size.
+fn assemble_in_place(d: *Decoder) Error!Gray {
+    const component = &d.component[0];
+    assert(component.y == d.height); // At full size: its rows are the picture's
+    assert(component.w2 >= d.width);
+    const samples = component.data;
+    assert(samples.len >= @as(u64, component.w2) * d.height);
+    // Row y moves from y * w2 to y * width, never later, so in order it never
+    // overwrites a row still to move
+    for (0..d.height) |y| {
+        const from = samples[y * component.w2 ..][0..d.width];
+        std.mem.copyForwards(u8, samples[y * d.width ..][0..d.width], from);
+    }
+    const pixels = try d.alloc.realloc(samples, @as(u32, d.width) * d.height);
+    component.data = &.{}; // The picture's now
     return .{ .pixels = pixels, .width = d.width, .height = d.height };
 }
 

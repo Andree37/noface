@@ -72,8 +72,9 @@ pub fn main(init: std.process.Init.Minimal) !void {
     wifi_saver.use_data_dir(data);
 
     var app_budget = memory.Budget{ .name = "app", .child = alloc, .limit = 512 << 20 };
-    var decoders_budget = memory.Budget{ .name = "decoders", .child = alloc, .limit = 256 << 20 };
-    decoder_memory.use(&decoders_budget);
+    // In the region the Kindle has, so a picture with no room there has none here
+    const decoders_budget = try setup.decoders();
+    decoder_memory.use(decoders_budget);
     const a_alloc = app_budget.allocator();
 
     var screen = try hwtcon.Screen.fake(a_alloc, width_px, height_px);
@@ -101,7 +102,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     var a = try setup.assemble(.{
         .alloc = a_alloc,
         .app_budget = &app_budget,
-        .decoders_budget = &decoders_budget,
+        .decoders_budget = decoders_budget,
         .screen = &screen,
         .input = &input,
         .kit = &kit,

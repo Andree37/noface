@@ -71,12 +71,10 @@ pub fn decode(alloc: std.mem.Allocator, data: []const u8) Error!Gray {
     try read_chunks(data, &header);
     assert(header.seen_header);
     assert(header.idat_count > 0);
-    const compressed = try gather_idat(alloc, data, &header);
-    defer if (header.idat_count > 1) alloc.free(compressed);
     const raw_size = try raw_size_of(&header);
     const raw = try alloc.alloc(u8, raw_size);
     defer alloc.free(raw);
-    try inflate(compressed, header.apple, raw);
+    try inflate_idat(alloc, data, &header, raw);
     const pixels = try alloc.alloc(u8, @as(u32, header.width) * header.height);
     errdefer alloc.free(pixels);
     try unfilter_all(alloc, &header, raw, pixels);
@@ -190,6 +188,21 @@ fn check_transparency(header: *const Header, body: []const u8) Error!void {
     // Only gray and colour without an alpha channel may have one
     if (header.channels & 1 == 0) return error.BadPng;
     if (body.len != @as(u32, header.channels) * 2) return error.BadPng;
+}
+
+/// Inflates the picture data into `raw`. A copy of the IDAT chunks joined goes as soon
+/// as it's inflated, so it's never held beside the pixels.
+fn inflate_idat(
+    alloc: std.mem.Allocator,
+    data: []const u8,
+    header: *const Header,
+    raw: []u8,
+) Error!void {
+    assert(header.idat_count > 0);
+    assert(raw.len > 0);
+    const compressed = try gather_idat(alloc, data, header);
+    defer if (header.idat_count > 1) alloc.free(compressed);
+    try inflate(compressed, header.apple, raw);
 }
 
 /// The compressed picture data, in one piece: the one IDAT chunk itself, or a copy of

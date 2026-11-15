@@ -311,20 +311,17 @@ fn play_on(kindle: Kindle, steps: []const Step) !Outcome {
 
     const devices = try play_on_devices(alloc, steps);
 
-    // Before any font: the decoders allocate through it. Let go of on return, as it lives here
-    var decoders_budget = memory.Budget{
-        .name = "decoders",
-        .child = std.heap.smp_allocator,
-        .limit = 128 << 20,
-    };
-    decoder_memory.use(&decoders_budget);
+    // Before any font: the decoders allocate through it, in the region the Kindle has,
+    // so a picture with no room there has none here
+    const decoders_budget = try setup.decoders();
+    decoder_memory.use(decoders_budget);
     defer decoder_memory.use_default();
 
     const kept = try play_on_kept(alloc, dir);
     var a = try setup.assemble(.{
         .alloc = alloc,
         .app_budget = &budget,
-        .decoders_budget = &decoders_budget,
+        .decoders_budget = decoders_budget,
         .screen = devices.screen,
         .input = devices.input,
         .kit = kept.kit,

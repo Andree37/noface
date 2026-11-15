@@ -84,13 +84,8 @@ fn main_reader(init: std.process.Init.Minimal) !void {
         .limit = setup.region_bytes.app,
     };
     const alloc = app_budget.allocator();
-    var decoders_region = try memory.Region.reserve("decoders", .heap, setup.region_bytes.decoders);
-    var decoders_budget = memory.Budget{
-        .name = "decoders",
-        .region = &decoders_region,
-        .limit = setup.region_bytes.decoders,
-    };
-    decoder_memory.use(&decoders_budget);
+    const decoders_budget = try setup.decoders();
+    decoder_memory.use(decoders_budget);
 
     const state_dir = std.mem.sliceTo(argv[6], 0);
 
@@ -127,7 +122,7 @@ fn main_reader(init: std.process.Init.Minimal) !void {
     var shared = try setup.assemble(.{
         .alloc = alloc,
         .app_budget = &app_budget,
-        .decoders_budget = &decoders_budget,
+        .decoders_budget = decoders_budget,
         .screen = &screen,
         .input = &input,
         .kit = &kit,

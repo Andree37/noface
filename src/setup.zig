@@ -22,9 +22,12 @@ pub const region_bytes = struct {
     /// eight pictures and hyphenation: 16 to 24 MB measured, so 64 leaves room for
     /// glyphs of many sizes and a full picture cache.
     pub const app: u32 = 64 << 20;
-    /// Glyph bitmaps and pictures decoded by the stb C libraries: 15 MB measured at
-    /// most (a large cover), so 64 for a picture four times that.
-    pub const decoders: u32 = 64 << 20;
+    /// Glyph bitmaps and pictures being decoded: 15 MB for a large cover, but kept at
+    /// the 128 MB the stb C libraries had, so every picture they decoded still decodes.
+    /// The Zig decoders need less for any picture than stb did (no copy of the picture
+    /// data beside the pixels, only the samples the gray is made of), and a block takes
+    /// whole 64 KB units: an 8000x6000 JPEG needs 48 MB, where stb needed 120.
+    pub const decoders: u32 = 128 << 20;
     /// The library's list and its covers, 84 KB each once seen; a reload holds two
     /// lists for a moment. A cover that doesn't fit is drawn as type instead.
     pub const library: u32 = 32 << 20;
@@ -42,6 +45,8 @@ comptime {
     assert(b.app + b.decoders + b.library + b.book + b.scratch < 480 << 20);
     // A book's region holds the largest book measured, with room to spare
     assert(b.book > 78 << 20);
+    // The decoders have what the stb C libraries had
+    assert(b.decoders >= 128 << 20);
 }
 
 /// The regions an App reads in, reserved by the first `assemble` and kept for good:
@@ -76,6 +81,30 @@ fn reserve_reading() !*Reading {
     reading.scratch = try .reserve("scratch", .bump, region_bytes.scratch);
     reading_reserved = true;
     return &reading;
+}
+
+/// The decoders' region and budget, reserved by the first call and kept for good: the
+/// Kindle, the simulator and the scenario tests all decode in the same region, so a
+/// picture or font with no room shows off the Kindle too.
+var decoders_region: memory.Region = undefined;
+var decoders_budget: memory.Budget = undefined;
+var decoders_reserved = false;
+
+/// The budget the font and picture decoders take their memory from, for
+/// `decoder_memory.use`.
+pub fn decoders() !*memory.Budget {
+    if (!decoders_reserved) {
+        decoders_region = try .reserve("decoders", .heap, region_bytes.decoders);
+        decoders_budget = .{
+            .name = "decoders",
+            .region = &decoders_region,
+            .limit = region_bytes.decoders,
+        };
+        decoders_reserved = true;
+    }
+    assert(decoders_budget.region == &decoders_region);
+    assert(decoders_budget.limit == decoders_region.bytes.len);
+    return &decoders_budget;
 }
 
 /// The font files the interface and a book's fallback text are drawn with.
@@ -212,4 +241,149 @@ pub fn assemble(p: Parts) !app.App {
         .utc_offset = 0,
         .layout = layout,
     };
+}
+
+/// A JPEG of `width` x `height`, mid gray, in YCbCr at 4:2:0 as cameras write them:
+/// every coefficient zero, so its scans are all zero bytes. A progressive one has a
+/// scan of every component's DC, then one of the brightness's AC.
+fn test_jpeg(alloc: std.mem.Allocator, width: u16, height: u16, progressive: bool) ![]u8 {
+    assert(width > 0);
+    assert(height > 0);
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(alloc);
+    const jfif = [_]u8{ 0xff, 0xe0, 0, 16, 'J', 'F', 'I', 'F', 0, 1, 1, 0, 0, 1, 0, 1, 0, 0 };
+    try out.appendSlice(alloc, &(.{ 0xff, 0xd8 } ++ jfif ++ .{ 0xff, 0xdb, 0, 67, 0 }));
+    try out.appendNTimes(alloc, 1, 64); // Every quantizer 1
+    const w: [2]u8 = @bitCast(std.mem.nativeToBig(u16, width));
+    const h: [2]u8 = @bitCast(std.mem.nativeToBig(u16, height));
+    const frame: u8 = if (progressive) 0xc2 else 0xc0;
+    try out.appendSlice(alloc, &.{ 0xff, frame, 0, 17, 8, h[0], h[1], w[0], w[1], 3 });
+    try out.appendSlice(alloc, &.{ 1, 0x22, 0, 2, 0x11, 0, 3, 0x11, 0 });
+    // One code each, a 0 bit: for DC "no change", for AC "end of block"
+    try out.appendSlice(alloc, &.{ 0xff, 0xc4, 0, 2 + 2 * 18 });
+    for ([_]u8{ 0x00, 0x10 }) |table| {
+        try out.appendSlice(alloc, &.{ table, 1 });
+        try out.appendNTimes(alloc, 0, 16); // 15 more lengths, none; then the symbol 0
+    }
+    const mcus = @as(u64, (width + 15) / 16) * ((height + 15) / 16);
+    const all = [_]u8{ 0xff, 0xda, 0, 12, 3, 1, 0, 2, 0, 3, 0 };
+    if (progressive) {
+        try test_jpeg_scan(alloc, &out, &(all ++ .{ 0, 0, 0 }), mcus * 6);
+        const luma_blocks = @as(u64, (width + 7) / 8) * ((height + 7) / 8);
+        const luma = [_]u8{ 0xff, 0xda, 0, 8, 1, 1, 0, 1, 63, 0 };
+        try test_jpeg_scan(alloc, &out, &luma, luma_blocks);
+    } else {
+        try test_jpeg_scan(alloc, &out, &(all ++ .{ 0, 63, 0 }), mcus * 6 * 2);
+    }
+    try out.appendSlice(alloc, &.{ 0xff, 0xd9 });
+    return out.toOwnedSlice(alloc);
+}
+
+fn test_jpeg_scan(
+    alloc: std.mem.Allocator,
+    out: *std.ArrayList(u8),
+    header: []const u8,
+    bits: u64,
+) !void {
+    assert(header.len >= 10);
+    assert(bits > 0);
+    try out.appendSlice(alloc, header);
+    try out.appendNTimes(alloc, 0, @intCast((bits + 7) / 8));
+}
+
+/// A `side` x `side` RGB PNG, black, its data stored uncompressed in IDAT chunks of
+/// `chunk` bytes, as libpng writes them: a joined copy is as large as the pixels' data.
+fn test_png(alloc: std.mem.Allocator, side: u32, chunk: u32) ![]u8 {
+    assert(side > 0);
+    assert(chunk > 0);
+    const raw_size = side * (1 + side * 3); // Each row: filter 0, then its samples
+    var stream: std.ArrayList(u8) = .empty;
+    defer stream.deinit(alloc);
+    try stream.appendSlice(alloc, &.{ 0x78, 0x01 });
+    var left = raw_size;
+    for (0..raw_size / 65535 + 1) |_| {
+        const length: u16 = @intCast(@min(left, 65535));
+        left -= length;
+        const last: u8 = if (left == 0) 1 else 0;
+        const l: [2]u8 = @bitCast(std.mem.nativeToLittle(u16, length));
+        try stream.appendSlice(alloc, &.{ last, l[0], l[1], ~l[0], ~l[1] });
+        try stream.appendNTimes(alloc, 0, length);
+        if (left == 0) break;
+    }
+    try stream.appendNTimes(alloc, 0, 4); // The checksum, which nothing reads
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(alloc);
+    try out.appendSlice(alloc, "\x89PNG\r\n\x1a\n");
+    var header: [13]u8 = @splat(0);
+    std.mem.writeInt(u32, header[0..4], side, .big);
+    std.mem.writeInt(u32, header[4..8], side, .big);
+    header[8] = 8; // Bits per sample
+    header[9] = 2; // RGB
+    try test_png_chunk(alloc, &out, "IHDR", &header);
+    const chunks: u32 = @intCast((stream.items.len + chunk - 1) / chunk);
+    for (0..chunks) |index| {
+        const at = index * chunk;
+        const end = @min(at + chunk, stream.items.len);
+        try test_png_chunk(alloc, &out, "IDAT", stream.items[at..end]);
+    }
+    try test_png_chunk(alloc, &out, "IEND", "");
+    return out.toOwnedSlice(alloc);
+}
+
+fn test_png_chunk(
+    alloc: std.mem.Allocator,
+    out: *std.ArrayList(u8),
+    kind: *const [4]u8,
+    body: []const u8,
+) !void {
+    assert(body.len <= std.math.maxInt(u32));
+    assert(kind[0] >= 'A');
+    var length: [4]u8 = undefined;
+    std.mem.writeInt(u32, &length, @intCast(body.len), .big);
+    try out.appendSlice(alloc, &length);
+    try out.appendSlice(alloc, kind);
+    try out.appendSlice(alloc, body);
+    try out.appendNTimes(alloc, 0, 4); // Its checksum, which stb_image never read
+}
+
+test "the decoders' region decodes the largest pictures stb decoded in its 128 MB" {
+    const jpeg = @import("gfx/jpeg.zig");
+    const png = @import("gfx/png.zig");
+    var region = try memory.Region.reserve("decoders", .heap, region_bytes.decoders);
+    defer region.release();
+    var budget = memory.Budget{
+        .name = "decoders",
+        .region = &region,
+        .limit = region_bytes.decoders,
+    };
+    const alloc = std.testing.allocator;
+    const Kind = enum { baseline, progressive, png };
+    const Case = struct { width: u16, height: u16, kind: Kind };
+    const cases = [_]Case{
+        // Turned down by a 64 MB region: stb took 28 to 65 MB for these
+        .{ .width = 4000, .height = 6000, .kind = .baseline },
+        .{ .width = 3000, .height = 4000, .kind = .progressive },
+        .{ .width = 3000, .height = 3000, .kind = .png },
+        // Near the largest stb read in 128 MB: it took 120 MB, and 114
+        .{ .width = 8000, .height = 6000, .kind = .baseline },
+        .{ .width = 4000, .height = 5200, .kind = .progressive },
+    };
+    for (cases) |case| {
+        const data = switch (case.kind) {
+            .baseline => try test_jpeg(alloc, case.width, case.height, false),
+            .progressive => try test_jpeg(alloc, case.width, case.height, true),
+            .png => try test_png(alloc, case.width, 8 << 10),
+        };
+        defer alloc.free(data);
+        budget.peak = 0;
+        const picture = switch (case.kind) {
+            .baseline, .progressive => try jpeg.decode(budget.allocator(), data),
+            .png => try png.decode(budget.allocator(), data),
+        };
+        try std.testing.expectEqual(@as(u32, case.width), picture.width);
+        try std.testing.expectEqual(@as(u32, case.height), picture.height);
+        budget.allocator().free(picture.pixels);
+        try std.testing.expectEqual(@as(u64, 0), budget.live);
+        try std.testing.expect(budget.peak < region_bytes.decoders / 2); // 61 MB at most
+    }
 }

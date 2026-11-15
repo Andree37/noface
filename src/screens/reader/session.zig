@@ -554,9 +554,17 @@ pub fn page_containing(pages: []const book_model.Pos, para: u32, byte: u32) u32 
     return found;
 }
 
+/// Where a session's pages point while a layout that failed partway had let go of the
+/// old ones: the book's start, a page that always exists.
+const pages_fallback = [_]book_model.Pos{.{}};
+
 /// Re-lays out the book after a text setting changed, keeping the reading position.
-pub fn relayout(a: *app.App, alloc: std.mem.Allocator, s: *Session) !void {
+/// The new pages go in the pages region, emptied first: the pages of the last change,
+/// and of a layout still running for it, are no longer wanted, so changing settings
+/// again and again takes no more memory.
+pub fn relayout(a: *app.App, s: *Session) !void {
     assert(s.current < s.pages.len);
+    assert(a.pages_budget.region.?.kind == .bump);
     a.apply_settings() catch |err| {
         std.debug.print("settings failed: {s}\n", .{@errorName(err)});
         a.settings = app.load_settings(a.settings_path);
@@ -567,8 +575,12 @@ pub fn relayout(a: *app.App, alloc: std.mem.Allocator, s: *Session) !void {
     const t0 = now_us();
     const pages_key = page_store.key(a, s.book_bytes);
     const paragraph_count: u32 = @intCast(s.paragraphs.len);
-    const stored = page_store.load(alloc, s.pages_path, pages_key, paragraph_count);
     s.progress = null; // A layout still running was for the old settings
+    s.pages = &pages_fallback;
+    s.current = 0;
+    a.pages_budget.reset(.keep);
+    const alloc = a.pages_budget.allocator();
+    const stored = page_store.load(alloc, s.pages_path, pages_key, paragraph_count);
     if (stored) |pages| {
         s.pages = pages;
         s.current = page_containing(s.pages, s.anchor.para, s.anchor.byte);

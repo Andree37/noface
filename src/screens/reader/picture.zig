@@ -19,6 +19,9 @@ const os = @import("../../sys/os.zig");
 
 /// Bigger than this and it isn't worth the memory: a page-sized scan is ~5M.
 const pixels_max = 24 * 1000 * 1000;
+/// The most the viewer takes of the book's region: the page underneath, and the
+/// largest picture's grays with room to spare.
+const viewer_bytes_max = 64 << 20;
 /// Zoom steps after fitting the screen: twice, then four times as close.
 const steps = [_]f32{ 1, 2, 4 };
 /// The close button, top right, a fingertip across.
@@ -34,6 +37,8 @@ const double_tap_reach = 120;
 comptime {
     // A picture worth decoding fits a 32-bit size, as the Kindle's usize is
     assert(pixels_max <= std.math.maxInt(u32));
+    // The page underneath and the largest picture fit what the viewer may take
+    assert(style.screen_width * style.screen_height + pixels_max < viewer_bytes_max);
     // The first step is the fit itself, and each one after comes closer
     assert(steps[0] == 1);
     for (steps[1..], steps[0 .. steps.len - 1]) |step, previous| assert(step > previous);
@@ -59,7 +64,11 @@ fn decode(alloc: std.mem.Allocator, img: book_model.Image) ?image.Gray {
     const g: image.Gray = if (jpegxr.is_jpeg_xr(img.data)) blk: {
         const x = jpegxr.decode_jpeg_xr(alloc, img.data, img.width, img.height) orelse return null;
         break :blk .{ .pixels = x.pixels, .width = x.width, .height = x.height };
-    } else image.decode_gray(alloc, img.data) orelse return null;
+    } else image.decode_gray_from(alloc, .{
+        .bytes = img.data,
+        .deflated = img.deflated,
+        .inflated_size = img.inflated_size,
+    }, pixels_max) orelse return null;
     if (!decodable(g.width, g.height)) return null;
     return g;
 }
@@ -200,19 +209,26 @@ fn on_close(x: i32, y: i32) bool {
 
 /// Starts showing `img` full screen in `viewer`, where it stays while it's open
 /// (`screen.open`); null when it can't be decoded, said in a notice over the page.
-/// Once it has ended, `ended` puts the page back as it was.
+/// Once it has ended, `ended` puts the page back as it was. The page underneath and
+/// the picture's grays sit on top of the open book's memory, in its region, and are
+/// let go of as the viewer closes: nothing else takes from that region while the
+/// viewer is open, so what it took is the last there.
 pub fn begin(viewer: *Viewer, a: *app.App, img: book_model.Image) !?screen.Frame {
+    assert(a.book_region.kind == .bump);
+    assert(!a.book_region.empty()); // The book the picture is in is open
     viewer.* = .{
         .a = a,
-        .budget = .{ .name = "picture", .child = std.heap.smp_allocator, .limit = 64 << 20 },
-        .arena = undefined,
+        .budget = .{ .name = "picture", .region = a.book_region, .limit = viewer_bytes_max },
+        .book_end = a.book_region.end,
+        .start = undefined,
         .saved = &.{},
         .v = undefined,
     };
-    viewer.arena = .init(viewer.budget.allocator());
+    viewer.start = viewer.budget.mark();
     errdefer viewer.release();
-    viewer.saved = try viewer.arena.allocator().dupe(u8, a.screen.pixels);
-    const picture = decode(viewer.arena.allocator(), img) orelse {
+    const alloc = viewer.budget.allocator();
+    viewer.saved = try alloc.dupe(u8, a.screen.pixels);
+    const picture = decode(alloc, img) orelse {
         try app.show_notice(a, "This picture can't be shown larger.");
         // The notice was drawn over the page: put the page back
         try a.present(viewer.saved, .page);
@@ -251,8 +267,9 @@ pub fn ended(viewer: *Viewer) !void {
 pub const Viewer = struct {
     pub const Result = void;
     a: *app.App,
-    budget: memory.Budget,
-    arena: std.heap.ArenaAllocator,
+    budget: memory.Budget, // On top of the book's memory, in its region
+    book_end: u32, // Where the book's memory ended as the viewer opened
+    start: memory.Budget.Mark, // Where the viewer's own memory began
     saved: []u8, // The page under it
     v: View,
     phase: Phase = .idle,
@@ -422,10 +439,12 @@ pub const Viewer = struct {
     }
 
     fn release(viewer: *Viewer) void {
+        const region = viewer.a.book_region;
         assert(viewer.budget.live <= viewer.budget.limit);
-        viewer.arena.deinit();
         viewer.budget.report();
-        assert(viewer.budget.live == 0);
+        viewer.budget.rewind(viewer.start);
+        region.give_back_past_end();
+        assert(region.end == viewer.book_end); // The book's memory as it was
     }
 };
 

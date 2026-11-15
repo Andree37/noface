@@ -83,6 +83,9 @@ pub fn main(init: std.process.Init.Minimal) !void {
     if (argv.len != 3) return error.Usage;
 
     const allocator = std.heap.page_allocator;
+    // A tool takes its memory from the system as it goes: its decoders too
+    var decoders = core.memory.Budget{ .name = "decoders", .child = allocator, .limit = 256 << 20 };
+    core.decoder_memory.use(&decoders);
     const book = try kfx.parse(allocator, try file.map(argv[1]));
     const font_file = try file.map(argv[2]);
 
@@ -90,8 +93,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
     const size = screen.pixels.len;
 
     // 10pt at the panel's 300 ppi is about 42 px.
-    var font = try Font.init(allocator, font_file, 46, 1.35);
-    var label_font = try Font.init(allocator, font_file, 30, 1.2);
+    var font = try Font.init(font_file, 46, 1.35);
+    var label_font = try Font.init(font_file, 30, 1.2);
     const layout = text.Layout{
         .margin_x = 100,
         .margin_top = 90,

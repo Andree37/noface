@@ -219,7 +219,10 @@ fn read_book_parse(
     entry: *const catalog.Entry,
     data: []const u8,
 ) !struct { book: book_model.Book, lang: ?hyphen.Lang } {
-    const book = if (entry.is_epub()) try epub.parse(alloc, data) else try kfx.parse(alloc, data);
+    const book = if (entry.is_epub())
+        try epub.parse(alloc, a.scratch_region, data)
+    else
+        try kfx.parse(alloc, data);
     // Positions are u32: a book's paragraphs fit its memory budget, far below that
     assert(book.paragraphs.len <= std.math.maxInt(u32));
     // Both parsers point the contents inside the book, as Go To relies on
@@ -554,7 +557,7 @@ pub const Reader = struct {
             },
             .controls => {
                 const title = r.entry.title;
-                try controls.resumed(&r.pending, r.a, r.alloc, s, title, r.sheet_open);
+                try controls.resumed(&r.pending, r.a, s, title, r.sheet_open);
             },
             .searching, .going => switch (r.page_ending.?) {
                 .done => |target| {
@@ -665,9 +668,11 @@ pub const Reader = struct {
         // Emptied for the next book, the pages touched handed back
         r.scratch_budget.reset(.give_back);
         r.book_budget.reset(.give_back);
+        a.pages_budget.reset(.give_back); // The pages of layouts after settings changes
         assert(a.book_region.empty());
         assert(a.scratch_region.empty());
         r.book_budget.report();
+        a.pages_budget.report();
         r.scratch_budget.report();
         a.library_budget.report();
         a.app_budget.report();
@@ -998,7 +1003,7 @@ pub const Reader = struct {
             .scrub => r.open_over(.controls, try controls.drag_scrub(&r.pending, a, s, t.x)),
             .sheet => {
                 const title = r.entry.title;
-                const f = try controls.tap_sheet(&r.pending, a, r.alloc, s, title, t.x, t.y);
+                const f = try controls.tap_sheet(&r.pending, a, s, title, t.x, t.y);
                 if (f) |opened| r.open_over(.controls, opened);
             },
         }

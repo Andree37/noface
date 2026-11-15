@@ -15,6 +15,9 @@ const style = @import("ui/style.zig");
 const text = @import("layout/text.zig");
 const books = @import("screens/books.zig");
 const image = @import("gfx/image.zig");
+const book_model = @import("model/book.zig");
+const glyph_cache = @import("gfx/glyph_cache.zig");
+const workspace = @import("gfx/workspace.zig");
 
 /// What each memory region reserves, taken once at startup (`memory.Region`). Pages
 /// come in as they're first touched, so a region costs what's used, not its size.
@@ -25,11 +28,18 @@ pub const region_bytes = struct {
     /// eight pictures and hyphenation: 16 to 24 MB measured, so 64 leaves room for
     /// glyphs of many sizes and a full picture cache.
     pub const app: u32 = 64 << 20;
-    /// Glyph bitmaps and pictures being decoded: 15 MB for a large cover, but kept at
+    /// The glyph cache: its table and its log of bitmaps (`glyph_cache.Config`), at
+    /// most 16 MB however many glyphs, fonts and sizes are drawn.
+    pub const glyphs: u32 =
+        std.mem.alignForward(u32, glyph_cache.Config.default.bytes(), memory.unit_bytes);
+    /// Where a glyph is drawn before it's kept: its outline, the lines its curves are
+    /// cut into, and its bitmap. Emptied before each glyph.
+    pub const glyph_scratch: u32 = glyph_cache.scratch_bytes;
+    /// Pictures being decoded: 15 MB for a large cover, but kept at
     /// the 128 MB the stb C libraries had, so every picture they decoded still decodes.
-    /// The Zig decoders need less for any picture than stb did (no copy of the picture
-    /// data beside the pixels, only the samples the gray is made of), and a block takes
-    /// whole 64 KB units: an 8000x6000 JPEG needs 48 MB, where stb needed 120.
+    /// The Zig decoders hand a picture on row by row, scaled as it comes: drawing an
+    /// 8000x6000 JPEG takes 300 KB, where stb needed 120 MB; a progressive one keeps
+    /// two bytes a pixel, and one past `workspace.bytes_max` is decoded smaller.
     pub const decoders: u32 = 128 << 20;
     /// The library's list and its covers: two lists of `books.books_max` books at
     /// `books.book_bytes_max` each (a reload holds two for a moment), and the covers
@@ -44,6 +54,10 @@ pub const region_bytes = struct {
     /// 78 from a 70 MB EPUB); kept at the old limit, so every book that opened still
     /// does. A larger one shows a notice instead of opening, as before.
     pub const book: u32 = 128 << 20;
+    /// An open book's pages after a text setting changed: emptied before each layout,
+    /// so changing settings again and again takes no more. A layout's two lists of
+    /// where pages start, joined, and the copy saved (see `book_bytes_per_page_min`).
+    pub const pages: u32 = 32 << 20;
     /// One action's: a Go To list (27 KB measured) or search results (500 at most).
     pub const scratch: u32 = 8 << 20;
 };
@@ -55,6 +69,10 @@ comptime {
     assert(hwtcon.height_px == style.screen_height);
 }
 
+/// A page holds at least this many bytes of a book's text, at the largest type: the
+/// pages region is sized for a book region full of text cut that finely.
+const book_bytes_per_page_min = 128;
+
 /// Room in the library's region for covers beside its two lists: 256 of the grid's,
 /// three pages of fifteen for each list being looked through, and plenty more.
 const library_covers: u32 = 256 * image.width * image.height;
@@ -62,15 +80,24 @@ const library_covers: u32 = 256 * image.width * image.height;
 comptime {
     // Every region fits in the ~480 MB a Kindle has free beside Amazon's services
     const b = region_bytes;
-    const reading_bytes = b.library + b.library_scratch + b.book + b.scratch;
-    assert(b.app + b.decoders + reading_bytes < 480 << 20);
+    const reading_bytes = b.library + b.library_scratch + b.book + b.pages + b.scratch;
+    const glyphs_bytes = b.glyphs + b.glyph_scratch;
+    assert(b.app + b.decoders + glyphs_bytes + reading_bytes < 480 << 20);
     // Regions are whole units
+    assert(b.glyphs % memory.unit_bytes == 0);
+    assert(b.glyph_scratch % memory.unit_bytes == 0);
     assert(b.library % memory.unit_bytes == 0);
     assert(b.library_scratch % memory.unit_bytes == 0);
     // A book's region holds the largest book measured, with room to spare
     assert(b.book > 78 << 20);
+    // A layout's lists of pages, joined and saved, fit for the most pages a book has
+    const pages_most = b.book / book_bytes_per_page_min;
+    assert(4 * pages_most * @sizeOf(book_model.Pos) <= b.pages);
+    assert(b.pages % memory.unit_bytes == 0);
     // The decoders have what the stb C libraries had
     assert(b.decoders >= 128 << 20);
+    // A picture's workspace leaves a quarter of the decoders' region to glyphs
+    assert(workspace.bytes_max * 4 <= b.decoders * 3);
 }
 
 /// The regions an App reads in, reserved by the first `assemble` and kept for good:
@@ -84,6 +111,8 @@ const Reading = struct {
     library_budget: memory.Budget, // Shared by a library list and the one reloaded after it
     library_scratch: memory.Region,
     book: memory.Region,
+    pages: memory.Region,
+    pages_budget: memory.Budget, // Emptied before each layout after a settings change
     scratch: memory.Region,
 };
 
@@ -92,6 +121,8 @@ fn reserve_reading() !*Reading {
         // The last App closed its book and its library, so the next starts with
         // nothing open
         assert(reading.book.empty());
+        assert(reading.pages.empty());
+        assert(reading.pages_budget.live == 0);
         assert(reading.scratch.empty());
         assert(reading.library_scratch.empty());
         assert(reading.library_budget.live == 0);
@@ -105,6 +136,12 @@ fn reserve_reading() !*Reading {
     };
     reading.library_scratch = try .reserve("library scratch", .bump, region_bytes.library_scratch);
     reading.book = try .reserve("book", .bump, region_bytes.book);
+    reading.pages = try .reserve("pages", .bump, region_bytes.pages);
+    reading.pages_budget = .{
+        .name = "pages",
+        .region = &reading.pages,
+        .limit = region_bytes.pages,
+    };
     reading.scratch = try .reserve("scratch", .bump, region_bytes.scratch);
     reading_reserved = true;
     return &reading;
@@ -134,6 +171,25 @@ pub fn decoders() !*memory.Budget {
     return &decoders_budget;
 }
 
+/// The glyph cache and its regions, made by the first call and kept for good, as the
+/// decoders' are: the Kindle, the simulator and the scenario tests draw through the
+/// same one.
+var glyphs: glyph_cache.Reserved = undefined;
+var glyphs_reserved = false;
+
+/// Gives every font the glyph cache, reserved by the first call: before any text is
+/// measured or drawn.
+pub fn use_glyph_cache() !void {
+    if (!glyphs_reserved) {
+        try glyphs.reserve(.default, region_bytes.glyphs, region_bytes.glyph_scratch);
+        glyphs_reserved = true;
+    }
+    // The cache took its table and cells once, and nothing since
+    assert(glyphs.budgets[0].live <= region_bytes.glyphs);
+    assert(glyphs.cache.scratch == &glyphs.budgets[1]);
+    glyph_cache.use(&glyphs.cache);
+}
+
 /// The font files the interface and a book's fallback text are drawn with.
 pub const FontFiles = struct {
     book: []const u8, // The book's regular face, for text with no typeface of its own
@@ -154,17 +210,17 @@ pub const Kit = struct {
     hero: Font,
     cover_type: Font,
 
-    pub fn init(alloc: std.mem.Allocator, files: FontFiles) !Kit {
+    pub fn init(files: FontFiles) !Kit {
         const kit: Kit = .{
-            .body = try Font.init(alloc, files.book, 46, 1.35),
-            .note_font = try Font.init(alloc, files.book, 36, 1.3),
-            .footer = try Font.init(alloc, files.ui, 28, 1.2),
-            .reference = try Font.init(alloc, files.book, 28, 1.2),
-            .title = try Font.init(alloc, files.ui_bold, 34, 1.2),
-            .small = try Font.init(alloc, files.ui, 34, 1.2),
-            .caption = try Font.init(alloc, files.ui, 26, 1.2),
-            .hero = try Font.init(alloc, files.book_bold, 56, 1.2),
-            .cover_type = try Font.init(alloc, files.book_bold, 36, 1.2),
+            .body = try Font.init(files.book, 46, 1.35),
+            .note_font = try Font.init(files.book, 36, 1.3),
+            .footer = try Font.init(files.ui, 28, 1.2),
+            .reference = try Font.init(files.book, 28, 1.2),
+            .title = try Font.init(files.ui_bold, 34, 1.2),
+            .small = try Font.init(files.ui, 34, 1.2),
+            .caption = try Font.init(files.ui, 26, 1.2),
+            .hero = try Font.init(files.book_bold, 56, 1.2),
+            .cover_type = try Font.init(files.book_bold, 36, 1.2),
         };
         // Line heights come from the sizes above: a note sets smaller than the page,
         // and the footer smaller still
@@ -246,6 +302,7 @@ pub fn assemble(p: Parts) !app.App {
         .library_budget = &regions.library_budget,
         .library_scratch_region = &regions.library_scratch,
         .book_region = &regions.book,
+        .pages_budget = &regions.pages_budget,
         .scratch_region = &regions.scratch,
         .screen = p.screen,
         .input = p.input,

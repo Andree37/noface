@@ -1,0 +1,8 @@
+# The workflows pin each action to a commit, so a moved tag can't change what runs;
+# this proposes the newer commits as pull requests to review.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

@@ -4,6 +4,7 @@ const assert = std.debug.assert;
 const autostart = @import("../../kindle/autostart.zig");
 const card = @import("../../ui/card.zig");
 const aa = @import("../../ui/aa.zig");
+const settings_model = @import("../../model/settings.zig");
 const toolbar = @import("../../ui/toolbar.zig");
 const app = @import("../../app.zig");
 const sess = @import("session.zig");
@@ -29,7 +30,10 @@ pub fn draw_toolbar(a: *app.App, s: *sess.Session, title: []const u8, drawn: Dra
     const total = if (s.layout_pending()) 0 else s.page_count(); // No page count until it's known
     assert(total == 0 or total > s.current);
     var fonts = a.ui;
-    if (drawn.sheet_open and a.tab == .font) fonts.families = a.load_family_samples();
+    if (drawn.sheet_open and a.tab == .font) {
+        fonts.families = a.load_family_samples();
+        fonts.family_first = a.family_first;
+    }
     try toolbar.render(
         fonts,
         a.page(a.overlay),
@@ -191,7 +195,6 @@ fn drag_setting(p: *Pending, a: *app.App, row: aa.Row, first_x: i32) !screen.Fra
 pub fn tap_sheet(
     p: *Pending,
     a: *app.App,
-    alloc: std.mem.Allocator,
     s: *sess.Session,
     title: []const u8,
     x: i32,
@@ -216,18 +219,28 @@ pub fn tap_sheet(
             a.settings.spacing = theme.spacing;
             a.settings.margin = theme.margin;
         },
-        .family => |index| a.settings.font = index,
+        .family => |cell| {
+            const family = a.family_first + cell;
+            // The last page may have fewer typefaces than cells
+            if (family >= settings_model.families.len) return null;
+            a.settings.font = family;
+        },
+        .more_families => {
+            a.family_first = aa.next_family_page(a.family_first);
+            try draw_toolbar(a, s, title, sheet_only);
+            return null;
+        },
         .toggle => |index| {
             assert(index < aa.switches.len);
             const turning_on = !aa.is_on(index, a.settings);
             if (turning_on) {
                 if (try ask_first(p, a, s, aa.switches[index].guard, index)) |f| return f;
             }
-            try flip(a, alloc, s, title, index);
+            try flip(a, s, title, index);
             return null;
         },
     }
-    try sess.relayout(a, alloc, s);
+    try sess.relayout(a, s);
     try draw_toolbar(a, s, title, .{ .sheet_open = true, .whole_page = true });
     return null;
 }
@@ -235,7 +248,6 @@ pub fn tap_sheet(
 /// Turns switch `index` over, and applies it.
 fn flip(
     a: *app.App,
-    alloc: std.mem.Allocator,
     s: *sess.Session,
     title: []const u8,
     index: u32,
@@ -247,7 +259,7 @@ fn flip(
     assert(aa.is_on(index, a.settings) == turning_on);
     switch (switch_hit.effect) {
         .relayout => {
-            try sess.relayout(a, alloc, s);
+            try sess.relayout(a, s);
             try draw_toolbar(a, s, title, .{ .sheet_open = true, .whole_page = true });
         },
         .footer, .nothing => {
@@ -303,7 +315,6 @@ const ok_rows = [_]card.Row{.{ .label = "OK" }};
 pub fn resumed(
     p: *Pending,
     a: *app.App,
-    alloc: std.mem.Allocator,
     s: *sess.Session,
     title: []const u8,
     sheet_open: bool,
@@ -321,7 +332,7 @@ pub fn resumed(
             _ = try app.drag_ended(&p.setting, p.drag_ending.?);
             if (p.value != p.started) {
                 row_value_set(a, p.row, p.value);
-                try sess.relayout(a, alloc, s);
+                try sess.relayout(a, s);
             }
             try draw_toolbar(a, s, title, .{ .sheet_open = true, .whole_page = true });
             try app.clean_band(a, p.row.top, aa.row_height);
@@ -329,7 +340,7 @@ pub fn resumed(
         .autostart => {
             try app.card_closed(a, p.background);
             if (p.card_ending.? != .done) return draw_toolbar(a, s, title, sheet_only);
-            if (autostart.install()) return flip(a, alloc, s, title, p.toggle);
+            if (autostart.install()) return flip(a, s, title, p.toggle);
             try draw_toolbar(a, s, title, sheet_only);
             try app.show_notice(a, "Couldn't set up starting with the Kindle.");
         },

@@ -121,6 +121,21 @@ pub const Region = struct {
         std.posix.madvise(region.bytes.ptr, touched, advice) catch {}; // Ignored: only advice
     }
 
+    /// Hands the pages of a bump region past its end back to the system, as `reset`
+    /// hands back all of them: after a rewind let go of more than is worth keeping.
+    pub fn give_back_past_end(region: *Region) void {
+        assert(region.kind == .bump);
+        assert(region.end <= region.touched);
+        const from = std.mem.alignForward(u32, region.end, std.heap.page_size_min);
+        const to = std.mem.alignForward(u32, region.touched, unit_bytes);
+        if (to <= from) return;
+        assert(to <= region.bytes.len);
+        region.touched = from;
+        const advice = std.posix.MADV.DONTNEED;
+        const pages: []align(std.heap.page_size_min) u8 = @alignCast(region.bytes[from..to]);
+        std.posix.madvise(pages.ptr, pages.len, advice) catch {}; // Ignored: only advice
+    }
+
     /// Whether nothing is handed out: a bump region's end at its start.
     pub fn empty(region: *const Region) bool {
         assert(region.bytes.len > 0);
@@ -445,13 +460,15 @@ pub const Budget = struct {
     }
 
     /// The system's allocator, for a budget without a region: never after `seal`. One
-    /// asked for after it is a bug, a crash in a debug build; elsewhere it's counted,
-    /// and named in the log the first time, so the budget can be given a region.
+    /// asked for after it is a bug, a crash in a debug build and in the tests; elsewhere
+    /// it's counted, and named in the log the first time, so the budget can be given a
+    /// region (the scenarios fail on that count).
     fn system(budget: *Budget) Allocator {
         assert(budget.region == null);
         assert(budget.child != null); // `allocator` checked it has one or the other
         if (sealed) {
-            if (builtin.mode == .debug) @panic("memory asked of the system after startup");
+            const crash = builtin.mode == .debug or builtin.is_test;
+            if (crash) @panic("memory asked of the system after startup");
             if (late_requests == 0) {
                 std.debug.print("memory {s}: asked of the system after startup\n", .{budget.name});
             }
@@ -655,16 +672,21 @@ test "a heap region gives a freed block's pages back, and keeps its slabs" {
     const a = b.allocator();
     const small = try a.alloc(u8, 100);
     const big = try a.alloc(u8, 1 << 20);
-    @memset(big, 0xaa); // Touched, so resident
+    @memset(big, 0x55); // Touched, so resident
+    const big_start: u32 = @intCast(big.ptr - region.bytes.ptr);
     try std.testing.expectEqual(@as(u64, 0), region.bytes_given_back);
     a.free(big);
     try std.testing.expectEqual(@as(u64, 1 << 20), region.bytes_given_back);
     a.free(small); // A slot: its slab stays, for the next small block
     try std.testing.expectEqual(@as(u64, 1 << 20), region.bytes_given_back);
-    // Given back, the pages read as zeros when next handed out
+    // Given back, the pages read as zeros. Read through the region, not a new block:
+    // the allocator fills a new block with 0xaa in safe builds, hiding the pages.
+    if (builtin.os.tag == .linux) {
+        try std.testing.expectEqual(@as(u8, 0), region.bytes[big_start + 4096]);
+    }
     const again = try a.alloc(u8, 1 << 20);
     defer a.free(again);
-    if (builtin.os.tag == .linux) try std.testing.expectEqual(@as(u8, 0), again[4096]);
+    try std.testing.expect(again.len == 1 << 20);
 }
 
 test "a bump region is an arena: in turn, the last given back, all emptied at once" {
@@ -697,6 +719,26 @@ test "a bump region is an arena: in turn, the last given back, all emptied at on
     b.reset(.give_back);
     try std.testing.expectEqual(@as(u32, 0), region.touched);
     try std.testing.expect(region.end_peak >= 1 << 20);
+}
+
+test "a second budget on a bump region rewinds to its mark, and its pages go back" {
+    var region = try Region.reserve("book", .bump, 4 << 20);
+    defer region.release();
+    var book = Budget{ .name = "book", .region = &region, .limit = region.bytes.len };
+    const kept = try book.allocator().alloc(u8, 1000);
+    const end = region.end;
+    var viewer = Budget{ .name = "picture", .region = &region, .limit = 2 << 20 };
+    const start = viewer.mark();
+    _ = try viewer.allocator().alloc(u8, 1 << 20);
+    try std.testing.expect(region.touched >= end + (1 << 20));
+    viewer.rewind(start);
+    region.give_back_past_end();
+    try std.testing.expectEqual(end, region.end);
+    try std.testing.expect(region.touched < unit_bytes); // Only the book's first page
+    try std.testing.expectEqual(@as(u64, 1000), book.live);
+    try std.testing.expect(kept.ptr == region.bytes.ptr);
+    region.give_back_past_end(); // Nothing more past the end: nothing happens
+    try std.testing.expectEqual(end, region.end);
 }
 
 test "after seal, budgets on regions ask the system for nothing" {

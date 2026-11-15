@@ -14,7 +14,8 @@ title: "Device report: "
 paste here
 ```
 
-**`selftest` output** (run `/mnt/us/noface/noface selftest`):
+**`selftest` output** (run `/mnt/us/noface/noface selftest`; it names books by kind and
+number, never by title):
 
 ```
 paste here

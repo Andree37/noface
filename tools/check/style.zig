@@ -346,6 +346,7 @@ const Scan = struct {
     previous_comment: bool = false,
     said: Said = .{}, // For the next line of code
     after_statement: bool = false, // The last line of code ended with `;`
+    after_catch: bool = false, // The last line of code ended with `catch`, wrapped
     // The file's functions and their assertions (and those outside any, at compile
     // time), but for the functions excused from them
     functions: u32 = 0,
@@ -556,6 +557,16 @@ fn open_function(scan: *Scan, function: Scan.Function) void {
     scan.open_count += 1;
 }
 
+/// Whether a line, following one that ended in `catch`, ignores the error:
+/// `{}` or `unreachable` as the first thing on it.
+fn ignores_wrapped_catch(after_catch: bool, code: []const u8) bool {
+    assert(std.mem.indexOfScalar(u8, code, '\n') == null); // One line, split before
+    if (!after_catch) return false;
+    const start = std.mem.trimStart(u8, code, " ");
+    assert(start.len <= code.len);
+    return std.mem.startsWith(u8, start, "{}") or std.mem.startsWith(u8, start, "unreachable");
+}
+
 /// Notes what a line of code breaks within a statement: compound assertions, unbraced
 /// ifs, ignored errors, unbounded loops and usize, each unless marked as an exception.
 fn check_zig_statement(scan: *Scan, line: *const Line, line_number: u32, said: Said) !void {
@@ -570,9 +581,13 @@ fn check_zig_statement(scan: *Scan, line: *const Line, line_number: u32, said: S
     }
     const ending = std.mem.trimEnd(u8, code, " ");
     if (ending.len > 0) scan.after_statement = ending[ending.len - 1] == ';';
-    // Ignoring an error is handling it only when the line says why: `// Ignored: …`
+    // Ignoring an error is handling it only when the line says why: `// Ignored: …`.
+    // A `catch` wrapped onto the next line counts the same as one on a single line.
+    const wrapped = ignores_wrapped_catch(scan.after_catch, code);
+    if (ending.len > 0) scan.after_catch = std.mem.endsWith(u8, ending, " catch");
     if (!is_marker(line.comment, "// Ignored: ")) {
-        const ignored = count_token(code, "catch {}") + count_token(code, "catch unreachable");
+        const inline_count = count_token(code, "catch {}") + count_token(code, "catch unreachable");
+        const ignored = inline_count + @intFromBool(wrapped);
         try scan.note(.error_ignored, line_number, ignored);
     }
     // A loop that never ends by design says so just above it: `// Unbounded: …`
@@ -877,12 +892,14 @@ test "compound assertions, unbraced ifs, ignored errors and recursion count" {
         \\    if (n == 1)
         \\        return 1;
         \\    foo() catch {};
+        \\    const x = foo() catch
+        \\        unreachable;
         \\    return walk(n - 1);
         \\}
     ;
     try std.testing.expectEqual(@as(u32, 1), try count_in(source, .compound_assertion));
     try std.testing.expectEqual(@as(u32, 1), try count_in(source, .if_without_braces));
-    try std.testing.expectEqual(@as(u32, 1), try count_in(source, .error_ignored));
+    try std.testing.expectEqual(@as(u32, 2), try count_in(source, .error_ignored));
     try std.testing.expectEqual(@as(u32, 1), try count_in(source, .recursion));
 }
 

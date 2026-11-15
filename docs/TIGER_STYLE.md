@@ -81,21 +81,31 @@ on outside data to avoid one either.
 
 - **Memory is reserved at startup.** Each budget (`base/memory.zig`) hands out memory
   from a fixed region of address space taken from the system once, at startup, with
-  sizes set in `setup.zig`: the app (64 MB) and the font and picture decoders (64 MB,
-  a region still named "stb") in `main.zig`; the library (32 MB), an open book
-  (128 MB) and one action's scratch (8 MB) by `setup.assemble`. Then `memory.seal()`,
-  and nothing more is asked of the system: a region that runs out is an error the
-  caller handles (a book too big shows a notice), never a crash. The app's, the
-  decoders' and the library's regions free and reuse blocks in any order; the book's
-  and scratch's hand out one block after another, as arenas, and are emptied whole
-  when the book closes. Pages come in as they're first touched, and an emptied book
-  region hands its pages back (`madvise`), still reserved, so an idle noface holds no
-  more than before. A budget without a region asking the system for
-  memory after `seal` is a bug: a crash in a debug build, else counted and logged.
-  *Left to do:* the picture viewer's budget (`screens/reader/picture.zig`) still takes
-  from the system, and a book's notes (`screens/reader/records.zig`) use
-  `std.heap.smp_allocator` directly; both should take their memory from the book's or
-  scratch's region.
+  sizes set in `setup.zig`: the app (64 MB) in `main.zig`, the picture decoders
+  (128 MB) by `setup.decoders`, the glyphs fonts draw (a fixed cache of ~17 MB that
+  gives up the least recently drawn, and 1 MB each glyph is drawn in) by
+  `setup.use_glyph_cache`; the library (~40 MB: two lists of its books
+  and 256 covers), what each EPUB is read for while the library is found (32 MB), an
+  open book (128 MB), its pages after a settings change (32 MB) and one action's
+  scratch (8 MB) by `setup.assemble`; ~450 MB of address space in all, of which only
+  what's touched is memory. Then `memory.seal()`, and nothing more is asked of the
+  system: a region that runs out is an error the caller handles (a book too big shows
+  a notice), never a crash. The app's, the decoders' and the library's regions free
+  and reuse blocks in any order; the others hand out one block after another, as
+  arenas, emptied whole at a named point: the book's when it closes, the pages' before
+  each layout, the scratch after each action, the library scratch after each EPUB,
+  the glyphs' scratch before each glyph.
+  Something that lives inside one of those lifetimes goes on top of its arena and is
+  rewound when it ends: the picture viewer on the book's. Pages come in as they're
+  first touched, and an emptied region hands its pages back (`madvise`), still
+  reserved, so an idle noface holds no more than before. What grows with the reader's
+  data is never capped in memory: a book's notes, however many, are rewritten through
+  a fixed buffer on the stack. A budget without a region asking the system for memory
+  after `seal` is a bug: a crash in a debug build and in the tests, a failed scenario
+  (they run sealed, as the Kindle does), else counted and logged. The picture
+  decoders have no memory until they're given a budget (`decoder_memory.use`). A
+  glyph the cache can't keep is drawn again when next needed, so text never depends
+  on what fits.
 
 - **Smallest possible scope** for every variable, and as few in scope as possible.
 

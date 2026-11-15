@@ -54,8 +54,16 @@ pub fn size_class(rem: f64) u8 {
 /// Bold or italic over part of a paragraph.
 pub const Run = struct { start: u32, end: u32, bold: bool, italic: bool };
 
-/// A picture in the text: its encoded bytes (JPEG or PNG) and size in pixels.
-pub const Image = struct { data: []const u8, width: u32, height: u32 };
+/// A picture in the text: its encoded bytes (JPEG or PNG) and size in pixels. The bytes
+/// are the book file's own, never a copy; an EPUB may keep a picture deflated, which
+/// is inflated to `inflated_size` bytes only when it's drawn.
+pub const Image = struct {
+    data: []const u8,
+    width: u32,
+    height: u32,
+    deflated: bool = false,
+    inflated_size: u32 = 0, // Of a deflated picture's bytes; 0 for one kept as it is
+};
 
 pub const Paragraph = struct {
     image: ?Image = null, // A picture standing alone, in place of text

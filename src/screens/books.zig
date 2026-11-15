@@ -167,6 +167,12 @@ pub const Library = struct {
     pub fn same_shelf(l: *const Library, other: *const Library) bool {
         assert(l.state != other.state);
         assert(l.shared == other.shared);
+        // Built again on the drive: the other's open files are of a build that's gone,
+        // and a book it saved would land on another's record
+        if (l.state.open != other.state.open) return false;
+        if (l.state.open and l.state.ix.header.generation != other.state.ix.header.generation) {
+            return false;
+        }
         if (l.local_count() != other.local_count()) return false;
         return l.downloading_count() == other.downloading_count();
     }

@@ -687,8 +687,9 @@ const Browser = struct {
         return b.reload_if_downloaded();
     }
 
-    /// The library read again, kept only if a book has arrived: a swap without a
-    /// redraw would leave the screen showing books by places that moved.
+    /// The library read again, kept if a book has arrived or the index was built again
+    /// (the old one's files are then gone): a swap without a redraw would leave the
+    /// screen showing books by places that moved.
     fn reload_if_downloaded(b: *Browser) Next {
         assert(b.count == b.lib.count());
         // Only what's downloading is looked at, until it says the catalog moved on

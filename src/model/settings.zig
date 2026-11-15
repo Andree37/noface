@@ -6,30 +6,31 @@ const check = @import("../base/check.zig");
 
 /// The Kindle's typefaces, by name. kindle/fonts.zig has their files, in the same order.
 pub const builtin_families = [_][]const u8{ "Ember", "Bookerly", "Baskerville", "Serif" };
-/// The reader's own typefaces, from the Kindle's fonts folder, come after them.
-pub const max_own = 2;
-pub const max_families = builtin_families.len + max_own;
+/// The typefaces offered: the Kindle's, then the reader's own from the Kindle's fonts
+/// folder, as many as are there, found at start.
+pub var families: []const []const u8 = &builtin_families;
 
-var family_storage: [max_families][]const u8 =
-    builtin_families ++ @as([max_own][]const u8, @splat(""));
-/// The typefaces offered: the Kindle's, then any of the reader's own found at start.
-pub var families: []const []const u8 = family_storage[0..builtin_families.len];
+/// Offers `all`: the Kindle's typefaces, then the reader's own, each name once. `all`
+/// must stay as long as it's offered.
+pub fn offer_families(all: []const []const u8) void {
+    assert(all.len >= builtin_families.len);
+    for (builtin_families, all[0..builtin_families.len]) |builtin, name| {
+        assert(std.mem.eql(u8, builtin, name));
+    }
+    families = all;
+    // Each name once, so a name picks one typeface
+    for (all, 0..) |name, i| assert(family_named(name).? == i);
+}
 
-/// Offers one of the reader's own typefaces. False when there's no room or the name is
-/// taken.
-pub fn add_family(name: []const u8) bool {
+/// Whether a typeface by this name is offered: a name is offered once.
+pub fn family_offered(name: []const u8) bool {
     assert(families.len >= builtin_families.len);
-    assert(families.len <= max_families);
-    if (families.len == max_families or name.len == 0 or family_named(name) != null) return false;
-    family_storage[families.len] = name;
-    families = family_storage[0 .. families.len + 1];
-    assert(family_named(name).? == families.len - 1);
-    return true;
+    return family_named(name) != null;
 }
 
 /// Back to the Kindle's typefaces only (for tests).
 pub fn reset_families() void {
-    families = family_storage[0..builtin_families.len];
+    families = &builtin_families;
     assert(families.len == builtin_families.len);
 }
 
@@ -97,7 +98,7 @@ pub const Settings = struct {
         check.that(s.size < sizes.len, "the text size is one of its steps");
         check.that(s.spacing < spacings.len, "the spacing is one of its steps");
         check.that(s.margin < margins.len, "the margin is one of its steps");
-        check.that(s.font < max_families, "the typeface is one on offer");
+        check.that(s.font < families.len, "the typeface is one on offer");
     }
 };
 
@@ -313,12 +314,22 @@ test "defaults match the original reader" {
 
 test "the reader's own typefaces are offered after the Kindle's, by name" {
     defer reset_families();
-    try std.testing.expect(add_family("Open Sans"));
-    try std.testing.expect(!add_family("Bookerly")); // Taken
+    try std.testing.expect(family_offered("Bookerly"));
+    try std.testing.expect(!family_offered("Open Sans"));
+    // Many more than the two there once was room for
+    var all: [builtin_families.len + 40][]const u8 = undefined;
+    var names: [40][8]u8 = undefined;
+    @memcpy(all[0..builtin_families.len], &builtin_families);
+    for (all[builtin_families.len..], &names, 0..) |*name, *buffer, i| {
+        name.* = try std.fmt.bufPrint(buffer, "Own {d}", .{i});
+    }
+    all[all.len - 1] = "Open Sans";
+    offer_families(&all);
     const s = parse("font Open Sans\n");
-    try std.testing.expectEqual(builtin_families.len, s.font);
+    try std.testing.expectEqual(all.len - 1, s.font);
     var buf: [256]u8 = undefined;
     try std.testing.expectEqual(s.font, parse(format(&buf, s)).font);
+    try std.testing.expectEqual(builtin_families.len + 7, parse("font Own 7\n").font);
     reset_families();
     // Removed since: the default
     try std.testing.expectEqual(@as(u32, 0), parse("font Open Sans\n").font);

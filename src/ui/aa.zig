@@ -32,7 +32,8 @@ pub const Hit = union(enum) {
     none,
     tab: Tab,
     theme: u32,
-    family: u32,
+    family: u32, // Which cell of the typefaces' grid, counted from its page's first
+    more_families, // The cell that turns the typefaces' grid to its next page
     text_size,
     spacing,
     margins,
@@ -182,9 +183,49 @@ const family_rows = 2;
 /// Two columns for the Kindle's four typefaces; three once the reader's own join them.
 fn family_columns() u32 {
     const result: u32 = if (settings_model.families.len > 4) 3 else 2;
-    // Every typeface offered has a place on the grid
-    assert(settings_model.families.len <= result * family_rows);
-    assert(result * family_rows <= settings_model.max_families);
+    assert(settings_model.families.len >= settings_model.builtin_families.len);
+    assert(result * family_rows <= family_cells_max);
+    return result;
+}
+
+/// The most cells the typefaces' grid has.
+pub const family_cells_max = 3 * family_rows;
+
+/// Whether there are more typefaces than the grid has cells: then its last cell
+/// turns it to the next page of them.
+fn families_paged() bool {
+    const cells = family_columns() * family_rows;
+    assert(cells <= family_cells_max);
+    assert(cells >= settings_model.builtin_families.len);
+    return settings_model.families.len > cells;
+}
+
+/// How many typefaces a page of the grid shows: all, or one fewer than its cells.
+pub fn families_per_page() u32 {
+    const cells = family_columns() * family_rows;
+    const result = if (families_paged()) cells - 1 else cells;
+    assert(result > 0);
+    assert(result <= family_cells_max);
+    return result;
+}
+
+/// The first typeface of the page after the one starting at `first`, back to the
+/// first page after the last.
+pub fn next_family_page(first: u32) u32 {
+    const per_page = families_per_page();
+    assert(first % per_page == 0);
+    const next = first + per_page;
+    const result: u32 = if (next < settings_model.families.len) next else 0;
+    assert(result < settings_model.families.len);
+    return result;
+}
+
+/// The first typeface of the page that shows typeface `family`.
+pub fn family_page_of(family: u32) u32 {
+    assert(family < settings_model.families.len);
+    const per_page = families_per_page();
+    const result = family - family % per_page;
+    assert(result <= family);
     return result;
 }
 
@@ -242,7 +283,9 @@ comptime {
     // No two themes alike, so at most one is ever in use
     for (themes[0 .. themes.len - 1], themes[1..]) |a, b| assert(a.size != b.size);
     assert(margin_names.len == settings_model.margins.len);
-    assert(settings_model.max_families <= 3 * family_rows);
+    // The Kindle's typefaces fill two columns, and a page of three shows one more
+    assert(2 * family_rows == settings_model.builtin_families.len);
+    assert(family_cells_max - 1 > settings_model.builtin_families.len);
 }
 
 fn row_slider(r: Row) slider.Slider {
@@ -307,7 +350,8 @@ pub fn hit(tab: Tab, x: i32, y: i32) Hit {
     return .none;
 }
 
-/// Which typeface a tap on the grid of them picks, if any is there.
+/// Which cell of the typefaces' grid a tap is on, if one of them is there, or the cell
+/// that turns it to the next page.
 fn hit_family(x: i32, y: i32) Hit {
     const row_reached: u32 = @intCast(@divTrunc(@max(y - family_top, 0), family_height));
     const row = @min(row_reached, family_rows - 1);
@@ -316,7 +360,11 @@ fn hit_family(x: i32, y: i32) Hit {
     assert(row < family_rows);
     assert(col < cols);
     const i = row * cols + col;
-    return if (i < settings_model.families.len) .{ .family = i } else .none;
+    if (families_paged() and i == families_per_page()) return .more_families;
+    // A cell past the last typeface on the last page is checked by the caller, which
+    // knows the page
+    const shown = @min(families_per_page(), settings_model.families.len);
+    return if (i < shown) .{ .family = i } else .none;
 }
 
 fn draw_toggle(fonts: Fonts, page: Page, y: u32, label: []const u8, on: bool) !void {
@@ -424,31 +472,72 @@ fn draw_themes_tile(fonts: Fonts, page: Page, t: Theme, left: u32, active: bool)
     try draw.centered(fonts.small, page, centre, theme_top + 264, t.label);
 }
 
+/// The typefaces' grid, the page of it from `fonts.family_first`, and the size row.
+/// With more typefaces than cells, the last cell turns the grid to its next page.
 fn draw_font(fonts: Fonts, page: Page, chosen: settings_model.Settings) !void {
-    assert(settings_model.families.len <= family_rows * family_columns());
-    for (settings_model.families, 0..) |family, i| {
-        const cols = family_columns();
-        const index: u32 = @intCast(i);
-        const row: u32 = index / cols;
-        const left: u32 = margin + index % cols * family_width();
-        const y = family_top + row * family_height;
-        assert(row < family_rows);
-        // The name in its own typeface, when it's loaded; underlined when chosen
-        const own = if (i < fonts.families.len) fonts.families[i] else null;
-        const chosen_here = i == chosen.font;
-        if (own) |font| {
-            const avail: f32 = @floatFromInt(family_width() - 24);
-            try draw.clipped(font, page, @floatFromInt(left), @intCast(y + 56), family, avail);
-            if (chosen_here) {
-                const width: u32 = @intFromFloat(@min(try font.measure(family), avail));
-                page.fill_rect(left, y + 70, width, style.underline, style.black);
-            }
-        } else {
-            const x: f32 = @floatFromInt(left);
-            try draw.choice(fonts, page, x, .left, @intCast(y + 56), family, chosen_here, y + 70);
-        }
+    const first = fonts.family_first;
+    const per_page = families_per_page();
+    assert(first % per_page == 0);
+    assert(first < settings_model.families.len);
+    const shown = @min(per_page, settings_model.families.len - first);
+    for (0..shown) |cell| {
+        const index: u32 = first + @as(u32, @intCast(cell));
+        // The name in its own typeface, when it's loaded
+        const own = if (cell < fonts.families.len) fonts.families[cell] else null;
+        const name = settings_model.families[index];
+        try draw_family(fonts, page, @intCast(cell), name, own, index == chosen.font);
     }
+    if (families_paged()) try draw_family_pager(fonts, page, first);
     try draw_row(fonts, page, size_row, chosen.size, false);
+}
+
+/// The grid's last cell, when it turns the page: "2 of 3" and an arrow, as every list
+/// shown a page at a time has.
+fn draw_family_pager(fonts: Fonts, page: Page, first: u32) !void {
+    const per_page = families_per_page();
+    assert(families_paged());
+    assert(first % per_page == 0);
+    const count: u32 = @intCast(settings_model.families.len);
+    const pages = (count + per_page - 1) / per_page; // Rounded up: the last may be short
+    assert(pages > 1);
+    var buffer: [32]u8 = undefined;
+    const label = try std.fmt.bufPrint(&buffer, "{d} of {d}", .{ first / per_page + 1, pages });
+    try draw_family(fonts, page, per_page, label, null, false);
+    const cols = family_columns();
+    const left: f32 = @floatFromInt(margin + per_page % cols * family_width());
+    const mid: f32 = @floatFromInt(family_top + per_page / cols * family_height + 56 - 11);
+    const x = left + try fonts.small.measure(label) + 36;
+    page.stroke(x - 9, mid - 18, x + 9, mid, 4);
+    page.stroke(x + 9, mid, x - 9, mid + 18, 4);
+}
+
+/// A typeface's name in cell `cell` of the grid, in `own` when it's loaded, else in the
+/// interface's; underlined when chosen.
+fn draw_family(
+    fonts: Fonts,
+    page: Page,
+    cell: u32,
+    name: []const u8,
+    own: ?*Font,
+    chosen: bool,
+) !void {
+    const cols = family_columns();
+    const row: u32 = cell / cols;
+    const left: u32 = margin + cell % cols * family_width();
+    const y = family_top + row * family_height;
+    assert(row < family_rows);
+    assert(name.len > 0);
+    if (own) |font| {
+        const avail: f32 = @floatFromInt(family_width() - 24);
+        try draw.clipped(font, page, @floatFromInt(left), @intCast(y + 56), name, avail);
+        if (chosen) {
+            const width: u32 = @intFromFloat(@min(try font.measure(name), avail));
+            page.fill_rect(left, y + 70, width, style.underline, style.black);
+        }
+    } else {
+        const x: f32 = @floatFromInt(left);
+        try draw.choice(fonts, page, x, .left, @intCast(y + 56), name, chosen, y + 70);
+    }
 }
 
 pub fn render(fonts: Fonts, page: Page, tab: Tab, chosen: settings_model.Settings) !void {
@@ -475,12 +564,29 @@ pub fn render(fonts: Fonts, page: Page, tab: Tab, chosen: settings_model.Setting
 
 test "with the reader's own typefaces, three to a row" {
     defer settings_model.reset_families();
-    try std.testing.expect(settings_model.add_family("Literata"));
+    settings_model.offer_families(&(settings_model.builtin_families ++ .{"Literata"}));
     try std.testing.expectEqual(Hit{ .family = 2 }, hit(.font, 1100, family_top + 20));
     const second_row = family_top + family_height + 20;
     try std.testing.expectEqual(Hit{ .family = 4 }, hit(.font, 600, second_row));
     // No sixth
     try std.testing.expectEqual(Hit.none, hit(.font, 1100, family_top + family_height + 20));
+    try std.testing.expectEqual(@as(u32, 6), families_per_page());
+}
+
+test "with more typefaces than cells, the last cell turns the page, round to the first" {
+    defer settings_model.reset_families();
+    const own = .{ "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K" };
+    settings_model.offer_families(&(settings_model.builtin_families ++ own));
+    const second_row = family_top + family_height + 20;
+    try std.testing.expectEqual(Hit.more_families, hit(.font, 1100, second_row));
+    try std.testing.expectEqual(Hit{ .family = 4 }, hit(.font, 600, second_row));
+    try std.testing.expectEqual(@as(u32, 5), families_per_page());
+    // Fifteen typefaces, five a page
+    try std.testing.expectEqual(@as(u32, 5), next_family_page(0));
+    try std.testing.expectEqual(@as(u32, 10), next_family_page(5));
+    try std.testing.expectEqual(@as(u32, 0), next_family_page(10));
+    try std.testing.expectEqual(@as(u32, 10), family_page_of(14));
+    try std.testing.expectEqual(@as(u32, 5), family_page_of(5));
 }
 
 test "tabs split the top row evenly" {

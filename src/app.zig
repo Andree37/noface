@@ -60,7 +60,6 @@ comptime {
     assert(languages_count == 2);
     // The interface's own family is the first, and always offered.
     assert(settings_model.builtin_families.len >= 1);
-    assert(settings_model.builtin_families.len <= settings_model.max_families);
     // A face's book size starts at its normal step.
     assert(book_model.normal_size < book_model.size_scales.len);
 }
@@ -85,7 +84,8 @@ pub const App = struct {
     // size, and each family's name in itself for Aa: made on first use, the least used
     // given up past a fixed number
     typefaces: Typefaces = .{},
-    family_sample_ptrs: [settings_model.max_families]?*Font = @splat(null),
+    family_sample_ptrs: [aa.family_cells_max]?*Font = @splat(null),
+    family_first: u32 = 0, // The first typeface on the Aa sheet's page of them
     tab: aa.Tab = .font,
     turns: u32 = 0,
     note_font: *Font,
@@ -186,27 +186,31 @@ pub const App = struct {
     pub fn apply_settings(a: *App) !void {
         // Parsing clamps every setting to its steps: one past them is a bug of ours
         assert(a.settings.margin < settings_model.margins.len);
-        assert(a.settings.font < settings_model.max_families);
+        assert(a.settings.font < settings_model.families.len);
         a.body = try a.face(false, false, book_model.normal_size);
         a.layout.faces = .{ .ctx = a, .pick = pick_face };
         a.layout.images = .{ .ctx = a, .draw = draw_image };
         a.layout.margin_x = settings_model.margins[a.settings.margin];
         a.layout.justify = !a.settings.left_align;
         a.layout.bold_starts = a.settings.bold_starts;
+        // The Aa sheet shows the page of typefaces with the one chosen
+        a.family_first = aa.family_page_of(a.settings.font);
         assert(a.layout.margin_x > 0);
         assert(a.body.line_height > 0);
     }
 
-    /// Each typeface offered, at interface size, to show its name in itself. One that
-    /// can't be loaded is null, and its name shows in the interface font.
+    /// The typefaces on the Aa sheet's page of them, from `family_first`, at interface
+    /// size, to show their names in themselves. One that can't be loaded is null, and
+    /// its name shows in the interface font.
     pub fn load_family_samples(a: *App) []const ?*Font {
         const families_count = settings_model.families.len;
-        assert(families_count >= settings_model.builtin_families.len);
-        assert(families_count <= settings_model.max_families);
-        for (0..families_count) |i| {
-            a.family_sample_ptrs[i] = a.typefaces.sample(@intCast(i));
+        assert(a.family_first < families_count);
+        const shown = @min(aa.families_per_page(), families_count - a.family_first);
+        assert(shown <= a.family_sample_ptrs.len);
+        for (a.family_sample_ptrs[0..shown], a.family_first..) |*sample, family| {
+            sample.* = a.typefaces.sample(@intCast(family));
         }
-        return a.family_sample_ptrs[0..families_count];
+        return a.family_sample_ptrs[0..shown];
     }
 
     /// The body font for a weight, slant and book size, in the reader's family and size.
@@ -567,7 +571,7 @@ pub fn load_settings(path: [*:0]const u8) settings_model.Settings {
     const settings = settings_model.parse(state.read_small(path, &buf));
     // Parsing clamps every value to its steps
     assert(settings.size < settings_model.sizes.len);
-    assert(settings.font < settings_model.max_families);
+    assert(settings.font < settings_model.families.len);
     return settings;
 }
 
@@ -667,14 +671,15 @@ test "a typeface's long name saves, and one too long to is left out, never a cra
         for (0..255) |i| name[i * 3 ..][0..3].* = "\u{6587}".*;
         break :blk name;
     };
-    try std.testing.expect(settings_model.add_family(&long));
+    const builtin = settings_model.builtin_families;
+    settings_model.offer_families(&(builtin ++ .{&long}));
     var s = settings_model.Settings{};
     s.font = @intCast(settings_model.families.len - 1);
     save_settings(path, s);
     try std.testing.expectEqual(s.font, load_settings(path).font);
     // Longer than any file's name: the settings stay as they were
     const longer: [2000]u8 = @splat('x');
-    try std.testing.expect(settings_model.add_family(&longer));
+    settings_model.offer_families(&(builtin ++ .{ &long, &longer }));
     var other = s;
     other.font = @intCast(settings_model.families.len - 1);
     save_settings(path, other);

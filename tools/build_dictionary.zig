@@ -35,6 +35,13 @@ const key_bytes_max = 64;
 const line_bytes_max = 1 << 28;
 /// The most lines read: an extract has a few million.
 const lines_max = 1 << 28;
+/// The most gzip members read: kaikki.org's extracts have one, `cat a.gz b.gz` makes two.
+const gzip_members_max = 1 << 16;
+/// The most chunks read from a member: each is at least a byte, and an extract is a few
+/// gigabytes.
+const chunks_max: u64 = 1 << 40;
+/// The most zeros skipped after a member, as padding.
+const gzip_padding_max: u64 = 1 << 32;
 const ellipsis = "\u{2026}";
 
 comptime {
@@ -150,28 +157,107 @@ fn read_extract(
     var file_buffer: [1 << 16]u8 = undefined;
     comptime assert(file_buffer.len >= 10); // Decompress reads the gzip header whole
     var file_reader = file.reader(io, &file_buffer);
-    var window: [std.compress.flate.max_window_len]u8 = undefined;
-    var gunzip = std.compress.flate.Decompress.init(&file_reader.interface, .gzip, &window);
-    var line: std.Io.Writer.Allocating = .init(std.heap.smp_allocator);
-    defer line.deinit();
-    for (0..lines_max) |line_index| {
-        line.clearRetainingCapacity();
-        const limit: std.Io.Limit = .limited(line_bytes_max);
-        _ = try gunzip.reader.streamDelimiterLimit(&line.writer, '\n', limit);
-        // The newline, or the end of the extract
-        const ended = if (gunzip.reader.takeByte()) |_| false else |err| switch (err) {
-            error.EndOfStream => true,
-            error.ReadFailed => return gunzip.err orelse error.ReadFailed,
-        };
-        if (line.written().len > 0) {
-            read_line(b, line.written()) catch |err| {
-                std.debug.print("line {d}: {s}\n", .{ line_index + 1, @errorName(err) });
+    const Reading = struct {
+        b: *Builder,
+        scratch_arena: *std.heap.ArenaAllocator,
+
+        fn line(r: @This(), number: u32, text: []const u8) anyerror!void {
+            assert(number > 0);
+            assert(text.len > 0);
+            read_line(r.b, text) catch |err| {
+                std.debug.print("line {d}: {s}\n", .{ number, @errorName(err) });
                 return err;
             };
+            _ = r.scratch_arena.reset(.retain_capacity);
         }
-        _ = scratch_arena.reset(.retain_capacity);
-        if (ended) return;
-    } else return error.TooManyLines;
+    };
+    const reading: Reading = .{ .b = b, .scratch_arena = scratch_arena };
+    try each_gzip_line(&file_reader.interface, reading, Reading.line);
+}
+
+/// Passes each line of the gzip stream `in` to `each`, without its newline, numbered
+/// from 1; empty lines are skipped. As Python's gzip module read it: every member of a
+/// file made of several (as `cat a.gz b.gz` makes), each member's checksum and size
+/// checked, zeros after the last member skipped, and anything else after it an error.
+fn each_gzip_line(
+    in: *std.Io.Reader,
+    context: anytype,
+    comptime each: fn (@TypeOf(context), u32, []const u8) anyerror!void,
+) !void {
+    assert(in.buffer.len >= 10); // Decompress reads a gzip header whole
+    var window: [std.compress.flate.max_window_len]u8 = undefined;
+    var line: std.Io.Writer.Allocating = .init(std.heap.smp_allocator);
+    defer line.deinit();
+    var lines_count: u32 = 0;
+    for (0..gzip_members_max) |member_index| {
+        if (member_index > 0 and !try skip_gzip_padding(in)) break;
+        var gunzip = std.compress.flate.Decompress.init(in, .gzip, &window);
+        var crc = std.hash.Crc32.init();
+        var size: u32 = 0; // Modulo 2^32, as gzip keeps it
+        // Bounded: each turn takes at least one byte of what the member holds
+        for (0..chunks_max) |_| {
+            const chunk = gunzip.reader.peekGreedy(1) catch |err| switch (err) {
+                error.EndOfStream => break,
+                error.ReadFailed => return gunzip.err orelse error.ReadFailed,
+            };
+            assert(chunk.len > 0);
+            crc.update(chunk);
+            size +%= @truncate(chunk.len);
+            lines_count = try split_lines(chunk, &line, lines_count, context, each);
+            gunzip.reader.toss(chunk.len);
+        } else return error.ExtractTooLarge;
+        const footer = gunzip.container_metadata.gzip;
+        if (footer.crc != crc.final()) return error.GzipChecksumWrong;
+        if (footer.count != size) return error.GzipSizeWrong;
+    } else return error.TooManyGzipMembers;
+    // The last line, if the extract doesn't end in a newline
+    if (line.written().len > 0) try each(context, lines_count + 1, line.written());
+    assert(lines_count <= lines_max);
+}
+
+/// Adds `chunk` to the line so far, passing on each line a newline ends. Returns the
+/// count of lines read now, empty ones included.
+fn split_lines(
+    chunk: []const u8,
+    line: *std.Io.Writer.Allocating,
+    lines_before: u32,
+    context: anytype,
+    comptime each: fn (@TypeOf(context), u32, []const u8) anyerror!void,
+) !u32 {
+    assert(chunk.len > 0);
+    assert(lines_before <= lines_max);
+    var lines_count = lines_before;
+    var rest = chunk;
+    // Bounded: each turn takes a newline off `rest`, or ends
+    for (0..chunk.len + 1) |_| {
+        const newline = std.mem.indexOfScalar(u8, rest, '\n') orelse break;
+        try line.writer.writeAll(rest[0..newline]);
+        rest = rest[newline + 1 ..];
+        if (lines_count == lines_max) return error.TooManyLines;
+        lines_count += 1;
+        if (line.written().len > 0) try each(context, lines_count, line.written());
+        line.clearRetainingCapacity();
+    }
+    if (line.written().len + rest.len > line_bytes_max) return error.LineTooLong;
+    try line.writer.writeAll(rest);
+    assert(lines_count >= lines_before);
+    return lines_count;
+}
+
+/// Skips the zeros that may pad a gzip file after a member. False at the end of the
+/// file; true when another member starts.
+fn skip_gzip_padding(in: *std.Io.Reader) !bool {
+    assert(in.buffer.len > 0);
+    // Bounded: each turn skips one zero, and a file's padding is at most what it holds
+    for (0..gzip_padding_max) |_| {
+        const byte = in.peekByte() catch |err| switch (err) {
+            error.EndOfStream => return false,
+            error.ReadFailed => return error.ReadFailed,
+        };
+        if (byte != 0) return true;
+        in.toss(1);
+    }
+    return error.GzipPaddingTooLong;
 }
 
 /// One entry of the extract, a JSON object, into the builder.
@@ -599,4 +685,56 @@ test "an entry's senses, forms and base word come out as noface reads them" {
     body.clearRetainingCapacity();
     try append_entry(std.testing.allocator, &body, "rans", b.words.getPtr("rans").?);
     try std.testing.expectEqualStrings("rans\x00rans\x00form\n1 plural of Ran\n=Ran", body.items);
+}
+
+/// `text` as one gzip member, for the tests.
+fn gzipped(gpa: std.mem.Allocator, text: []const u8) ![]u8 {
+    assert(text.len > 0);
+    var out: std.Io.Writer.Allocating = try .initCapacity(gpa, 1 << 10);
+    const window = try gpa.alloc(u8, std.compress.flate.max_window_len);
+    var compress = try std.compress.flate.Compress.init(&out.writer, window, .gzip, .level_6);
+    try compress.writer.writeAll(text);
+    try compress.finish();
+    assert(out.written().len > 18); // A header and a footer, at least
+    return out.written();
+}
+
+/// The lines `each_gzip_line` reads from `data`, joined by "|", for the tests.
+fn gzip_lines(gpa: std.mem.Allocator, data: []const u8) ![]const u8 {
+    const Lines = struct {
+        list: *std.ArrayList(u8),
+        gpa: std.mem.Allocator,
+
+        fn add(lines: @This(), number: u32, text: []const u8) anyerror!void {
+            assert(number > 0);
+            assert(text.len > 0);
+            if (lines.list.items.len > 0) try lines.list.append(lines.gpa, '|');
+            try lines.list.appendSlice(lines.gpa, text);
+        }
+    };
+    var list: std.ArrayList(u8) = .empty;
+    var in: std.Io.Reader = .fixed(data);
+    try each_gzip_line(&in, Lines{ .list = &list, .gpa = gpa }, Lines.add);
+    return list.items;
+}
+
+test "an extract in several gzip members is read whole, as Python's gzip read it" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const gpa = arena.allocator();
+    const first = try gzipped(gpa, "{\"a\": 1}\n{\"b\": ");
+    const second = try gzipped(gpa, "2}\n\n{\"c\": 3}");
+    // One member alone: its last line ends with the file
+    try std.testing.expectEqualStrings("{\"a\": 1}|{\"b\": ", try gzip_lines(gpa, first));
+    // Two members, as `cat a.gz b.gz` makes, then zeros padding the file
+    const zeros: [8]u8 = @splat(0);
+    const joined = try std.mem.concat(gpa, u8, &.{ first, second, &zeros });
+    const expected = "{\"a\": 1}|{\"b\": 2}|{\"c\": 3}";
+    try std.testing.expectEqualStrings(expected, try gzip_lines(gpa, joined));
+    // Something else after the last member is an error, as is a checksum that's wrong
+    const trailing = try std.mem.concat(gpa, u8, &.{ first, "junk after" });
+    try std.testing.expectError(error.BadGzipHeader, gzip_lines(gpa, trailing));
+    const damaged = try gpa.dupe(u8, first);
+    damaged[damaged.len - 8] ^= 1; // The footer's checksum
+    try std.testing.expectError(error.GzipChecksumWrong, gzip_lines(gpa, damaged));
 }

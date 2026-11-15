@@ -6,20 +6,17 @@ const highlights = @import("highlights.zig");
 
 pub const Bookmark = struct { id: []const u8, para: u32, byte: u32 };
 
-/// Reads "id|start|end" lines from the annotation database. Bookmarks start and
-/// end at the same place, so only the start counts.
+/// Bookmarks from stored notes. A bookmark starts and ends at the same place, so only
+/// the start counts.
 pub fn parse(
     alloc: std.mem.Allocator,
     paragraphs: []const book_model.Paragraph,
-    lines: []const u8,
+    notes: []const highlights.Note,
 ) ![]Bookmark {
     var out: std.ArrayList(Bookmark) = .empty;
-    var it = std.mem.tokenizeScalar(u8, lines, '\n');
-    while (it.next()) |line| {
-        var fields = std.mem.splitScalar(u8, line, '|');
-        const id = fields.next() orelse continue;
-        const start = std.fmt.parseInt(u32, fields.next() orelse continue, 10) catch continue;
-        const at = highlights.locate(paragraphs, start) orelse continue;
+    for (notes) |note| {
+        const id = note.id;
+        const at = highlights.locate(paragraphs, note.start) orelse continue;
         assert(at.para < paragraphs.len);
         assert(at.byte <= paragraphs[at.para].text.len);
         try out.append(alloc, .{ .id = try alloc.dupe(u8, id), .para = at.para, .byte = at.byte });
@@ -64,14 +61,18 @@ test "a bookmark belongs to the page it falls on" {
     try std.testing.expect(is_on_page(b, .{ .para = 2, .byte = 0 }, null)); // Last page
 }
 
-test "bookmark lines become positions" {
+test "bookmark notes become positions" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const paras = [_]book_model.Paragraph{
         .{ .text = "abcdef", .position = 100 },
         .{ .text = "ghij", .position = 106 },
     };
-    const list = try parse(arena.allocator(), &paras, "kindle.bookmark-107|107|107\nbad\n");
+    const notes = [_]highlights.Note{
+        .{ .id = "kindle.bookmark-107", .start = 107, .end = 107 },
+        .{ .id = "outside", .start = 1, .end = 1 },
+    };
+    const list = try parse(arena.allocator(), &paras, &notes);
     try std.testing.expectEqual(@as(usize, 1), list.len);
     try std.testing.expectEqual(@as(u32, 1), list[0].para);
     try std.testing.expectEqual(@as(u32, 1), list[0].byte);

@@ -14,6 +14,7 @@ const catalog = @import("../../model/catalog.zig");
 const os = @import("../../sys/os.zig");
 const cache = @import("../../layout/page_cache.zig");
 const highlights = @import("../../model/highlights.zig");
+const note_store = @import("note_store.zig");
 const state = @import("../../sys/state.zig");
 const text = @import("../../layout/text.zig");
 const now_us = os.now_us;
@@ -63,8 +64,8 @@ pub const Session = struct {
     /// What layout shades, rebuilt from highlights.
     marks: std.ArrayList(book_model.Mark) = .empty,
     pages_path: [:0]const u8 = "", // Where this book's page breaks are saved
-    /// Where highlights and bookmarks are kept, for books Amazon doesn't sync.
-    notes_path: [:0]const u8 = "",
+    /// Where highlights and bookmarks are kept, chosen as the book opens.
+    notes: note_store.NoteStore = .off,
     book_bytes: u64 = 0, // The book file's size, part of the saved breaks' key
     // A first open still being laid out: pages count from the reader's place until done
     progress: ?*paginate.Progressive = null,

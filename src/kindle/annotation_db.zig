@@ -9,6 +9,7 @@ const failed = os.failed;
 const annotations = @import("annotations.zig");
 const process = @import("../sys/process.zig");
 const safe = @import("safe.zig");
+const Note = @import("../model/highlights.zig").Note;
 
 /// Where stock keeps the database: a folder per account, so the shell finds it.
 const database_glob = "/mnt/us/system/ksdk/.annotations/*/ksdk_annotation_v1.db";
@@ -33,6 +34,7 @@ comptime {
 }
 
 /// While this file exists, annotation writes are skipped. Used by device tests.
+// Assertions: it only looks for a file, outside data.
 pub fn dry_run() bool {
     const result = linux.open(paths.dry_run, .{ .ACCMODE = .RDONLY }, 0);
     if (failed(result)) return false;
@@ -41,8 +43,39 @@ pub fn dry_run() bool {
     return true;
 }
 
+/// A book's highlights or bookmarks, their ids in `alloc`; `out` holds the database's
+/// answer while it's read.
+pub fn read_notes(
+    alloc: std.mem.Allocator,
+    key: []const u8,
+    kind: annotations.Kind,
+    out: []u8,
+) ![]const Note {
+    assert(out.len > 0);
+    const notes = try parse_notes(alloc, read_lines(key, kind, out));
+    for (notes) |note| assert(note.id.len > 0); // parse_notes keeps none without one
+    return notes;
+}
+
+/// The database's "id|start|end" lines as notes; a line that isn't one is skipped.
+pub fn parse_notes(alloc: std.mem.Allocator, lines: []const u8) ![]const Note {
+    var notes: std.ArrayList(Note) = .empty;
+    var it = std.mem.tokenizeScalar(u8, lines, '\n');
+    while (it.next()) |line| {
+        var fields = std.mem.splitScalar(u8, line, '|');
+        const id = fields.next() orelse continue;
+        const start = std.fmt.parseInt(u32, fields.next() orelse continue, 10) catch continue;
+        const end = std.fmt.parseInt(u32, fields.next() orelse continue, 10) catch continue;
+        if (id.len == 0) continue;
+        try notes.append(alloc, .{ .id = try alloc.dupe(u8, id), .start = start, .end = end });
+    }
+    assert(notes.items.len <= lines.len); // A note takes a line, and a line some bytes
+    for (notes.items) |note| assert(note.id.len > 0);
+    return notes.toOwnedSlice(alloc);
+}
+
 /// Fetches a book's highlights or bookmarks as "id|start|end" lines.
-pub fn read_annotations(key: []const u8, kind: annotations.Kind, out: []u8) []const u8 {
+fn read_lines(key: []const u8, kind: annotations.Kind, out: []u8) []const u8 {
     assert(out.len > 0);
     if (!safe.safe_id(key)) return "";
     var match_buf: [128]u8 = undefined;
@@ -99,4 +132,15 @@ test "a cut-off highlight list loses only its partial line" {
     );
     try std.testing.expectEqualStrings("a|1|2\nc|5|6", complete_lines("a|1|2\nc|5|6", false));
     try std.testing.expectEqualStrings("", complete_lines("c|5|", true));
+}
+
+test "database lines become notes, and lines that aren't are skipped" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const lines = "kindle.h-101|101|104\nbad line\n|1|2\nx|7|9\n";
+    const notes = try parse_notes(arena.allocator(), lines);
+    try std.testing.expectEqual(@as(usize, 2), notes.len);
+    try std.testing.expectEqualStrings("kindle.h-101", notes[0].id);
+    try std.testing.expectEqual(@as(u32, 104), notes[0].end);
+    try std.testing.expectEqual(@as(u32, 7), notes[1].start);
 }

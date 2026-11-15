@@ -3,7 +3,6 @@ const std = @import("std");
 const assert = std.debug.assert;
 const annotations = @import("../../kindle/annotations.zig");
 const bookmarks = @import("../../model/bookmarks.zig");
-const catalog = @import("../../model/catalog.zig");
 const app = @import("../../app.zig");
 const records = @import("records.zig");
 const sess = @import("session.zig");
@@ -13,7 +12,6 @@ pub fn toggle(
     a: *app.App,
     s: *sess.Session,
     alloc: std.mem.Allocator,
-    entry: *const catalog.Entry,
 ) !void {
     assert(s.current < s.pages.len);
     defer a.forget_pages(); // The ribbon is drawn into the page
@@ -27,7 +25,7 @@ pub fn toggle(
                 index += 1;
                 continue;
             }
-            if (!records.delete(s, entry, .bookmark, b.id)) {
+            if (!s.notes.remove(.bookmark, b.id)) {
                 return app.show_notice(a, "This bookmark couldn't be removed.");
             }
             _ = s.bookmarks.orderedRemove(index);
@@ -46,14 +44,14 @@ pub fn toggle(
         };
         const prefix = annotations.Kind.bookmark.prefix();
         const id = try std.fmt.allocPrint(alloc, "{s}{d}", .{ prefix, point.short });
-        if (!records.write(s, entry, .bookmark, id, point, point)) {
+        if (!s.notes.put(.bookmark, id, point, point)) {
             return app.show_notice(a, "This bookmark couldn't be saved.");
         }
         try s.bookmarks.append(alloc, .{ .id = id, .para = at.para, .byte = at.byte });
         assert(s.is_bookmarked(s.current));
         std.debug.print("bookmark added\n", .{});
     }
-    records.sync(s);
+    s.notes.sync();
 }
 
 /// The first place on a page that Amazon numbers. Pages can open on a heading

@@ -118,21 +118,21 @@ pub fn locate(
     return .{ .para = index, .byte = byte };
 }
 
+/// A highlight or bookmark as it's stored: its id and Amazon's character positions,
+/// the Kindle's database's and noface's own file's alike.
+pub const Note = struct { id: []const u8, start: u32, end: u32 };
+
 /// Reads "id|start|end" lines from the annotation database.
 pub fn parse(
     alloc: std.mem.Allocator,
     paragraphs: []const book_model.Paragraph,
-    lines: []const u8,
+    notes: []const Note,
 ) ![]Highlight {
     var out: std.ArrayList(Highlight) = .empty;
-    var it = std.mem.tokenizeScalar(u8, lines, '\n');
-    while (it.next()) |line| {
-        var fields = std.mem.splitScalar(u8, line, '|');
-        const id = fields.next() orelse continue;
-        const start = std.fmt.parseInt(u32, fields.next() orelse continue, 10) catch continue;
-        const end = std.fmt.parseInt(u32, fields.next() orelse continue, 10) catch continue;
-        const from = locate(paragraphs, start) orelse continue;
-        const to = locate(paragraphs, end) orelse continue;
+    for (notes) |note| {
+        const id = note.id;
+        const from = locate(paragraphs, note.start) orelse continue;
+        const to = locate(paragraphs, note.end) orelse continue;
         assert(from.para < paragraphs.len);
         assert(to.para < paragraphs.len);
         if (from.para != to.para) {
@@ -308,12 +308,16 @@ test "short positions find paragraph and byte" {
     try std.testing.expect(locate(&paras, 50) == null);
 }
 
-test "database lines become marks, split across paragraphs" {
+test "notes become marks, split across paragraphs" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const paras = [_]book_model.Paragraph{ sample("abcdef", 100), sample("ghijkl", 106) };
-    const lines = "kindle.highlight-101|101|104\nkindle.highlight-104|104|108\nbad line\n";
-    const list = try parse(arena.allocator(), &paras, lines);
+    const notes = [_]Note{
+        .{ .id = "kindle.highlight-101", .start = 101, .end = 104 },
+        .{ .id = "kindle.highlight-104", .start = 104, .end = 108 },
+        .{ .id = "outside", .start = 1, .end = 2 }, // Before the book's first position
+    };
+    const list = try parse(arena.allocator(), &paras, &notes);
     try std.testing.expectEqual(@as(u32, 3), list.len);
     try std.testing.expectEqual(@as(u32, 1), list[0].mark.start);
     try std.testing.expectEqual(@as(u32, 4), list[0].mark.end);

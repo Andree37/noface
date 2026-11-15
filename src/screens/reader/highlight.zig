@@ -4,7 +4,6 @@ const assert = std.debug.assert;
 const book_model = @import("../../model/book.zig");
 const draw = @import("../../ui/draw.zig");
 const style = @import("../../ui/style.zig");
-const catalog = @import("../../model/catalog.zig");
 const os = @import("../../sys/os.zig");
 const highlights = @import("../../model/highlights.zig");
 const selection = @import("../../ui/selection.zig");
@@ -34,7 +33,6 @@ comptime {
 
 pub fn save_highlight(
     s: *sess.Session,
-    entry: *const catalog.Entry,
     id: []const u8,
     span: highlights.Span,
 ) bool {
@@ -42,7 +40,7 @@ pub fn save_highlight(
     assert(span.last_para < s.paragraphs.len);
     const start = records.point_for(s, span.first_para, span.first_byte) orelse return false;
     const end = records.point_for(s, span.last_para, span.last_byte) orelse return false;
-    return records.write(s, entry, .highlight, id, start, end);
+    return s.notes.put(.highlight, id, start, end);
 }
 
 pub fn page_words(a: *app.App, s: *const sess.Session) []const book_model.Word {
@@ -257,7 +255,6 @@ pub fn new_highlight(
     a: *app.App,
     s: *sess.Session,
     alloc: std.mem.Allocator,
-    entry: *const catalog.Entry,
     fixed: u32,
     head: u32,
 ) !?[]const u8 {
@@ -275,8 +272,8 @@ pub fn new_highlight(
         try highlight_not_saved(a, s);
         return null;
     };
-    const saved = save_highlight(s, entry, id, highlights.Span.of(lo, hi));
-    if (saved) records.sync(s);
+    const saved = save_highlight(s, id, highlights.Span.of(lo, hi));
+    if (saved) s.notes.sync();
     const word_count = @max(fixed, head) - @min(fixed, head) + 1;
     std.debug.print("highlight {s}: {d} words, saved {}\n", .{ id, word_count, saved });
     if (!saved) {
@@ -319,7 +316,6 @@ pub fn extend_ended(
     a: *app.App,
     s: *sess.Session,
     alloc: std.mem.Allocator,
-    entry: *const catalog.Entry,
 ) !void {
     const id = sel.id;
     assert(id.len > 0);
@@ -333,8 +329,8 @@ pub fn extend_ended(
     const grab_start = sel.grab_start;
     const crossed = if (grab_start) head > fixed else head < fixed;
     const span = highlights.dragged(sel.whole, words[fixed], words[head], grab_start, crossed);
-    const saved = save_highlight(s, entry, id, span);
-    if (saved) records.sync(s);
+    const saved = save_highlight(s, id, span);
+    if (saved) s.notes.sync();
     std.debug.print("highlight extended: saved {}\n", .{saved});
     if (!saved) return app.show_notice(a, "This highlight couldn't be changed.");
     highlights.remove(&s.highlights, id);
@@ -348,15 +344,14 @@ pub fn remove_highlight(
     a: *app.App,
     s: *sess.Session,
     alloc: std.mem.Allocator,
-    entry: *const catalog.Entry,
     id: []const u8,
 ) !void {
     // Only a highlight on the page has a Delete bubble to tap
     assert(highlights.extent(s.highlights.items, id) != null);
-    const removed = records.delete(s, entry, .highlight, id);
+    const removed = s.notes.remove(.highlight, id);
     std.debug.print("highlight removed: {}\n", .{removed});
     if (!removed) return app.show_notice(a, "This highlight couldn't be deleted.");
-    records.sync(s);
+    s.notes.sync();
     highlights.remove(&s.highlights, id);
     try refresh_marks(a, s, alloc);
     assert(highlights.extent(s.highlights.items, id) == null);

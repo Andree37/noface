@@ -13,8 +13,6 @@ const kfx = @import("../kindle/kfx.zig");
 const menu = @import("../ui/menu.zig");
 const selection = @import("../ui/selection.zig");
 const state = @import("../sys/state.zig");
-const annotation_db = @import("../kindle/annotation_db.zig");
-const annotations = @import("../kindle/annotations.zig");
 const lipc = @import("../kindle/lipc.zig");
 const hyphen = @import("../layout/hyphen.zig");
 const define = @import("reader/define.zig");
@@ -26,7 +24,6 @@ const now_us = os.now_us;
 const unix_time = os.unix_time;
 const app = @import("../app.zig");
 const goto = @import("reader/goto.zig");
-const local_notes = @import("reader/local_notes.zig");
 const more = @import("reader/more.zig");
 const picture_view = @import("reader/picture.zig");
 const wifi_saver = @import("../kindle/wifi_saver.zig");
@@ -365,40 +362,18 @@ fn read_book_notes(
     }
     session.words_before = words_before;
     assert(session.words_before.len == paragraphs.len + 1);
-    if (entry.is_epub()) {
-        var notes_buffer: [320]u8 = undefined;
-        const notes_name = try state.sibling(&notes_buffer, state_path, "notes");
-        session.notes_path = try alloc.dupeSentinel(u8, notes_name, 0);
-    }
-    assert(entry.is_epub() == (session.notes_path.len > 0));
-    // Each kind is parsed before the next is read, as both may be read into this
+    session.notes = try .choose(alloc, entry, state_path);
+    // The database's answer for each kind, read into this before it's parsed
     const stored = try alloc.alloc(u8, 1024 * 1024);
-    const notes_path = session.notes_path;
-    const highlight_lines = try read_book_lines(alloc, entry, notes_path, .highlight, stored);
-    const highlights_read = try highlights.parse(alloc, paragraphs, highlight_lines);
+    const highlight_notes = try session.notes.read(alloc, .highlight, stored);
+    const highlights_read = try highlights.parse(alloc, paragraphs, highlight_notes);
     try session.highlights.appendSlice(alloc, highlights_read);
-    const bookmark_lines = try read_book_lines(alloc, entry, notes_path, .bookmark, stored);
-    const bookmarks_read = try bookmarks.parse(alloc, paragraphs, bookmark_lines);
+    const bookmark_notes = try session.notes.read(alloc, .bookmark, stored);
+    const bookmarks_read = try bookmarks.parse(alloc, paragraphs, bookmark_notes);
     try session.bookmarks.appendSlice(alloc, bookmarks_read);
     std.debug.print("{d} bookmarks loaded\n", .{session.bookmarks.items.len});
     std.debug.print("{d} highlights loaded\n", .{session.highlights.items.len});
     try hl.refresh_marks(a, session, alloc);
-}
-
-/// One kind of a book's notes as lines: noface's own for a book Amazon doesn't sync,
-/// else the Kindle's database's, read into `stored`.
-fn read_book_lines(
-    alloc: std.mem.Allocator,
-    entry: *const catalog.Entry,
-    notes_path: [:0]const u8,
-    kind: annotations.Kind,
-    stored: []u8,
-) ![]const u8 {
-    assert(stored.len > 0);
-    // Only a book Amazon doesn't sync has notes of noface's own
-    assert(entry.is_epub() == (notes_path.len > 0));
-    if (entry.is_epub()) return local_notes.read(alloc, notes_path, kind);
-    return annotation_db.read_annotations(entry.key, kind, stored);
 }
 
 /// An open book and what's on screen over it, a screen on the stack (screen.zig).
@@ -552,7 +527,7 @@ pub const Reader = struct {
             .selecting => try r.held_ended(),
             .picture => try picture_view.ended(&r.picture),
             .extending => {
-                try hl.extend_ended(&r.selecting, r.a, s, r.alloc, r.entry);
+                try hl.extend_ended(&r.selecting, r.a, s, r.alloc);
                 try r.show_highlight_page(r.active.?);
             },
             .controls => {
@@ -896,7 +871,7 @@ pub const Reader = struct {
         const held = r.held;
         assert(held.fixed < hl.page_words(r.a, r.s).len);
         assert(r.view == .page);
-        const id = try hl.new_highlight(r.a, r.s, r.alloc, r.entry, held.fixed, held.head);
+        const id = try hl.new_highlight(r.a, r.s, r.alloc, held.fixed, held.head);
         if (id) |selected| try r.select_highlight(selected);
     }
 
@@ -990,7 +965,7 @@ pub const Reader = struct {
                 r.open_over(.going, screen.open(&r.going, &r.page_ending));
             },
             .bookmark => {
-                try bookmark.toggle(a, s, r.alloc, r.entry);
+                try bookmark.toggle(a, s, r.alloc);
                 try r.draw_toolbar(true);
             },
             .chapter_prev, .chapter_next => |direction| {
@@ -1048,7 +1023,7 @@ pub const Reader = struct {
         const id = r.active.?;
         if (r.delete_top) |top| {
             if (hl.in_delete_bubble(a, top, t.x, t.y)) {
-                try hl.remove_highlight(a, r.s, r.alloc, r.entry, id);
+                try hl.remove_highlight(a, r.s, r.alloc, id);
                 try r.unselect_highlight();
                 return null;
             }

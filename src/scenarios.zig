@@ -1028,21 +1028,25 @@ fn selftest_books() bool {
         // Up to three that noface can open; protected ones (most bought from Amazon)
         // open in the Kindle's own reader instead, so they're passed over, not failed
         var opened: u32 = 0;
-        for (found[0..@min(found.len, books_tried_max)]) |path| {
+        // Named by kind and number, not title: this report is pasted into public issues
+        const kind = suffix[1..];
+        for (found[0..@min(found.len, books_tried_max)], 1..) |path, number| {
             assert(opened <= books_opened_max);
             if (opened == books_opened_max) break;
-            const name = std.fs.path.stem(path);
-            const short = name[0..@min(name.len, 48)];
+            assert(number <= books_tried_max);
+            assert(std.fs.path.isAbsolute(path));
             if (play_on(.{ .real_book = path }, &.{})) |r| {
-                std.debug.print("ok    opened {s} ({d} ms)\n", .{ short, r.ms });
+                std.debug.print("ok    opened {s} book {d} ({d} ms)\n", .{ kind, number, r.ms });
                 opened += 1;
             } else |err| switch (err) {
                 error.Encrypted, error.Compressed, error.NotKfx => {
                     const why = @errorName(err);
-                    std.debug.print("--    {s}: not one noface opens ({s})\n", .{ short, why });
+                    const line = "--    {s} book {d}: not one noface opens ({s})\n";
+                    std.debug.print(line, .{ kind, number, why });
                 },
                 else => {
-                    std.debug.print("FAIL  opened {s}: {s}\n", .{ short, @errorName(err) });
+                    const line = "FAIL  opened {s} book {d}: {s}\n";
+                    std.debug.print(line, .{ kind, number, @errorName(err) });
                     ok = false;
                 },
             }

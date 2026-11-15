@@ -245,6 +245,15 @@ fn build_checks(b: *std.Build) void {
         .check = true,
     });
     check_step.dependOn(&fmt.step);
+    // The tests compile for CI's Linux and the Kindle's too, not only this computer:
+    // code only Linux builds (system calls by architecture) is checked before a push
+    const linux_targets = [_]std.Target.Query{
+        .{ .cpu_arch = .x86_64, .os_tag = .linux, .abi = .gnu },
+        .{ .cpu_arch = .arm, .os_tag = .linux, .abi = .musleabihf },
+    };
+    for (linux_targets) |query| {
+        check_step.dependOn(&unit_tests(b, b.resolveTargetQuery(query)).step);
+    }
     assert(run_style.has_side_effects); // Never skipped as cached
 }
 
@@ -333,10 +342,24 @@ fn build_sim(b: *std.Build) void {
 /// `zig build test`: every unit test, listed in src/tests.zig, on this computer.
 fn build_tests(b: *std.Build) void {
     const test_step = b.step("test", "Run unit tests on the host");
+    const tests = unit_tests(b, b.graph.host);
+    test_step.dependOn(&b.addRunArtifact(tests).step);
+    // The tools that run on this computer, each with its own tests
+    for (host_tool_names) |name| {
+        const tool_tests = b.addTest(.{ .root_module = host_tool_module(b, name) });
+        test_step.dependOn(&b.addRunArtifact(tool_tests).step);
+    }
+    // Tests run on this computer, through its C library
+    assert(tests.root_module.link_libc == true);
+    assert(tests.root_module.resolved_target != null);
+}
+
+/// Every unit test, listed in src/tests.zig, built for `target`.
+fn unit_tests(b: *std.Build, target: std.Build.ResolvedTarget) *std.Build.Step.Compile {
     const tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/tests.zig"),
-            .target = b.graph.host,
+            .target = target,
             .link_libc = true,
         }),
     });
@@ -347,15 +370,8 @@ fn build_tests(b: *std.Build) void {
     tests.root_module.addAnonymousImport("autostart_conf", .{
         .root_source_file = b.path("device/noface-autostart.conf"),
     });
-    test_step.dependOn(&b.addRunArtifact(tests).step);
-    // The tools that run on this computer, each with its own tests
-    for (host_tool_names) |name| {
-        const tool_tests = b.addTest(.{ .root_module = host_tool_module(b, name) });
-        test_step.dependOn(&b.addRunArtifact(tool_tests).step);
-    }
-    // Tests run on this computer, through its C library
     assert(tests.root_module.link_libc == true);
-    assert(tests.root_module.resolved_target != null);
+    return tests;
 }
 
 fn scenario_exe(

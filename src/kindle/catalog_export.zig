@@ -44,18 +44,14 @@ pub const query =
     \\        or (p_isArchived = 1 and p_isVisibleInHome = 1 and p_type = 'Entry:Item')
 ;
 
-/// Where the catalog is copied for sqlite3 to read, first choice first: RAM, as before,
-/// when it has room to spare; else the data folder on the user drive, slower but large.
-/// /tmp holds /var too, which Amazon's services write to, so it's never filled: a
-/// large account's catalog can be tens of megabytes, and /tmp is 64.
-const copy_places = [_]CopyPlace{
-    .{ .path = paths.catalog_copy, .folder = "/tmp" },
-    .{ .path = paths.data_dir ++ "/kf-cc.db", .folder = paths.data_dir },
-};
-const CopyPlace = struct { path: [*:0]const u8, folder: [*:0]const u8 };
-
-/// What a copy leaves free on its file system, at least, for everything else there.
-const copy_room_spare_bytes: u64 = 16 << 20;
+/// Where the catalog is copied for sqlite3 to read: RAM when it's small, as nearly
+/// every account's is; else the data folder on the user drive, slower but large. /tmp
+/// holds /var too, which Amazon's services write to, and is 64 MB with ~55 free: a
+/// copy of at most 8 MB always leaves them room. A catalog that can't be measured
+/// counts as large, so nothing goes to RAM unmeasured.
+const copy_to_ram_bytes_max: u64 = 8 << 20;
+const copy_in_ram: [*:0]const u8 = paths.catalog_copy;
+const copy_on_drive: [*:0]const u8 = paths.data_dir ++ "/kf-cc.db";
 
 /// What sqlite3 may leave beside a database it opened.
 const sqlite_sidecars = [_][]const u8{ "-journal", "-wal", "-shm" };
@@ -65,7 +61,7 @@ comptime {
     // after, and taken only with room to spare
     assert(std.mem.startsWith(u8, paths.catalog_copy, "/tmp/"));
     assert(std.mem.endsWith(u8, library_tmp, ".tmp"));
-    assert(copy_room_spare_bytes < 64 << 20);
+    assert(copy_to_ram_bytes_max < 64 << 20);
 }
 
 /// Writes library.tsv afresh. A catalog that can't be read leaves the old list.
@@ -74,10 +70,7 @@ pub fn run() void {
         std.debug.print("export: no sqlite3\n", .{});
         return;
     };
-    const copy = copy_place(file.size_of(paths.catalog), calls.free_bytes) orelse {
-        std.debug.print("export: no room to copy {s}\n", .{paths.catalog});
-        return;
-    };
+    const copy = copy_place(file.size_of(paths.catalog));
     if (!service.copy_file(paths.catalog, copy)) {
         std.debug.print("export: couldn't copy {s}\n", .{paths.catalog});
         return;
@@ -110,18 +103,12 @@ pub fn run() void {
     assert(finished);
 }
 
-/// The first of `copy_places` with room for a catalog of `catalog_bytes` and to spare,
-/// by `free_bytes`; null when none has. A catalog that can't be measured counts as
-/// large, so it never goes to RAM unmeasured.
-fn copy_place(catalog_bytes: u64, free_bytes: fn ([*:0]const u8) ?u64) ?[*:0]const u8 {
-    assert(copy_places.len > 0);
-    const needed = (if (catalog_bytes == 0) 64 << 20 else catalog_bytes) +| copy_room_spare_bytes;
-    for (copy_places) |place| {
-        const free = free_bytes(place.folder) orelse continue;
-        if (free >= needed) return place.path;
-    }
-    assert(needed > copy_room_spare_bytes);
-    return null;
+/// Where a catalog of `catalog_bytes` (0: not measured) is copied.
+fn copy_place(catalog_bytes: u64) [*:0]const u8 {
+    if (catalog_bytes == 0) return copy_on_drive;
+    if (catalog_bytes > copy_to_ram_bytes_max) return copy_on_drive;
+    assert(catalog_bytes <= copy_to_ram_bytes_max);
+    return copy_in_ram;
 }
 
 /// Removes the copy and whatever sqlite3 left beside it.
@@ -157,25 +144,11 @@ fn find_sqlite() ?[*:0]const u8 {
     return null;
 }
 
-test "the catalog is copied to RAM only with room to spare, else to the user drive" {
-    const Free = struct {
-        fn tight(folder: [*:0]const u8) ?u64 {
-            return if (std.mem.eql(u8, std.mem.sliceTo(folder, 0), "/tmp")) 20 << 20 else 8 << 30;
-        }
-        fn roomy(_: [*:0]const u8) ?u64 {
-            return 60 << 20;
-        }
-        fn none(_: [*:0]const u8) ?u64 {
-            return null;
-        }
-    };
-    try std.testing.expectEqual(copy_places[0].path, copy_place(1 << 20, Free.roomy).?);
-    try std.testing.expectEqual(copy_places[1].path, copy_place(10 << 20, Free.tight).?);
-    // A catalog that can't be measured is taken as large: never to RAM unmeasured
-    try std.testing.expect(copy_place(0, Free.roomy) == null);
-    try std.testing.expectEqual(copy_places[1].path, copy_place(0, Free.tight).?);
-    try std.testing.expect(copy_place(1 << 20, Free.none) == null);
-    try std.testing.expect(copy_place(50 << 20, Free.roomy) == null);
+test "a small catalog is copied to RAM, a large or unmeasured one to the user drive" {
+    try std.testing.expectEqual(copy_in_ram, copy_place(1 << 20));
+    try std.testing.expectEqual(copy_in_ram, copy_place(copy_to_ram_bytes_max));
+    try std.testing.expectEqual(copy_on_drive, copy_place(copy_to_ram_bytes_max + 1));
+    try std.testing.expectEqual(copy_on_drive, copy_place(0));
 }
 
 test "the query lists the twelve columns the library reads" {

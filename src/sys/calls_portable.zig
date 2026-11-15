@@ -278,22 +278,6 @@ pub fn facts(fd: i32) ?Facts {
     return result;
 }
 
-/// The C library's statfs: on a Mac its struct begins with the block size (u32), then
-/// a u32, then the counts of blocks, free blocks and blocks free to anyone (u64 each).
-extern "c" fn statfs(path: [*:0]const u8, buffer: *[statfs_bytes]u8) c_int;
-const statfs_bytes = 4096; // Larger than any system's struct statfs
-
-/// Bytes free to an unprivileged writer on the file system holding `path`.
-pub fn free_bytes(path: [*:0]const u8) ?u64 {
-    assert(path[0] != 0);
-    // Apple silicon's statfs is the 64-bit one; an Intel Mac's is named statfs$INODE64
-    comptime assert(!builtin.os.tag.isDarwin() or builtin.cpu.arch == .aarch64);
-    var buffer: [statfs_bytes]u8 align(8) = undefined;
-    if (statfs(path, &buffer) != 0) return null;
-    const block_bytes = std.mem.readInt(u32, buffer[0..4], .little);
-    const available = std.mem.readInt(u64, buffer[24..32], .little);
-    return std.math.mul(u64, block_bytes, available) catch std.math.maxInt(u64);
-}
 pub fn getpid() i32 {
     const pid = c.getpid();
     assert(pid > 0);

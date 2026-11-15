@@ -13,13 +13,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.1
       - name: Build
         run: |
+          zig build host-tools
           mkdir -p work && cd work
           curl -sSfLO https://kaikki.org/dictionary/English/kaikki.org-dictionary-English.jsonl.gz
           curl -sSfLO https://kaikki.org/dictionary/Portuguese/kaikki.org-dictionary-Portuguese.jsonl.gz
-          python3 ../tools/build_dictionary.py kaikki.org-dictionary-English.jsonl.gz dict-en
-          python3 ../tools/build_dictionary.py kaikki.org-dictionary-Portuguese.jsonl.gz dict-pt
+          ../zig-out/bin/build_dictionary kaikki.org-dictionary-English.jsonl.gz dict-en
+          ../zig-out/bin/build_dictionary kaikki.org-dictionary-Portuguese.jsonl.gz dict-pt
           # Just the file and its license: copied into noface-data on the Kindle, so the
           # zip never holds a folder that could replace the one there
           for d in dict-en dict-pt; do

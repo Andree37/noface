@@ -26,6 +26,7 @@ pub fn parse(alloc: std.mem.Allocator, text: []const u8) ![]Override {
 }
 
 pub fn find(list: []const Override, path: []const u8) ?Override {
+    assert(path.len > 0); // A book is always known by a path
     for (list) |o| {
         assert(o.path.len > 0); // `parse` keeps no line without a path
         if (std.mem.eql(u8, o.path, path)) return o;
@@ -33,24 +34,19 @@ pub fn find(list: []const Override, path: []const u8) ?Override {
     return null;
 }
 
-/// The file's new contents: `list` with `path` set to `name` and `index`.
-pub fn format(
-    alloc: std.mem.Allocator,
-    list: []const Override,
-    path: []const u8,
-    name: []const u8,
-    index: f32,
-) ![]const u8 {
-    var out: std.ArrayList(u8) = .empty;
-    for (list) |o| {
-        assert(o.path.len > 0); // `parse` keeps no line without a path
-        if (std.mem.eql(u8, o.path, path)) continue;
-        try out.print(alloc, "{s}\t{s}\t{d}\n", .{ o.path, o.name, o.index });
-    }
-    try out.print(alloc, "{s}\t{s}\t{d}\n", .{ path, name, index });
-    assert(out.items.len > 0);
-    assert(out.items[out.items.len - 1] == '\n');
-    return out.items;
+/// Whether `text`, a line of the file, is `path`'s.
+// Assertions: it compares two strings, and every pair of them is valid.
+pub fn is_for(text: []const u8, path: []const u8) bool {
+    if (text.len <= path.len) return false;
+    return std.mem.startsWith(u8, text, path) and text[path.len] == '\t';
+}
+
+/// `path`'s line, with its break, in `buffer`.
+pub fn format_line(buffer: []u8, path: []const u8, name: []const u8, index: f32) ![]const u8 {
+    assert(path.len > 0);
+    const text = try std.fmt.bufPrint(buffer, "{s}\t{s}\t{d}\n", .{ path, name, index });
+    assert(is_for(text, path));
+    return text;
 }
 
 /// "three body problem" typed on a lowercase keyboard, as a name: "Three Body Problem".
@@ -66,19 +62,18 @@ pub fn title_case(alloc: std.mem.Allocator, typed: []const u8) ![]const u8 {
     return out;
 }
 
-test "overrides read back as written, the newest winning" {
+test "a line reads back as written, and is known by its book's path" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    const alloc = arena.allocator();
-    const first = try format(alloc, &.{}, "/b/dark.kfx", "Three-Body", 2);
-    const list = try parse(alloc, first);
+    var buffer: [128]u8 = undefined;
+    const text = try format_line(&buffer, "/b/dark.kfx", "Three-Body", 2);
+    const list = try parse(arena.allocator(), text);
     try std.testing.expectEqualStrings("Three-Body", find(list, "/b/dark.kfx").?.name);
     try std.testing.expectEqual(@as(f32, 2), find(list, "/b/dark.kfx").?.index);
-    const second = try format(alloc, list, "/b/dark.kfx", "", 0); // Taken out of a series
-    const again = try parse(alloc, second);
-    try std.testing.expectEqual(@as(usize, 1), again.len);
-    try std.testing.expectEqualStrings("", find(again, "/b/dark.kfx").?.name);
-    try std.testing.expect(find(again, "/b/other.kfx") == null);
+    try std.testing.expect(is_for(text, "/b/dark.kfx"));
+    // A path that only begins the same is another book's
+    try std.testing.expect(!is_for(text, "/b/dark"));
+    try std.testing.expect(!is_for(text, "/b/other.kfx"));
 }
 
 test "typed names are capitalised" {

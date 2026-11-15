@@ -12,7 +12,7 @@ const search_sheet = @import("../ui/search_sheet.zig");
 const draw_ui = @import("../ui/draw.zig");
 const icons = @import("../ui/icons.zig");
 const style = @import("../ui/style.zig");
-const state = @import("../sys/state.zig");
+const files = @import("../library/files.zig");
 const app = @import("../app.zig");
 const screen = @import("screen.zig");
 const typing = @import("typing.zig");
@@ -35,20 +35,6 @@ pub fn path(buffer: []u8, state_dir: []const u8) ![:0]u8 {
     assert(p.len > state_dir.len);
     assert(std.mem.endsWith(u8, p, "/series"));
     return p;
-}
-
-/// Applies the hand-set series to the library's entries.
-pub fn apply(alloc: std.mem.Allocator, state_dir: []const u8, entries: []catalog.Entry) void {
-    var path_buffer: [320]u8 = undefined;
-    const p = path(&path_buffer, state_dir) catch return;
-    assert(std.mem.endsWith(u8, p, "/series"));
-    var buffer: [64 * 1024]u8 = undefined;
-    const list = overrides.parse(alloc, state.read_small(p, &buffer)) catch return;
-    for (entries) |*e| {
-        const o = overrides.find(list, e.path) orelse continue;
-        e.series = alloc.dupe(u8, o.name) catch continue;
-        e.series_index = o.index;
-    }
 }
 
 const Choices = struct {
@@ -226,7 +212,7 @@ pub const Series = struct {
         assert(s.phase == .choosing);
         const picked = s.row_picked() orelse return s.finish();
         if (picked == 1) {
-            try save(s.a, s.arena.allocator(), s.e.path, .{ .series = "", .index = 0 });
+            try save(s.a, s.e.path, .{ .series = "", .index = 0 });
             s.changed = true;
             return s.finish();
         }
@@ -278,7 +264,7 @@ pub const Series = struct {
         const i = s.order.items[tapped_index];
         if (tapped_index >= s.listed.in_series) {
             s.places[i] = .{ .series = s.name, .index = s.listed.next };
-            try save(s.a, s.arena.allocator(), s.entries[i].path, s.places[i]);
+            try save(s.a, s.entries[i].path, s.places[i]);
             s.changed = true;
             return s.list();
         }
@@ -298,7 +284,7 @@ pub const Series = struct {
             .series = s.name,
             .index = @floatFromInt(n),
         };
-        try save(s.a, s.arena.allocator(), s.entries[i].path, s.places[i]);
+        try save(s.a, s.entries[i].path, s.places[i]);
         s.changed = true;
         return s.list();
     }
@@ -431,16 +417,46 @@ fn manage_list_less(places: []const Place, x: u32, y: u32) bool {
     return places[x].index < places[y].index;
 }
 
-/// Saves one book's series and number in the overrides file.
-fn save(a: *app.App, alloc: std.mem.Allocator, book: []const u8, place: Place) !void {
+/// Saves one book's series and number in the overrides file: every other book's line
+/// is copied through as it is, however many there are, and the file replaced whole.
+fn save(a: *app.App, book: []const u8, place: Place) !void {
     // Out of a series, a book has no number in one
     if (place.series.len == 0) assert(place.index == 0);
     assert(place.index >= 0);
-    var path_buffer: [320]u8 = undefined;
-    const p = try path(&path_buffer, a.state_dir);
-    var buffer: [64 * 1024]u8 = undefined;
-    const list = try overrides.parse(alloc, state.read_small(p, &buffer));
-    state.write_small(p, try overrides.format(alloc, list, book, place.series, place.index));
+    var path_buffer: [files.path_bytes_max]u8 = undefined;
+    const target = try path(&path_buffer, a.state_dir);
+    var new_buffer: [files.path_bytes_max + 4]u8 = undefined;
+    const fresh = try std.fmt.bufPrintSentinel(&new_buffer, "{s}.new", .{target}, 0);
+    var write_buffer: [4096]u8 = undefined;
+    var out = try files.Writer.create(fresh, &write_buffer);
+    errdefer files.remove(fresh);
+    errdefer out.abandon();
+    try save_others(&out, target, book);
+    var line_buffer: [line_bytes_max]u8 = undefined;
+    out.write(try overrides.format_line(&line_buffer, book, place.series, place.index));
+    _ = try out.finish();
+    try files.replace(fresh, target);
     const said = if (place.series.len > 0) place.series else "(none)";
     std.debug.print("series set: {s} #{d}\n", .{ said, place.index });
+}
+
+/// The longest line the overrides file has: a path, a series name and a number.
+const line_bytes_max = files.path_bytes_max + 512;
+
+/// Copies every line of the overrides file at `target` but `book`'s into `out`.
+fn save_others(out: *files.Writer, target: [*:0]const u8, book: []const u8) !void {
+    assert(book.len > 0);
+    var read_buffer: [line_bytes_max]u8 = undefined;
+    const reader = files.Reader.open(target, &read_buffer) catch return; // None set yet
+    var lines: files.Lines = .{ .reader = reader };
+    defer lines.close();
+    // Each line moves on through the file, so there are fewer than it has bytes
+    const lines_max: u32 = @intCast(@min(reader.size + 1, std.math.maxInt(u32)));
+    for (0..lines_max) |_| {
+        const text = (try lines.next()) orelse break;
+        if (overrides.is_for(text, book)) continue;
+        if (text.len == 0) continue;
+        out.write(text);
+        out.write("\n");
+    }
 }

@@ -9,6 +9,8 @@ const decoder_memory = @import("decoder_memory.zig");
 const decoded = @import("decoded.zig");
 const jpeg_decoder = @import("jpeg.zig");
 const png_decoder = @import("png.zig");
+const scaler = @import("rows.zig");
+const workspace = @import("workspace.zig");
 
 pub const width = 252;
 pub const height = 333;
@@ -28,33 +30,11 @@ comptime {
 }
 
 /// A size in pixels.
-pub const Size = struct { width: u32, height: u32 };
-
+pub const Size = scaler.Size;
 /// Box filter: each output pixel averages the source pixels it covers.
-pub fn scale(source: []const u8, source_size: Size, target: []u8, target_size: Size) void {
-    assert(source_size.width > 0);
-    assert(source_size.height > 0);
-    assert(source.len >= @as(u64, source_size.width) * source_size.height);
-    assert(target.len >= @as(u64, target_size.width) * target_size.height);
-    const sw = source_size.width;
-    const sh = source_size.height;
-    const dw = target_size.width;
-    const dh = target_size.height;
-    // In 64 bits: a picture can be millions of pixels along one side
-    for (0..dh) |y| {
-        const y0: u32 = @intCast(@as(u64, y) * sh / dh);
-        const y1 = @max(@as(u32, @intCast(@as(u64, y + 1) * sh / dh)), y0 + 1);
-        for (0..dw) |x| {
-            const x0: u32 = @intCast(@as(u64, x) * sw / dw);
-            const x1 = @max(@as(u32, @intCast(@as(u64, x + 1) * sw / dw)), x0 + 1);
-            var sum: u32 = 0;
-            for (y0..y1) |sy| {
-                for (x0..x1) |sx| sum += source[sy * sw + sx];
-            }
-            target[y * dw + x] = @intCast(sum / ((y1 - y0) * (x1 - x0)));
-        }
-    }
-}
+pub const scale = scaler.scale;
+/// The largest size with a picture's shape that fits inside a box.
+pub const fitted = scaler.fitted;
 
 /// Rounds to the 16 grays the panel shows, spreading each pixel's rounding error
 /// onto its neighbours (Floyd-Steinberg). Without it the panel rounds by itself,
@@ -99,25 +79,6 @@ pub fn dither(alloc: std.mem.Allocator, pixels: []u8, w: u32) !void {
     }
 }
 
-/// The largest size with a picture's shape that fits inside a box.
-pub fn fitted(picture: Size, box: Size) Size {
-    assert(picture.width > 0);
-    assert(picture.height > 0);
-    assert(box.width > 0);
-    assert(box.height > 0);
-    const w: u64 = picture.width;
-    const h: u64 = picture.height;
-    var fit: Size = undefined;
-    if (w * box.height > h * box.width) {
-        fit = .{ .width = box.width, .height = @intCast(@max(1, h * box.width / w)) };
-    } else {
-        fit = .{ .width = @intCast(@max(1, w * box.height / h)), .height = box.height };
-    }
-    assert(fit.width <= box.width);
-    assert(fit.height <= box.height);
-    return fit;
-}
-
 /// Decodes a cover and shows all of it, as large as fits, centred on black.
 /// `stride` is bytes per row in `buf`, which can be more than the visible width.
 pub fn fill_screen(
@@ -130,20 +91,13 @@ pub fn fill_screen(
 ) bool {
     const screen = Page{ .buf = buf, .width = width_px, .height = height_px, .stride = stride };
     assert(screen.holds_rows());
-    const decoder = decoder_memory.allocator();
-    const gray = decode_picture(decoder, jpeg) orelse return false;
-    defer decoder.free(gray.pixels);
-    const picture = Size{ .width = gray.width, .height = gray.height };
-    const fit = fitted(picture, .{ .width = screen.width, .height = screen.height });
-    const ready = prepare(
-        alloc,
-        gray.pixels,
-        picture.width,
-        picture.height,
-        fit.width,
-        fit.height,
-    ) orelse return false;
+    const box = Size{ .width = screen.width, .height = screen.height };
+    var sink = scaler.Sink{ .target = .{ .fit = box }, .out = alloc };
+    const ready = decoded_into(&sink, .{ .bytes = jpeg }, decoder_memory.allocator()) orelse
+        return false;
     defer alloc.free(ready);
+    const fit = sink.size;
+    dither(alloc, ready, fit.width) catch return false;
     for (0..screen.height) |row| @memset(buf[row * stride ..][0..screen.width], 0x00);
     const left = (screen.width - fit.width) / 2;
     const top = (screen.height - fit.height) / 2;
@@ -181,13 +135,7 @@ pub fn prepare(
 
 /// Decodes a JPEG or PNG, then prepares it at `w` x `h`.
 pub fn decode_and_prepare(alloc: std.mem.Allocator, encoded: []const u8, w: u32, h: u32) ?[]u8 {
-    const decoder = decoder_memory.allocator();
-    const gray = decode_picture(decoder, encoded) orelse return null;
-    defer decoder.free(gray.pixels);
-    const ready = prepare(alloc, gray.pixels, gray.width, gray.height, w, h) orelse return null;
-    // Paired with `blit`, which copies exactly this many
-    assert(ready.len == @as(u64, w) * h);
-    return ready;
+    return prepare_from(alloc, .{ .bytes = encoded }, w, h);
 }
 
 /// A picture's bytes as its book keeps them: the JPEG or PNG itself, or that deflated
@@ -198,29 +146,93 @@ pub const Encoded = struct {
     inflated_size: u32 = 0,
 };
 
-/// `decode_and_prepare` for a picture as its book keeps it.
+/// Decodes a picture as its book keeps it, scaled to `w` x `h` as its rows come and
+/// dithered for the panel, ready to copy onto pages. The caller owns the result.
 pub fn prepare_from(alloc: std.mem.Allocator, source: Encoded, w: u32, h: u32) ?[]u8 {
-    assert(w > 0);
-    assert(h > 0);
-    if (!source.deflated) return decode_and_prepare(alloc, source.bytes, w, h);
-    const decoder = decoder_memory.allocator();
-    const encoded = inflated(decoder, source) orelse return null;
-    defer decoder.free(encoded);
-    return decode_and_prepare(alloc, encoded, w, h);
+    if (w == 0 or h == 0) return null;
+    // The box is noface's own, a cover's or a page's: its pixels fit in memory
+    assert(@as(u64, w) * h <= std.math.maxInt(u32));
+    var sink = scaler.Sink{ .target = .{ .size = .{ .width = w, .height = h } }, .out = alloc };
+    const ready = decoded_into(&sink, source, decoder_memory.allocator()) orelse return null;
+    dither(alloc, ready, w) catch {
+        alloc.free(ready);
+        return null;
+    };
+    // Paired with `blit`, which copies exactly this many
+    assert(ready.len == @as(u64, w) * h);
+    return ready;
 }
 
-/// `decode_gray` for a picture as its book keeps it, or null for one of more than
-/// `pixels_max` pixels.
+/// A picture as its book keeps it, at its own size, or at a half, a quarter or an
+/// eighth of it when it's larger than `pixels_max` pixels or than memory holds. The
+/// caller owns the pixels.
 pub fn decode_gray_from(alloc: std.mem.Allocator, source: Encoded, pixels_max: u64) ?Gray {
     assert(pixels_max > 0);
-    const decoder = decoder_memory.allocator();
+    var sink = scaler.Sink{ .target = .{ .divided = 1 }, .out = alloc, .pixels_max = pixels_max };
+    const pixels = decoded_into(&sink, source, decoder_memory.allocator()) orelse return null;
+    const gray = Gray{ .pixels = pixels, .width = sink.size.width, .height = sink.size.height };
+    // Paired with `zoomed` and its helpers, which index rows by the width
+    assert(gray.pixels.len == @as(u64, gray.width) * gray.height);
+    assert(gray.width > 0);
+    return gray;
+}
+
+/// Decodes a JPEG or PNG at full size, or smaller if it won't fit (see
+/// `decode_gray_from`). The caller owns the pixels.
+pub fn decode_gray(alloc: std.mem.Allocator, encoded: []const u8) ?Gray {
+    return decode_gray_from(alloc, .{ .bytes = encoded }, decoded.pixels_max);
+}
+
+/// How much smaller a picture is decoded when it won't fit at its size: by its DCT
+/// for a JPEG, by the sink's box for a PNG.
+const shrinks = [_]u8{ 1, 2, 4, 8 };
+
+/// Decodes a picture into `sink`, in a workspace over `parent` that's emptied after,
+/// and gives the sink's result, or null for data that isn't a picture noface reads. A
+/// picture whose decoding needs more than `workspace.bytes_max`, or whose result more
+/// than `sink.out` has, is decoded smaller where that helps: a JPEG always, a PNG when
+/// the sink keeps the picture's own size. The grays only differ from a whole decode's
+/// then: a picture that fits comes out exactly as before.
+fn decoded_into(sink: *scaler.Sink, source: Encoded, parent: std.mem.Allocator) ?[]u8 {
+    assert(sink.mode == .waiting);
+    var work = workspace.Workspace.init(parent, workspace.bytes_max);
+    defer work.reset();
     var encoded = source.bytes;
-    if (source.deflated) encoded = inflated(decoder, source) orelse return null;
-    defer if (source.deflated) decoder.free(encoded);
-    const gray = decode_gray(alloc, encoded) orelse return null;
-    if (@as(u64, gray.width) * gray.height <= pixels_max) return gray;
-    alloc.free(gray.pixels);
+    if (source.deflated) encoded = inflated(work.allocator(), source) orelse return null;
+    const is_png = png_decoder.is_png(encoded);
+    if (!is_png and !jpeg_decoder.is_jpeg(encoded)) return null;
+    const target = sink.target;
+    const kept = work.mark();
+    for (shrinks) |shrink| {
+        work.rewind(kept);
+        if (is_png and shrink > 1 and target != .divided) return null; // No smaller help
+        if (is_png and target == .divided) sink.target = .{ .divided = target.divided * shrink };
+        const decoding = if (is_png)
+            png_decoder.decode_rows(work.allocator(), encoded, sink)
+        else
+            jpeg_decoder.decode_rows(work.allocator(), encoded, sink, shrink);
+        decoding catch |err| {
+            if (sink.mode != .waiting) sink.abandon();
+            // A picture that can't be decoded is shown as none: nothing worse
+            if (err != error.OutOfMemory) return null;
+            continue;
+        };
+        if (shrink > 1) log_shrunk(sink, shrink);
+        return sink.finish();
+    }
+    assert(sink.mode == .waiting);
     return null;
+}
+
+fn log_shrunk(sink: *const scaler.Sink, shrink: u8) void {
+    assert(shrink > 1);
+    assert(sink.source.width > 0);
+    if (@import("builtin").is_test) return;
+    std.debug.print("picture decoded at 1/{d} for want of memory: {d}x{d} from it\n", .{
+        shrink,
+        sink.source.width,
+        sink.source.height,
+    });
 }
 
 /// A deflated picture's bytes, inflated into `alloc`, or null for data that doesn't
@@ -282,50 +294,27 @@ pub fn load(alloc: std.mem.Allocator, path: [*:0]const u8, dw: u32, dh: u32) ?[]
     assert(dh > 0);
     const data = file.map(path) catch return null;
     defer file.unmap(data);
-    const decoder = decoder_memory.allocator();
-    const gray = decode_picture(decoder, data) orelse return null;
-    defer decoder.free(gray.pixels);
-    const picture = Size{ .width = gray.width, .height = gray.height };
-    // A cover's size is noface's own, far under 32 bits
-    const out = alloc.alloc(u8, dw * dh) catch return null;
-    const target_size = Size{ .width = dw, .height = dh };
-    scale(gray.pixels, picture, out, target_size);
-    return out;
+    var sink = scaler.Sink{ .target = .{ .size = .{ .width = dw, .height = dh } }, .out = alloc };
+    return decoded_into(&sink, .{ .bytes = data }, decoder_memory.allocator());
 }
 
 /// A decoded picture at its own size, one gray byte per pixel.
 pub const Gray = struct { pixels: []u8, width: u32, height: u32 };
 
-/// Decodes a PNG or a JPEG into gray pixels from `alloc`, which the caller frees, or
-/// null for a file that isn't one, or can't be read.
+/// Decodes a PNG or a JPEG at its own size, all its memory from `alloc`, which owns
+/// the pixels; or null for a file that isn't one, or can't be read.
 fn decode_picture(alloc: std.mem.Allocator, encoded: []const u8) ?decoded.Gray {
-    // A picture that can't be decoded, or has no room, is shown as none: nothing worse
-    const picture = decode_either(alloc, encoded) catch return null;
+    var sink = scaler.Sink{ .target = .{ .divided = 1 }, .out = alloc };
+    const pixels = decoded_into(&sink, .{ .bytes = encoded }, alloc) orelse return null;
+    const picture = decoded.Gray{
+        .pixels = pixels,
+        .width = sink.size.width,
+        .height = sink.size.height,
+    };
     // Paired with the callers, which index rows by the width
     assert(picture.pixels.len == @as(u64, picture.width) * picture.height);
     assert(picture.width > 0);
     return picture;
-}
-
-fn decode_either(alloc: std.mem.Allocator, encoded: []const u8) !decoded.Gray {
-    if (png_decoder.is_png(encoded)) return png_decoder.decode(alloc, encoded);
-    if (jpeg_decoder.is_jpeg(encoded)) return jpeg_decoder.decode(alloc, encoded);
-    return error.NotAPicture;
-}
-
-/// Decodes a JPEG or PNG at full size. The caller owns the pixels.
-pub fn decode_gray(alloc: std.mem.Allocator, encoded: []const u8) ?Gray {
-    const decoder = decoder_memory.allocator();
-    const picture = decode_picture(decoder, encoded) orelse return null;
-    defer decoder.free(picture.pixels);
-    const out = alloc.alloc(u8, picture.pixels.len) catch return null;
-    @memcpy(out, picture.pixels);
-    const gray = Gray{ .pixels = out, .width = picture.width, .height = picture.height };
-
-    // Paired with `zoomed` and its helpers, which index rows by the width
-    assert(gray.pixels.len == @as(u64, gray.width) * gray.height);
-    assert(gray.width > 0);
-    return gray;
 }
 
 /// A view into a picture for zooming: `zoom` screen pixels per picture pixel, with

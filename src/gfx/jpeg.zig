@@ -10,6 +10,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const decoded = @import("decoded.zig");
 const Gray = decoded.Gray;
+const scaler = @import("rows.zig");
 
 pub const Error = error{ BadJpeg, OutOfMemory };
 
@@ -209,6 +210,23 @@ pub fn decode(alloc: std.mem.Allocator, data: []const u8) Error!Gray {
         error.BadJpeg => error.BadJpeg,
         error.OutOfMemory => error.OutOfMemory,
     };
+}
+
+/// Decodes a JPEG into `sink`, its memory from `work`. Interim: decoded whole, then
+/// handed on row by row.
+pub fn decode_rows(
+    work: std.mem.Allocator,
+    data: []const u8,
+    sink: *scaler.Sink,
+    shrink: u8,
+) Error!void {
+    if (shrink > 1) return error.OutOfMemory;
+    // Interim: whole, in the decoders' memory as before, outside the workspace
+    const whole = @import("decoder_memory.zig").allocator();
+    const gray = try decode(whole, data);
+    defer whole.free(gray.pixels);
+    try sink.begin(work, .{ .width = gray.width, .height = gray.height }, .rows);
+    for (0..gray.height) |y| sink.put_row(gray.pixels[y * gray.width ..][0..gray.width]);
 }
 
 const RetryError = Error || error{BadJpegRetry};

@@ -8,6 +8,7 @@
 //! same place. The panel's Kindle button and Wi-Fi settings hand over to the stock UI.
 const std = @import("std");
 const assert = std.debug.assert;
+const scenarios = @import("scenarios.zig");
 const paths = @import("kindle/paths.zig");
 const setup = @import("setup.zig");
 const fonts_db = @import("kindle/fonts.zig");
@@ -16,7 +17,6 @@ const decoder_memory = @import("gfx/decoder_memory.zig");
 const Font = @import("gfx/font.zig").Font;
 const file = @import("sys/file.zig");
 const hwtcon = @import("kindle/hwtcon.zig");
-const library = @import("ui/library.zig");
 const clock = @import("sys/clock.zig");
 const input_mod = @import("kindle/input.zig");
 const app = @import("app.zig");
@@ -35,7 +35,7 @@ const reader_arguments_count = 7;
 /// own messages while they run.
 pub const panic = std.debug.FullPanic(struct {
     fn crash(msg: []const u8, first: ?usize) noreturn { // usize: Zig's panic handler signature
-        @import("scenarios.zig").show_crashes();
+        scenarios.show_crashes();
         std.debug.defaultPanic(msg, first);
     }
 }.crash);
@@ -61,7 +61,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     // `noface battery-report [data folder]`: how the battery has done off the charger
     // `noface selftest`: noface's own checks, run here, changing nothing
     if (argv.len == 2 and std.mem.eql(u8, std.mem.sliceTo(argv[1], 0), "selftest")) {
-        std.process.exit(if (@import("scenarios.zig").selftest()) 0 else 1);
+        std.process.exit(if (scenarios.selftest()) 0 else 1);
     }
     if (argv.len >= 2 and std.mem.eql(u8, std.mem.sliceTo(argv[1], 0), "battery-report")) {
         const data_dir = if (argv.len >= 3) std.mem.sliceTo(argv[2], 0) else paths.data_dir;

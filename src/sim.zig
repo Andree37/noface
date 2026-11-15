@@ -11,7 +11,6 @@
 //! saves (positions, settings, stats) goes in ./noface-sim-data.
 const std = @import("std");
 const assert = std.debug.assert;
-const app = @import("app.zig");
 const hwtcon = @import("kindle/hwtcon.zig");
 const input_mod = @import("kindle/input.zig");
 const decoder_memory = @import("gfx/decoder_memory.zig");

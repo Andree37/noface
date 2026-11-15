@@ -8,7 +8,6 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const catalog = @import("../model/catalog.zig");
-const search = @import("../model/search.zig");
 const files = @import("files.zig");
 const keys = @import("keys.zig");
 const sorter = @import("sorter.zig");

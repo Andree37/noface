@@ -8,7 +8,6 @@ const assert = std.debug.assert;
 const style = @import("style.zig");
 const Page = @import("../gfx/page.zig").Page;
 const Font = @import("../gfx/font.zig").Font;
-const text = @import("../layout/text.zig");
 
 const Pen = struct {
     page: Page,

@@ -2,6 +2,8 @@
 //! dithering and zooming them for the panel.
 const std = @import("std");
 const assert = std.debug.assert;
+const memory = @import("../base/memory.zig");
+const builtin = @import("builtin");
 const check = @import("../base/check.zig");
 const file = @import("../sys/file.zig");
 const Page = @import("page.zig").Page;
@@ -227,7 +229,7 @@ fn decoded_into(sink: *scaler.Sink, source: Encoded, parent: std.mem.Allocator) 
 fn log_shrunk(sink: *const scaler.Sink, shrink: u8) void {
     assert(shrink > 1);
     assert(sink.source.width > 0);
-    if (@import("builtin").is_test) return;
+    if (builtin.is_test) return;
     std.debug.print("picture decoded at 1/{d} for want of memory: {d}x{d} from it\n", .{
         shrink,
         sink.source.width,
@@ -660,7 +662,7 @@ test "a deflated picture draws as the same picture kept as it is" {
     @memcpy(deflated[0..5], &[_]u8{ 1, l[0], l[1], ~l[0], ~l[1] });
     @memcpy(deflated[5..], data);
     // The decoders' working memory, as the app gives them theirs
-    var decoders = @import("../base/memory.zig").Budget{
+    var decoders = memory.Budget{
         .name = "decoders",
         .child = alloc,
         .limit = 64 << 20,

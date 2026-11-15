@@ -3,7 +3,6 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const Page = @import("../gfx/page.zig").Page;
-const Font = @import("../gfx/font.zig").Font;
 const draw = @import("draw.zig");
 const style = @import("style.zig");
 const dictionary = @import("../model/dictionary.zig");

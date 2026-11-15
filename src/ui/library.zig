@@ -9,7 +9,6 @@ const style = @import("style.zig");
 const cover = @import("../gfx/image.zig");
 const icons = @import("icons.zig");
 const quick_model = @import("../model/quick.zig");
-const text = @import("../layout/text.zig");
 const catalog = @import("../model/catalog.zig");
 const stats = @import("../model/stats.zig");
 const Fonts = @import("fonts.zig").Fonts;

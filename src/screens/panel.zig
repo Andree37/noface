@@ -1,7 +1,6 @@
 //! The quick panel: light, warmth, airplane mode, Bluetooth and sync, over a book or the library.
 const std = @import("std");
 const assert = std.debug.assert;
-const library = @import("../ui/library.zig");
 const menu = @import("../ui/menu.zig");
 const wifi_saver = @import("../kindle/wifi_saver.zig");
 const lipc = @import("../kindle/lipc.zig");

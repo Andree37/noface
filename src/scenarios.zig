@@ -7,6 +7,12 @@
 //! self-test (`noface-scenarios`), done in seconds.
 const std = @import("std");
 const assert = std.debug.assert;
+const folders = @import("sys/dir.zig");
+const hyphen = @import("layout/hyphen.zig");
+const file = @import("sys/file.zig");
+const fonts_db = @import("kindle/fonts.zig");
+const process = @import("sys/process.zig");
+const image = @import("gfx/image.zig");
 const app = @import("app.zig");
 const hwtcon = @import("kindle/hwtcon.zig");
 const input_mod = @import("kindle/input.zig");
@@ -183,7 +189,6 @@ fn matches_reference(alloc: std.mem.Allocator, which: Snapshot, pixels: []const 
     const encoded = switch (which) {
         inline else => |w| reference_image(@tagName(w)),
     };
-    const image = @import("gfx/image.zig");
     const want = image.decode_gray(alloc, encoded) orelse return error.BadSnapshot;
     if (want.width != width or want.height != height) return false;
     var off: u32 = 0;
@@ -681,7 +686,7 @@ fn clean_up(dir: [:0]const u8) void {
     assert(std.mem.indexOf(u8, dir, "..") == null);
     var out: [64]u8 = undefined;
     const argv = [_:null]?[*:0]const u8{ "/bin/rm", "-rf", dir };
-    _ = @import("sys/process.zig").run(&argv, &out);
+    _ = process.run(&argv, &out);
 }
 
 fn same_place(a: state.State, b: state.State) bool {
@@ -1117,8 +1122,6 @@ pub fn selftest() bool {
 
 /// This Kindle's own fonts, the dictionaries if installed, and the picture helper.
 fn selftest_files() bool {
-    const fonts_db = @import("kindle/fonts.zig");
-    const file = @import("sys/file.zig");
     var ok = true;
     for (settings_model.builtin_families, 0..) |name, i| {
         const path = fonts_db.path(i, false, false);
@@ -1127,7 +1130,7 @@ fn selftest_files() bool {
         ok = ok and usable;
     }
     const dictionaries = [_][]const u8{ "dict-en", "dict-pt" };
-    comptime assert(dictionaries.len == @typeInfo(@import("layout/hyphen.zig").Lang)
+    comptime assert(dictionaries.len == @typeInfo(hyphen.Lang)
         .@"enum".field_names.len);
     for (dictionaries) |name| {
         var buf: [96]u8 = undefined;
@@ -1158,9 +1161,8 @@ fn selftest_books() bool {
     var ok = true;
     var arena = std.heap.ArenaAllocator.init(std.heap.smp_allocator);
     defer arena.deinit();
-    const dir = @import("sys/dir.zig");
     for ([_][]const u8{ ".epub", ".kfx" }) |suffix| {
-        const found = dir.find_files(arena.allocator(), paths.documents, suffix) catch continue;
+        const found = folders.find_files(arena.allocator(), paths.documents, suffix) catch continue;
         // Up to three that noface can open; protected ones (most bought from Amazon)
         // open in the Kindle's own reader instead, so they're passed over, not failed
         var opened: u32 = 0;

@@ -9,7 +9,6 @@ const style = @import("style.zig");
 const Fonts = @import("fonts.zig").Fonts;
 const slider = @import("slider.zig");
 const icons = @import("icons.zig");
-const text = @import("../layout/text.zig");
 
 const top = 228; // Under the toolbar
 const tabs_height = 92;

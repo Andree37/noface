@@ -7,7 +7,6 @@ const book_model = @import("../model/book.zig");
 const draw = @import("draw.zig");
 const icons = @import("icons.zig");
 const style = @import("style.zig");
-const text = @import("../layout/text.zig");
 const Fonts = @import("fonts.zig").Fonts;
 
 pub const top = 228; // Under the toolbar, which stays visible above

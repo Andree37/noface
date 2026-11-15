@@ -4,7 +4,6 @@ const std = @import("std");
 const assert = std.debug.assert;
 const card = @import("../ui/card.zig");
 const catalog = @import("../model/catalog.zig");
-const library = @import("../ui/library.zig");
 const book_actions = @import("../ui/book_actions.zig");
 const state = @import("../sys/state.zig");
 const store = @import("../kindle/store.zig");
@@ -14,7 +13,6 @@ const books = @import("books.zig");
 const memory = @import("../base/memory.zig");
 const cover_image = @import("../gfx/image.zig");
 const screen = @import("screen.zig");
-const reader = @import("reader.zig");
 
 /// The rounds a book's sheet can take: its actions, then, for a removal, the question
 /// whether to remove it.

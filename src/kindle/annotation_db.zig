@@ -1,6 +1,7 @@
 //! The Kindle's annotation database: reading a book's records and queuing changes for sync.
 const std = @import("std");
 const assert = std.debug.assert;
+const builtin = @import("builtin");
 const paths = @import("paths.zig");
 const linux = @import("../sys/calls.zig");
 const os = @import("../sys/os.zig");
@@ -61,7 +62,7 @@ pub fn read_annotations(key: []const u8, kind: annotations.Kind, out: []u8) []co
 /// rather than read as a highlight with a wrong end.
 pub fn complete_lines(output: []const u8, filled: bool) []const u8 {
     if (!filled) return output;
-    if (!@import("builtin").is_test) {
+    if (!builtin.is_test) {
         std.debug.print("highlight list cut off at {d} bytes\n", .{output.len});
     }
     const end = std.mem.lastIndexOfScalar(u8, output, '\n') orelse return "";

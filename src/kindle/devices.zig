@@ -3,6 +3,7 @@
 //! each device. Kindles name and number these differently from model to model.
 const std = @import("std");
 const assert = std.debug.assert;
+const calls = @import("../sys/calls.zig");
 const state = @import("../sys/state.zig");
 const evdev = @import("input/evdev.zig");
 
@@ -163,7 +164,7 @@ fn list_supplies(
         }
     };
     var into = Into{ .names = names, .lengths = lengths };
-    @import("../sys/calls.zig").each_entry("/sys/class/power_supply", &into, Into.add);
+    calls.each_entry("/sys/class/power_supply", &into, Into.add);
     assert(into.count <= names.len);
     return into.count;
 }

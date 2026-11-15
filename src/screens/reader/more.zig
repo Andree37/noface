@@ -5,7 +5,6 @@ const assert = std.debug.assert;
 const card = @import("../../ui/card.zig");
 const catalog = @import("../../model/catalog.zig");
 const stats = @import("../../model/stats.zig");
-const store = @import("../../kindle/store.zig");
 const app = @import("../../app.zig");
 const book_actions = @import("../book_actions.zig");
 const page_number = @import("page_number.zig");

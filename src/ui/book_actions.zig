@@ -1,12 +1,9 @@
 //! Actions for one book, opened from the three dots beside its cover. Shown as a card.
 const std = @import("std");
 const assert = std.debug.assert;
-const Page = @import("../gfx/page.zig").Page;
 const stats = @import("../model/stats.zig");
 const catalog = @import("../model/catalog.zig");
 const card = @import("card.zig");
-const cover = @import("../gfx/image.zig");
-const library = @import("library.zig");
 
 pub const Option = enum {
     download,

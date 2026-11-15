@@ -13,7 +13,6 @@ const settings_model = @import("../../model/settings.zig");
 const book_model = @import("../../model/book.zig");
 const file = @import("../../sys/file.zig");
 const state = @import("../../sys/state.zig");
-const check = @import("../../base/check.zig");
 const app = @import("../../app.zig");
 
 const magic = "NFPG";

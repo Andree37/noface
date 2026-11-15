@@ -181,6 +181,30 @@ pub fn main(init: std.process.Init.Minimal) !void {
     write_image(pixels[0 .. screen_width * menu.height], screen_width, menu.height);
 }
 
+/// Page `index` of the books `visible` lets through, as the library draws it.
+fn page_books(
+    entries: []catalog.Entry,
+    lead: ?u32,
+    visible: []const u32,
+    index: u32,
+) !library.Books {
+    assert(visible.len <= entries.len);
+    const Shown = struct {
+        var books: [library.page_books_max]catalog.Entry = undefined;
+    };
+    if (index >= library.page_count(@intCast(visible.len))) return error.NoSuchPage;
+    const range = library.page_range(index, @intCast(visible.len));
+    for (visible[range.first..range.end], 0..) |entry_index, i| {
+        Shown.books[i] = entries[entry_index];
+    }
+    assert(range.end - range.first <= Shown.books.len);
+    return .{
+        .shown = Shown.books[0 .. range.end - range.first],
+        .hero = if (lead) |l| &entries[l] else null,
+        .count = @intCast(visible.len),
+    };
+}
+
 /// The library, at page `index` when given, of the books read when a third argument is.
 fn render_library(shot: *const Shot) !void {
     const entries = try catalog_db.parse(shot.allocator, try file.map(library_path));
@@ -200,9 +224,7 @@ fn render_library(shot: *const Shot) !void {
         shot.covers,
         shot.fonts,
         shot.page,
-        entries,
-        lead,
-        visible[0..count],
+        try page_books(entries, lead, visible[0..count], index),
         index,
         filter,
         .recent,
@@ -228,9 +250,7 @@ fn render_library_search(shot: *const Shot) !void {
         shot.covers,
         shot.fonts,
         shot.page,
-        entries,
-        catalog.pick_hero(entries),
-        visible[0..count],
+        try page_books(entries, catalog.pick_hero(entries), visible[0..count], 0),
         0,
         .all,
         .recent,
@@ -289,9 +309,7 @@ fn render_sheet(shot: *const Shot) !void {
         shot.covers,
         shot.fonts,
         shot.page,
-        entries,
-        lead,
-        visible[0..count],
+        try page_books(entries, lead, visible[0..count], 0),
         0,
         .all,
         .recent,

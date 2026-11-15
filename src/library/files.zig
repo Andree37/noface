@@ -34,6 +34,20 @@ pub const Writer = struct {
         return .{ .fd = @intCast(rc), .buffer = buffer };
     }
 
+    /// The file at `path`, kept as it is, to write on at its end.
+    pub fn append(path: [*:0]const u8, buffer: []u8) !Writer {
+        assert(path[0] != 0);
+        assert(buffer.len > 0);
+        const rc = calls.open(path, .{ .ACCMODE = .WRONLY, .APPEND = true, .CLOEXEC = true }, 0);
+        if (failed(rc)) return error.CantWrite;
+        const fd: i32 = @intCast(rc);
+        const facts = calls.facts(fd) orelse {
+            _ = calls.close(fd); // Ignored: nothing was written
+            return error.CantWrite;
+        };
+        return .{ .fd = fd, .buffer = buffer, .size = facts.size };
+    }
+
     pub fn write(w: *Writer, bytes: []const u8) void {
         assert(w.used <= w.buffer.len);
         if (bytes.len > w.buffer.len - w.used) w.flush();
@@ -157,6 +171,46 @@ pub const Reader = struct {
             r.len += @intCast(got);
         }
         assert(r.len == want);
+    }
+};
+
+/// Reads a text file a line at a time through a `Reader`. A line longer than the
+/// buffer is passed over (and counted): none of noface's files has one.
+pub const Lines = struct {
+    reader: Reader,
+    at: u64 = 0, // Where the next line starts
+    skipped: u32 = 0, // Lines too long for the buffer, passed over
+
+    /// The next line, without its line break, or null at the end. Valid until the next.
+    pub fn next(l: *Lines) !?[]const u8 {
+        assert(l.at <= l.reader.size);
+        // Each pass reads a buffer further on, so this many reach the end
+        const passes: u64 = l.reader.size / l.reader.buffer.len + 2;
+        const passes_max: u32 = @intCast(@min(passes, std.math.maxInt(u32)));
+        var long = false;
+        for (0..passes_max) |_| {
+            if (l.at == l.reader.size) return null;
+            const want: u32 = @intCast(@min(l.reader.buffer.len, l.reader.size - l.at));
+            const chunk = try l.reader.read_at(l.at, want);
+            const end = std.mem.indexOfScalar(u8, chunk, '\n') orelse {
+                const last = l.at + chunk.len == l.reader.size;
+                l.at += chunk.len;
+                if (last and !long) return chunk; // The last line, without a break
+                long = true; // Longer than the buffer: on to its end
+                continue;
+            };
+            l.at += end + 1;
+            if (!long) return chunk[0..end];
+            l.skipped += 1;
+            long = false;
+        }
+        unreachable; // Each pass moved on by a buffer, or to a line's end
+    }
+
+    pub fn close(l: *Lines) void {
+        assert(l.reader.fd >= 0);
+        l.reader.close();
+        assert(l.reader.fd < 0);
     }
 };
 

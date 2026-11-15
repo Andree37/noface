@@ -33,6 +33,8 @@ const plain_grid_top = 206;
 const tabs_height = 84;
 const hero_rows = 2;
 const plain_rows = 3;
+/// The most books a page shows: a page without the hero, whole.
+pub const page_books_max: u32 = plain_rows * columns;
 const hero_title_lines = 3;
 const hero_title_step = 66;
 const hero_dots_left = 1100; // The hero's dots take taps right of here, near its top
@@ -321,24 +323,6 @@ fn type_cover(
     try draw.clipped(fonts.caption, page, left, @intCast(y + h - 34), e.author, avail);
 }
 
-/// Gets the covers of library page `index` ready, so turning to it doesn't wait on
-/// decoding them (about 10 ms each). For idle moments, like a screen refresh.
-pub fn prepare_covers(
-    pool: *covers.Pool,
-    entries: []catalog.Entry,
-    visible: []const u32,
-    index: u32,
-) void {
-    assert(visible.len <= entries.len);
-    const count: u32 = @intCast(visible.len);
-    if (index >= page_count(count)) return;
-    const range = page_range(index, count);
-    for (visible[range.first..range.end]) |i| {
-        assert(i < entries.len);
-        _ = pool.grid_cover(entries[i].thumbnail);
-    }
-}
-
 fn draw_cover(
     pool: *covers.Pool,
     fonts: Fonts,
@@ -596,13 +580,19 @@ fn draw_tabs_sort(fonts: Fonts, page: Page, top: i32, order: catalog.Order) !voi
     try fonts.small.draw(page, label_x, y, order.label());
 }
 
+/// The books to draw: those on page `index` (`shown`) of the `count` let through, and
+/// the book to continue, which page one leads with.
+pub const Books = struct {
+    shown: []catalog.Entry,
+    hero: ?*catalog.Entry,
+    count: u32,
+};
+
 pub fn render(
     pool: *covers.Pool,
     fonts: Fonts,
     page: Page,
-    entries: []catalog.Entry,
-    hero: ?u32,
-    visible: []const u32,
+    books: Books,
     index: u32,
     filter: catalog.Filter,
     order: catalog.Order,
@@ -611,35 +601,31 @@ pub fn render(
     quick: *const quick_model.Quick,
     now: Moment,
 ) !void {
-    assert(visible.len <= entries.len);
-    if (hero) |h| assert(h < entries.len);
+    const with_hero = index == 0;
+    assert(books.shown.len <= grid_size(with_hero));
+    assert(books.shown.len <= books.count);
     @memset(page.buf, 0xff);
     try draw_status(fonts, page, quick);
 
-    const with_hero = index == 0;
     if (with_hero) {
         if (query.len > 0) {
-            try draw_search_header(fonts, page, query, @intCast(visible.len));
-        } else if (hero) |h| {
-            try draw_hero(pool, fonts, page, &entries[h], now);
+            try draw_search_header(fonts, page, query, books.count);
+        } else if (books.hero) |h| {
+            try draw_hero(pool, fonts, page, h, now);
         }
     }
     try draw_tabs(fonts, page, tabs_top(with_hero), filter, order, query.len > 0);
 
-    const first = first_book(index);
-    const end = @min(first + grid_size(with_hero), visible.len);
-    const shown = visible[@min(first, visible.len)..end];
     const top: u32 = @intCast(grid_top(with_hero));
-    for (shown, 0..) |entry_index, i| {
-        assert(entry_index < entries.len);
+    for (books.shown, 0..) |*e, i| {
         const at = cell_origin(@intCast(i), with_hero);
-        try draw_cell(pool, fonts, page, &entries[entry_index], at.x, at.y);
+        try draw_cell(pool, fonts, page, e, at.x, at.y);
     }
-    if (visible.len == 0) {
+    if (books.count == 0) {
         const empty = if (query.len > 0) "No books match." else "No books here yet.";
         try fonts.small.draw(page, margin, @intCast(top + 60), empty);
     }
-    try footer.render(fonts, page, index, page_count(@intCast(visible.len)));
+    try footer.render(fonts, page, index, page_count(books.count));
     if (message.len > 0) try fonts.caption.draw(page, margin, message_baseline, message);
 }
 

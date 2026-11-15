@@ -65,25 +65,20 @@ pub fn logged_hit(x: i32, y: i32, page_index: u32, count: u32, searching: bool) 
 /// and holding a book can bring up its actions.
 const touches = input_mod.Input.Modes{ .grips = false, .deferred = true, .edge_zones = true };
 
-pub fn log_page(lib: *const Library, page_index: u32, count: u32) void {
-    assert(count <= lib.visible.len);
-    const range = library.page_range(page_index, count);
-    assert(range.first <= range.end);
-    assert(range.end <= count);
-    for (range.first..range.end) |i| {
-        const title = lib.entries[lib.visible[i]].title;
-        std.debug.print("cell {d} {d} {s}\n", .{ page_index, i - range.first, title });
-    }
+pub fn log_page(shown: []const catalog.Entry, page_index: u32) void {
+    assert(page_index < books.books_max);
+    assert(shown.len <= library.page_books_max);
+    for (shown, 0..) |e, i| std.debug.print("cell {d} {d} {s}\n", .{ page_index, i, e.title });
 }
 
 /// The books to show: the filter's, without the hero, or while searching every match,
 /// the hero too.
-const SearchEnd = union(enum) { cancel, search, open: u32 };
+const SearchEnd = union(enum) { cancel, search, open: *catalog.Entry };
 
 /// The search sheet, with books matching what's typed listed as it changes. Ends by
 /// cancelling (what was searched before stays), searching for what's typed (nothing
-/// clears the search), or opening a book from the list, by its entry index.
-fn type_search(a: *app.App, lib: *const Library, q: *search.Query) !SearchEnd {
+/// clears the search), or opening a book from the list.
+fn type_search(a: *app.App, lib: *Library, q: *search.Query) !SearchEnd {
     assert(q.len <= q.buf.len);
     const kept = q.*;
     var sheet = LibrarySearch{ .a = a, .lib = lib, .q = q };
@@ -92,7 +87,7 @@ fn type_search(a: *app.App, lib: *const Library, q: *search.Query) !SearchEnd {
     if (end == null or end.? == .cancel) q.* = kept;
     const result = end orelse .cancel;
     // Only a book on the Kindle opens from the list
-    if (result == .open) assert(lib.entries[result.open].is_local());
+    if (result == .open) assert(result.open.is_local());
     return result;
 }
 
@@ -100,43 +95,48 @@ fn type_search(a: *app.App, lib: *const Library, q: *search.Query) !SearchEnd {
 const LibrarySearch = struct {
     pub const Result = SearchEnd;
     a: *app.App,
-    lib: *const Library,
+    lib: *Library,
     q: *search.Query,
-    /// One more than the rows, to tell whether there are more matches than shown.
-    matches: [search_sheet.max_rows + 1]u32 = undefined,
-    shown: u32 = 0, // How many of `matches` are listed
+    matches: []catalog.Entry = &.{}, // Those listed, read back by the library
+
+    /// The rows listed, each the match of its place.
+    const rows: [search_sheet.max_rows]u32 = std.simd.iota(u32, search_sheet.max_rows);
 
     pub fn draw(ls: *LibrarySearch, part: screen.Part) !void {
+        assert(ls.q.len <= ls.q.buf.len);
         const a = ls.a;
         const words = ls.q.words();
-        const found = catalog.select(ls.lib.entries, .all, null, words, &ls.matches);
-        assert(found <= ls.matches.len);
-        ls.shown = if (words.len > 0) @min(found, search_sheet.max_rows) else 0;
-        assert(ls.shown <= search_sheet.max_rows);
-        const listed = ls.matches[0..ls.shown];
-        const more = found > search_sheet.max_rows;
+        var more = false;
+        ls.matches = &.{};
+        if (words.len > 0) {
+            const found = ls.lib.matches(words);
+            ls.matches = found.entries;
+            more = found.more;
+        }
+        assert(ls.matches.len <= search_sheet.max_rows);
         const page = a.page(a.screen.pixels);
-        try search_sheet.render(a.ui, page, words, ls.lib.entries, listed, more);
+        const listed = rows[0..ls.matches.len];
+        try search_sheet.render(a.ui, page, words, ls.matches, listed, more);
         // The keyboard never changes, so after the first time only the part above it does
         const bottom: u32 = if (part == .all) a.screen.height else keyboard.top;
         try a.show_band(search_sheet.top, bottom - search_sheet.top);
     }
 
     pub fn on_tap(ls: *LibrarySearch, t: screen.Tap) !screen.Step(SearchEnd) {
-        assert(ls.shown <= search_sheet.max_rows);
+        assert(ls.matches.len <= search_sheet.max_rows);
         switch (typing.key(ls.q, t, typing.anything)) {
             .changed => return .{ .redraw = .changing },
             .enter => return .{ .done = .search },
             .none => {},
         }
-        return switch (search_sheet.hit(t.x, t.y, ls.shown)) {
+        return switch (search_sheet.hit(t.x, t.y, @intCast(ls.matches.len))) {
             .cancel => .close,
             .row => |i| {
                 // A row tapped is one of those listed
-                assert(i < ls.shown);
-                const entry_index = ls.matches[i];
-                if (!ls.lib.entries[entry_index].is_local()) return .{ .done = .search };
-                return .{ .done = .{ .open = entry_index } };
+                assert(i < ls.matches.len);
+                const entry = &ls.matches[i];
+                if (!entry.is_local()) return .{ .done = .search };
+                return .{ .done = .{ .open = entry } };
             },
             .field, .none => .stay,
         };
@@ -155,15 +155,13 @@ fn show_with_covers(
     buffer: []const u8,
     refresh: hwtcon.Refresh,
     page_index: u32,
-    count: u32,
 ) !void {
     assert(buffer.len == a.screen.pixels.len);
-    assert(count <= lib.visible.len);
+    assert(page_index < library.page_count(lib.count()));
     @memcpy(a.screen.pixels, buffer);
     const marker = try a.screen.show(refresh);
-    const visible = lib.visible[0..count];
-    library.prepare_covers(a.covers, lib.entries, visible, page_index + 1);
-    if (page_index > 0) library.prepare_covers(a.covers, lib.entries, visible, page_index - 1);
+    lib.prepare_covers(a.covers, page_index + 1);
+    if (page_index > 0) lib.prepare_covers(a.covers, page_index - 1);
     try a.screen.wait_complete(marker);
 }
 
@@ -175,7 +173,6 @@ const Next = enum { nothing, page, everything, leave };
 pub fn run_library(a: *app.App) !void {
     var b = Browser{ .a = a, .lib = try load_library(a), .buf = a.slots[0].buf };
     defer b.lib.deinit();
-    assert(b.lib.visible.len == b.lib.entries.len);
     assert(b.buf.len == a.screen.pixels.len);
     a.slots[0].page = -1;
     // Started while the Kindle is locked: the "going to lock" event has passed, so
@@ -197,7 +194,6 @@ const Browser = struct {
     order: catalog.Order = .recent,
     query: search.Query = .{},
     index: u32 = 0, // The page of books shown
-    hero: ?u32 = null, // The book to continue, at the top
     count: u32 = 0, // How many books the filter and search let through
     notice: []const u8 = "", // A line for the next drawing only
     /// Set only for a download started here: the library is reloaded every few seconds
@@ -217,7 +213,7 @@ const Browser = struct {
                 .leave => return,
             }
             // Whatever was drawn, the page shown is one there is, of the books let through
-            assert(b.count <= b.lib.visible.len);
+            assert(b.count == b.lib.count());
             assert(b.index < library.page_count(b.count));
             b.set_input();
             next = try b.on_action(b.a.input.next());
@@ -244,7 +240,7 @@ const Browser = struct {
 
     fn on_action(b: *Browser, action: input_mod.Action) !Next {
         assert(b.buf.len == b.a.screen.pixels.len);
-        assert(b.count <= b.lib.visible.len);
+        assert(b.count == b.lib.count());
         return switch (action) {
             .tap => |t| b.on_tap(t.x, t.y),
             .hold => |h| b.on_hold(h.x, h.y),
@@ -262,31 +258,28 @@ const Browser = struct {
     /// The books in order, the one to continue, and those the filter and search let
     /// through, with the page kept in range.
     fn arrange(b: *Browser) void {
-        assert(b.lib.visible.len == b.lib.entries.len);
-        catalog.sort(b.lib.entries, b.order);
-        const hero = catalog.pick_hero(b.lib.entries);
-        b.hero = hero;
         // While searching, every match is listed, the hero too
-        const left_out = if (b.query.words().len > 0) null else hero;
-        const words = b.query.words();
-        b.count = catalog.select(b.lib.entries, b.filter, left_out, words, b.lib.visible);
+        b.lib.arrange(b.order, b.filter, b.query.words());
+        b.count = b.lib.count();
         b.index = @min(b.index, library.page_count(b.count) - 1);
-        assert(b.count <= b.lib.visible.len);
         assert(b.index < library.page_count(b.count));
-        if (b.hero) |h| assert(b.lib.entries[h].is_local());
+        if (b.lib.hero()) |h| assert(h.is_local());
     }
 
     fn render(b: *Browser) !void {
         const a = b.a;
-        assert(b.count <= b.lib.visible.len);
+        assert(b.count == b.lib.count());
         assert(b.buf.len == a.screen.pixels.len);
+        const books_shown: library.Books = .{
+            .shown = b.lib.page(b.index),
+            .hero = b.lib.hero(),
+            .count = b.count,
+        };
         try library.render(
             a.covers,
             a.ui,
             a.page(b.buf),
-            b.lib.entries,
-            b.hero,
-            b.lib.visible[0..b.count],
+            books_shown,
             b.index,
             b.filter,
             b.order,
@@ -304,10 +297,8 @@ const Browser = struct {
         b.arrange();
         assert(b.index < library.page_count(b.count));
         // A book still coming down keeps Wi-Fi on, even once a book is open
-        for (b.lib.entries) |e| {
-            if (e.availability == .downloading) {
-                a.downloads_until = @max(a.downloads_until, now_us() + download_watch_us);
-            }
+        if (b.lib.downloading_count() > 0) {
+            a.downloads_until = @max(a.downloads_until, now_us() + download_watch_us);
         }
         const t0 = now_us();
         try b.render();
@@ -331,10 +322,10 @@ const Browser = struct {
     }
 
     fn present(b: *Browser, refresh: hwtcon.Refresh) !void {
-        assert(b.count <= b.lib.visible.len);
+        assert(b.count == b.lib.count());
         assert(b.index < library.page_count(b.count));
-        try show_with_covers(b.a, &b.lib, b.buf, refresh, b.index, b.count);
-        log_page(&b.lib, b.index, b.count);
+        try show_with_covers(b.a, &b.lib, b.buf, refresh, b.index);
+        log_page(b.lib.page_shown(), b.index);
     }
 
     /// Reads the clock, battery, charger and Wi-Fi again, and if anything moved on,
@@ -363,9 +354,9 @@ const Browser = struct {
     /// The library read again from the Kindle's catalog (after `export`, which has the
     /// Kindle write it out afresh) and the EPUBs, in place of what was shown.
     fn reload(b: *Browser, how: enum { export_first, as_is }) bool {
+        assert(b.buf.len == b.a.screen.pixels.len);
         if (how == .export_first) catalog_db.export_library();
         const fresh = load_library(b.a) catch return false;
-        assert(fresh.visible.len == fresh.entries.len);
         b.lib.deinit();
         b.lib = fresh;
         return true;
@@ -374,6 +365,7 @@ const Browser = struct {
     // Actions
 
     fn on_tap(b: *Browser, x: i32, y: i32) !Next {
+        assert(b.count == b.lib.count());
         const a = b.a;
         switch (logged_hit(x, y, b.index, b.count, b.query.words().len > 0)) {
             .none => return .nothing,
@@ -396,7 +388,7 @@ const Browser = struct {
                 return .page;
             },
             .stats => {
-                try stats_screen.run(a, b.lib.entries);
+                try stats_screen.run(a, &b.lib);
                 return .page;
             },
             .menu => return if (try panel.library_menu(a, b.buf)) .leave else .nothing,
@@ -405,15 +397,14 @@ const Browser = struct {
                 return .nothing;
             },
             .hero => {
-                const h = b.hero orelse return .nothing;
-                assert(h < b.lib.entries.len);
+                const h = b.lib.hero() orelse return .nothing;
                 a.flash(library.hero_rect(a.screen.width));
-                return b.open_book(&b.lib.entries[h]);
+                return b.open_book(h);
             },
-            .hero_dots => return b.act_on(&b.lib.entries[b.hero orelse return .nothing]),
+            .hero_dots => return b.act_on(b.lib.hero() orelse return .nothing),
             .book => |i| {
                 assert(i < b.count);
-                const entry = &b.lib.entries[b.lib.visible[i]];
+                const entry = b.lib.book(i - library.page_range(b.index, b.count).first);
                 if (entry.is_local()) {
                     a.flash(library.book_rect(i, b.index));
                     return b.open_book(entry);
@@ -430,12 +421,13 @@ const Browser = struct {
 
     /// Holding a book brings up its actions.
     fn on_hold(b: *Browser, x: i32, y: i32) !Next {
+        assert(b.count == b.lib.count());
         return switch (logged_hit(x, y, b.index, b.count, b.query.words().len > 0)) {
             .book => |i| {
                 assert(i < b.count);
-                return b.act_on(&b.lib.entries[b.lib.visible[i]]);
+                return b.act_on(b.lib.book(i - library.page_range(b.index, b.count).first));
             },
-            .hero, .hero_dots => b.act_on(&b.lib.entries[b.hero orelse return .nothing]),
+            .hero, .hero_dots => b.act_on(b.lib.hero() orelse return .nothing),
             else => .nothing,
         };
     }
@@ -467,10 +459,10 @@ const Browser = struct {
                 return .page;
             },
             .open => |e| {
-                assert(b.lib.entries[e].is_local());
+                assert(e.is_local());
                 b.query = .{};
                 b.index = 0;
-                return b.open_book(&b.lib.entries[e]);
+                return b.open_book(e);
             },
         }
     }
@@ -481,22 +473,22 @@ const Browser = struct {
         const a = b.a;
         // Only books on the Kindle are opened: the hero, a book on it, or a match
         assert(first.is_local());
-        assert(b.lib.entries.len > 0);
+        assert(b.lib.local_count() > 0);
         var entry = first;
         // Each next book is further on in its series, so none comes round twice
-        for (0..b.lib.entries.len) |_| {
+        for (0..b.lib.local_count()) |_| {
             const was_read = entry.is_read();
             const outcome = reader.read_book(a, entry) catch |err| blk: {
                 std.debug.print("could not open book: {s}\n", .{@errorName(err)});
                 b.notice = "This book can't be opened here.";
                 break :blk reader.Outcome.library;
             };
+            b.lib.save(entry); // Its place and time read, in the library's index
             if (outcome == .quit) return .leave;
             a.slots[0].page = -1;
             b.status_until = now_us() + status_watch_us; // Wi-Fi coming back, and the like
             if (was_read or !entry.is_read()) break;
-            const next_index = catalog.next_in_series(b.lib.entries, entry) orelse break;
-            const next = &b.lib.entries[next_index];
+            const next = b.lib.next_in_series(entry) orelse break;
             // The next is one not read yet, so never the book just finished
             assert(!next.is_read());
             assert(next != entry);
@@ -509,7 +501,7 @@ const Browser = struct {
     /// A book's actions sheet, and the library read again if they changed it.
     fn act_on(b: *Browser, entry: *catalog.Entry) !Next {
         assert(b.buf.len == b.a.screen.pixels.len);
-        switch (try actions.book_sheet(b.a, entry, b.lib.entries, b.buf)) {
+        switch (try actions.book_sheet(b.a, entry, &b.lib, b.buf)) {
             .none => return .nothing,
             .redraw => return .everything,
             .reload => _ = b.reload(.as_is),
@@ -526,6 +518,7 @@ const Browser = struct {
     }
 
     fn on_tick(b: *Browser) !Next {
+        assert(b.count == b.lib.count());
         const now = now_us();
         // The status: the whole screen while it's settling after a book; else just the
         // strip, once a minute or at once when a charger comes or goes
@@ -548,13 +541,13 @@ const Browser = struct {
     /// The library read again, kept only if a book has arrived: a swap without a
     /// redraw would leave the screen showing books by places that moved.
     fn reload_if_downloaded(b: *Browser) Next {
+        assert(b.count == b.lib.count());
         // Only what's downloading is looked at, until it says the catalog moved on
-        if (books.watch_download(&b.lib) == .waiting) return .nothing;
+        if (b.lib.watch_download() == .waiting) return .nothing;
         catalog_db.export_library();
         var fresh = load_library(b.a) catch return .nothing;
-        assert(fresh.visible.len == fresh.entries.len);
-        if (books.same_shelf(&fresh, &b.lib)) {
-            b.lib.catalog_seen = fresh.catalog_seen; // Nothing to show for the change
+        if (fresh.same_shelf(&b.lib)) {
+            b.lib.state.catalog_seen = fresh.state.catalog_seen; // Nothing to show for it
             fresh.deinit();
             return .nothing;
         }
@@ -565,23 +558,15 @@ const Browser = struct {
     }
 
     fn on_lock(b: *Browser) !Next {
+        assert(b.count == b.lib.count());
         const a = b.a;
-        var hero: ?*const catalog.Entry = null;
-        if (b.hero) |h| {
-            assert(h < b.lib.entries.len);
-            hero = &b.lib.entries[h];
-        }
+        const hero: ?*const catalog.Entry = b.lib.hero();
         // Not put back on waking: it's all drawn again, fresh
         if (lock.lock_screen(a, hero, .{ .restore = false }) == .leaving) return .nothing;
         a.note_battery(); // What sleeping (or charging) did
         a.quick = lipc.read(a.quick); // The clock and battery may be hours old
         // A download may have finished while the Kindle slept
-        for (b.lib.entries) |e| {
-            if (e.availability == .downloading) {
-                _ = b.reload(.export_first);
-                break;
-            }
-        }
+        if (b.lib.downloading_count() > 0) _ = b.reload(.export_first);
         return .everything;
     }
 };

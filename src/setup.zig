@@ -31,11 +31,14 @@ pub const region_bytes = struct {
     /// data beside the pixels, only the samples the gray is made of), and a block takes
     /// whole 64 KB units: an 8000x6000 JPEG needs 48 MB, where stb needed 120.
     pub const decoders: u32 = 128 << 20;
-    /// The library's list and its covers: two lists of `books.books_max` books at
-    /// `books.book_bytes_max` each (a reload holds two for a moment), and the pool the
-    /// covers shown are kept in, whose oldest give way to new ones.
-    pub const library: u32 =
-        std.mem.alignForward(u32, 2 * books.list_bytes_max + library_covers, memory.unit_bytes);
+    /// The library: the buffers its index is built and looked through with, two
+    /// libraries' books read back (a reload holds two for a moment), and the pool the
+    /// covers shown are kept in. The same for any number of books: they're on the drive.
+    pub const library: u32 = std.mem.alignForward(
+        u32,
+        books.shared_bytes_max + 2 * books.library_bytes + library_covers + library_slack,
+        memory.unit_bytes,
+    );
     /// What an EPUB is read for while the library is found: its zip directory, its
     /// package document and, the first time, its cover's bytes. Emptied after each
     /// book, so it holds one book's at a time; a larger cover is left for type.
@@ -58,6 +61,8 @@ comptime {
 /// Room in the library's region for the cover pool beside its two lists, and for each
 /// of its two blocks being rounded up to whole units.
 const library_covers: u32 = covers.bytes + 2 * memory.unit_bytes;
+/// Each block of the library's region rounded up to whole units, and room to spare.
+const library_slack: u32 = 4 << 20;
 
 comptime {
     // Every region fits in the ~480 MB a Kindle has free beside Amazon's services
@@ -82,7 +87,8 @@ var reading_reserved = false;
 const Reading = struct {
     library: memory.Region,
     covers: covers.Pool, // In the library's region, for good
-    covers_bytes: u64, // What the pool takes of the library's budget
+    covers_bytes: u64, // What the pool and the shared buffers take of the library's budget
+    library_shared: books.Shared, // In the library's region, for good
     library_budget: memory.Budget, // Shared by a library list and the one reloaded after it
     library_scratch: memory.Region,
     book: memory.Region,
@@ -96,7 +102,7 @@ fn reserve_reading() !*Reading {
         assert(reading.book.empty());
         assert(reading.scratch.empty());
         assert(reading.library_scratch.empty());
-        // Every list let go of, only the cover pool left
+        // Every library let go of, only the cover pool and the shared buffers left
         assert(reading.library_budget.live == reading.covers_bytes);
         reading.covers.clear(); // The next App's covers may differ under the same names
         return &reading;
@@ -108,6 +114,7 @@ fn reserve_reading() !*Reading {
         .limit = region_bytes.library,
     };
     try reading.covers.init(reading.library_budget.allocator());
+    try reading.library_shared.init(reading.library_budget.allocator());
     reading.covers_bytes = reading.library_budget.live;
     assert(reading.covers_bytes >= covers.bytes);
     reading.library_scratch = try .reserve("library scratch", .bump, region_bytes.library_scratch);
@@ -252,6 +259,7 @@ pub fn assemble(p: Parts) !app.App {
         .decoders_budget = p.decoders_budget,
         .library_budget = &regions.library_budget,
         .covers = &regions.covers,
+        .library_shared = &regions.library_shared,
         .library_scratch_region = &regions.library_scratch,
         .book_region = &regions.book,
         .scratch_region = &regions.scratch,

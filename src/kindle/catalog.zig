@@ -88,7 +88,7 @@ pub fn parse(alloc: std.mem.Allocator, data: []const u8) ![]library.Entry {
 }
 
 /// One book's row: its fields, tab separated. Null for a row that names no book.
-fn parse_line(alloc: std.mem.Allocator, line: []const u8) !?library.Entry {
+pub fn parse_line(alloc: std.mem.Allocator, line: []const u8) !?library.Entry {
     assert(line.len > 0);
     assert(std.mem.indexOfScalar(u8, line, '\n') == null);
     var fields = std.mem.splitScalar(u8, line, '\t');

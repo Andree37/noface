@@ -10,6 +10,8 @@ const state = @import("../sys/state.zig");
 const store = @import("../kindle/store.zig");
 const app = @import("../app.zig");
 const series_screen = @import("series.zig");
+const books = @import("books.zig");
+const memory = @import("../base/memory.zig");
 const cover_image = @import("../gfx/image.zig");
 const screen = @import("screen.zig");
 const reader = @import("reader.zig");
@@ -78,7 +80,7 @@ pub const Change = enum { none, downloading, other, reload, redraw };
 pub fn book_sheet(
     a: *app.App,
     e: *catalog.Entry,
-    entries: []const catalog.Entry,
+    lib: *books.Library,
     background: []const u8,
 ) !Change {
     std.debug.print("sheet: {s}\n", .{e.title});
@@ -103,7 +105,7 @@ pub fn book_sheet(
                 assert(!confirming);
                 continue;
             },
-            .series => return if (try series_screen.choose(a, entries, e)) .reload else .redraw,
+            .series => return choose_series(a, e, lib),
             .confirm_remove => {
                 assert(confirming);
                 store.remove_download(e.key, e.kind);
@@ -123,6 +125,25 @@ pub fn book_sheet(
     }
     // Only removing goes round again, and the question it asks has no removing in it
     unreachable;
+}
+
+/// The series screens for `e`, over the books on this Kindle, listed in the library's
+/// scratch region (each with its title, author and series). With no room there for
+/// them all, the log says so and nothing changes.
+fn choose_series(a: *app.App, e: *const catalog.Entry, lib: *books.Library) !Change {
+    assert(e.is_local());
+    var scratch = memory.Budget{
+        .name = "library scratch",
+        .region = a.library_scratch_region,
+        .limit = a.library_scratch_region.bytes.len,
+    };
+    defer scratch.reset(.give_back);
+    const entries = lib.local_books(scratch.allocator()) catch |err| {
+        std.debug.print("series: books not listed ({s})\n", .{@errorName(err)});
+        return .redraw;
+    };
+    assert(entries.len <= lib.local_count());
+    return if (try series_screen.choose(a, entries, e)) .reload else .redraw;
 }
 
 pub fn up_next(a: *app.App, next: *const catalog.Entry, background: []u8) !bool {

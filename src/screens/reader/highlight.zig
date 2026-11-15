@@ -194,6 +194,9 @@ fn paint_selection(
     return now;
 }
 
+/// The words a press and hold covered: the one held, and the one it reached.
+pub const Held = struct { fixed: u32, head: u32 };
+
 /// Press and hold: follows the finger from the word held, and says which words it
 /// covered when it lifted. Null when the hold wasn't on a word.
 pub fn select_from_hold(
@@ -201,7 +204,7 @@ pub fn select_from_hold(
     s: *sess.Session,
     hold_x: i32,
     hold_y: i32,
-) !?struct { fixed: u32, head: u32 } {
+) !?Held {
     const words = page_words(a, s);
     const fixed = selection.word_at(words, hold_x, hold_y) orelse return null;
     assert(fixed < words.len);

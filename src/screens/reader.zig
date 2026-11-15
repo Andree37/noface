@@ -439,10 +439,13 @@ pub const Reader = struct {
     searching: search.Search = undefined,
     going: goto.GoTo = undefined,
     page_ending: ?screen.Ending(u32) = null, // Of search or Go To: a page to show
+    define: define.Define = undefined,
+    define_ending: ?screen.Ending(define.Choice) = null,
+    held: hl.Held = undefined, // The words held, looked up while the definition is open
 
     /// The screens a book opens over itself: the lock screen, the ⋮ menu, search and
     /// Go To.
-    const Over = enum { none, lock, menu, searching, going };
+    const Over = enum { none, lock, menu, searching, going, define };
 
     /// The page the book opens at, its place saved as it opens.
     pub fn draw(r: *Reader, part: screen.Part) !void {
@@ -483,16 +486,19 @@ pub const Reader = struct {
 
     pub fn on_tap(r: *Reader, t: screen.Tap) !screen.Step(Outcome) {
         assert(r.over == .none); // In front, nothing over it
+        assert(r.opening == null);
         return r.on_act(.{ .tap = t }) catch |err| r.fail(err);
     }
 
     pub fn on_tick(r: *Reader) !screen.Step(Outcome) {
         assert(r.over == .none); // In front, nothing over it
+        assert(r.opening == null);
         return r.on_act(.tick) catch |err| r.fail(err);
     }
 
     pub fn on_action(r: *Reader, action: input_mod.Action) !screen.Step(Outcome) {
         assert(r.over == .none); // In front, nothing over it
+        assert(r.opening == null);
         return r.on_act(action) catch |err| r.fail(err);
     }
 
@@ -508,6 +514,8 @@ pub const Reader = struct {
     /// What follows the screen `over` that has just ended.
     fn resumed(r: *Reader, over: Over) !screen.Step(Outcome) {
         const s = r.s;
+        assert(r.over == .none); // Back in front
+        assert(r.opening == null);
         switch (over) {
             .none => unreachable,
             // Leaving: what comes next takes the stop
@@ -520,6 +528,7 @@ pub const Reader = struct {
                 },
                 .closed, .interrupted => try r.draw_toolbar(true),
             },
+            .define => try r.defined(),
             .searching, .going => switch (r.page_ending.?) {
                 .done => |target| {
                     assert(target < s.pages.len);
@@ -597,7 +606,13 @@ pub const Reader = struct {
     /// Something went wrong reading the book: it closes, and the library says so.
     fn fail(r: *Reader, err: anyerror) screen.Step(Outcome) {
         std.debug.print("could not open book: {s}\n", .{@errorName(err)});
+        // Still open: its file mapped and pages found, until `finish` lets go of them
+        assert(r.data.len > 0);
+        assert(r.s.pages.len > 0);
         r.failed = err;
+        // Whatever a handler meant to open, it won't now
+        r.opening = null;
+        r.over = .none;
         return r.finish(.failed);
     }
 
@@ -824,16 +839,37 @@ pub const Reader = struct {
             return r.select_highlight(id);
         }
         const held = try hl.select_from_hold(a, r.s, x, y) orelse return;
+        r.held = held;
         if (held.head == held.fixed) { // Held without moving: look it up, highlight only if asked
             const words = hl.page_words(a, r.s);
             assert(held.fixed < words.len);
-            if (try define.run(a, r.s, words[held.fixed], r.lang) == .close) {
-                _ = try hl.show_page(a, r.s, null); // Takes the underline off
-                return;
-            }
+            try define.begin(&r.define, a, r.s, words[held.fixed], r.lang);
+            return r.open_over(.define, screen.open(&r.define, &r.define_ending));
         }
-        const id = try hl.new_highlight(a, r.s, r.alloc, r.entry, held.fixed, held.head);
+        try r.highlight_held();
+    }
+
+    /// The words held, highlighted, and the highlight selected.
+    fn highlight_held(r: *Reader) !void {
+        const held = r.held;
+        assert(held.fixed < hl.page_words(r.a, r.s).len);
+        assert(r.view == .page);
+        const id = try hl.new_highlight(r.a, r.s, r.alloc, r.entry, held.fixed, held.head);
         if (id) |selected| try r.select_highlight(selected);
+    }
+
+    /// The definition closed: the underline off, or Highlight pressed.
+    fn defined(r: *Reader) !void {
+        assert(r.view == .page); // A word on the page was held
+        assert(r.define_ending != null);
+        const choice: define.Choice = switch (r.define_ending.?) {
+            .done => |choice| choice,
+            .closed, .interrupted => .close,
+        };
+        // Only Highlight goes on to highlight the word
+        if (choice == .highlight) return r.highlight_held();
+        _ = try hl.show_page(r.a, r.s, null); // Takes the underline off
+        assert(choice == .close);
     }
 
     fn highlight_at(r: *Reader, x: i32, y: i32) ?[]const u8 {

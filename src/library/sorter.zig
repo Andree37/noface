@@ -11,6 +11,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const files = @import("files.zig");
+const calls = @import("../sys/calls.zig");
 
 /// The longest key an item may have.
 pub const key_bytes_max: u32 = 1536;
@@ -324,7 +325,10 @@ fn test_sort(items_bytes: u32, inputs_count: u32, count: u32) !void {
         .inputs = inputs[0..inputs_count],
         .output = &output,
     };
-    var s = Sorter.init(&memory, "/tmp", "noface-sort-test");
+    // Named for this process: test runs at once each sort into their own runs
+    var name_buffer: [32]u8 = undefined;
+    const name = try std.fmt.bufPrint(&name_buffer, "noface-sort-test-{d}", .{calls.getpid()});
+    var s = Sorter.init(&memory, "/tmp", name);
     var prng = std.Random.DefaultPrng.init(count);
     for (0..count) |i| {
         var key: [8]u8 = undefined;

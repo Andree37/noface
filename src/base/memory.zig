@@ -121,6 +121,21 @@ pub const Region = struct {
         std.posix.madvise(region.bytes.ptr, touched, advice) catch {}; // Ignored: only advice
     }
 
+    /// Hands the pages of a bump region past its end back to the system, as `reset`
+    /// hands back all of them: after a rewind let go of more than is worth keeping.
+    pub fn give_back_past_end(region: *Region) void {
+        assert(region.kind == .bump);
+        assert(region.end <= region.touched);
+        const from = std.mem.alignForward(u32, region.end, std.heap.page_size_min);
+        const to = std.mem.alignForward(u32, region.touched, unit_bytes);
+        if (to <= from) return;
+        assert(to <= region.bytes.len);
+        region.touched = from;
+        const advice = std.posix.MADV.DONTNEED;
+        const pages: []align(std.heap.page_size_min) u8 = @alignCast(region.bytes[from..to]);
+        std.posix.madvise(pages.ptr, pages.len, advice) catch {}; // Ignored: only advice
+    }
+
     /// Whether nothing is handed out: a bump region's end at its start.
     pub fn empty(region: *const Region) bool {
         assert(region.bytes.len > 0);
@@ -702,6 +717,26 @@ test "a bump region is an arena: in turn, the last given back, all emptied at on
     b.reset(.give_back);
     try std.testing.expectEqual(@as(u32, 0), region.touched);
     try std.testing.expect(region.end_peak >= 1 << 20);
+}
+
+test "a second budget on a bump region rewinds to its mark, and its pages go back" {
+    var region = try Region.reserve("book", .bump, 4 << 20);
+    defer region.release();
+    var book = Budget{ .name = "book", .region = &region, .limit = region.bytes.len };
+    const kept = try book.allocator().alloc(u8, 1000);
+    const end = region.end;
+    var viewer = Budget{ .name = "picture", .region = &region, .limit = 2 << 20 };
+    const start = viewer.mark();
+    _ = try viewer.allocator().alloc(u8, 1 << 20);
+    try std.testing.expect(region.touched >= end + (1 << 20));
+    viewer.rewind(start);
+    region.give_back_past_end();
+    try std.testing.expectEqual(end, region.end);
+    try std.testing.expect(region.touched < unit_bytes); // Only the book's first page
+    try std.testing.expectEqual(@as(u64, 1000), book.live);
+    try std.testing.expect(kept.ptr == region.bytes.ptr);
+    region.give_back_past_end(); // Nothing more past the end: nothing happens
+    try std.testing.expectEqual(end, region.end);
 }
 
 test "after seal, budgets on regions ask the system for nothing" {

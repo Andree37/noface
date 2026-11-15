@@ -147,6 +147,8 @@ fn at_stop(l: *const Layout, para: u32, byte: u32) bool {
 const Link = book_model.Link;
 
 /// The link in `links` that refers to a note and overlaps `len` bytes from `start`.
+// Assertions: it reads a book's links, which are outside data: a target past the book is
+// passed over.
 fn find_reference(links: []const Link, paras: []const Paragraph, start: u32, len: u32) ?Link {
     for (links) |link| {
         if (link.end <= start or link.start >= start + len) continue;

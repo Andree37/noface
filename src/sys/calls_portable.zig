@@ -28,7 +28,7 @@ comptime {
 const errno_max = 4095;
 
 /// A C result as Linux reports it: the value, or the negated errno wrapped around.
-fn linux_result(rc: anytype) usize {
+fn linux_result(rc: anytype) usize { // usize: Linux's syscall ABI
     // A result is at most C's largest signed value, so it never reads as an error
     if (rc >= 0) return @intCast(rc);
     const errno: u32 = @intCast(c._errno().*);
@@ -68,22 +68,28 @@ fn c_flags(options: O) c.O {
     return flags;
 }
 
-pub fn open(path: [*:0]const u8, flags: O, mode: u32) usize {
+pub fn open(path: [*:0]const u8, flags: O, mode: u32) usize { // usize: Linux's syscall ABI
     assert(path[0] != 0);
     assert(mode <= 0o7777);
     if (!flags.CREAT) assert(mode == 0); // A mode only means something to a new file
     return linux_result(c.open(path, c_flags(flags), @as(c.mode_t, @intCast(mode))));
 }
-pub fn close(fd: i32) usize {
+// Assertions: a call to C: the descriptor may be -1 (see above), and its result is the caller's to
+// read.
+pub fn close(fd: i32) usize { // usize: Linux's syscall ABI
     return linux_result(c.close(fd));
 }
-pub fn read(fd: i32, buffer: [*]u8, count: usize) usize {
+pub fn read(fd: i32, buffer: [*]u8, count: usize) usize { // usize: Linux's syscall ABI
     assert(count <= std.math.maxInt(isize)); // C's read returns the count signed
-    return linux_result(c.read(fd, buffer, count));
+    const rc = c.read(fd, buffer, count);
+    assert(rc <= count); // What was read, or -1
+    return linux_result(rc);
 }
-pub fn write(fd: i32, buffer: [*]const u8, count: usize) usize {
+pub fn write(fd: i32, buffer: [*]const u8, count: usize) usize { // usize: Linux's syscall ABI
     assert(count <= std.math.maxInt(isize)); // C's write returns the count signed
-    return linux_result(c.write(fd, buffer, count));
+    const rc = c.write(fd, buffer, count);
+    assert(rc <= count); // What was written, or -1
+    return linux_result(rc);
 }
 pub const off_t = i64;
 pub const SEEK = struct {
@@ -91,6 +97,7 @@ pub const SEEK = struct {
     pub const CUR = 1;
     pub const END = 2;
 };
+// usize: Linux's syscall ABI
 pub fn llseek(fd: i32, offset: u64, result: *off_t, whence: usize) usize {
     assert(whence == SEEK.SET or whence == SEEK.CUR or whence == SEEK.END);
     const rc = c.lseek(fd, @bitCast(offset), @intCast(whence));
@@ -102,12 +109,12 @@ pub const PROT = struct { READ: bool = false, WRITE: bool = false };
 pub const MAP = struct { TYPE: enum { PRIVATE, SHARED } = .PRIVATE };
 pub fn mmap(
     address: ?[*]u8,
-    len: usize,
+    len: usize, // usize: Linux's syscall ABI
     protection: PROT,
     flags: MAP,
     fd: i32,
     offset: i64,
-) usize {
+) usize { // usize: Linux's syscall ABI
     assert(address == null); // The system chooses where
     assert(len > 0);
     assert(offset >= 0);
@@ -120,14 +127,14 @@ pub fn mmap(
     if (mapped == c.MAP_FAILED) return linux_result(@as(isize, -1));
     return @intFromPtr(mapped);
 }
-pub fn munmap(address: [*]const u8, len: usize) usize {
+pub fn munmap(address: [*]const u8, len: usize) usize { // usize: Linux's syscall ABI
     assert(len > 0);
     assert(std.mem.isAligned(@intFromPtr(address), std.heap.page_size_min)); // As mmap gave it
     return linux_result(c.munmap(@ptrCast(@alignCast(@constCast(address))), len));
 }
 pub const timespec = c.timespec;
 pub const CLOCK = enum { MONOTONIC, REALTIME };
-pub fn clock_gettime(clock: CLOCK, time: *timespec) usize {
+pub fn clock_gettime(clock: CLOCK, time: *timespec) usize { // usize: Linux's syscall ABI
     const id = if (clock == .MONOTONIC) c.CLOCK.MONOTONIC else c.CLOCK.REALTIME;
     const result = linux_result(c.clock_gettime(id, time));
     // A clock's time is never before its start, nor its nanoseconds a whole second
@@ -136,20 +143,22 @@ pub fn clock_gettime(clock: CLOCK, time: *timespec) usize {
     if (result == 0) assert(time.nsec < std.time.ns_per_s);
     return result;
 }
+// usize: Linux's syscall ABI
 pub fn nanosleep(request: *const timespec, remaining: ?*timespec) usize {
     assert(request.sec >= 0);
     assert(request.nsec >= 0);
     assert(request.nsec < std.time.ns_per_s);
     return linux_result(c.nanosleep(request, remaining));
 }
-pub fn fork() usize {
+// Assertions: a call to C, given nothing to check; its result is the caller's to read.
+pub fn fork() usize { // usize: Linux's syscall ABI
     return linux_result(c.fork());
 }
 pub fn execve(
     path: [*:0]const u8,
     argv: [*:null]const ?[*:0]const u8,
     envp: [*:null]const ?[*:0]const u8,
-) usize {
+) usize { // usize: Linux's syscall ABI
     assert(path[0] != 0);
     assert(argv[0] != null); // A program is passed its own name first
     return linux_result(c.execve(path, argv, envp));
@@ -159,7 +168,7 @@ pub fn exit(code: i32) noreturn {
     assert(code <= 255); // All an exit status holds
     c._exit(code);
 }
-pub fn pipe2(fds: *[2]i32, flags: O) usize {
+pub fn pipe2(fds: *[2]i32, flags: O) usize { // usize: Linux's syscall ABI
     // Only close-on-exec is passed on
     assert(flags.ACCMODE == .RDONLY);
     assert(!flags.NONBLOCK);
@@ -173,20 +182,23 @@ pub fn pipe2(fds: *[2]i32, flags: O) usize {
     }
     return 0;
 }
-pub fn dup(fd: i32) usize {
+// Assertions: a call to C: the descriptor may be -1 (see above), and its result is the
+// caller's to read.
+pub fn dup(fd: i32) usize { // usize: Linux's syscall ABI
     return linux_result(c.dup(fd));
 }
-pub fn dup2(old: i32, new: i32) usize {
+pub fn dup2(old: i32, new: i32) usize { // usize: Linux's syscall ABI
     assert(new >= 0);
     return linux_result(c.dup2(old, new));
 }
-pub fn setpgid(pid: i32, pgid: i32) usize {
+pub fn setpgid(pid: i32, pgid: i32) usize { // usize: Linux's syscall ABI
     assert(pid >= 0);
     assert(pgid >= 0);
     return linux_result(c.setpgid(pid, pgid));
 }
 pub const W = struct {
     pub const NOHANG = 1;
+    // Assertions: C's macro as it is, for which every status is one to read.
     pub fn IFEXITED(status: u32) bool {
         return status & 0x7f == 0;
     }
@@ -195,7 +207,7 @@ pub const W = struct {
         return @intCast((status >> 8) & 0xff);
     }
 };
-pub fn waitpid(pid: i32, status: *i32, flags: u32) usize {
+pub fn waitpid(pid: i32, status: *i32, flags: u32) usize { // usize: Linux's syscall ABI
     assert(pid != 0); // A child, or any child (-1), never a group
     assert(flags & ~@as(u32, W.NOHANG) == 0);
     var c_status: c_int = 0;
@@ -204,7 +216,7 @@ pub fn waitpid(pid: i32, status: *i32, flags: u32) usize {
     return linux_result(rc);
 }
 pub const SIG = enum(u32) { HUP = 1, INT = 2, KILL = 9, TERM = 15 };
-pub fn kill(pid: i32, signal: SIG) usize {
+pub fn kill(pid: i32, signal: SIG) usize { // usize: Linux's syscall ABI
     assert(pid != 0); // Not noface's own group
     assert(pid != -1); // Not every process there is
     return linux_result(c.kill(pid, @fromBackingInt(@intCast(@backingInt(signal)))));
@@ -213,7 +225,7 @@ pub const pollfd = c.pollfd;
 pub const POLL = struct {
     pub const IN = c.POLL.IN;
 };
-pub fn poll(fds: [*]pollfd, count: usize, timeout: i32) usize {
+pub fn poll(fds: [*]pollfd, count: usize, timeout: i32) usize { // usize: Linux's syscall ABI
     assert(count > 0);
     assert(timeout >= -1); // -1 waits for as long as it takes
     return linux_result(c.poll(fds, @intCast(count), timeout));
@@ -222,20 +234,20 @@ pub const F = struct {
     pub const GETFL = c.F.GETFL;
     pub const SETFL = c.F.SETFL;
 };
-pub fn fcntl(fd: i32, command: i32, argument: usize) usize {
+pub fn fcntl(fd: i32, command: i32, argument: usize) usize { // usize: Linux's syscall ABI
     assert(command == F.GETFL or command == F.SETFL);
     return linux_result(c.fcntl(fd, command, argument));
 }
-pub fn unlink(path: [*:0]const u8) usize {
+pub fn unlink(path: [*:0]const u8) usize { // usize: Linux's syscall ABI
     assert(path[0] != 0);
     return linux_result(c.unlink(path));
 }
-pub fn rename(old: [*:0]const u8, new: [*:0]const u8) usize {
+pub fn rename(old: [*:0]const u8, new: [*:0]const u8) usize { // usize: Linux's syscall ABI
     assert(old[0] != 0);
     assert(new[0] != 0);
     return linux_result(c.rename(old, new));
 }
-pub fn mkdir(path: [*:0]const u8, mode: u32) usize {
+pub fn mkdir(path: [*:0]const u8, mode: u32) usize { // usize: Linux's syscall ABI
     assert(path[0] != 0);
     assert(mode <= 0o7777);
     return linux_result(c.mkdir(path, @intCast(mode)));
@@ -245,7 +257,7 @@ pub fn getpid() i32 {
     assert(pid > 0);
     return pid;
 }
-pub fn ioctl(fd: i32, request: u32, argument: usize) usize {
+pub fn ioctl(fd: i32, request: u32, argument: usize) usize { // usize: Linux's syscall ABI
     assert(request != 0);
     return linux_result(c.ioctl(fd, @intCast(request), argument));
 }
@@ -253,6 +265,7 @@ pub fn ioctl(fd: i32, request: u32, argument: usize) usize {
 pub const Sigaction = struct {
     handler: struct { handler: ?*const fn (i32) callconv(.c) void = null } = .{},
 };
+// usize: Linux's syscall ABI
 pub fn sigaction(signal: SIG, action: *const Sigaction, old: ?*Sigaction) usize {
     assert(old == null); // The handler it replaces is never asked for
     assert(signal != .KILL); // KILL can't be caught

@@ -58,6 +58,7 @@ fn read(comptime format: []const u8, arguments: anytype, buffer: []u8) []const u
 /// Which kind of input device eventN is: the touch panel reports multitouch positions,
 /// a power button reports the power key. Virtual devices that claim every key (as
 /// "kindle-input-pt" does) don't count as the button.
+// Assertions: it reads the kernel's description of a device, which is outside data.
 fn classify(name: []const u8, abs: []const u8, keys: []const u8) enum { touch, power, other } {
     if (has_bit(abs, evdev.abs_mt_x)) return .touch;
     if (!has_bit(keys, evdev.key_power)) return .other;
@@ -102,6 +103,7 @@ pub fn find_inputs() Found {
 
 /// A power supply's role, from its type. USB_WET is a moisture sensor in the port, not
 /// a charger, though it says it's online.
+// Assertions: it reads the kernel's name for a power supply's type, which is outside data.
 pub fn is_charger(kind: []const u8) bool {
     if (std.mem.eql(u8, kind, "USB_WET")) return false;
     const usb = std.mem.startsWith(u8, kind, "USB");

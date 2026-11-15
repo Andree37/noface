@@ -143,6 +143,7 @@ fn main_books(args: []const [*:0]const u8) ![]const u8 {
 
 extern "c" fn time(t: ?*i64) i64;
 extern "c" fn localtime_r(t: *const i64, out: *anyopaque) ?*anyopaque;
+// usize: C's size_t
 extern "c" fn strftime(buf: [*]u8, max: usize, format: [*:0]const u8, tm: *const anyopaque) usize;
 
 /// The computer's local time, as the Kindle's `date +"%H:%M - %d %b %Y"` prints it.

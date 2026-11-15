@@ -12,8 +12,11 @@ Needs [Zig](https://ziglang.org) 0.17.
 - `zig build`: the app (`zig-out/bin/noface`), its launcher (`noface-launch`) and the
   picture helper (`jxr2pgm`), for the Kindle (32-bit ARM, static).
 - `zig build test`: unit tests.
-- `zig build check`: the ownership boundaries below, and that every file with tests
-  is listed in `src/tests.zig` (a file left out would have its tests never run).
+- `zig build check`: the ownership boundaries below, that every file with tests
+  is listed in `src/tests.zig` (a file left out would have its tests never run),
+  `zig fmt`, and Tiger Style with zero tolerance: any break anywhere fails, listed by
+  file and line, short of an exception marked in the code with its reason
+  ([TIGER_STYLE.md](TIGER_STYLE.md#how-its-kept)).
 - `zig build scenarios`: scripted runs of the real app (see Tests).
 - `zig build sim`: the real app in a browser on this computer (see below).
 - `zig build tools`: development tools, also for the Kindle.

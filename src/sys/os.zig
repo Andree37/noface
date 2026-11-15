@@ -4,8 +4,8 @@ const assert = std.debug.assert;
 const linux = @import("calls.zig");
 
 /// Raw syscalls return errors as values in the top 4096 of the range.
-pub fn failed(rc: usize) bool {
-    return rc > std.math.maxInt(usize) - 4096;
+pub fn failed(rc: usize) bool { // usize: Linux's syscall ABI
+    return rc > std.math.maxInt(usize) - 4096; // usize: Linux's syscall ABI
 }
 
 /// Set, the clock tests run on: scenario tests move it forward themselves, so a wait

@@ -647,7 +647,8 @@ const scenarios = [_]Scenario{
             fn run() !void {
                 // A minute on the page, then a minute with the toolbar open
                 const r = try play(&.{ wait(60_000), forward, top, wait(60_000), page_middle });
-                try expect(r.saved.seconds >= 55 and r.saved.seconds <= 70, "reading time off");
+                try expect(r.saved.seconds >= 55, "reading time too short");
+                try expect(r.saved.seconds <= 70, "reading time counted the toolbar");
             }
         }.run,
     },
@@ -931,7 +932,7 @@ pub fn show_crashes() void {
 /// The panic handler for noface-scenarios: the message reaches the terminal even
 /// when it happens mid-scenario.
 pub const panic = std.debug.FullPanic(struct {
-    fn crash(msg: []const u8, first: ?usize) noreturn {
+    fn crash(msg: []const u8, first: ?usize) noreturn { // usize: Zig's panic handler signature
         show_crashes();
         std.debug.defaultPanic(msg, first);
     }

@@ -18,6 +18,7 @@ const service_prefix = "com.lab126.";
 /// The most commands `process.run_all` runs at once.
 const commands_at_once_max = 16;
 
+// Assertions: it parses lipc's answer, which is outside data.
 pub fn parse_int(output: []const u8) ?u32 {
     return std.fmt.parseInt(u32, std.mem.trim(u8, output, " \n"), 10) catch null;
 }
@@ -72,6 +73,7 @@ fn get_text(
 }
 
 /// Maps wifid's "5/5" to the three arcs of the icon.
+// Assertions: it reads wifid's answer, which is outside data; only its result is ours.
 pub fn signal_bars(signal: []const u8) u32 {
     const slash = std.mem.indexOfScalar(u8, signal, '/') orelse return 0;
     const value = std.fmt.parseInt(u32, signal[0..slash], 10) catch return 0;
@@ -252,6 +254,7 @@ comptime {
 
 /// Tells powerd the reader is active, so it doesn't lock while they read. noface holds
 /// the touchscreen, so powerd never sees the touches itself.
+// Assertions: one lipc call with constants, which `set` checks.
 pub fn still_active() void {
     set("com.lab126.powerd", "touchScreenSaverTimeout", 1);
 }
@@ -299,6 +302,7 @@ pub fn watch_usb_events() ?process.Child {
 }
 
 /// True while USB carries a network (as Jobman's SSH does) rather than file transfer.
+// Assertions: one lipc read, whose answer is outside data.
 pub fn usb_for_network() bool {
     return (get("com.lab126.volumd", "useUsbForNetwork", lipc_deadline()) orelse 0) == 1;
 }
@@ -323,20 +327,24 @@ pub fn open_settings() void {
     _ = process.run(&argv, &buffer);
 }
 
+// Assertions: one lipc call; the level may have started as lipc's own answer, outside data.
 pub fn set_brightness(level: u32) void {
     set("com.lab126.powerd", "flIntensity", level);
 }
 
 /// With the schedule on, its own level has to move too or it would snap back.
+// Assertions: one lipc call; the level may have started as lipc's own answer, outside data.
 pub fn set_warmth(level: u32, scheduled: bool) void {
     set("com.lab126.powerd", "currentAmberLevel", level);
     if (scheduled) set("com.lab126.powerd", "schedAmberLevel", level);
 }
 
+// Assertions: one lipc call; a switch has no wrong value to assert.
 pub fn set_schedule(on: bool) void {
     set("com.lab126.powerd", "amberSchedEnable", if (on) 1 else 0);
 }
 
+// Assertions: one lipc call; a switch has no wrong value to assert.
 pub fn set_airplane(on: bool) void {
     set("com.lab126.cmd", "wirelessEnable", if (on) 0 else 1);
 }
@@ -350,6 +358,7 @@ pub fn wifi_connected() ?bool {
     return std.mem.eql(u8, state, "CONNECTED");
 }
 
+// Assertions: one lipc read, whose answer is outside data.
 pub fn airplane_on() ?bool {
     const value = get("com.lab126.cmd", "wirelessEnable", lipc_deadline()) orelse return null;
     return value == 0;
@@ -358,6 +367,7 @@ pub fn airplane_on() ?bool {
 const bt_service: [*:0]const u8 = "com.lab126.btfd";
 
 /// Null when btfd can't be asked. Its state is 0 off, 1 on, 2 connected.
+// Assertions: one lipc read, whose answer is outside data.
 pub fn bluetooth_on() ?bool {
     const value = get(bt_service, "BTstate", lipc_deadline()) orelse return null;
     return value != 0;
@@ -365,6 +375,7 @@ pub fn bluetooth_on() ?bool {
 
 /// The Bluetooth daemon takes "<on>:<mode>". Mode 2 is the user's own switch, which
 /// it remembers across reboots; mode 1 belongs to VoiceView, and other modes are refused.
+// Assertions: one lipc call; a switch has no wrong value to assert.
 pub fn set_bluetooth(on: bool) void {
     const value: [*:0]const u8 = if (on) "1:2" else "0:2";
     const argv = [_:null]?[*:0]const u8{ lipc_set, "-s", bt_service, "BTenable", value };

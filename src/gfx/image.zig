@@ -59,7 +59,7 @@ pub fn scale(source: []const u8, source_size: Size, target: []u8, target_size: S
 /// Rounds to the 16 grays the panel shows, spreading each pixel's rounding error
 /// onto its neighbours (Floyd-Steinberg). Without it the panel rounds by itself,
 /// and dark areas flatten into one murky gray.
-pub fn dither(alloc: std.mem.Allocator, pixels: []u8, w: usize) !void {
+pub fn dither(alloc: std.mem.Allocator, pixels: []u8, w: u32) !void {
     if (w == 0) return;
     // Whole rows only
     assert(pixels.len % w == 0);
@@ -124,17 +124,11 @@ pub fn fill_screen(
     alloc: std.mem.Allocator,
     jpeg: []const u8,
     buf: []u8,
-    width_px: usize,
-    height_px: usize,
-    stride: usize,
+    width_px: u32,
+    height_px: u32,
+    stride: u32,
 ) bool {
-    // The screen's own sizes, far under 32 bits
-    const screen = Page{
-        .buf = buf,
-        .width = @intCast(width_px),
-        .height = @intCast(height_px),
-        .stride = @intCast(stride),
-    };
+    const screen = Page{ .buf = buf, .width = width_px, .height = height_px, .stride = stride };
     assert(screen.holds_rows());
     const decoder = c_memory.allocator();
     const gray = decode_picture(decoder, jpeg) orelse return false;
@@ -165,21 +159,19 @@ pub fn fill_screen(
 pub fn prepare(
     alloc: std.mem.Allocator,
     pixels: []const u8,
-    sw: usize,
-    sh: usize,
-    w: usize,
-    h: usize,
+    sw: u32,
+    sh: u32,
+    w: u32,
+    h: u32,
 ) ?[]u8 {
-    if (w == 0 or h == 0 or sw == 0 or sh == 0 or pixels.len < sw * sh) return null;
-    // A picture's sides come from its file: too long to scale is no picture
-    if (sw > std.math.maxInt(u32) or sh > std.math.maxInt(u32)) return null;
-    // The box is noface's own: a cover's or a page's
-    assert(w <= std.math.maxInt(u32));
-    assert(h <= std.math.maxInt(u32));
+    const source_pixels = @as(u64, sw) * sh;
+    if (w == 0 or h == 0 or sw == 0 or sh == 0 or pixels.len < source_pixels) return null;
+    // The box is noface's own, a cover's or a page's: its pixels fit in memory
+    assert(@as(u64, w) * h <= std.math.maxInt(u32));
     const out = alloc.alloc(u8, w * h) catch return null;
-    const source_size = Size{ .width = @intCast(sw), .height = @intCast(sh) };
-    const target_size = Size{ .width = @intCast(w), .height = @intCast(h) };
-    scale(pixels[0 .. sw * sh], source_size, out, target_size);
+    const source_size = Size{ .width = sw, .height = sh };
+    const target_size = Size{ .width = w, .height = h };
+    scale(pixels[0..@intCast(source_pixels)], source_size, out, target_size);
     dither(alloc, out, w) catch {
         alloc.free(out);
         return null;
@@ -188,7 +180,7 @@ pub fn prepare(
 }
 
 /// Decodes a JPEG or PNG, then prepares it at `w` x `h`.
-pub fn decode_and_prepare(alloc: std.mem.Allocator, encoded: []const u8, w: usize, h: usize) ?[]u8 {
+pub fn decode_and_prepare(alloc: std.mem.Allocator, encoded: []const u8, w: u32, h: u32) ?[]u8 {
     const decoder = c_memory.allocator();
     const gray = decode_picture(decoder, encoded) orelse return null;
     defer decoder.free(gray.pixels);
@@ -214,7 +206,7 @@ pub fn blit(page: Page, ready: []const u8, x: u32, y: u32, w: u32, h: u32) void 
 }
 
 /// Returns a grayscale cover at the given size, or null if it can't be read.
-pub fn load(alloc: std.mem.Allocator, path: [*:0]const u8, dw: usize, dh: usize) ?[]u8 {
+pub fn load(alloc: std.mem.Allocator, path: [*:0]const u8, dw: u32, dh: u32) ?[]u8 {
     assert(dw > 0);
     assert(dh > 0);
     const data = file.map(path) catch return null;
@@ -223,15 +215,15 @@ pub fn load(alloc: std.mem.Allocator, path: [*:0]const u8, dw: usize, dh: usize)
     const gray = decode_picture(decoder, data) orelse return null;
     defer decoder.free(gray.pixels);
     const picture = Size{ .width = gray.width, .height = gray.height };
-    const out = alloc.alloc(u8, dw * dh) catch return null;
     // A cover's size is noface's own, far under 32 bits
-    const target_size = Size{ .width = @intCast(dw), .height = @intCast(dh) };
+    const out = alloc.alloc(u8, dw * dh) catch return null;
+    const target_size = Size{ .width = dw, .height = dh };
     scale(gray.pixels, picture, out, target_size);
     return out;
 }
 
 /// A decoded picture at its own size, one gray byte per pixel.
-pub const Gray = struct { pixels: []u8, width: usize, height: usize };
+pub const Gray = struct { pixels: []u8, width: u32, height: u32 };
 
 /// Decodes a PNG or a JPEG into gray pixels from `alloc`, which the caller frees, or
 /// null for a file that isn't one, or can't be read.
@@ -260,7 +252,7 @@ pub fn decode_gray(alloc: std.mem.Allocator, encoded: []const u8) ?Gray {
     const gray = Gray{ .pixels = out, .width = picture.width, .height = picture.height };
 
     // Paired with `zoomed` and its helpers, which index rows by the width
-    assert(gray.pixels.len == gray.width * gray.height);
+    assert(gray.pixels.len == @as(u64, gray.width) * gray.height);
     assert(gray.width > 0);
     return gray;
 }

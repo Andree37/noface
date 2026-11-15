@@ -459,6 +459,7 @@ pub const Budget = struct {
         assert(new_len <= budget.live);
     }
 
+    // usize: std.mem.Allocator's interface
     fn alloc(context: *anyopaque, len: usize, alignment: Alignment, return_address: usize) ?[*]u8 {
         const budget: *Budget = @ptrCast(@alignCast(context));
         assert(budget.live <= budget.limit);
@@ -481,8 +482,8 @@ pub const Budget = struct {
         context: *anyopaque,
         memory: []u8,
         alignment: Alignment,
-        new_len: usize,
-        return_address: usize,
+        new_len: usize, // usize: std.mem.Allocator's interface
+        return_address: usize, // usize: std.mem.Allocator's interface
     ) bool {
         const budget: *Budget = @ptrCast(@alignCast(context));
         assert(memory.len <= budget.live); // Memory this budget handed out
@@ -501,8 +502,8 @@ pub const Budget = struct {
         context: *anyopaque,
         memory: []u8,
         alignment: Alignment,
-        new_len: usize,
-        return_address: usize,
+        new_len: usize, // usize: std.mem.Allocator's interface
+        return_address: usize, // usize: std.mem.Allocator's interface
     ) ?[*]u8 {
         const budget: *Budget = @ptrCast(@alignCast(context));
         assert(memory.len <= budget.live); // Memory this budget handed out
@@ -517,6 +518,7 @@ pub const Budget = struct {
         return pointer;
     }
 
+    // usize: std.mem.Allocator's interface
     fn free(context: *anyopaque, memory: []u8, alignment: Alignment, return_address: usize) void {
         const budget: *Budget = @ptrCast(@alignCast(context));
         assert(memory.len <= budget.live); // Memory this budget handed out

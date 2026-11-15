@@ -65,6 +65,7 @@ pub fn sibling(buf: []u8, state_path: []const u8, kind: []const u8) ![:0]u8 {
 /// Reads a state file. Each value is on a line of its own, by name ("percent 37"), so a
 /// value added later is simply missing from older files and reads as its default.
 /// Files from before that are numbers in a row, in the order of `old_order`.
+// Assertions: it reads a state file, which is outside data.
 pub fn parse(content: []const u8) State {
     const first = std.mem.trimStart(u8, content, " \n");
     if (first.len > 0 and std.ascii.isDigit(first[0])) return parse_old(content);

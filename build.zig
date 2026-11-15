@@ -201,8 +201,7 @@ fn pack_file(
     pack.addFileArg(source);
 }
 
-/// `zig build check`: ownership boundaries, Tiger Style and zig fmt. Also
-/// `zig build style-baseline`.
+/// `zig build check`: ownership boundaries, Tiger Style and zig fmt.
 fn build_checks(b: *std.Build) void {
     // Ownership boundaries: `zig build check` fails when a file imports across one.
     const host = b.graph.host;
@@ -222,16 +221,15 @@ fn build_checks(b: *std.Build) void {
     }) });
     check_step.dependOn(&b.addRunArtifact(boundary_tests).step);
 
-    // Tiger Style (docs/TIGER_STYLE.md): `zig build check` fails when a file breaks a
-    // rule more than tools/check/style_baseline.txt allows, or less without the
-    // baseline being lowered to match. `zig build style-baseline` lowers it.
+    // Tiger Style (docs/TIGER_STYLE.md): `zig build check` fails on any break of a rule
+    // anywhere, short of an exception marked in the code with its reason.
     const style_module = b.createModule(.{
         .root_source_file = b.path("tools/check/style.zig"),
         .target = host,
     });
     const style = b.addExecutable(.{ .name = "style", .root_module = style_module });
     const run_style = b.addRunArtifact(style);
-    run_style.addArgs(&.{ ".", "check" });
+    run_style.addArg(".");
     run_style.has_side_effects = true; // Reads the sources itself, so always runs
     check_step.dependOn(&run_style.step);
     const style_tests = b.addTest(.{ .root_module = b.createModule(.{
@@ -239,13 +237,6 @@ fn build_checks(b: *std.Build) void {
         .target = host,
     }) });
     check_step.dependOn(&b.addRunArtifact(style_tests).step);
-    const write_baseline = b.addRunArtifact(style);
-    write_baseline.addArgs(&.{ ".", "baseline" });
-    write_baseline.has_side_effects = true;
-    b.step(
-        "style-baseline",
-        "Lower the Tiger Style baseline to what the code breaks now (never raise it)",
-    ).dependOn(&write_baseline.step);
     // Formatting, as Tiger Style asks: the code is formatted as zig fmt has it
     const fmt = b.addFmt(.{
         .paths = &.{ b.path("src"), b.path("tools"), b.path("build.zig") },
@@ -253,7 +244,6 @@ fn build_checks(b: *std.Build) void {
     });
     check_step.dependOn(&fmt.step);
     assert(run_style.has_side_effects); // Never skipped as cached
-    assert(write_baseline.has_side_effects);
 }
 
 /// Development tools, kept out of the app. Built with `zig build tools`.

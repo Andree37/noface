@@ -164,13 +164,13 @@ pub const Font = struct {
     }
 
     /// Bytes of `word` that fit in `avail`, always at least one character.
-    pub fn fit(f: *Font, word: []const u8, avail: f32) !usize {
+    pub fn fit(f: *Font, word: []const u8, avail: f32) !u32 {
         // Words are pieces of a paragraph or of noface's own text, far under 4 GB
         assert(word.len <= std.math.maxInt(u32));
         var width: f32 = 0;
         var previous: ?Glyph = null;
         var last: u32 = 0;
-        var it = (std.unicode.Utf8View.init(word) catch return word.len).iterator();
+        var it = (std.unicode.Utf8View.init(word) catch return @intCast(word.len)).iterator();
         while (it.nextCodepoint()) |code_point| {
             if (is_combining(code_point)) {
                 last = @intCast(it.i);
@@ -269,9 +269,9 @@ test "words fit by whole characters, at least one" {
     const go = @embedFile("../testdata/fonts/Go-Regular.ttf");
     var font = try Font.init(std.testing.allocator, go, 40, 1.2);
     defer font.glyphs.deinit(std.testing.allocator);
-    try std.testing.expectEqual(@as(usize, 1), try font.fit("wide", 0));
-    try std.testing.expectEqual(@as(usize, 4), try font.fit("wide", 10_000));
-    try std.testing.expectEqual(@as(usize, 0), try font.fit("", 10));
+    try std.testing.expectEqual(@as(u32, 1), try font.fit("wide", 0));
+    try std.testing.expectEqual(@as(u32, 4), try font.fit("wide", 10_000));
+    try std.testing.expectEqual(@as(u32, 0), try font.fit("", 10));
     try std.testing.expectEqual(@as(f32, 0), try font.measure(""));
 }
 

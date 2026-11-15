@@ -15,13 +15,25 @@ the reader is left with a device that doesn't answer.
 `tools/check/style.zig` over every Zig file in `src/`, `tools/` and `build.zig`, and
 `zig fmt --check`. The rules it checks are marked **[checked]** below.
 
-Code from before Tiger Style was adopted breaks some rules. `tools/check/style_baseline.txt`
-records how often, per rule and file. The check fails if any file breaks a rule more
-often than its baseline allows: **new code follows every rule from its first line**. It
-also fails if a file breaks a rule *less* often, until `zig build style-baseline` lowers
-the baseline to match, so progress can't quietly be lost. The baseline only ever
-shrinks; `style-baseline` refuses to raise it. When you touch a file, leave it with
-less debt than you found it.
+**Zero tolerance.** There is no baseline and no debt: any break of any checked rule,
+in any file, fails the check, which lists each one by file and line. Code follows every
+rule from its first line.
+
+The few genuine exceptions are marked in the code, at the exact spot, with the reason.
+The check accepts these four markers and nothing else, and a marker with nothing to
+excuse is itself a break, so none outlives its reason. A reviewer finds them all with
+`grep -rn "// usize:\|// Assertions:\|// Unbounded:\|// Ignored:" src tools build.zig`.
+
+| Marker | Where | Allowed only for |
+|---|---|---|
+| `// Unbounded: <why>` | just above the loop | a loop that by design never ends: an event loop |
+| `// Ignored: <why>` | on the line | an error whose only effect is something missing, nothing worse |
+| `// usize: <why>` | on the line, or just above it | a `usize` the language, C or the kernel's ABI requires: a syscall's signature, C's `size_t`, the panic handler's or `std.mem.Allocator`'s interface |
+| `// Assertions: <why>` | just above the function (with its doc comment) | a function that can't honestly make two assertions, when its file's average needs it: it only reads outside data, or is a one-line call to C or lipc, or reads or sets fields every value of which is valid |
+
+An `// Assertions:` function is left out of its file's average, its assertions with
+it. Never pad a function with assertions that check nothing to avoid one; never assert
+on outside data to avoid one either.
 
 ## Safety
 
@@ -35,13 +47,21 @@ less debt than you found it.
   never ends (the reader's event loop) says so in a comment just above it, starting
   `// Unbounded: ` and saying why; the check accepts that and nothing else.
 
-- **Explicitly sized types** (`u32`, `u64`, `i32`). `usize` is counted **[checked]**: use
-  it only where the language needs it (indexing a slice, a slice's length), and convert
-  at that edge. A position in a book, a count of pages, a size on disk: `u32` or `u64`,
+- **Explicitly sized types** (`u32`, `u64`, `i32`). `usize` is a break **[checked]**:
+  slice indexes and lengths are usize without being written, so convert at that edge.
+  Where a signature must say `usize` (a Linux syscall, C's `size_t`, the panic handler,
+  `std.mem.Allocator`'s interface), mark it `// usize: <why>`. A position in a book, a count of pages, a size on disk: `u32` or `u64`,
   chosen by the largest value it can hold, which the code asserts.
 
 - **Assertions.** At least **two per function on average [checked]**, counted per
-  file. `std.debug.assert` for invariants; `check.that` / `check.thatf` (`src/base/check.zig`)
+  file, as Tiger Style has it. A file short of that fails with each of its functions
+  below two listed, as the places to add them; one that can't honestly have two is
+  marked `// Assertions: <why>` (above). Counted as assertions: `assert`, `check.that`,
+  `check.thatf`, `@compileError`, and a call to `invariants()`, a struct's method that
+  asserts what holds of it between calls. In `src/scenarios.zig`, `expect` too: the
+  scenarios are tests that also ship as `noface selftest`, so a failed check reports
+  and goes on to the next scenario instead of stopping, and `expect` is their
+  assertion. `std.debug.assert` for invariants; `check.that` / `check.thatf` (`src/base/check.zig`)
   when a message helps whoever reads the crash log. noface builds in ReleaseSafe, so
   both are checked on the Kindle. They state *our* invariants. Data from outside
   (a book, the catalog, settings files, lipc answers) is never asserted: it's handled

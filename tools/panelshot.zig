@@ -181,7 +181,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
 fn render_library(shot: *const Shot) !void {
     const entries = try catalog_db.parse(shot.allocator, try file.map(library_path));
     catalog.sort(entries, .recent);
-    const visible = try shot.allocator.alloc(usize, entries.len);
+    const visible = try shot.allocator.alloc(u32, entries.len);
     const filter: catalog.Filter = if (shot.argv.len > 3) .read else .all;
     const lead = catalog.pick_hero(entries);
     const count = catalog.select(entries, filter, lead, "", visible);
@@ -215,7 +215,7 @@ fn render_library(shot: *const Shot) !void {
 fn render_library_search(shot: *const Shot) !void {
     const entries = try catalog_db.parse(shot.allocator, try file.map(library_path));
     catalog.sort(entries, .recent);
-    const visible = try shot.allocator.alloc(usize, entries.len);
+    const visible = try shot.allocator.alloc(u32, entries.len);
     const query = if (shot.argv.len > 2) std.mem.sliceTo(shot.argv[2], 0) else "the";
     const count = catalog.select(entries, .all, null, query, visible);
     assert(count <= entries.len);
@@ -276,7 +276,7 @@ fn render_sheet(shot: *const Shot) !void {
     const entries = try catalog_db.parse(shot.allocator, try file.map(library_path));
     catalog.sort(entries, .recent);
     const lead = catalog.pick_hero(entries);
-    const visible = try shot.allocator.alloc(usize, entries.len);
+    const visible = try shot.allocator.alloc(u32, entries.len);
     const count = catalog.select(entries, .all, lead, "", visible);
     if (count == 0) return error.EmptyLibrary;
     assert(count <= entries.len);

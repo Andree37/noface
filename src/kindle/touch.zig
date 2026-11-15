@@ -23,6 +23,7 @@ pub fn last_power_event(line: []const u8) ?PowerEvent {
 }
 
 /// Whether powerd said a charger came or went: "charging" or "notCharging".
+// Assertions: it reads what powerd printed, which is outside data.
 pub fn charger_changed(line: []const u8) bool {
     const charging = std.mem.indexOf(u8, line, "charging") != null;
     const not_charging = std.mem.indexOf(u8, line, "Charging") != null;

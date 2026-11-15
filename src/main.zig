@@ -34,7 +34,7 @@ const reader_arguments_count = 7;
 /// A crash during `noface selftest` must say why, though the scenarios hide the app's
 /// own messages while they run.
 pub const panic = std.debug.FullPanic(struct {
-    fn crash(msg: []const u8, first: ?usize) noreturn {
+    fn crash(msg: []const u8, first: ?usize) noreturn { // usize: Zig's panic handler signature
         @import("scenarios.zig").show_crashes();
         std.debug.defaultPanic(msg, first);
     }

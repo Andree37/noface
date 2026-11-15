@@ -240,6 +240,7 @@ pub const Input = struct {
         if (in.script != null) assert(in.remote < 0);
     }
 
+    // Assertions: it reads three switches, for which every value is valid.
     pub fn modes(in: *const Input) Modes {
         return .{ .grips = in.grips, .deferred = in.deferred, .edge_zones = in.edge_zones };
     }
@@ -258,6 +259,8 @@ pub const Input = struct {
     ///
     ///     const was = in.enter(modes, tick_us);
     ///     defer in.leave(was);
+    // Assertions: it saves fields and sets them, each to a value that's always valid; `take`
+    // asserts the modes.
     pub fn enter(in: *Input, m: Modes, tick_us: u64) Scope {
         const was = Scope{
             .modes = in.modes(),
@@ -272,6 +275,7 @@ pub const Input = struct {
     }
 
     /// Puts back what `enter` changed.
+    // Assertions: it puts back what `enter` saved; `take` asserts the modes.
     pub fn leave(in: *Input, was: Scope) void {
         in.take(was.modes);
         in.tick_us = was.tick_us;
@@ -280,12 +284,14 @@ pub const Input = struct {
 
     /// Keeps `action` back, for the next call to `next`: for a screen that ends because
     /// of it, so the one underneath acts on it in turn.
+    // Assertions: it sets one field, for which every action is valid.
     pub fn hold_back(in: *Input, action: Action) void {
         in.stashed = action;
     }
 
     /// An action kept back for the next call to `next`, if any: a lock or a stop that
     /// closed a screen, or something that turned up while a drag was being followed.
+    // Assertions: it reads one field.
     pub fn held_back(in: *const Input) ?Action {
         return in.stashed;
     }

@@ -1,16 +1,19 @@
 //! Checks the rules of docs/TIGER_STYLE.md that a program can check, over every Zig
 //! file in src/, tools/ and build.zig, and every script that isn't Zig.
 //!
-//!   style <repo root> check     Fails if any file breaks a rule more than the
-//!                               baseline allows, or less (so progress is locked in).
-//!   style <repo root> baseline  Writes the baseline from what's there now, but only
-//!                               if no count went up.
+//!   style <repo root>   Lists every break, by file and line, and fails if there's one.
 //!
-//! The baseline (tools/check/style_baseline.txt) lists, per rule and file, how many
-//! times the code broke the rule when this check was introduced. It can only shrink:
-//! new code must follow every rule from its first line, and old code is brought in
-//! line file by file. Once a count reaches zero its line goes, and the rule holds there
-//! for good.
+//! Nothing is allowed for: every rule holds in every file. The few genuine exceptions
+//! are marked in the code where they are, with the reason, and the check accepts those
+//! markers and nothing else:
+//!
+//!   `// Unbounded: …`   just above a loop that by design never ends;
+//!   `// Ignored: …`     on the line of an error that may be ignored;
+//!   `// usize: …`       on a line (or just above it) whose usize the language, C or
+//!                       the kernel's ABI needs;
+//!   `// Assertions: …`  just above a function that can't honestly make two assertions.
+//!
+//! A marker with nothing to excuse is a break too, so none outlives its reason.
 const std = @import("std");
 const assert = std.debug.assert;
 
@@ -23,7 +26,10 @@ pub const Rule = enum {
     /// are. A function returning a type keeps TitleCase, as Zig has it, and one copying
     /// a C macro keeps its capitals.
     function_name,
-    /// Fewer than two assertions per function, counted per file: the shortfall.
+    /// Fewer than two assertions per function on average, over a file. Each function
+    /// below two is listed, as the places to add them. One that can't honestly make
+    /// two says why in a comment just above it starting `// Assertions: `, and is left
+    /// out of the average.
     assertion_density,
     /// A function that calls itself: every execution must be bounded.
     recursion,
@@ -40,14 +46,21 @@ pub const Rule = enum {
     /// `while (true)`: every loop has a bound. One that by design never ends (an event
     /// loop) says so in a comment just above it starting `// Unbounded: `, with why.
     loop_unbounded,
-    /// `usize`: sizes are explicit (u32, u64), except where the language needs usize
-    /// (slice indexes and lengths).
+    /// `usize`: sizes are explicit (u32, u64). Where the language, C or the kernel's ABI
+    /// needs a usize, a comment on that line or just above it starting `// usize: `
+    /// says which.
     usize_used,
     /// A script that isn't Zig: tooling is Zig, so it runs the same everywhere.
     script_not_zig,
+    /// A `// Unbounded: `, `// usize: ` or `// Assertions: ` marker with nothing below
+    /// (or on its line) for it to excuse.
+    marker_unused,
 };
 
 pub const rule_count = @typeInfo(Rule).@"enum".field_names.len;
+
+/// One break of a rule: which, and on which line (counting from 1).
+pub const Break = struct { rule: Rule, line: u32 };
 
 pub const line_columns_max = 100;
 pub const function_lines_max = 70;
@@ -58,9 +71,6 @@ comptime {
     assert(function_lines_max == 70);
     assert(assertions_per_function_min >= 2);
 }
-
-/// How many times each rule is broken in one file.
-pub const Counts = [rule_count]u32;
 
 /// One line of a Zig file, seen as code: its text with strings, characters and
 /// comments blanked out, so braces and keywords in them don't count.
@@ -127,6 +137,8 @@ fn columns(text: []const u8) u32 {
 /// has it (`IFEXITED`), so code written against the system's API reads the same.
 fn is_snake_case(name: []const u8) bool {
     assert(name.len > 0);
+    // Paired with function_name, which ends the name before its `(`.
+    assert(std.mem.indexOfScalar(u8, name, '(') == null);
     var lower = false;
     var upper = false;
     for (name) |c| {
@@ -158,6 +170,7 @@ fn function_name(code: []const u8) ?[]const u8 {
     const name = std.mem.trim(u8, rest[0..end], " ");
     if (name.len == 0) return null;
     assert(std.mem.indexOfScalar(u8, name, '(') == null);
+    assert(name.len < code.len); // At least `fn ` and `(` aren't part of it
     return name;
 }
 
@@ -194,12 +207,25 @@ fn is_word(c: u8) bool {
     return std.ascii.isAlphanumeric(c) or c == '_';
 }
 
-/// How many assertions a line makes: `assert(`, `check.that(`, `check.thatf(`, and
-/// compile-time `@compileError(`, which asserts at build time.
-fn count_assertions(code: []const u8) u32 {
+/// How many assertions a line makes: `assert(`, `check.that(`, `check.thatf(`,
+/// compile-time `@compileError(`, which asserts at build time, and a call to
+/// `invariants()`, the method that asserts what holds of a struct between any two
+/// calls (`Input.invariants`). In the scenarios, `expect(` too (see
+/// `expects_assert_path`).
+fn count_assertions(code: []const u8, expects_assert: bool) u32 {
+    const expects = if (expects_assert) count_token(code, "expect(") else 0;
     return count_token(code, "assert(") + count_token(code, "that(") +
-        count_token(code, "thatf(") + count_token(code, "@compileError(");
+        count_token(code, "thatf(") + count_token(code, "@compileError(") +
+        count_token(code, "invariants()") + expects;
 }
+
+/// The scenarios (src/scenarios.zig) are tests that also ship, as `noface selftest`:
+/// each is a function, not a test block, and states what must hold with `expect`,
+/// which reports a failure and goes on to the next scenario, where an assertion would
+/// stop the Kindle's selftest at the first. There, `expect(` is the assertion, and
+/// counts as one, its conditions split as an assertion's are; a scenario that checks
+/// nothing still counts as a function without any.
+const expects_assert_path = "src/scenarios.zig";
 
 /// How many times a line calls the function `name` itself: not a method or field of
 /// the same name.
@@ -219,14 +245,17 @@ fn count_calls(code: []const u8, name: []const u8, gpa: std.mem.Allocator) !u32 
 }
 
 /// Whether an assertion on this line joins conditions with `and` at its top level.
-fn has_compound_assertion(code: []const u8) bool {
-    const openers = [_][]const u8{ "assert(", "that(", "thatf(" };
+fn has_compound_assertion(code: []const u8, expects_assert: bool) bool {
+    const openers = [_][]const u8{ "assert(", "that(", "thatf(", "expect(" };
     for (openers) |opener| {
+        if (!expects_assert and std.mem.eql(u8, opener, "expect(")) continue;
         var at: u32 = 0;
         while (std.mem.indexOfPos(u8, code, at, opener)) |index| {
             at = @intCast(index + opener.len);
             assert(at <= code.len);
             if (index > 0 and is_word(code[index - 1])) continue;
+            // Paired with top_level_and, which reads from just after the `(`.
+            assert(code[at - 1] == '(');
             if (top_level_and(code[at..])) return true;
         }
     }
@@ -253,6 +282,8 @@ fn top_level_and(arguments: []const u8) bool {
 /// next line without braces. `after_statement` says the line of code before ended a
 /// statement (with `;`): only then is a lone `else` a statement's. After a value, it's
 /// part of an `if` expression, which takes no braces.
+// Assertions: it reads a line of a file, which is outside data to the check; the one
+// assertion, on where a capture starts, follows from the line's `if (`.
 fn opens_unbraced(code: []const u8, after_statement: bool) bool {
     const line = std.mem.trim(u8, code, " ");
     if (line.len == 0) return false;
@@ -294,58 +325,105 @@ fn bad_comment(comment: []const u8, own_line: bool, previous_was_comment: bool) 
     return std.ascii.isLower(first[0]);
 }
 
+/// The markers on the comment lines just above a line of code, each by the line it's on.
+const Said = struct {
+    unbounded_at: ?u32 = null,
+    assertions_at: ?u32 = null,
+    usize_at: ?u32 = null,
+};
+
 /// What `check_zig` carries from one line to the next.
 const Scan = struct {
-    counts: Counts = @splat(0),
-    functions: u32 = 0,
-    assertions: u32 = 0,
+    breaks: std.ArrayList(Break) = .empty,
+    gpa: std.mem.Allocator,
     depth: i32 = 0,
     test_depth: ?i32 = null, // Inside a test block: its depth
     // The functions being read, innermost last: a struct inside a function has its own
     open: [open_max]Function = undefined,
     open_count: u32 = 0,
+    // A function whose signature runs over several lines, until the line with its `{`
+    pending: ?Function = null,
     previous_comment: bool = false,
-    unbounded_next: bool = false,
+    said: Said = .{}, // For the next line of code
     after_statement: bool = false, // The last line of code ended with `;`
+    // The file's functions and their assertions (and those outside any, at compile
+    // time), but for the functions excused from them
+    functions: u32 = 0,
+    assertions: u32 = 0,
+    light: std.ArrayList(u32) = .empty, // Where each function with fewer than two starts
+    expects_assert: bool, // In the scenarios, where `expect(` is the assertion
 
-    /// A function being read: its name, first line, and depth outside it.
-    const Function = struct { name: []const u8, start_line: u32, depth: i32 };
+    /// A function being read: its name, first line, depth outside it, the assertions
+    /// made in it so far, and the line of the `// Assertions:` marker above it, if any.
+    const Function = struct {
+        name: []const u8,
+        start_line: u32,
+        depth: i32,
+        assertions: u32 = 0,
+        excused_at: ?u32,
+    };
     const open_max = 16;
+
+    // Assertions: it appends to a list; its one invariant is lines counted from 1.
+    fn note(scan: *Scan, rule: Rule, line_number: u32, times: u32) !void {
+        assert(line_number > 0);
+        for (0..times) |_| {
+            try scan.breaks.append(scan.gpa, .{ .rule = rule, .line = line_number });
+        }
+    }
 };
 
-/// Counts the rules broken in one Zig file.
-pub fn check_zig(source: []const u8, gpa: std.mem.Allocator) !Counts {
+/// Lists the rules broken in one Zig file, in order of line. The caller frees the list.
+pub fn check_zig(path: []const u8, source: []const u8, gpa: std.mem.Allocator) ![]Break {
     const buffer = try gpa.alloc(u8, source.len);
     defer gpa.free(buffer);
-    var scan: Scan = .{};
-    var line_number: u32 = 0;
+    assert(path.len > 0);
+    var scan: Scan = .{
+        .gpa = gpa,
+        .expects_assert = std.mem.eql(u8, path, expects_assert_path),
+    };
+    errdefer scan.breaks.deinit(gpa);
+    defer scan.light.deinit(gpa);
+    var line_number: u32 = 1;
     var lines = std.mem.splitScalar(u8, source, '\n');
     while (lines.next()) |text| : (line_number += 1) {
-        const line = split_line(text, buffer[@intFromPtr(text.ptr) - @intFromPtr(source.ptr) ..]);
-        const unbounded_said = check_zig_text(&scan, &line);
+        const offset = @intFromPtr(text.ptr) - @intFromPtr(source.ptr);
+        const line = split_line(text, buffer[offset..]);
+        const said = try check_zig_text(&scan, &line, line_number);
         const trimmed = std.mem.trimStart(u8, line.code, " ");
         const test_start = std.mem.startsWith(u8, trimmed, "test \"") or
             std.mem.startsWith(u8, trimmed, "test {");
         if (scan.test_depth == null and test_start) scan.test_depth = scan.depth;
         if (scan.test_depth == null) {
-            try check_zig_code(&scan, &line, line_number, unbounded_said, gpa);
+            if (said) |above| try check_zig_code(&scan, &line, line_number, above);
         }
         scan.depth += count_depth(line.code, '{', '}');
-        close_functions(&scan, line_number);
+        try close_functions(&scan, line_number);
         if (scan.test_depth) |test_depth| {
             if (scan.depth <= test_depth) scan.test_depth = null; // Its closing brace
         }
     }
     // Even an empty file is one line.
-    assert(line_number > 0);
-    const wanted = scan.functions * assertions_per_function_min;
-    scan.counts[@backingInt(Rule.assertion_density)] = wanted -| scan.assertions;
-    assert(scan.counts[@backingInt(Rule.assertion_density)] <= wanted);
-    return scan.counts;
+    assert(line_number > 1);
+    try marked_for_nothing(&scan, scan.said);
+    if (scan.assertions < scan.functions * assertions_per_function_min) {
+        // Short on average: each function below two is where to add them
+        assert(scan.light.items.len > 0);
+        for (scan.light.items) |start_line| try scan.note(.assertion_density, start_line, 1);
+    }
+    std.mem.sort(Break, scan.breaks.items, {}, struct {
+        fn before(_: void, a: Break, b: Break) bool {
+            assert(a.line > 0);
+            assert(b.line > 0);
+            return a.line < b.line;
+        }
+    }.before);
+    return scan.breaks.toOwnedSlice(gpa);
 }
 
-/// Ends every open function whose closing brace this line holds, counting its length.
-fn close_functions(scan: *Scan, line_number: u32) void {
+/// Ends every open function whose closing brace this line holds: its length, and its
+/// assertions toward the file's, unless it's excused from them.
+fn close_functions(scan: *Scan, line_number: u32) !void {
     assert(scan.open_count <= Scan.open_max);
     for (0..Scan.open_max) |_| {
         if (scan.open_count == 0) return;
@@ -355,122 +433,167 @@ fn close_functions(scan: *Scan, line_number: u32) void {
         if (scan.depth > open.depth) return;
         assert(open.start_line <= line_number);
         const length = line_number - open.start_line + 1;
-        if (length > function_lines_max) scan.counts[@backingInt(Rule.function_length)] += 1;
+        if (length > function_lines_max) try scan.note(.function_length, open.start_line, 1);
+        const light = open.assertions < assertions_per_function_min;
+        if (open.excused_at) |marker_line| {
+            if (!light) try scan.note(.marker_unused, marker_line, 1);
+        } else {
+            scan.functions += 1;
+            scan.assertions += open.assertions;
+            if (light) try scan.light.append(scan.gpa, open.start_line);
+        }
         scan.open_count -= 1;
     }
 }
 
-/// Counts what a line breaks as text: its length and its comment. Returns whether a
-/// `// Unbounded:` comment just above it vouches for a loop on it.
-fn check_zig_text(scan: *Scan, line: *const Line) bool {
-    assert(line.code.len <= line.text.len);
-    const counts = &scan.counts;
-    const trimmed = std.mem.trimStart(u8, line.code, " ");
-    if (columns(line.text) > line_columns_max) counts[@backingInt(Rule.line_length)] += 1;
-    const own_line_comment = line.comment.len > 0 and trimmed.len == 0;
-    const continued = scan.previous_comment and own_line_comment;
-    if (bad_comment(line.comment, own_line_comment, continued)) {
-        counts[@backingInt(Rule.comment_style)] += 1;
-    }
-    scan.previous_comment = own_line_comment;
-    // Set by a `// Unbounded:` comment, for the loop on the next line of code
-    const unbounded_said = scan.unbounded_next;
-    if (own_line_comment) {
-        const said = std.mem.trimStart(u8, line.comment, "/ ");
-        if (std.mem.startsWith(u8, said, "Unbounded: ")) scan.unbounded_next = true;
-    } else if (trimmed.len > 0) {
-        scan.unbounded_next = false;
-    }
-    return unbounded_said;
+/// Whether a comment is a marker: it starts with `prefix`, and gives a reason after it.
+fn is_marker(comment: []const u8, prefix: []const u8) bool {
+    assert(std.mem.startsWith(u8, prefix, "// "));
+    assert(prefix[prefix.len - 1] == ' ');
+    if (!std.mem.startsWith(u8, comment, prefix)) return false;
+    return std.mem.trim(u8, comment[prefix.len..], " ").len > 0;
 }
 
-/// Counts what a line of code outside the tests breaks, and the functions and
-/// assertions it adds.
-fn check_zig_code(
-    scan: *Scan,
-    line: *const Line,
-    line_number: u32,
-    unbounded_said: bool,
-    gpa: std.mem.Allocator,
-) !void {
+/// Notes every marker that reached no line of code for it to excuse.
+fn marked_for_nothing(scan: *Scan, said: Said) !void {
+    assert(scan.open_count <= Scan.open_max);
+    const lines = [_]?u32{ said.unbounded_at, said.assertions_at, said.usize_at };
+    comptime assert(lines.len == @typeInfo(Said).@"struct".field_names.len);
+    for (lines) |marker_line| {
+        if (marker_line) |at| try scan.note(.marker_unused, at, 1);
+    }
+}
+
+/// Notes what a line breaks as text: its length and its comment. Returns, for a line
+/// of code, the markers on the comment lines just above it; null for any other line.
+fn check_zig_text(scan: *Scan, line: *const Line, line_number: u32) !?Said {
+    assert(line.code.len <= line.text.len);
+    assert(line_number > 0);
+    const trimmed = std.mem.trimStart(u8, line.code, " ");
+    if (columns(line.text) > line_columns_max) try scan.note(.line_length, line_number, 1);
+    const own_line_comment = line.comment.len > 0 and trimmed.len == 0;
+    const continued = scan.previous_comment and own_line_comment;
+    // A `// usize:` marker names the type it excuses, so it starts in lowercase
+    const usize_marker = is_marker(line.comment, "// usize: ");
+    if (bad_comment(line.comment, own_line_comment, continued) and !usize_marker) {
+        try scan.note(.comment_style, line_number, 1);
+    }
+    scan.previous_comment = own_line_comment;
+    if (own_line_comment) {
+        if (is_marker(line.comment, "// Unbounded: ")) scan.said.unbounded_at = line_number;
+        if (is_marker(line.comment, "// Assertions: ")) scan.said.assertions_at = line_number;
+        if (usize_marker) scan.said.usize_at = line_number;
+        return null;
+    }
+    const above = scan.said;
+    scan.said = .{};
+    if (trimmed.len > 0) return above;
+    // A blank line, or one of a multiline string: the markers above it mark nothing
+    if (scan.test_depth == null) try marked_for_nothing(scan, above);
+    return null;
+}
+
+/// Notes what a line of code outside the tests breaks, and adds its assertions to the
+/// function they're in. `said` is the markers on the comment lines just above it.
+fn check_zig_code(scan: *Scan, line: *const Line, line_number: u32, said: Said) !void {
     assert(scan.test_depth == null);
-    const counts = &scan.counts;
+    assert(line_number > 0);
     const code = line.code;
+    var excuse_used = false;
     if (function_name(code)) |name| {
-        scan.functions += 1;
         const returns_type = std.mem.indexOf(u8, code, ") type") != null;
-        if (!returns_type and !is_snake_case(name)) counts[@backingInt(Rule.function_name)] += 1;
-        const has_body = std.mem.indexOfScalar(u8, code, '{') != null;
-        if (has_body and scan.open_count < Scan.open_max) {
-            scan.open[scan.open_count] = .{
-                .name = name,
-                .start_line = line_number,
-                .depth = scan.depth,
-            };
-            scan.open_count += 1;
+        if (!returns_type and !is_snake_case(name)) {
+            try scan.note(.function_name, line_number, 1);
+        }
+        const function: Scan.Function = .{
+            .name = name,
+            .start_line = line_number,
+            .depth = scan.depth,
+            .excused_at = said.assertions_at,
+        };
+        excuse_used = true;
+        scan.pending = null;
+        if (std.mem.indexOfScalar(u8, code, '{') != null) {
+            open_function(scan, function);
+        } else {
+            scan.pending = function;
+        }
+    } else if (scan.pending) |pending| {
+        // The rest of a signature: the function opens on the line with its `{`
+        if (std.mem.indexOfScalar(u8, code, '{') != null) {
+            var function = pending;
+            function.depth = scan.depth;
+            open_function(scan, function);
+            scan.pending = null;
+        } else if (std.mem.endsWith(u8, std.mem.trimEnd(u8, code, " "), ";")) {
+            scan.pending = null; // A declaration without a body
         }
     } else if (scan.open_count > 0) {
         // A call to the function being read, from inside it: the innermost one
         const open = scan.open[scan.open_count - 1];
         assert(open.start_line < line_number);
-        counts[@backingInt(Rule.recursion)] += try count_calls(code, open.name, gpa);
+        try scan.note(.recursion, line_number, try count_calls(code, open.name, scan.gpa));
     }
-    scan.assertions += count_assertions(code);
-    if (has_compound_assertion(code)) counts[@backingInt(Rule.compound_assertion)] += 1;
+    if (!excuse_used) {
+        if (said.assertions_at) |at| try scan.note(.marker_unused, at, 1);
+    }
+    const assertions = count_assertions(code, scan.expects_assert);
+    if (scan.open_count > 0) {
+        scan.open[scan.open_count - 1].assertions += assertions;
+    } else {
+        scan.assertions += assertions; // At compile time, outside any function
+    }
+    try check_zig_statement(scan, line, line_number, said);
+}
+
+/// Starts reading a function's body.
+fn open_function(scan: *Scan, function: Scan.Function) void {
+    assert(function.depth >= 0);
+    assert(function.assertions == 0);
+    // Deeper than any code here nests functions: those past it go unchecked
+    if (scan.open_count == Scan.open_max) return;
+    scan.open[scan.open_count] = function;
+    scan.open_count += 1;
+}
+
+/// Notes what a line of code breaks within a statement: compound assertions, unbraced
+/// ifs, ignored errors, unbounded loops and usize, each unless marked as an exception.
+fn check_zig_statement(scan: *Scan, line: *const Line, line_number: u32, said: Said) !void {
+    assert(line_number > 0);
+    assert(scan.test_depth == null);
+    const code = line.code;
+    if (has_compound_assertion(code, scan.expects_assert)) {
+        try scan.note(.compound_assertion, line_number, 1);
+    }
     if (opens_unbraced(code, scan.after_statement)) {
-        counts[@backingInt(Rule.if_without_braces)] += 1;
+        try scan.note(.if_without_braces, line_number, 1);
     }
     const ending = std.mem.trimEnd(u8, code, " ");
     if (ending.len > 0) scan.after_statement = ending[ending.len - 1] == ';';
     // Ignoring an error is handling it only when the line says why: `// Ignored: …`
-    if (!std.mem.startsWith(u8, line.comment, "// Ignored: ")) {
-        counts[@backingInt(Rule.error_ignored)] += count_token(code, "catch {}") +
-            count_token(code, "catch unreachable");
+    if (!is_marker(line.comment, "// Ignored: ")) {
+        const ignored = count_token(code, "catch {}") + count_token(code, "catch unreachable");
+        try scan.note(.error_ignored, line_number, ignored);
     }
     // A loop that never ends by design says so just above it: `// Unbounded: …`
-    if (!unbounded_said) {
-        counts[@backingInt(Rule.loop_unbounded)] += count_token(code, "while (true)");
+    const loops = count_token(code, "while (true)");
+    if (said.unbounded_at) |at| {
+        if (loops == 0) try scan.note(.marker_unused, at, 1);
+    } else {
+        try scan.note(.loop_unbounded, line_number, loops);
     }
-    counts[@backingInt(Rule.usize_used)] += count_token(code, "usize");
-}
-
-/// One line of the baseline: a rule, a file, and how many times it may break it.
-pub const Entry = struct { rule: Rule, path: []const u8, count: u32 };
-
-const baseline_header =
-    "# Tiger Style debt: rule, times broken, file. It may only shrink; see docs/TIGER_STYLE.md.\n";
-
-comptime {
-    // The header is a comment, which reading the baseline skips.
-    assert(baseline_header[0] == '#');
-}
-
-pub fn parse_baseline(text: []const u8, gpa: std.mem.Allocator) ![]Entry {
-    var entries: std.ArrayList(Entry) = .empty;
-    var lines = std.mem.tokenizeScalar(u8, text, '\n');
-    while (lines.next()) |line| {
-        if (line[0] == '#') continue;
-        var words = std.mem.tokenizeScalar(u8, line, ' ');
-        const rule_name = words.next() orelse continue;
-        const count_text = words.next() orelse return error.BadBaseline;
-        const path = words.next() orelse return error.BadBaseline;
-        const rule = std.meta.stringToEnum(Rule, rule_name) orelse return error.BadBaseline;
-        const count = std.fmt.parseInt(u32, count_text, 10) catch return error.BadBaseline;
-        assert(path.len > 0);
-        try entries.append(gpa, .{ .rule = rule, .path = path, .count = count });
+    // A usize the language, C or the kernel needs says so on its line or just above
+    const sizes = count_token(code, "usize");
+    const usize_here = is_marker(line.comment, "// usize: ");
+    if (usize_here or said.usize_at != null) {
+        if (sizes == 0) try scan.note(.marker_unused, said.usize_at orelse line_number, 1);
+    } else {
+        try scan.note(.usize_used, line_number, sizes);
     }
-    return entries.items;
 }
 
-fn allowed(entries: []const Entry, rule: Rule, path: []const u8) u32 {
-    assert(path.len > 0);
-    for (entries) |e| {
-        if (e.rule == rule and std.mem.eql(u8, e.path, path)) return e.count;
-    }
-    return 0;
-}
-
-const Found = struct { path: []const u8, counts: Counts };
+/// Every Zig file's breaks, and every script's, by path.
+const Found = struct { path: []const u8, breaks: []const Break };
 
 /// The one script that isn't counted: KPM, the launcher noface is opened from, runs
 /// only a shell file, so device/kpm/launch.sh stays shell (docs/TIGER_STYLE.md). It is
@@ -493,70 +616,60 @@ fn is_kpm_shim(path: []const u8, source: []const u8) bool {
     return code_lines <= kpm_shim_code_lines_max;
 }
 
-const baseline_path = "tools/check/style_baseline.txt";
+/// What to do about a break of each rule, printed once for every rule broken.
+// Assertions: a table, which the switch keeps complete.
+fn advice(rule: Rule) []const u8 {
+    return switch (rule) {
+        .line_length => "lines are at most 100 columns",
+        .function_length => "functions are at most 70 lines: split it",
+        .function_name => "functions are snake_case",
+        .assertion_density => "two assertions per function on average: add them where listed," ++
+            " or say above one why it can't: `// Assertions: <why>`",
+        .recursion => "no recursion: walk with an explicit, bounded stack",
+        .compound_assertion => "split it: `assert(a); assert(b);`",
+        .if_without_braces => "a body on its own line takes braces",
+        .error_ignored => "handle the error, or say why on that line: `// Ignored: <why>`",
+        .comment_style => "comments start with a space, and a sentence with a capital",
+        .loop_unbounded => "bound the loop, or say why above it: `// Unbounded: <why>`",
+        .usize_used => "size it (u32, u64), or `// usize: <why>` where the ABI needs it",
+        .script_not_zig => "tooling is Zig",
+        .marker_unused => "the marker excuses nothing: remove it",
+    };
+}
 
 pub fn main(init: std.process.Init) !void {
     const gpa = init.arena.allocator();
     const args = try init.minimal.args.toSlice(gpa);
-    if (args.len != 3) return error.Usage;
+    if (args.len != 2) return error.Usage;
     const io = init.io;
     var root = try std.Io.Dir.cwd().openDir(io, args[1], .{ .iterate = true });
     defer root.close(io);
-    const write_baseline = std.mem.eql(u8, args[2], "baseline");
+    const found = try find_breaks(io, root, gpa);
+    assert(found.len > 0);
 
-    const found = try find_counts(io, root, gpa);
-    const baseline_text = root.readFileAlloc(io, baseline_path, gpa, .limited(4 << 20)) catch "";
-    const entries = try parse_baseline(baseline_text, gpa);
-
-    var out: std.ArrayList(u8) = .empty;
-    var worse: u32 = 0;
-    var better: u32 = 0;
-    var totals: Counts = @splat(0);
+    var total: u32 = 0;
+    var rules_broken: std.EnumSet(Rule) = .empty;
     for (found) |f| {
-        for (f.counts, 0..) |count, i| {
-            const rule: Rule = @fromBackingInt(@intCast(i));
-            const limit = allowed(entries, rule, f.path);
-            totals[i] += count;
-            if (count > limit) {
-                worse += 1;
-                const format = "{s}: {s} {d}, allowed {d}\n";
-                try out.print(gpa, format, .{ f.path, @tagName(rule), count, limit });
-            } else if (count < limit) {
-                better += 1;
-            }
+        for (f.breaks) |b| {
+            std.debug.print("{s}:{d}: {s}\n", .{ f.path, b.line, @tagName(b.rule) });
+            rules_broken.insert(b.rule);
+            total += 1;
         }
     }
-    assert(worse + better <= found.len * rule_count);
-    if (write_baseline) {
-        // The very first baseline records the debt as found; after that, it only shrinks
-        if (worse > 0 and baseline_text.len > 0) {
-            const message = "baseline not written: the code above breaks rules more than before";
-            std.debug.print("{s}{s}\n", .{ out.items, message });
-            std.process.exit(1);
+    assert(rules_broken.count() <= total);
+    if (total > 0) {
+        var rules = rules_broken.iterator();
+        while (rules.next()) |rule| {
+            std.debug.print("  {s}: {s}\n", .{ @tagName(rule), advice(rule) });
         }
-        try main_write_baseline(io, root, found, gpa);
-        return;
-    }
-    if (worse > 0) {
-        const message = "breaks a Tiger Style rule more than allowed (docs/TIGER_STYLE.md)";
-        std.debug.print("{s}{d} {s}\n", .{ out.items, worse, message });
+        std.debug.print("{d} Tiger Style breaks (docs/TIGER_STYLE.md)\n", .{total});
         std.process.exit(1);
     }
-    if (better > 0) {
-        const message = "counts went down: run `zig build style-baseline` to lock that in";
-        std.debug.print("{d} {s}\n", .{ better, message });
-        std.process.exit(1);
-    }
-    std.debug.print("style ok, debt left:", .{});
-    for (totals, 0..) |total, i| {
-        const rule: Rule = @fromBackingInt(@intCast(i));
-        if (total > 0) std.debug.print(" {s} {d}", .{ @tagName(rule), total });
-    }
-    std.debug.print("\n", .{});
+    std.debug.print("style ok\n", .{});
 }
 
-/// Every Zig file's counts, and every script's, sorted by path.
-fn find_counts(io: std.Io, root: std.Io.Dir, gpa: std.mem.Allocator) ![]const Found {
+/// Every Zig file's breaks, and every script's, sorted by path.
+fn find_breaks(io: std.Io, root: std.Io.Dir, gpa: std.mem.Allocator) ![]const Found {
     var found: std.ArrayList(Found) = .empty;
     for ([_][]const u8{ "src", "tools", "device" }) |folder| {
         var dir = try root.openDir(io, folder, .{ .iterate = true });
@@ -565,21 +678,26 @@ fn find_counts(io: std.Io, root: std.Io.Dir, gpa: std.mem.Allocator) ![]const Fo
         while (try walker.next(io)) |entry| {
             if (entry.kind != .file) continue;
             const path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ folder, entry.path });
-            var counts: Counts = @splat(0);
+            var breaks: []const Break = &.{};
             if (std.mem.endsWith(u8, path, ".zig")) {
                 const source = try dir.readFileAlloc(io, entry.path, gpa, .limited(8 << 20));
-                counts = try check_zig(source, gpa);
+                breaks = try check_zig(path, source, gpa);
             } else if (std.mem.endsWith(u8, path, ".sh") or std.mem.endsWith(u8, path, ".py")) {
                 const source = try dir.readFileAlloc(io, entry.path, gpa, .limited(1 << 20));
-                if (!is_kpm_shim(path, source)) counts[@backingInt(Rule.script_not_zig)] = 1;
+                if (!is_kpm_shim(path, source)) {
+                    breaks = try gpa.dupe(Break, &.{.{ .rule = .script_not_zig, .line = 1 }});
+                }
             } else continue;
-            try found.append(gpa, .{ .path = path, .counts = counts });
+            try found.append(gpa, .{ .path = path, .breaks = breaks });
         }
     }
     const build_source = try root.readFileAlloc(io, "build.zig", gpa, .limited(1 << 20));
-    try found.append(gpa, .{ .path = "build.zig", .counts = try check_zig(build_source, gpa) });
+    const build_breaks = try check_zig("build.zig", build_source, gpa);
+    try found.append(gpa, .{ .path = "build.zig", .breaks = build_breaks });
     std.mem.sort(Found, found.items, {}, struct {
         fn before(_: void, a: Found, b: Found) bool {
+            assert(a.path.len > 0);
+            assert(b.path.len > 0);
             return std.mem.lessThan(u8, a.path, b.path);
         }
     }.before);
@@ -591,32 +709,15 @@ fn find_counts(io: std.Io, root: std.Io.Dir, gpa: std.mem.Allocator) ![]const Fo
     return found.items;
 }
 
-/// Writes the baseline from the counts found: every rule a file breaks, and how often.
-fn main_write_baseline(
-    io: std.Io,
-    root: std.Io.Dir,
-    found: []const Found,
-    gpa: std.mem.Allocator,
-) !void {
-    assert(found.len > 0);
-    var text: std.ArrayList(u8) = .empty;
-    try text.appendSlice(gpa, baseline_header);
-    for (found) |f| {
-        for (f.counts, 0..) |count, i| {
-            if (count == 0) continue;
-            const rule: Rule = @fromBackingInt(@intCast(i));
-            try text.print(gpa, "{s} {d} {s}\n", .{ @tagName(rule), count, f.path });
-        }
-    }
-    assert(std.mem.startsWith(u8, text.items, baseline_header));
-    try root.writeFile(io, .{ .sub_path = baseline_path, .data = text.items });
-    std.debug.print("baseline written\n", .{});
-}
-
 /// How many times `source` breaks `rule`.
 fn count_in(source: []const u8, rule: Rule) !u32 {
-    const counts = try check_zig(source, std.testing.allocator);
-    return counts[@backingInt(rule)];
+    const breaks = try check_zig("src/a.zig", source, std.testing.allocator);
+    defer std.testing.allocator.free(breaks);
+    var count: u32 = 0;
+    for (breaks) |b| {
+        if (b.rule == rule) count += 1;
+    }
+    return count;
 }
 
 test "long lines and camelCase functions count; type functions keep their case" {
@@ -644,7 +745,117 @@ test "assertions are counted against functions" {
     ;
     try std.testing.expectEqual(@as(u32, 0), try count_in(two, .assertion_density));
     const none = "fn f() void {}\nfn g() void {}\n";
-    try std.testing.expectEqual(@as(u32, 4), try count_in(none, .assertion_density));
+    try std.testing.expectEqual(@as(u32, 2), try count_in(none, .assertion_density));
+}
+
+test "assertions average per file; a signature may run over lines; nesting" {
+    // Four assertions in one function make up for none in the other, as an average
+    const even =
+        \\fn f(a: u32) void {
+        \\    assert(a > 0);
+        \\    assert(a < 9);
+        \\    assert(a != 3);
+        \\    assert(a != 4);
+        \\}
+        \\fn g(
+        \\    a: u32,
+        \\) void {
+        \\    _ = a;
+        \\}
+    ;
+    try std.testing.expectEqual(@as(u32, 0), try count_in(even, .assertion_density));
+    // Short once one goes: the function below two is listed, at the line it starts
+    const short = comptime even[0..std.mem.indexOf(u8, even, "    assert(a != 4);").?] ++
+        even[std.mem.indexOf(u8, even, "}").?..];
+    const breaks = try check_zig("src/a.zig", short, std.testing.allocator);
+    defer std.testing.allocator.free(breaks);
+    try std.testing.expect(breaks.len == 1);
+    try std.testing.expectEqual(Break{ .rule = .assertion_density, .line = 6 }, breaks[0]);
+    // An inner function's assertions are its own: its outer one has none
+    const nested =
+        \\fn outer() void {
+        \\    const S = struct {
+        \\        fn inner(n: u32) void {
+        \\            assert(n > 0);
+        \\            assert(n < 9);
+        \\        }
+        \\    };
+        \\    _ = S;
+        \\}
+    ;
+    try std.testing.expectEqual(@as(u32, 1), try count_in(nested, .assertion_density));
+}
+
+test "a call to invariants() asserts; its definition isn't one" {
+    const source =
+        \\fn invariants(in: *const Input) void {
+        \\    assert(in.a > 0);
+        \\    assert(in.b > 0);
+        \\}
+        \\fn handle(in: *Input) void {
+        \\    in.invariants();
+        \\    defer in.invariants();
+        \\}
+        \\fn idle(in: *Input) void {
+        \\    _ = in;
+        \\}
+    ;
+    // Four of six: idle, without any, is where they're missing
+    try std.testing.expectEqual(@as(u32, 1), try count_in(source, .assertion_density));
+}
+
+test "in the scenarios, and only there, `expect(` is an assertion" {
+    const source =
+        \\fn run() !void {
+        \\    try expect(a, "a");
+        \\    try expect(b and c, "b and c");
+        \\}
+    ;
+    const in_scenarios = try check_zig("src/scenarios.zig", source, std.testing.allocator);
+    defer std.testing.allocator.free(in_scenarios);
+    try std.testing.expect(in_scenarios.len == 1);
+    try std.testing.expectEqual(Rule.compound_assertion, in_scenarios[0].rule);
+    try std.testing.expectEqual(@as(u32, 1), try count_in(source, .assertion_density));
+    try std.testing.expectEqual(@as(u32, 0), try count_in(source, .compound_assertion));
+}
+
+test "a function marked `// Assertions:` is excused; a marker excusing nothing counts" {
+    const source =
+        \\/// A wrapper.
+        \\// Assertions: a one-line wrapper over outside data.
+        \\fn f() void {}
+        \\// Assertions: this one has its two.
+        \\fn g(a: u32) void {
+        \\    assert(a > 0);
+        \\    assert(a < 9);
+        \\}
+        \\// Assertions:
+        \\fn h() void {}
+        \\fn i(a: u32) void {
+        \\    assert(a > 0);
+        \\}
+    ;
+    try std.testing.expectEqual(@as(u32, 2), try count_in(source, .assertion_density));
+    try std.testing.expectEqual(@as(u32, 1), try count_in(source, .marker_unused));
+}
+
+test "usize counts unless `// usize:` on its line or just above says why" {
+    const source =
+        \\const a: usize = 1;
+        \\const b: usize = 2; // usize: the kernel's ABI
+        \\// usize: C's size_t
+        \\const c: usize = 3;
+        \\// usize: nothing here
+        \\const d: u32 = 4;
+        \\const e: u32 = 5; // usize: nor here
+        \\// usize: a blank line ends what a marker covers
+        \\
+        \\const f: usize = 6;
+        \\const g: u32 = 7; // usize_used isn't usize
+    ;
+    try std.testing.expectEqual(@as(u32, 2), try count_in(source, .usize_used));
+    try std.testing.expectEqual(@as(u32, 3), try count_in(source, .marker_unused));
+    try std.testing.expectEqual(@as(u32, 0), try count_in(source, .comment_style));
 }
 
 test "tests don't count as functions or toward any rule" {
@@ -706,16 +917,6 @@ test "braces and keywords inside strings and comments don't count" {
     try std.testing.expectEqual(@as(u32, 0), try count_in(source, .loop_unbounded));
 }
 
-test "the baseline reads back" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const entries = try parse_baseline("# note\nline_length 3 src/a.zig\n", arena.allocator());
-    try std.testing.expect(entries.len == 1);
-    try std.testing.expectEqual(Rule.line_length, entries[0].rule);
-    try std.testing.expectEqual(@as(u32, 3), allowed(entries, .line_length, "src/a.zig"));
-    try std.testing.expectEqual(@as(u32, 0), allowed(entries, .line_length, "src/b.zig"));
-}
-
 test "a loop or an ignored error with its reason given doesn't count" {
     const source =
         \\fn f() void {
@@ -724,10 +925,13 @@ test "a loop or an ignored error with its reason given doesn't count" {
         \\    while (true) {}
         \\    g() catch {}; // Ignored: a missing cover only means no picture.
         \\    g() catch {};
+        \\    // Unbounded: but the loop below is bounded.
+        \\    for (0..9) |_| {}
         \\}
     ;
     try std.testing.expectEqual(@as(u32, 1), try count_in(source, .loop_unbounded));
     try std.testing.expectEqual(@as(u32, 1), try count_in(source, .error_ignored));
+    try std.testing.expectEqual(@as(u32, 1), try count_in(source, .marker_unused));
 }
 
 test "an if expression's else, a phrase after code, and C declarations don't count" {

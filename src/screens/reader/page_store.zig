@@ -51,7 +51,7 @@ const layout_sources = [_][]const u8{
 const not_layout = [_][]const u8{
     "base/check.zig",
     "gfx/page.zig",
-    "gfx/c_memory.zig",
+    "gfx/decoder_memory.zig",
     "model/catalog.zig",
 };
 

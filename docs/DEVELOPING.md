@@ -58,8 +58,7 @@ The dictionaries are built and published by hand from the Actions tab
 On the Kindle, the app lives in `/mnt/us/noface/` and opens with `;kpm launch noface`
 (the launcher entry is `kmc/kpm/packages/noface/launch.sh`, a one-line shim that runs
 `noface-launch`). What noface keeps lives in `/mnt/us/noface-data/`, so replacing the
-app folder never loses anything; the launcher moves an older install's data there on
-its first run.
+app folder never loses anything.
 
 `noface-launch` (`src/launch.zig`) is a program of its own, apart from the app, so
 nothing the app does can take it down. It writes the book list, pauses the Kindle's

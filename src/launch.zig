@@ -9,15 +9,11 @@
 //!   noface-launch autostart From the system's startup file, at boot (src/kindle/boot.zig).
 //!   noface-launch export    Writes the book list (src/kindle/catalog_export.zig).
 //!
-//! KPM's launch.sh passes its own path, which means "kpm"; an older install's startup
-//! file runs it as noface/autostart.sh, which means "autostart", and an older KPM entry
-//! as noface/start.sh or noface/data.sh, which mean "kpm" (see tools/package.zig).
-//! Each first moves an older install's data into noface-data (src/kindle/data_folder.zig).
+//! KPM's launch.sh passes no argument, which means "kpm".
 //! What it prints goes to noface-data/launch.log; noface's own output to noface.log.
 const std = @import("std");
 const assert = std.debug.assert;
 const paths = @import("kindle/paths.zig");
-const data_folder = @import("kindle/data_folder.zig");
 const boot = @import("kindle/boot.zig");
 const catalog_export = @import("kindle/catalog_export.zig");
 const stock_ui = @import("kindle/stock_ui.zig");
@@ -61,7 +57,6 @@ pub fn main(init: std.process.Init.Minimal) void {
     const mode = mode_of(argument);
     const envp: [*:null]const ?[*:0]const u8 = init.environ.block.slice.ptr;
     assert(envp[init.environ.block.slice.len] == null); // As execve wants it
-    data_folder.migrate();
     switch (mode) {
         .export_list => catalog_export.run(),
         .autostart => autostart(envp),
@@ -78,16 +73,12 @@ pub fn main(init: std.process.Init.Minimal) void {
     }
 }
 
-/// Which mode an argument asks for. A path ending in autostart.sh is an older install's
-/// startup file; anything else not named is KPM's launch.sh.
+/// Which mode an argument asks for; anything not named is KPM's.
 pub fn mode_of(argument: []const u8) Mode {
     assert(@typeInfo(Mode).@"enum".field_names.len == 4);
     if (std.mem.eql(u8, argument, "now")) return .now;
     if (std.mem.eql(u8, argument, "export")) return .export_list;
     if (std.mem.eql(u8, argument, "autostart")) return .autostart;
-    const slash = std.mem.lastIndexOfScalar(u8, argument, '/');
-    const name = argument[if (slash) |at| at + 1 else 0..];
-    if (std.mem.eql(u8, name, "autostart.sh")) return .autostart;
     assert(!std.mem.eql(u8, argument, "now"));
     return .kpm;
 }
@@ -164,7 +155,4 @@ test "each way in is told apart" {
     try std.testing.expectEqual(Mode.now, mode_of("now"));
     try std.testing.expectEqual(Mode.export_list, mode_of("export"));
     try std.testing.expectEqual(Mode.autostart, mode_of("autostart"));
-    try std.testing.expectEqual(Mode.autostart, mode_of("/mnt/us/noface/autostart.sh"));
-    try std.testing.expectEqual(Mode.kpm, mode_of("/mnt/us/noface/data.sh"));
-    try std.testing.expectEqual(Mode.kpm, mode_of("/mnt/us/noface/start.sh"));
 }

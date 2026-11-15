@@ -86,7 +86,6 @@ test {
     _ = @import("launch.zig");
     _ = @import("kindle/boot.zig");
     _ = @import("kindle/catalog_export.zig");
-    _ = @import("kindle/data_folder.zig");
     _ = @import("kindle/stock_ui.zig");
     _ = @import("kindle/supervisor.zig");
     _ = @import("sys/service.zig");

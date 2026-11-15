@@ -20,8 +20,6 @@ pub const reader = app_dir ++ "/noface";
 /// Starts the app, puts the Kindle's own screens back after it, starts it at boot and
 /// writes the book list for the library (src/launch.zig).
 pub const launcher = app_dir ++ "/noface-launch";
-/// What writes the book list, by its older name, which the pretend Kindle's test uses.
-pub const export_script = launcher;
 /// Decodes a JPEG XR picture with the Kindle's own library.
 pub const jxr_helper = app_dir ++ "/jxr2pgm";
 /// The startup file shipped with the app, copied into /etc when autostart is on.

@@ -193,6 +193,6 @@ test "the fake Kindle answers and remembers lipc" {
     _ = FakeKindle.answer(&k, &set_argv, &out);
     try std.testing.expect(k.was_set("com.lab126.cmd wirelessEnable 0"));
     try std.testing.expectEqualStrings("0", k.get("com.lab126.cmd wirelessEnable"));
-    _ = FakeKindle.answer(&k, &.{ "/bin/sh", paths.export_script }, &out);
-    try std.testing.expect(k.did_run("sh"));
+    _ = FakeKindle.answer(&k, &.{ paths.launcher, "export" }, &out);
+    try std.testing.expect(k.did_run("noface-launch"));
 }

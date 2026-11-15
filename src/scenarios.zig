@@ -315,7 +315,7 @@ fn play_on(kindle: Kindle, steps: []const Step) !Outcome {
     // so a picture with no room there has none here
     const decoders_budget = try setup.decoders();
     decoder_memory.use(decoders_budget);
-    defer decoder_memory.use_default();
+    defer decoder_memory.stop_using(decoders_budget);
 
     const kept = try play_on_kept(alloc, dir);
     var a = try setup.assemble(.{

@@ -128,6 +128,9 @@ const PreviewFaces = struct {
 pub fn main(init: std.process.Init.Minimal) !void {
     const argv = init.args.vector;
     const allocator = std.heap.page_allocator;
+    // A tool takes its memory from the system as it goes: its decoders too
+    var decoders = core.memory.Budget{ .name = "decoders", .child = allocator, .limit = 256 << 20 };
+    core.decoder_memory.use(&decoders);
     const book_regular = try file.map(font_folder ++ "Bookerly-Regular.ttf");
     const book_bold = try file.map(font_folder ++ "Bookerly-Bold.ttf");
     const ui_regular = try file.map(font_folder ++ "Amazon-Ember-Regular.ttf");

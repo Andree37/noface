@@ -69,6 +69,23 @@ comptime {
 
 pub const Slot = struct { page: i64 = -1, buf: []u8, hits: text.Hits = .{} };
 
+/// What the Aa sheet keeps from one book to the next: only the reader's controls use
+/// it (screens/reader/controls.zig).
+pub const AaKept = struct {
+    tab: aa.Tab = .font,
+    family_first: u32 = 0, // The first typeface on the sheet's page of them
+    family_sample_ptrs: [aa.family_cells_max]?*Font = @splat(null),
+};
+
+/// What the lock screen keeps from one lock to the next: only it uses it
+/// (screens/lock.zig).
+pub const LockKept = struct {
+    saved: []u8, // The screen under it, to put back on waking
+    cover: []u8, // The book's cover as last drawn, full screen
+    cover_key: u64 = 0, // Which book's cover `cover` holds, so it isn't decoded again
+    picture_bad: u64 = 0, // A lock screen picture that didn't decode, not to try again
+};
+
 pub const App = struct {
     alloc: std.mem.Allocator, // Lives as long as the app, counted by app_budget
     app_budget: *memory.Budget,
@@ -91,20 +108,13 @@ pub const App = struct {
     // size, and each family's name in itself for Aa: made on first use, the least used
     // given up past a fixed number
     typefaces: Typefaces = .{},
-    family_sample_ptrs: [aa.family_cells_max]?*Font = @splat(null),
-    family_first: u32 = 0, // The first typeface on the Aa sheet's page of them
-    tab: aa.Tab = .font,
-    turns: u32 = 0,
+    aa_kept: AaKept = .{},
     note_font: *Font,
     footer: *Font,
     ui: Fonts,
     slots: [3]Slot,
     overlay: []u8,
-    lock_saved: []u8,
-    lock_cover: []u8,
-    // Which book's lock screen lock_cover holds, so it isn't decoded again; 0 for none
-    lock_cover_key: u64 = 0,
-    lock_picture_bad: u64 = 0, // A lock screen picture that didn't decode, not to try again
+    lock_kept: LockKept,
     state_dir: []const u8,
     library_path: [*:0]const u8,
     settings_path: [*:0]const u8,
@@ -200,7 +210,7 @@ pub const App = struct {
         a.layout.justify = !a.settings.left_align;
         a.layout.bold_starts = a.settings.bold_starts;
         // The Aa sheet shows the page of typefaces with the one chosen
-        a.family_first = aa.family_page_of(a.settings.family_index());
+        a.aa_kept.family_first = aa.family_page_of(a.settings.family_index());
         assert(a.layout.margin_x > 0);
         assert(a.body.line_height > 0);
     }
@@ -210,13 +220,13 @@ pub const App = struct {
     /// its name shows in the interface font.
     pub fn load_family_samples(a: *App) []const ?*Font {
         const families_count = settings_model.families.len;
-        assert(a.family_first < families_count);
-        const shown = @min(aa.families_per_page(), families_count - a.family_first);
-        assert(shown <= a.family_sample_ptrs.len);
-        for (a.family_sample_ptrs[0..shown], a.family_first..) |*sample, family| {
+        assert(a.aa_kept.family_first < families_count);
+        const shown = @min(aa.families_per_page(), families_count - a.aa_kept.family_first);
+        assert(shown <= a.aa_kept.family_sample_ptrs.len);
+        for (a.aa_kept.family_sample_ptrs[0..shown], a.aa_kept.family_first..) |*sample, family| {
             sample.* = a.typefaces.sample(@intCast(family));
         }
-        return a.family_sample_ptrs[0..shown];
+        return a.aa_kept.family_sample_ptrs[0..shown];
     }
 
     /// The body font for a weight, slant and book size, in the reader's family and size.

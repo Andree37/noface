@@ -49,8 +49,8 @@ pub const Options = struct { restore: bool = true };
 /// A screen update that fails is logged, never fatal: the Kindle is asleep, and the
 /// reader shouldn't wake to an error.
 pub fn make(a: *app.App, entry: ?*const catalog.Entry, options: Options) Lock {
-    assert(a.lock_saved.len == a.screen.pixels.len);
-    assert(a.lock_cover.len == a.screen.pixels.len);
+    assert(a.lock_kept.saved.len == a.screen.pixels.len);
+    assert(a.lock_kept.cover.len == a.screen.pixels.len);
     // Touches are taken as they were, though none counts while it's up
     return .{ .a = a, .entry = entry, .options = options, .modes = a.input.modes() };
 }
@@ -76,11 +76,11 @@ pub const Lock = struct {
     fn show(l: *Lock) void {
         assert(l.redraws == 0);
         const a = l.a;
-        @memcpy(a.lock_saved, a.screen.pixels);
+        @memcpy(a.lock_kept.saved, a.screen.pixels);
         draw_target(a, l.entry);
         // What's kept is a picture's, a book's, or the title on white's: never nothing
-        assert(a.lock_cover_key != key_nothing);
-        a.present(a.lock_cover, .flash) catch |err| {
+        assert(a.lock_kept.cover_key != key_nothing);
+        a.present(a.lock_kept.cover, .flash) catch |err| {
             std.debug.print("lock screen not shown: {s}\n", .{@errorName(err)});
         };
     }
@@ -106,9 +106,9 @@ pub const Lock = struct {
         l.redraws += 1;
         const a = l.a;
         // Only when stock painted over it, and only the pixels it changed.
-        if (!std.mem.eql(u8, a.screen.pixels, a.lock_cover)) {
+        if (!std.mem.eql(u8, a.screen.pixels, a.lock_kept.cover)) {
             std.debug.print("lock cover repainted\n", .{});
-            a.present(a.lock_cover, .screen) catch |err| {
+            a.present(a.lock_kept.cover, .screen) catch |err| {
                 std.debug.print("lock cover not repainted: {s}\n", .{@errorName(err)});
             };
         }
@@ -128,7 +128,7 @@ pub const Lock = struct {
         assert(l.a.input.locked);
         l.a.input.last_input = now_us();
         if (l.options.restore) {
-            l.a.present(l.a.lock_saved, .flash) catch |err| {
+            l.a.present(l.a.lock_kept.saved, .flash) catch |err| {
                 std.debug.print("screen not put back: {s}\n", .{@errorName(err)});
             };
         }
@@ -142,7 +142,7 @@ pub const Lock = struct {
     }
 };
 
-/// Draws what the lock screen shows into `a.lock_cover`, unless it's there already:
+/// Draws what the lock screen shows into `a.lock_kept.cover`, unless it's there already:
 /// the reader's own picture, if they chose it and it's there; else the book's cover.
 fn draw_target(a: *app.App, entry: ?*const catalog.Entry) void {
     var picture_buffer: [320]u8 = undefined;
@@ -151,16 +151,16 @@ fn draw_target(a: *app.App, entry: ?*const catalog.Entry) void {
     defer if (own_data) |d| file.unmap(d);
     const book_key: u64 = if (entry) |e| key_for(e) else key_no_book;
     const wanted = if (own_data) |d| picture_key(d) else book_key;
-    if (a.lock_cover_key != wanted) {
+    if (a.lock_kept.cover_key != wanted) {
         lock_screen_draw(a, entry, own_data, wanted, book_key);
     } else {
         std.debug.print("locked, cover kept\n", .{});
     }
-    assert(a.lock_cover_key != key_nothing);
+    assert(a.lock_kept.cover_key != key_nothing);
     assert(wanted != key_nothing);
 }
 
-/// Draws the lock screen into `a.lock_cover`: the reader's picture when it decodes,
+/// Draws the lock screen into `a.lock_kept.cover`: the reader's picture when it decodes,
 /// else the book's cover, else its title on white. Keeps the key of what it drew.
 fn lock_screen_draw(
     a: *app.App,
@@ -173,12 +173,12 @@ fn lock_screen_draw(
     if (entry != null) assert(book_key > key_no_book);
     assert(wanted != key_nothing);
     assert(book_key != key_nothing);
-    const target = a.lock_cover;
+    const target = a.lock_kept.cover;
     // The key kept is of what was really drawn: a picture that won't decode leaves
     // the book's cover, which mustn't be kept as if it were the picture
     var drew_picture = false;
     if (own_data) |d| {
-        if (wanted != a.lock_picture_bad) {
+        if (wanted != a.lock_kept.picture_bad) {
             drew_picture = cover.fill_screen(
                 a.alloc,
                 d,
@@ -188,14 +188,14 @@ fn lock_screen_draw(
                 a.screen.stride,
             );
             if (!drew_picture) {
-                a.lock_picture_bad = wanted; // Not decoded again until the file changes
+                a.lock_kept.picture_bad = wanted; // Not decoded again until the file changes
                 std.debug.print("lock screen picture can't be read\n", .{});
             }
         }
     }
     const drawn = drew_picture or (if (entry) |e| draw_cover(a, e, target) else false);
     if (!drawn) draw_title(a, entry, target);
-    a.lock_cover_key = if (drew_picture) wanted else book_key;
+    a.lock_kept.cover_key = if (drew_picture) wanted else book_key;
     std.debug.print("locked, cover drawn: {}\n", .{drawn});
 }
 

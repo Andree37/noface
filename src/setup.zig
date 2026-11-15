@@ -330,8 +330,10 @@ pub fn assemble(p: Parts) !app.App {
         .ui = ui,
         .slots = slots,
         .overlay = try p.alloc.alloc(u8, pixels),
-        .lock_saved = try p.alloc.alloc(u8, pixels),
-        .lock_cover = try p.alloc.alloc(u8, pixels),
+        .lock_kept = .{
+            .saved = try p.alloc.alloc(u8, pixels),
+            .cover = try p.alloc.alloc(u8, pixels),
+        },
         .state_dir = p.data_dir,
         .library_path = p.library_path,
         .settings_path = p.files.settings,

@@ -687,7 +687,7 @@ pub const Reader = struct {
     fn sheet(r: *const Reader) ?aa.Tab {
         if (r.sheet_open) assert(r.view == .toolbar);
         if (r.view != .toolbar) assert(!r.sheet_open);
-        return if (r.sheet_open) r.a.tab else null;
+        return if (r.sheet_open) r.a.aa_kept.tab else null;
     }
 
     /// A jump (Go To, search, a chapter, the slider) is saved at once: turning page by

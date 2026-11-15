@@ -30,9 +30,9 @@ pub fn draw_toolbar(a: *app.App, s: *sess.Session, title: []const u8, drawn: Dra
     const total = if (s.layout_pending()) 0 else s.page_count(); // No page count until it's known
     assert(total == 0 or total > s.current);
     var fonts = a.ui;
-    if (drawn.sheet_open and a.tab == .font) {
+    if (drawn.sheet_open and a.aa_kept.tab == .font) {
         fonts.families = a.load_family_samples();
-        fonts.family_first = a.family_first;
+        fonts.family_first = a.aa_kept.family_first;
     }
     try toolbar.render(
         fonts,
@@ -41,7 +41,7 @@ pub fn draw_toolbar(a: *app.App, s: *sess.Session, title: []const u8, drawn: Dra
         s.current,
         total,
         &a.quick,
-        if (drawn.sheet_open) a.tab else null,
+        if (drawn.sheet_open) a.aa_kept.tab else null,
         a.settings,
         s.is_bookmarked(s.current),
     );
@@ -202,10 +202,10 @@ pub fn tap_sheet(
 ) !?screen.Frame {
     assert(s.current < s.pages.len);
     const sheet_only: Drawn = .{ .sheet_open = true, .whole_page = false };
-    switch (aa.hit(a.tab, x, y)) {
+    switch (aa.hit(a.aa_kept.tab, x, y)) {
         .none => return null,
         .tab => |tab| {
-            a.tab = tab;
+            a.aa_kept.tab = tab;
             try draw_toolbar(a, s, title, sheet_only);
             return null;
         },
@@ -220,13 +220,13 @@ pub fn tap_sheet(
             a.settings.margin = theme.margin;
         },
         .family => |cell| {
-            const family = a.family_first + cell;
+            const family = a.aa_kept.family_first + cell;
             // The last page may have fewer typefaces than cells
             if (family >= settings_model.families.len) return null;
             a.settings.font = settings_model.Family.of(settings_model.families[family]).?;
         },
         .more_families => {
-            a.family_first = aa.next_family_page(a.family_first);
+            a.aa_kept.family_first = aa.next_family_page(a.aa_kept.family_first);
             try draw_toolbar(a, s, title, sheet_only);
             return null;
         },

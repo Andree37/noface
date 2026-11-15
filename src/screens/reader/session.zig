@@ -78,6 +78,7 @@ pub const Session = struct {
     /// kept through several jumps, and let go after `back_turns` turns from the jump.
     back: ?book_model.Pos = null,
     turns_since_jump: u32 = 0,
+    turns: u32 = 0, // Pages shown, for a clean refresh every 20 when asked for
     turning: bool = false, // Set by a normal page turn, so `show` can tell it from a jump
     page_us: u64 = 0, // Time on the current page before that
     seconds_read: u64 = 0, // Time spent in this book, saved with the position
@@ -477,8 +478,8 @@ pub const Session = struct {
         const buf = try s.ensure(index, index);
         @memcpy(a.screen.pixels, buf);
         a.stamp_clock();
-        a.turns += 1;
-        const clean = force_clean or (a.settings.refresh and a.turns % 20 == 0);
+        s.turns += 1;
+        const clean = force_clean or (a.settings.refresh and s.turns % 20 == 0);
         const marker = try a.screen.show(if (clean) .flash else .page);
         const queued = now_us();
         try a.screen.wait_complete(marker);

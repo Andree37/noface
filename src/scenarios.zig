@@ -275,26 +275,29 @@ fn play(steps: []const Step) !Outcome {
 }
 
 /// Opens the scenario book in a fresh app on a pretend Kindle, plays `steps`, and
-/// returns what was saved and what the Kindle was asked to do.
+/// returns what was saved and what the Kindle was asked to do. The app's memory is
+/// reserved and sealed as on the Kindle, so one asked of the system as it runs fails
+/// the scenario; the harness's own (the pretend Kindle, the folder) is apart from it.
 fn play_on(kindle: Kindle, steps: []const Step) !Outcome {
     assert(kindle.books.len > 0);
     assert(kindle.books.len <= books_max);
     if (kindle.read_before) |i| assert(i < kindle.books.len);
-    const budget_limit = 256 << 20;
-    var budget = memory.Budget{
-        .name = "scenario",
-        .child = std.heap.smp_allocator,
-        .limit = budget_limit,
-    };
-    var arena = std.heap.ArenaAllocator.init(budget.allocator());
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    var harness_arena = std.heap.ArenaAllocator.init(std.heap.smp_allocator);
+    defer harness_arena.deinit();
+    const harness = harness_arena.allocator();
+    const app_budget = try app_memory();
+    var app_arena = std.heap.ArenaAllocator.init(app_budget.allocator());
+    defer {
+        app_arena.deinit();
+        assert(app_budget.live == 0); // The next scenario's app starts with all of it
+    }
+    const alloc = app_arena.allocator();
 
     var dir_buf: [96]u8 = undefined;
     const dir = try play_on_dir(&dir_buf);
     defer clean_up(dir);
     var book_paths: [books_max][:0]const u8 = undefined;
-    try play_on_folder(alloc, kindle, dir, &book_paths);
+    try play_on_folder(harness, kindle, dir, &book_paths);
     var library_buf: [128]u8 = undefined;
     const library_path = try std.fmt.bufPrintSentinel(&library_buf, "{s}/library.tsv", .{dir}, 0);
 
@@ -303,13 +306,13 @@ fn play_on(kindle: Kindle, steps: []const Step) !Outcome {
 
     // Nothing reaches the real Kindle: its tools are answered by a pretend one, and
     // the Wi-Fi saver's note goes in this folder
-    var fake = try play_on_fake(alloc, kindle);
+    var fake = try play_on_fake(harness, kindle);
     fake.install();
     defer fake.release();
     wifi_saver.use_data_dir(dir);
     defer wifi_saver.use_data_dir(paths.data_dir);
 
-    const devices = try play_on_devices(alloc, steps);
+    const devices = try play_on_devices(harness, steps);
 
     // Before any font: the decoders allocate through it, in the region the Kindle has,
     // so a picture with no room there has none here
@@ -320,7 +323,7 @@ fn play_on(kindle: Kindle, steps: []const Step) !Outcome {
     const kept = try play_on_kept(alloc, dir);
     var a = try setup.assemble(.{
         .alloc = alloc,
-        .app_budget = &budget,
+        .app_budget = app_budget,
         .decoders_budget = decoders_budget,
         .screen = devices.screen,
         .input = devices.input,
@@ -330,14 +333,50 @@ fn play_on(kindle: Kindle, steps: []const Step) !Outcome {
         .library_path = library_path,
     });
     try play_on_start(&a, kindle, dir, &book_paths);
-    const ms = try play_on_run(&a, kindle, book_paths[0]);
+    const ms = try play_on_sealed(&a, kindle, book_paths[0]);
     assert(devices.script.ended); // Every step was played
     return play_on_outcome(&a, kindle, &book_paths, .{
-        .alloc = alloc,
+        .alloc = harness,
         .fake = &fake,
         .last_screen = devices.last_screen,
         .ms = ms,
     });
+}
+
+/// The app's region in the scenarios, reserved by the first and kept for good. Twice
+/// the Kindle's, the most a heap region holds: each scenario's app takes its memory
+/// through an arena, emptied whole when it ends, and an arena keeps what's freed.
+var app_region: memory.Region = undefined;
+var app_budget_kept: memory.Budget = undefined;
+var app_reserved = false;
+
+comptime {
+    assert(2 * setup.region_bytes.app <= 128 << 20); // What a heap region holds at most
+}
+
+fn app_memory() !*memory.Budget {
+    if (!app_reserved) {
+        const size = 2 * setup.region_bytes.app;
+        app_region = try .reserve("app", .heap, size);
+        app_budget_kept = .{ .name = "app", .region = &app_region, .limit = size };
+        app_reserved = true;
+    }
+    assert(app_budget_kept.region == &app_region);
+    assert(app_budget_kept.live == 0); // The last scenario's app gave all of it back
+    return &app_budget_kept;
+}
+
+/// Plays the script with memory sealed, as the Kindle runs: any memory asked of the
+/// system from here on fails the scenario.
+fn play_on_sealed(a: *app.App, kindle: Kindle, book_path: [:0]const u8) !u64 {
+    assert(!memory.sealed);
+    assert(a.app_budget.region != null); // The app's memory comes from a region
+    const late_before = memory.late_requests;
+    memory.seal();
+    defer memory.sealed = false;
+    const ms = try play_on_run(a, kindle, book_path);
+    try expect(memory.late_requests == late_before, "memory was asked of the system after startup");
+    return ms;
 }
 
 /// A new folder for a scenario under /tmp, named for this process and run.

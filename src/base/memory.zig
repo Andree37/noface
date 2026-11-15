@@ -460,13 +460,15 @@ pub const Budget = struct {
     }
 
     /// The system's allocator, for a budget without a region: never after `seal`. One
-    /// asked for after it is a bug, a crash in a debug build; elsewhere it's counted,
-    /// and named in the log the first time, so the budget can be given a region.
+    /// asked for after it is a bug, a crash in a debug build and in the tests; elsewhere
+    /// it's counted, and named in the log the first time, so the budget can be given a
+    /// region (the scenarios fail on that count).
     fn system(budget: *Budget) Allocator {
         assert(budget.region == null);
         assert(budget.child != null); // `allocator` checked it has one or the other
         if (sealed) {
-            if (builtin.mode == .debug) @panic("memory asked of the system after startup");
+            const crash = builtin.mode == .debug or builtin.is_test;
+            if (crash) @panic("memory asked of the system after startup");
             if (late_requests == 0) {
                 std.debug.print("memory {s}: asked of the system after startup\n", .{budget.name});
             }

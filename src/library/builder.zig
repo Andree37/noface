@@ -549,16 +549,13 @@ const Found = struct {
         assert(id < index.books_max);
         assert(f.records.fd >= 0);
         const offset = index.file_head_bytes + @as(u64, id) * @sizeOf(index.Record);
-        const bytes = try f.records.read_at(offset, @sizeOf(index.Record));
-        const r = std.mem.bytesToValue(index.Record, bytes);
-        if (r.percent > 100 or r.text_len > index.blob_bytes_max) return error.Damaged;
-        if (r.availability > 2) return error.Damaged;
-        return r;
+        return index.Record.decode(try f.records.read_at(offset, @sizeOf(index.Record)));
     }
 
-    fn write_record(f: *Found, id: u32, r: *const index.Record) !void {
+    fn write_record(f: *Found, id: u32, r: *index.Record) !void {
         assert(id < index.books_max);
-        r.invariants();
+        assert(f.folder.len > 0);
+        r.seal();
         var path_buffer: [files.path_bytes_max]u8 = undefined;
         const path = try std.fmt.bufPrintSentinel(&path_buffer, "{s}/records{s}", .{
             f.folder,

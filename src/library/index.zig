@@ -47,10 +47,48 @@ pub const Record = extern struct {
     kindle_percent: u8,
     availability: u8, // A `catalog.Availability`
     flags: u8,
-    reserved: [8]u8 = @splat(0),
+    /// Of every byte before it: a record torn by a crash while written in place
+    /// doesn't read as whole, and the index is built again.
+    checksum: u32 = 0,
+    reserved: [4]u8 = @splat(0),
 
     pub const finished: u8 = 1;
     pub const epub: u8 = 2;
+
+    /// Sets the checksum, as the record is now: last, before it's written.
+    pub fn seal(r: *Record) void {
+        r.invariants();
+        r.checksum = r.checksum_now();
+        assert(r.sound());
+    }
+
+    /// Whether the checksum matches what the record holds.
+    pub fn sound(r: *const Record) bool {
+        comptime assert(@offsetOf(Record, "checksum") == 56);
+        comptime assert(@offsetOf(Record, "reserved") == 60);
+        return r.checksum == r.checksum_now();
+    }
+
+    fn checksum_now(r: *const Record) u32 {
+        const bytes = std.mem.asBytes(r)[0..@offsetOf(Record, "checksum")];
+        assert(bytes.len == 56);
+        assert(bytes.len < @sizeOf(Record)); // Never over itself
+        return @truncate(std.hash.Wyhash.hash(0x7265, bytes));
+    }
+
+    /// The record in `bytes`, read from the drive: an error when it doesn't read as
+    /// whole (torn, or damaged), which means building the index again.
+    pub fn decode(bytes: []const u8) !Record {
+        assert(bytes.len == @sizeOf(Record));
+        const r = std.mem.bytesToValue(Record, bytes);
+        if (!r.sound()) return error.Damaged;
+        if (r.percent > 100 or r.text_len > blob_bytes_max) return error.Damaged;
+        if (r.availability > @backingInt(catalog.Availability.downloading)) {
+            return error.Damaged;
+        }
+        r.invariants();
+        return r;
+    }
 
     pub fn invariants(r: *const Record) void {
         assert(r.percent <= 100);
@@ -73,7 +111,9 @@ pub const file_magic = "NFLIBDAT".*;
 pub const FileHead = extern struct { magic: [8]u8 = file_magic, generation: u64 };
 pub const file_head_bytes: u32 = @sizeOf(FileHead);
 
-pub const header_magic = "NFLIB001".*;
+/// Its version: an index written by a noface that wrote records differently is built
+/// again.
+pub const header_magic = "NFLIB002".*;
 
 pub const Header = extern struct {
     magic: [8]u8 = header_magic,
@@ -207,15 +247,9 @@ pub const Index = struct {
 
     pub fn record(ix: *Index, id: u32) !Record {
         assert(id < ix.header.count);
+        assert(ix.records.fd >= 0);
         const offset = file_head_bytes + @as(u64, id) * @sizeOf(Record);
-        const bytes = try ix.records.read_at(offset, @sizeOf(Record));
-        const result = std.mem.bytesToValue(Record, bytes);
-        if (result.percent > 100 or result.text_len > blob_bytes_max) return error.Damaged;
-        if (result.availability > @backingInt(catalog.Availability.downloading)) {
-            return error.Damaged;
-        }
-        result.invariants();
-        return result;
+        return Record.decode(try ix.records.read_at(offset, @sizeOf(Record)));
     }
 
     /// Book `id` read into `slot`: its record and its texts.
@@ -230,9 +264,10 @@ pub const Index = struct {
     }
 
     /// Writes book `id`'s record over the old one, in place.
-    pub fn write_record(ix: *Index, id: u32, r: *const Record) !void {
+    pub fn write_record(ix: *Index, id: u32, r: *Record) !void {
         assert(id < ix.header.count);
-        r.invariants();
+        assert(ix.dir.len > 0);
+        r.seal();
         var path_buffer: [files.path_bytes_max]u8 = undefined;
         const path = try files.path_in(&path_buffer, ix.dir, "records");
         const offset = file_head_bytes + @as(u64, id) * @sizeOf(Record);
@@ -408,7 +443,7 @@ pub fn series_hash(series: []const u8) u32 {
 pub fn record_of(e: *const catalog.Entry, text_offset: u64, text_len: u32) Record {
     assert(text_len <= blob_bytes_max);
     const finite = std.math.isFinite(e.series_index) or std.math.isNan(e.series_index);
-    const r: Record = .{
+    var r: Record = .{
         .last = e.last,
         .added = e.added,
         .kindle_last = e.kindle_last,
@@ -422,7 +457,8 @@ pub fn record_of(e: *const catalog.Entry, text_offset: u64, text_len: u32) Recor
         .availability = @backingInt(e.availability),
         .flags = (if (e.finished) Record.finished else 0) | (if (e.is_epub()) Record.epub else 0),
     };
-    r.invariants();
+    r.seal();
+    assert(r.text_offset == text_offset);
     return r;
 }
 

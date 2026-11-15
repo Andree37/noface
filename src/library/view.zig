@@ -108,11 +108,7 @@ const Stream = struct {
         assert(s.records.fd >= 0);
         assert(id < s.ix.header.count);
         const offset = index.file_head_bytes + @as(u64, id) * @sizeOf(index.Record);
-        const bytes = try s.records.read_at(offset, @sizeOf(index.Record));
-        const r = std.mem.bytesToValue(index.Record, bytes);
-        if (r.percent > 100 or r.text_len > index.blob_bytes_max) return error.Damaged;
-        if (r.availability > 2) return error.Damaged;
-        return r;
+        return index.Record.decode(try s.records.read_at(offset, @sizeOf(index.Record)));
     }
 
     /// Book `id`'s entry, its texts in `slot`.

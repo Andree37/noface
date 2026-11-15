@@ -112,6 +112,7 @@ const State = struct {
     search_entries: [search_sheet.max_rows]catalog.Entry = undefined,
     search_filled: u32 = 0,
     catalog_seen: CatalogFacts = .{},
+    rebuilt: bool = false, // Built again once since loaded, after damage was found
 
     fn dir(s: *const State) []const u8 {
         assert(s.dir_len > 0);
@@ -208,18 +209,53 @@ pub const Library = struct {
         @memcpy(s.words.buf[0..words.len], words);
         s.words.len = @intCast(words.len);
         s.hero_slot.id = std.math.maxInt(u32);
+        // An index found damaged (a record torn, a file cut short) is built again now,
+        // once: a drive that won't take it leaves the library empty till the next load
+        if (!s.open) l.rebuild();
         if (!s.open) return;
-        view.arrange(&s.ix, &l.shared.work, &l.shared.bits, &s.v, order, s.look()) catch |err| {
+        l.arrange_index(order) catch |err| {
             l.broken(err);
+            l.rebuild();
+            if (!s.open) return;
+            l.arrange_index(order) catch |again| l.broken(again);
+        };
+        s.v.invariants();
+    }
+
+    fn arrange_index(l: *Library, order: catalog.Order) !void {
+        const s = l.state;
+        assert(s.open);
+        try view.arrange(&s.ix, &l.shared.work, &l.shared.bits, &s.v, order, s.look());
+        if (s.v.hero) |h| try s.ix.read(h, &s.hero_slot);
+        s.v.invariants();
+    }
+
+    /// Builds the index again, in place of one found damaged, the first time only.
+    fn rebuild(l: *Library) void {
+        const s = l.state;
+        assert(!s.open);
+        if (s.rebuilt or !l.sources.scratch.empty()) return;
+        s.rebuilt = true;
+        var scratch = memory.Budget{
+            .name = "library scratch",
+            .region = l.sources.scratch,
+            .limit = l.sources.scratch.bytes.len,
+        };
+        defer scratch.reset(.give_back);
+        const places = places_of(l.sources, s);
+        const work = &l.shared.work;
+        const wanted = builder.sources_now(&scratch, places);
+        builder.build(work, &scratch, places, wanted) catch |err| {
+            log("library: index not built again ({s})\n", .{@errorName(err)});
             return;
         };
-        if (s.v.hero) |h| {
-            s.ix.read(h, &s.hero_slot) catch |err| {
-                l.broken(err);
-                return;
-            };
-        }
-        s.v.invariants();
+        const buffers: index.Buffers = .{ .records = &s.records_buffer, .text = &s.text_buffer };
+        s.ix = index.Index.open(s.dir(), buffers) catch return;
+        s.open = true;
+        builder.merge_states(&s.ix, work, l.sources.state_dir) catch |err| {
+            log("library: places not merged ({s})\n", .{@errorName(err)});
+        };
+        assert(s.rebuilt);
     }
 
     /// The book to continue, when there is one: always on this Kindle.
@@ -483,12 +519,7 @@ pub fn load(sources: Sources) !Library {
         .limit = sources.scratch.bytes.len,
     };
     defer scratch.reset(.give_back);
-    const places: builder.Places = .{
-        .catalog_path = sources.catalog_path,
-        .documents = sources.documents,
-        .state_dir = sources.state_dir,
-        .dir = s.dir(),
-    };
+    const places = places_of(sources, s);
     const work = &sources.shared.work;
     const wanted = builder.sources_now(&scratch, places);
     open_or_build(s, work, &scratch, places, wanted) catch |err| {
@@ -500,6 +531,19 @@ pub fn load(sources: Sources) !Library {
         };
     }
     return .{ .shared = sources.shared, .sources = sources, .state = s };
+}
+
+/// Where the books are, and where `s`'s index is kept.
+fn places_of(sources: Sources, s: *const State) builder.Places {
+    assert(sources.state_dir.len > 0);
+    const places: builder.Places = .{
+        .catalog_path = sources.catalog_path,
+        .documents = sources.documents,
+        .state_dir = sources.state_dir,
+        .dir = s.dir(),
+    };
+    assert(places.dir.len > sources.state_dir.len);
+    return places;
 }
 
 fn open_or_build(
@@ -832,6 +876,30 @@ test "a download is watched by its own file, not by reading the whole catalog ag
     try std.testing.expectEqual(Download.waiting, library.watch_download());
     try test_write(book, "not a whole book");
     try std.testing.expectEqual(Download.waiting, library.watch_download());
+}
+
+test "a record torn while written in place is found by its checksum, and the index built again" {
+    var buffer: [64]u8 = undefined;
+    const root = try test_folder(&buffer, 40, 0, 1 << 10);
+    defer test_folder_remove(root);
+    var t: TestLibrary = undefined;
+    try t.init(root);
+    defer t.deinit();
+    var library = try load(t.sources);
+    defer library.deinit();
+    library.arrange(.recent, .all, "");
+    const count = library.count();
+    // Half a record written over, as by power lost in the middle of saving a place
+    var path_buffer: [320]u8 = undefined;
+    const format = "{s}/library/records";
+    const path = try std.fmt.bufPrintSentinel(&path_buffer, format, .{t.sources.state_dir}, 0);
+    const torn: [32]u8 = @splat(0x55);
+    try std.testing.expect(files.write_at(path, index.file_head_bytes + 7 * 64, &torn));
+    library.state.ix.records.len = 0; // Read from the drive again, as after a restart
+    library.state.ix.header.stale = index.all_orders; // Every record read again
+    library.arrange(.title, .all, "");
+    try std.testing.expect(library.state.rebuilt);
+    try std.testing.expectEqual(count, library.count());
 }
 
 test "an index damaged or cut short is built again, and a missing order sorted again" {

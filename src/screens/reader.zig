@@ -232,7 +232,10 @@ fn read_book_parse(
     entry: *const catalog.Entry,
     data: []const u8,
 ) !struct { book: book_model.Book, lang: ?hyphen.Lang } {
-    const book = if (entry.is_epub()) try epub.parse(alloc, data) else try kfx.parse(alloc, data);
+    const book = if (entry.is_epub())
+        try epub.parse(alloc, a.scratch_region, data)
+    else
+        try kfx.parse(alloc, data);
     // Positions are u32: a book's paragraphs fit its memory budget, far below that
     assert(book.paragraphs.len <= std.math.maxInt(u32));
     // Both parsers point the contents inside the book, as Go To relies on

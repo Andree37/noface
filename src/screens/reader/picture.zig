@@ -64,7 +64,11 @@ fn decode(alloc: std.mem.Allocator, img: book_model.Image) ?image.Gray {
     const g: image.Gray = if (jpegxr.is_jpeg_xr(img.data)) blk: {
         const x = jpegxr.decode_jpeg_xr(alloc, img.data, img.width, img.height) orelse return null;
         break :blk .{ .pixels = x.pixels, .width = x.width, .height = x.height };
-    } else image.decode_gray(alloc, img.data) orelse return null;
+    } else image.decode_gray_from(alloc, .{
+        .bytes = img.data,
+        .deflated = img.deflated,
+        .inflated_size = img.inflated_size,
+    }, pixels_max) orelse return null;
     if (!decodable(g.width, g.height)) return null;
     return g;
 }

@@ -255,13 +255,19 @@ pub const App = struct {
         assert(a.layout.images.?.ctx == ctx);
         const ready = a.pictures.get(image.data.ptr, w, h) orelse blk: {
             var made: ?[]u8 = null;
-            if (jpegxr.is_jpeg_xr(image.data)) {
+            if (!image.deflated and jpegxr.is_jpeg_xr(image.data)) {
                 made = prepared_jpeg_xr(a.alloc, image.data, w, h);
             } else {
-                made = cover.decode_and_prepare(a.alloc, image.data, w, h);
+                made = cover.prepare_from(a.alloc, .{
+                    .bytes = image.data,
+                    .deflated = image.deflated,
+                    .inflated_size = image.inflated_size,
+                }, w, h);
             }
             const pixels = made orelse {
-                std.debug.print("picture not drawn\n", .{});
+                // Not kept, so a picture that fails for want of memory is tried again
+                std.debug.print("picture not drawn: {d}x{d}\n", .{ image.width, image.height });
+                cover.placeholder(page_buf, x, y, w, h);
                 return;
             };
             assert(pixels.len == @as(u64, w) * h); // Prepared at the size asked for

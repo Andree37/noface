@@ -157,6 +157,9 @@ pub fn open(r: *Reader, a: *app.App, entry: *catalog.Entry) !void {
     r.alloc = r.book_budget.allocator();
     r.scratch = r.scratch_budget.allocator();
     errdefer r.release();
+    // The page under a selection: memory only once a word is first held
+    const pixels: u32 = @intCast(a.screen.pixels.len);
+    r.selecting.clean = try r.book_budget.untouched(u8, pixels);
     try open_book(r);
     assert(r.start < r.s.pages.len);
 }

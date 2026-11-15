@@ -127,6 +127,9 @@ pub fn in_delete_bubble(a: *app.App, top: u32, x: i32, y: i32) bool {
 /// A selection following a finger, kept while it's open over the page: `fixed` stays
 /// in place, and `head` is the word the finger is on.
 pub const Selecting = struct {
+    /// The page under a selection, in pure black and white for quick refreshes: the
+    /// book's own, taken as it opens (`Reader.open`).
+    clean: []u8 = &.{},
     words: []const book_model.Word = &.{},
     fixed: u32 = 0,
     moving: u32 = 0, // Where the head began
@@ -142,6 +145,7 @@ pub const Selecting = struct {
 
 const SelectionFollow = struct {
     a: *app.App,
+    clean: []const u8,
     words: []const book_model.Word,
     fixed: u32,
     head: *u32,
@@ -153,7 +157,7 @@ const SelectionFollow = struct {
         assert(next < f.words.len);
         if (next == f.head.*) return null;
         f.head.* = next;
-        f.previous.* = try paint_selection(f.a, f.words, f.fixed, f.head.*, f.previous.*);
+        f.previous.* = try paint_selection(f.a, f.clean, f.words, f.fixed, f.head.*, f.previous.*);
         return f.a.screen.next_marker - 1;
     }
 };
@@ -173,13 +177,14 @@ fn drag_selection(
     sel.fixed = fixed;
     sel.moving = moving;
     sel.head = moving;
-    @memcpy(a.lock_cover, a.screen.pixels);
-    a.page(a.lock_cover).threshold(0, a.screen.height); // Pure black and white for A2
+    assert(sel.clean.len == a.screen.pixels.len); // The book's, taken as it opened
+    @memcpy(sel.clean, a.screen.pixels);
+    a.page(sel.clean).threshold(0, a.screen.height); // Pure black and white for A2
     const none = selection.Band{ .top = 0, .height = 0 };
-    sel.previous = try paint_selection(a, words, fixed, sel.head, none);
-    a.lock_cover_key = 0; // Used as scratch above: the lock screen's cover is gone
+    sel.previous = try paint_selection(a, sel.clean, words, fixed, sel.head, none);
     const follow = SelectionFollow{
         .a = a,
+        .clean = sel.clean,
         .words = words,
         .fixed = fixed,
         .head = &sel.head,
@@ -200,6 +205,7 @@ fn drag_selection_ended(sel: *Selecting) !?u32 {
 /// Underlines from `first` to `last`, redrawing the band the old and new selections cover.
 fn paint_selection(
     a: *app.App,
+    clean: []const u8,
     words: []const book_model.Word,
     first: u32,
     last: u32,
@@ -215,7 +221,8 @@ fn paint_selection(
     const stride = a.screen.stride;
     const band_start = top * stride;
     const band_end = bottom * stride;
-    @memcpy(a.screen.pixels[band_start..band_end], a.lock_cover[band_start..band_end]);
+    assert(clean.len == a.screen.pixels.len);
+    @memcpy(a.screen.pixels[band_start..band_end], clean[band_start..band_end]);
     selection.draw(a.page(a.screen.pixels), chosen);
     _ = try a.screen.show_region(0, top, a.screen.width, bottom - top, .quick);
     return now;

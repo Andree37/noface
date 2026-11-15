@@ -155,10 +155,13 @@ fn show_with_covers(
 const Next = union(enum) { nothing, page, everything, leave, open: screen.Frame };
 
 pub fn run_library(a: *app.App) !void {
-    var b = Browser{ .a = a, .lib = try load_library(a), .buf = a.slots[0].buf };
+    // The library as last drawn, its own: memory once it's first drawn
+    const pixels: u32 = @intCast(a.screen.pixels.len);
+    const buf = try a.library_budget.untouched(u8, pixels);
+    defer a.library_budget.allocator().free(buf);
+    var b = Browser{ .a = a, .lib = try load_library(a), .buf = buf };
     defer b.lib.deinit();
     assert(b.buf.len == a.screen.pixels.len);
-    a.slots[0].page = -1;
     // Started while the Kindle is locked: the "going to lock" event has passed, so
     // show the lock screen now, as if it had just arrived. Otherwise the library
     // would sit under a locked Kindle with touch switched off.
@@ -591,7 +594,6 @@ const Browser = struct {
         if (outcome == .failed) b.notice = "This book can't be opened here.";
         b.lib.save(entry); // Its place and time read, in the library's index
         if (outcome == .quit) return .leave;
-        a.slots[0].page = -1;
         b.status_until = now_us() + status_watch_us; // Wi-Fi coming back, and the like
         if (b.book_was_read or !entry.is_read()) return .everything;
         const next = b.lib.next_in_series(entry) orelse return .everything;

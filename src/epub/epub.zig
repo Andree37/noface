@@ -93,7 +93,7 @@ comptime {
     }
 }
 
-fn read_file(alloc: std.mem.Allocator, files: []const zip.Entry, name: []const u8) ![]u8 {
+fn read_file(alloc: std.mem.Allocator, files: []const zip.Entry, name: []const u8) ![]const u8 {
     // An archive's count of files is 16 bits
     assert(files.len <= std.math.maxInt(u16));
     const e = zip.find(files, name) orelse return error.MissingFile;
@@ -247,7 +247,7 @@ pub fn info(alloc: std.mem.Allocator, data: []const u8, with_cover: bool) !Info 
 
 /// The cover's bytes: the item EPUB 3 marks as the cover image, or the one EPUB 2's
 /// metadata names. Null when there's none, or it won't read.
-fn info_cover(alloc: std.mem.Allocator, files: []const zip.Entry, p: *const Package) !?[]u8 {
+fn info_cover(alloc: std.mem.Allocator, files: []const zip.Entry, p: *const Package) !?[]const u8 {
     assert(p.spine.len > 0);
     for (p.items) |i| {
         const marked = std.mem.indexOf(u8, i.properties, "cover-image") != null;
@@ -438,14 +438,16 @@ const Builder = struct {
         assert(b.in_body);
         const path = try resolve(b.alloc, dir, src);
         const entry = zip.find(b.files, path) orelse return;
-        const data = zip.read(b.alloc, &entry) catch return;
-        const size = picture.size(data) orelse return; // Only JPEG and PNG can be drawn
+        // The book's own bytes, read only as far as their size: only JPEG and PNG
+        // can be drawn
+        const image = picture.image(&entry) orelse return;
+        assert(image.data.ptr == entry.data.ptr); // Never a copy
         try b.flush();
         const index: u32 = @intCast(b.paragraphs.items.len);
         try b.paragraphs.append(b.alloc, .{
             .text = "",
             .style = 0,
-            .image = .{ .data = data, .width = size.width, .height = size.height },
+            .image = image,
             .section = b.section,
         });
         try b.place_anchors(index);

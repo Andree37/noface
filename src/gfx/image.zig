@@ -190,6 +190,77 @@ pub fn decode_and_prepare(alloc: std.mem.Allocator, encoded: []const u8, w: u32,
     return ready;
 }
 
+/// A picture's bytes as its book keeps them: the JPEG or PNG itself, or that deflated
+/// (as an EPUB may keep it), to be inflated to `inflated_size` bytes when it's drawn.
+pub const Encoded = struct {
+    bytes: []const u8,
+    deflated: bool = false,
+    inflated_size: u32 = 0,
+};
+
+/// `decode_and_prepare` for a picture as its book keeps it.
+pub fn prepare_from(alloc: std.mem.Allocator, source: Encoded, w: u32, h: u32) ?[]u8 {
+    assert(w > 0);
+    assert(h > 0);
+    if (!source.deflated) return decode_and_prepare(alloc, source.bytes, w, h);
+    const decoder = decoder_memory.allocator();
+    const encoded = inflated(decoder, source) orelse return null;
+    defer decoder.free(encoded);
+    return decode_and_prepare(alloc, encoded, w, h);
+}
+
+/// `decode_gray` for a picture as its book keeps it, or null for one of more than
+/// `pixels_max` pixels.
+pub fn decode_gray_from(alloc: std.mem.Allocator, source: Encoded, pixels_max: u64) ?Gray {
+    assert(pixels_max > 0);
+    const decoder = decoder_memory.allocator();
+    var encoded = source.bytes;
+    if (source.deflated) encoded = inflated(decoder, source) orelse return null;
+    defer if (source.deflated) decoder.free(encoded);
+    const gray = decode_gray(alloc, encoded) orelse return null;
+    if (@as(u64, gray.width) * gray.height <= pixels_max) return gray;
+    alloc.free(gray.pixels);
+    return null;
+}
+
+/// A deflated picture's bytes, inflated into `alloc`, or null for data that doesn't
+/// inflate to the size the book gave.
+fn inflated(alloc: std.mem.Allocator, source: Encoded) ?[]u8 {
+    assert(source.deflated);
+    assert(source.bytes.len <= std.math.maxInt(u32));
+    const out = alloc.alloc(u8, source.inflated_size) catch return null;
+    var input: std.Io.Reader = .fixed(source.bytes);
+    // The output holds the history the inflater looks back into: no window needed
+    var inflater: std.compress.flate.Decompress = .init(&input, .raw, &.{});
+    var writer: std.Io.Writer = .fixed(out);
+    inflater.reader.streamExact(&writer, out.len) catch {
+        alloc.free(out);
+        return null;
+    };
+    assert(writer.end == out.len);
+    return out;
+}
+
+/// The gray of a picture's place when it can't be drawn: one of the panel's own, light.
+const placeholder_gray = 14 * panel_gray_step;
+/// Its corners' radius, at most: the interface's rounded shapes.
+const placeholder_corner_max = 24;
+
+comptime {
+    assert(placeholder_gray < 255);
+    assert(placeholder_gray % panel_gray_step == 0);
+}
+
+/// What stands where a picture can't be drawn: a light rounded box filling the
+/// picture's own box, so the page around it is laid out as with the picture.
+pub fn placeholder(page: Page, x: u32, y: u32, w: u32, h: u32) void {
+    assert(page.holds_rows());
+    assert(w > 0);
+    if (h == 0 or x + w > page.width or y + h > page.height) return;
+    const corner: f32 = @floatFromInt(@min(placeholder_corner_max, @min(w, h) / 2));
+    page.round_rect(x, y, w, h, corner, placeholder_gray);
+}
+
 /// Copies a prepared picture into a box on a page.
 pub fn blit(page: Page, ready: []const u8, x: u32, y: u32, w: u32, h: u32) void {
     check.thatf(
@@ -572,4 +643,28 @@ test "damaged pictures decode or are turned down, never crash" {
             }
         }
     }
+}
+
+test "a deflated picture draws as the same picture kept as it is" {
+    const alloc = std.testing.allocator;
+    const data = test_picture("baseline420.jpg");
+    // Deflate's stored blocks: the picture's bytes as they are, after a block header
+    const deflated = try alloc.alloc(u8, data.len + 5);
+    defer alloc.free(deflated);
+    const length: u16 = @intCast(data.len);
+    const l: [2]u8 = @bitCast(std.mem.nativeToLittle(u16, length));
+    @memcpy(deflated[0..5], &[_]u8{ 1, l[0], l[1], ~l[0], ~l[1] });
+    @memcpy(deflated[5..], data);
+    const plain = decode_and_prepare(alloc, data, 20, 14).?;
+    defer alloc.free(plain);
+    const source = Encoded{ .bytes = deflated, .deflated = true, .inflated_size = length };
+    const from = prepare_from(alloc, source, 20, 14).?;
+    defer alloc.free(from);
+    try std.testing.expectEqualSlices(u8, plain, from);
+    const gray = decode_gray_from(alloc, source, 41 * 29).?;
+    defer alloc.free(gray.pixels);
+    try std.testing.expectEqual(@as(u32, 41), gray.width);
+    try std.testing.expect(decode_gray_from(alloc, source, 41 * 29 - 1) == null);
+    const short = Encoded{ .bytes = deflated, .deflated = true, .inflated_size = length + 1 };
+    try std.testing.expect(prepare_from(alloc, short, 20, 14) == null);
 }

@@ -23,6 +23,17 @@ const files_max = 32;
 const file_bytes_max = 64 << 20;
 const version_path = "noface/VERSION";
 
+/// The paths, in the zip, of the files an older install still runs, each a copy of KPM's
+/// launch.sh shim (device/kpm/launch.sh), so an update that replaces only the noface
+/// folder still starts. KPM entries from 6 to 14 Nov run noface/start.sh, or source
+/// noface/data.sh first; the startup file from 12 to 14 Nov runs noface/autostart.sh.
+/// noface-launch reads the name it was started by (src/launch.zig's mode_of).
+pub const older_entry_paths = [_][]const u8{
+    "noface/start.sh",
+    "noface/data.sh",
+    "noface/autostart.sh",
+};
+
 comptime {
     assert(files_max * file_bytes_max <= std.math.maxInt(u32)); // No zip64 needed
 }
@@ -72,6 +83,10 @@ pub fn main(init: std.process.Init) !void {
         const data = try std.Io.Dir.cwd().readFileAlloc(io, args[index + 2], gpa, limit);
         try items.append(gpa, .{ .path = args[index + 1], .data = data, .mode = mode });
     }
+    if (missing_entry(items.items)) |path| {
+        std.debug.print("package: {s} is missing: older installs run it\n", .{path});
+        std.process.exit(1);
+    }
     const version = try std.fmt.allocPrint(gpa, "noface {s}\n", .{args[2]});
     try items.append(gpa, .{ .path = version_path, .data = version, .mode = 0o644 });
     const now = std.Io.Timestamp.now(io, .real).toSeconds();
@@ -81,6 +96,19 @@ pub fn main(init: std.process.Init) !void {
     const said = std.fmt.bufPrint(&line, "{s}\n", .{args[1]}) catch return error.PathTooLong;
     try std.Io.File.stdout().writeStreamingAll(io, said);
     assert(zip.len > 0);
+}
+
+/// The first of the paths an older install runs that `items` doesn't hold, if any.
+pub fn missing_entry(items: []const Item) ?[]const u8 {
+    assert(items.len <= files_max);
+    assert(older_entry_paths.len > 0);
+    for (older_entry_paths) |path| {
+        const found = for (items) |item| {
+            if (std.mem.eql(u8, item.path, path)) break true;
+        } else false;
+        if (!found) return path;
+    }
+    return null;
 }
 
 /// A time in MS-DOS's form, as zip keeps it: the date in the high half, the time in
@@ -261,4 +289,19 @@ test "zip times count from 1980, to two seconds" {
     try std.testing.expectEqual(@as(u32, 15), (time >> 16) & 0x1F);
     try std.testing.expectEqual(@as(u32, 0), time & 0xFFFF);
     try std.testing.expectEqual(dos_time(0), dos_time(315_532_800));
+}
+
+test "a package without a path an older install runs is refused" {
+    const shim = "#!/bin/sh\n";
+    var items = [_]Item{
+        .{ .path = "noface/noface", .data = "program", .mode = 0o755 },
+        .{ .path = "noface/data.sh", .data = shim, .mode = 0o755 },
+        .{ .path = "noface/autostart.sh", .data = shim, .mode = 0o755 },
+        .{ .path = "noface/start.sh", .data = shim, .mode = 0o755 },
+    };
+    try std.testing.expectEqual(@as(?[]const u8, null), missing_entry(&items));
+    // KPM entries from 6 to 14 Nov run start.sh directly
+    try std.testing.expectEqualStrings("noface/start.sh", missing_entry(items[0..3]).?);
+    items[1].path = "noface/other.sh";
+    try std.testing.expectEqualStrings("noface/data.sh", missing_entry(&items).?);
 }

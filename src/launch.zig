@@ -10,7 +10,8 @@
 //!   noface-launch export    Writes the book list (src/kindle/catalog_export.zig).
 //!
 //! KPM's launch.sh passes its own path, which means "kpm"; an older install's startup
-//! file runs it as noface/autostart.sh, which means "autostart" (see device/kpm/launch.sh).
+//! file runs it as noface/autostart.sh, which means "autostart", and an older KPM entry
+//! as noface/start.sh or noface/data.sh, which mean "kpm" (see tools/package.zig).
 //! Each first moves an older install's data into noface-data (src/kindle/data_folder.zig).
 //! What it prints goes to noface-data/launch.log; noface's own output to noface.log.
 const std = @import("std");
@@ -165,4 +166,5 @@ test "each way in is told apart" {
     try std.testing.expectEqual(Mode.autostart, mode_of("autostart"));
     try std.testing.expectEqual(Mode.autostart, mode_of("/mnt/us/noface/autostart.sh"));
     try std.testing.expectEqual(Mode.kpm, mode_of("/mnt/us/noface/data.sh"));
+    try std.testing.expectEqual(Mode.kpm, mode_of("/mnt/us/noface/start.sh"));
 }

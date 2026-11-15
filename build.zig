@@ -1,5 +1,6 @@
 const std = @import("std");
 const assert = std.debug.assert;
+const package = @import("tools/package.zig");
 
 /// The development tools in tools/, each built from tools/<name>.zig.
 const tool_names = [_][]const u8{
@@ -177,8 +178,9 @@ fn build_package(b: *std.Build, app: App) void {
     pack_file(pack, executable, "noface/kpm/noface/launch.sh", b.path("device/kpm/launch.sh"));
     // The same file under the names an older install's KPM entry and startup file run,
     // so an update that copies only the noface folder still starts (device/kpm/launch.sh)
-    pack_file(pack, executable, "noface/data.sh", b.path("device/kpm/launch.sh"));
-    pack_file(pack, executable, "noface/autostart.sh", b.path("device/kpm/launch.sh"));
+    for (package.older_entry_paths) |path| {
+        pack_file(pack, executable, path, b.path("device/kpm/launch.sh"));
+    }
     pack_file(pack, plain, "noface/LICENSE.md", b.path("LICENSE.md"));
     pack_file(pack, plain, "noface/THIRD_PARTY_NOTICES.md", b.path("THIRD_PARTY_NOTICES.md"));
     const install_zip = b.addInstallFile(zip, zip_name);

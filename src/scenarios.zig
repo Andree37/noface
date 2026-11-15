@@ -627,7 +627,8 @@ fn play_on_outcome(
         .bookmarks = count_notes(state_path, "bookmark"),
         .book_peak = a.book_region.end_peak,
         .pages_peak = a.pages_budget.peak,
-        .breaks = breaks_digest(state_path),
+        // Only the test book's: a real book's breaks can be any length
+        .breaks = if (kindle.real_book == null) breaks_digest(state_path) else 0,
         .updates = a.screen.updates,
         .airplane_asked_on = ran.fake.was_set(wifi_key ++ " 0"),
         .airplane_at_end = std.mem.eql(u8, ran.fake.get(wifi_key), "0"),

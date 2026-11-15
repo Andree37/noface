@@ -134,7 +134,6 @@ pub const Cache = struct {
     oldest: u32 = 2, // The next segment to empty
     scratch: *memory.Budget, // On a bump region, emptied before each glyph is drawn
     // Counted for the log and the tests
-    lookups: u64 = 0,
     misses: u64 = 0,
     rasterized: u64 = 0,
     bitmaps_given_up: u64 = 0,
@@ -219,7 +218,6 @@ pub const Cache = struct {
         // Code points come from decoding UTF-8, which yields only these
         assert(code_point <= code_point_max);
         assert(font.id > 0);
-        cache.lookups += 1;
         const key = key_of(font, code_point);
         const set = set_of(key, cache.sets());
         const first = set * ways;

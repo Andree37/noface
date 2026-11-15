@@ -487,25 +487,10 @@ pub const Session = struct {
                 index + 1, queued -| t, (done -| t) / 1000, if (clean) " (clean)" else "",
             });
         }
-        s.show_references(index);
         // Prepare both neighbours now, so the next turn is only a copy.
         if (index + 1 < s.pages.len) _ = try s.ensure(index + 1, index);
         if (index > 0) _ = try s.ensure(index - 1, index);
         assert(s.current == index);
-    }
-
-    /// Prints where the links on a page just shown are, for following taps in the log.
-    fn show_references(s: *const Session, index: u32) void {
-        assert(index < s.pages.len);
-        assert(s.current == index);
-        for (&s.app.slots) |*slot| {
-            if (slot.page != @as(i64, index)) continue;
-            for (slot.hits.items[0..slot.hits.len]) |h| {
-                std.debug.print("ref page {d} at {d},{d} size {d}x{d} target {d}\n", .{
-                    index + 1, h.x, h.y, h.w, h.h, h.target,
-                });
-            }
-        }
     }
 };
 

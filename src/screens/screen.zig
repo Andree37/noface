@@ -1,8 +1,13 @@
-//! A screen of its own over the library or a page: a card, a sheet, a list, a
-//! keyboard. Every one works the same way, so this runs them all:
+//! Every screen of noface, and the one loop that runs them. The library is at the
+//! root of a stack of screens; a book opens over it, and a card, a sheet, a list, the
+//! keyboard, the lock screen or a finger being followed opens over either. The one in
+//! front gets every action, but for a lock or a stop, which ends the screens in front
+//! of the first that takes it (`takes`). Each action goes to exactly one screen.
 //!
-//!     var go_to = GoTo{ ... };
-//!     const page = try screen.run(a, &go_to) orelse return; // null: closed, or locked
+//!     var go_to = goto.make(...);                         // Kept in the screen under it
+//!     return .{ .push = screen.open(&go_to, &ending) };   // Opens it over that one
+//!     ...
+//!     pub fn on_resume(s) ... // It ended: `ending` says how (done, closed, interrupted)
 //!
 //! A screen is a struct that says what makes it different, and nothing else (its
 //! functions `pub`, as they're called from here):
@@ -12,21 +17,29 @@
 //!     `Input.Modes.sheet`. Optional: without it, touches stay as they were.
 //!   - `pub const tick_us: u64 = ...;` a tick this often, for a screen that changes on
 //!     its own. Optional: without it, no ticks.
+//!   - `pub fn setting(s) Input.Scope` in place of both, for a screen whose touches or
+//!     tick change as it's used (the library, a book, the lock screen).
+//!   - `pub const takes: Takes = ...;` the lock, or leaving, for a screen that handles
+//!     them itself rather than ending (the library, a book, the lock screen).
 //!   - `fn draw(s, part: Part) !void` draws it: all of it, or what changes as it's used.
 //!   - `fn on_tap(s, Tap) !Step(Result)` what a tap does.
 //!   - `fn on_tick(s) !Step(Result)` what a tick does, if it asks for ticks.
 //!   - `fn on_action(s, Action) !Step(Result)` holds, swipes and drags, if it cares.
+//!   - `fn on_open(s) !Step(Result)` called once it's drawn as it opens, for a screen
+//!     that only leads to others (a book's actions, setting a series): it opens its
+//!     first at once.
+//!   - `fn on_resume(s) !Step(Result)` the screen it opened over itself has ended.
 //!
 //! Anything else `pub` on it, or a name spelled wrong (`onTik`), doesn't compile, nor
 //! does a tick without `on_tick`: a screen can't quietly miss what it meant to handle.
 //! Helpers of its own stay private. The test at the end of this file is a screen to
 //! copy from.
 //!
-//! `run` draws it whole first, then waits and hands it each action, drawing what each
-//! step asks for. When the Kindle locks or noface is told to leave, the screen closes
-//! (`run` returns null) and the action is kept for the screen underneath, so it locks
-//! or leaves in turn. Touch modes and the tick are put back as they were either way.
-//! A caller that must tell "closed" from "locked or leaving" uses `run_to_end`.
+//! A screen is drawn whole as it opens, and then as each step asks. When the Kindle
+//! locks or noface is told to leave, the screens in front of the one that takes it end
+//! `interrupted`, each one under them resuming in turn (to put back what a card
+//! covered, say), and the one that takes it gets the action. Touches and the tick are
+//! the screen in front's, set before each wait.
 const std = @import("std");
 const assert = std.debug.assert;
 const app = @import("../app.zig");
@@ -290,61 +303,9 @@ pub fn Ending(comptime Result: type) type {
     return union(enum) {
         done: Result, // Finished, with this result
         closed, // Cancelled, or tapped outside it
-        /// The Kindle locked, or noface was told to leave: kept for the screen underneath.
+        /// The Kindle locked, or noface was told to leave: taken by a screen underneath.
         interrupted: Action,
     };
-}
-
-/// Runs screen `s` until it's done (its result), or closes or the Kindle locks (null).
-pub fn run(a: *app.App, s: anytype) !?@TypeOf(s.*).Result {
-    const modes_before = a.input.modes();
-    const tick_before_us = a.input.tick_us;
-    const ending = try run_to_end(a, s);
-    // However it ended, touches and the tick are as they were before it opened
-    assert(std.meta.eql(a.input.modes(), modes_before));
-    assert(a.input.tick_us == tick_before_us);
-    return switch (ending) {
-        .done => |result| result,
-        .closed, .interrupted => null,
-    };
-}
-
-/// Runs screen `s`, saying how it ended.
-pub fn run_to_end(a: *app.App, s: anytype) !Ending(@TypeOf(s.*).Result) {
-    const S = @TypeOf(s.*);
-    comptime check(S);
-    const touches = if (@hasDecl(S, "touches")) S.touches else a.input.modes();
-    const tick_us: u64 = if (@hasDecl(S, "tick_us")) S.tick_us else 0;
-    const was = a.input.enter(touches, tick_us);
-    defer a.input.leave(was);
-    assert(std.meta.eql(a.input.modes(), touches));
-    assert(a.input.tick_us == tick_us);
-
-    var part: ?Part = .all;
-    // Unbounded: a screen stays open for as long as the reader takes, until it's done
-    while (true) {
-        if (part) |p| try s.draw(p);
-        part = null;
-        // Locked, or leaving: the action is kept for the screen underneath
-        const action = a.input.next_for() orelse return .{
-            .interrupted = a.input.held_back().?,
-        };
-        // Those end the screen, and never reach it
-        assert(action != .lock);
-        assert(action != .stop);
-        const step: Step(S.Result) = switch (action) {
-            .tap => |t| try s.on_tap(t),
-            .tick => if (@hasDecl(S, "on_tick")) try s.on_tick() else .stay,
-            else => if (@hasDecl(S, "on_action")) try s.on_action(action) else .stay,
-        };
-        switch (step) {
-            .stay => {},
-            .redraw => |p| part = p,
-            .done => |result| return .{ .done = result },
-            .close => return .closed,
-            .push => unreachable, // Only a screen on the stack (`run_root`) opens others
-        }
-    }
 }
 
 /// The screens open, each over the one before; the last is in front, and takes every
@@ -375,7 +336,9 @@ const Stack = struct {
     fn scope(stack: *const Stack) input_mod.Input.Scope {
         const f = stack.top();
         if (f.kind.setting) |setting| return setting(f.screen);
-        // Without touches of its own, a screen keeps those it opened over
+        // Without touches of its own, a screen keeps those it opened over, kept as it
+        // opened
+        assert(f.inherited != null);
         const modes = f.kind.touches orelse f.inherited.?;
         if (f.kind.touches) |own| assert(std.meta.eql(modes, own));
         return .{ .modes = modes, .tick_us = f.kind.tick_us };
@@ -438,6 +401,8 @@ const Stack = struct {
     /// Does what the screen in front asked: and as each screen ends, what the one
     /// under it asks on resuming.
     fn settle(stack: *Stack, a: *app.App, first: Turn) !void {
+        // A screen asked, but for the root as it opens, with none under it
+        if (first != .push) assert(stack.depth > 0);
         var t = first;
         for (0..settle_turns_max) |_| {
             switch (t) {
@@ -462,6 +427,8 @@ const Stack = struct {
 
     /// The screen in front again, the one over it ended.
     fn resume_top(stack: *Stack) !Turn {
+        // One was just taken off over it
+        assert(stack.depth < depth_max);
         const f = stack.top().*;
         // Only a screen that reads how the ones it opens end opens any
         assert(f.kind.resumes);
@@ -519,10 +486,13 @@ pub fn run_root(a: *app.App, root: anytype) !Ending(@TypeOf(root.*).Result) {
     var stack = Stack{ .input = a.input };
     try stack.settle(a, .{ .push = open(root, &ending) });
     stack.shown_us = os.now_us();
-    // Unbounded: noface's event loop, which runs for as long as the reader reads
+    // Unbounded: noface's event loop, the only one, which runs for as long as the
+    // reader reads: each turn waits once for something to happen, and hands what
+    // happened, if anything, to the screen that takes it
     while (true) {
         a.input.apply(stack.scope(), false);
-        try stack.route(a, a.input.next());
+        const action = a.input.poll() orelse continue;
+        try stack.route(a, action);
         if (stack.depth == 0) break;
     }
     assert(stack.depth == 0);
@@ -532,7 +502,7 @@ pub fn run_root(a: *app.App, root: anytype) !Ending(@TypeOf(root.*).Result) {
 /// A screen to copy from: a counter that finishes on its third tap. A real one draws
 /// in `draw` (see battery.zig, the smallest), and keeps what it shows in its fields.
 const Example = struct {
-    pub const Result = u32; // What `run` gives back when it's done
+    pub const Result = u32; // What it ends with when it's done
     pub const touches = input_mod.Input.Modes.sheet; // Optional: how it takes touches
 
     taps: u32 = 0,
@@ -559,6 +529,43 @@ const Example = struct {
     }
 };
 
+/// The root for the test: it opens an Example over itself at once, and ends with how
+/// that one ended, or on a stop.
+const ExampleRoot = struct {
+    pub const Result = ?Ending(u32);
+    pub const takes = Takes{ .lock = true, .leave = true };
+    example: Example = .{},
+    ending: ?Ending(u32) = null,
+
+    pub fn draw(r: *ExampleRoot, part: Part) !void {
+        assert(part == .all);
+        assert(r.example.taps == 0);
+    }
+
+    pub fn on_open(r: *ExampleRoot) !Step(?Ending(u32)) {
+        assert(r.example.taps == 0);
+        assert(r.ending == null);
+        return .{ .push = open(&r.example, &r.ending) };
+    }
+
+    pub fn on_resume(r: *ExampleRoot) !Step(?Ending(u32)) {
+        assert(r.ending != null);
+        assert(r.example.taps <= Example.taps_max);
+        return .{ .done = r.ending };
+    }
+
+    pub fn on_tap(r: *ExampleRoot, _: Tap) !Step(?Ending(u32)) {
+        assert(r.ending == null);
+        unreachable; // The example is in front until it ends, and that ends this
+    }
+
+    pub fn on_action(r: *ExampleRoot, action: Action) !Step(?Ending(u32)) {
+        assert(action == .stop); // The script runs out
+        assert(r.ending != null); // The example ended first, interrupted by it
+        return .{ .done = r.ending };
+    }
+};
+
 test "a screen draws whole, takes taps until done, and gives back its result" {
     // Scripted taps move the test clock: the real one comes back after, for the tests that
     // follow
@@ -579,15 +586,17 @@ test "a screen draws whole, takes taps until done, and gives back its result" {
     var a: app.App = undefined;
     a.input = &input;
     const before = input.modes();
-    var e = Example{};
-    try std.testing.expectEqual(@as(?u32, 3), try run(&a, &e));
-    try std.testing.expectEqual(@as(u32, 1), e.drawn[0]); // Whole, once, first
-    try std.testing.expectEqual(@as(u32, 2), e.drawn[1]);
+    var root = ExampleRoot{};
+    const ended = (try run_root(&a, &root)).done.?;
+    try std.testing.expectEqual(@as(u32, 3), ended.done);
+    try std.testing.expectEqual(@as(u32, 1), root.example.drawn[0]); // Whole, once, first
+    try std.testing.expectEqual(@as(u32, 2), root.example.drawn[1]);
     try std.testing.expectEqual(before, input.modes()); // Touches as they were
-    // A script that runs out stops noface: the screen closes, and the stop is kept
+    // A script that runs out stops noface: the example ends interrupted, and the root
+    // takes the stop
     var none = [_]input_mod.Step{};
     script = .{ .steps = &none };
-    e = .{};
-    try std.testing.expect(try run(&a, &e) == null);
-    try std.testing.expect(input.held_back().? == .stop);
+    root = .{};
+    const stopped = (try run_root(&a, &root)).done.?;
+    try std.testing.expect(stopped.interrupted == .stop);
 }

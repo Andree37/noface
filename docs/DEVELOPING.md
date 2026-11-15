@@ -135,14 +135,17 @@ The exact rules are at the top of `tools/check/boundaries.zig`.
 
 ## How a screen works
 
-Two screens run for as long as noface does: the library (`screens/library.zig`) and a
-book (`screens/reader.zig`). Each is a struct with one loop that takes the next action
-and hands it to a handler, and each says how it takes touches (`Input.Modes`) in one
-place: the library's `touches`, the reader's `touches_for(view)`.
+noface has one event loop, `screen.run_root` (`screens/screen.zig`), and every screen
+runs on it. The screens open are a stack of fixed depth: the library
+(`screens/library.zig`) at its root, a book (`screens/reader.zig`) over it, and over
+either a card, a sheet, a list, the keyboard, the lock screen, the picture viewer or a
+finger being followed. Each turn the loop waits once for something to happen and hands
+it to exactly one screen: the one in front. A lock or a stop goes instead to the first
+screen under it that takes it (`takes`: the library, a book, the lock screen), and every
+screen in front of that one ends `interrupted` first. A tap whose finger touched while
+another screen was in front is dropped, as it was meant for that one.
 
-Everything opened over them (a card, a sheet, a list, the keyboard, the quick panel,
-the picture viewer) runs on `screens/screen.zig`. Such a screen is a struct that says
-only what makes it different:
+A screen is a struct that says only what makes it different:
 
 ```zig
 const Bubble = struct {
@@ -155,31 +158,26 @@ const Bubble = struct {
         return .close; // Or .stay, .{ .redraw = .changing }, .{ .done = result }
     }
 };
-
-var bubble = Bubble{ .a = a };
-_ = try screen.run(a, &bubble); // null: closed, or the Kindle locked
 ```
 
-`screen.run` draws it whole first, waits, and draws again as each step asks. It sets
-the touch modes and puts them back after, and when the Kindle locks or noface is told
-to leave, it closes the screen and keeps that action for the one underneath. A screen
-that changes on its own adds `tick_us` and `on_tick`; holds and swipes go to `on_action`.
-Typing on the keyboard is `screens/typing.zig`, shared by every screen with a field, and
-a list shown a page at a time is `goto.Pages` (`ui/goto.zig`), which turns the page
-itself, so the screen only says what a tapped row does.
-
-A caller that must tell a screen closed by the reader from one cut short by the Kindle
-locking uses `screen.run_to_end`, which says which. A loop of its own (the lock screen,
-the picture's double tap) sets touches and its tick with `Input.enter`, and puts them
-back with `leave`.
+The screen under it keeps it in a field of its own, opens it by returning
+`.{ .push = screen.open(&self.bubble, &self.bubble_ending) }`, and reads how it ended
+(done with a result, closed, or interrupted) in its `on_resume`. A screen is drawn whole
+as it opens and again as each step asks. A screen that changes on its own adds
+`tick_us` and `on_tick`; holds, swipes and drags go to `on_action`; one whose touches or
+tick change as it's used says so in `setting` (the library, a book). A screen that only
+leads to others (a book's actions, setting a series, getting a dictionary) draws
+nothing itself and opens its first in `on_open`. Typing on the keyboard is
+`screens/typing.zig`, shared by every screen with a field; a list shown a page at a
+time is `goto.Pages` (`ui/goto.zig`); a card of rows is `app.card_over`; following a
+finger is `app.Drag`.
 
 The build checks each screen: anything else made `pub` on it, a misspelled hook
 (`onTik`), or `tick_us` without `on_tick` fails with a message saying what's wrong. The
 `Example` at the end of `screens/screen.zig` is the screen to copy from.
 
-So a new screen never writes its own wait loop, redraw flags or touch settings. The
-loops left are the two above, the lock screen (which waits for the unlock, not a tap),
-and following one gesture to its end (`app.follow_drag`, the picture's double tap).
+So a new screen never writes a wait loop, redraw flags or touch settings: there is
+only the one loop.
 
 ## How the speed comparison was measured
 
@@ -256,6 +254,6 @@ it. The build or a test fails if a second place is needed and missed.
 | A file noface keeps, or a place on the Kindle | `kindle/paths.zig` | the app and the launcher both use it |
 | A tone, corner or the status strip's height | `ui/style.zig` | every screen using it |
 | An item in the reader's ⋮ menu | `screens/reader/more.zig` | |
-| A sheet, card or list | a struct run by `screen.run` (see above) | its loop, touches and redraws |
+| A sheet, card or list | a struct opened with `screen.open` (see above) | its waiting, touches and redraws |
 | An App-wide font size or page margin | `setup.zig` | the Kindle, the simulator and the tests alike |
 

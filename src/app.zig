@@ -420,38 +420,6 @@ pub const App = struct {
     }
 };
 
-/// Shows a sheet over `background` and waits for a row to be tapped. Null when the
-/// tap lands above the sheet, or the Kindle locks or quits (which is passed on to
-/// the caller's loop). What was under the sheet is put back either way.
-pub fn choose_from_card(
-    a: *App,
-    background: []const u8,
-    title: []const u8,
-    subtitle: []const u8,
-    rows: []const card.Row,
-) !?u32 {
-    assert(background.len == a.screen.pixels.len); // Put back over the whole screen
-    assert(a.overlay.len == a.screen.pixels.len); // The card is drawn there first
-    return choose_from_card_with(a, background, title, subtitle, rows, null);
-}
-
-/// The same, with a small cover beside the title.
-pub fn choose_from_card_with(
-    a: *App,
-    background: []const u8,
-    title: []const u8,
-    subtitle: []const u8,
-    rows: []const card.Row,
-    book_cover: ?card.Cover,
-) !?u32 {
-    assert(background.len == a.screen.pixels.len); // Put back over the whole screen
-    var c = card_over(a, background, title, subtitle, rows, book_cover);
-    const chosen = try screen.run(a, &c);
-    if (chosen) |index| assert(index < rows.len);
-    try card_closed(a, background);
-    return chosen;
-}
-
 /// A card of rows over `background`, to open over a screen (`screen.open`): it ends
 /// with the row tapped, or closes with a tap above it. Once it has ended, whatever
 /// way, `card_closed` puts back what was under it.
@@ -601,30 +569,6 @@ pub fn drag_ended(d: anytype, ending: screen.Ending(void)) !bool {
     // A drag ends when the finger lifts, or the Kindle locks or noface leaves
     assert(ending != .closed);
     return ending == .done;
-}
-
-/// Follows the dragged finger until it lifts. `follow.moved(x, y)` redraws for a
-/// new position and returns the update to wait on, or null when nothing changed.
-/// Only one update runs at a time: overlapping ones smear on the panel. False when
-/// the drag was cut short (the Kindle locking, say) rather than the finger lifting.
-pub fn follow_drag(a: *App, first: ?u32, follow: anytype) !bool {
-    // An update already sent to this screen
-    if (first) |m| assert(m < a.screen.next_marker);
-    var marker = first;
-    var lifted = true;
-    while (a.input.next_for()) |action| switch (action) {
-        .drag => |x0| {
-            if (marker) |m| try a.screen.wait_complete(m);
-            marker = try follow.moved(a.input.latest_drag() orelse x0, a.input.drag_y);
-        },
-        .drag_end => break,
-        else => {},
-    } else lifted = false; // Locked, or leaving, before the finger lifted
-    if (marker) |m| {
-        assert(m < a.screen.next_marker);
-        try a.screen.wait_complete(m);
-    }
-    return lifted;
 }
 
 pub fn load_journal(path: [*:0]const u8) journal_model.Journal {

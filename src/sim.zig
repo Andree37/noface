@@ -189,7 +189,8 @@ const Server = struct {
             std.debug.print("noface-sim: port {d} is taken; set NOFACE_SIM_PORT\n", .{s.port});
             return;
         }
-        // Unbounded: the simulator serves the page until it's stopped.
+        // Unbounded: the simulator's web server, on a thread of its own beside the app's
+        // event loop, serves the page until the simulator is stopped
         while (true) {
             const conn = c.accept(fd, null, null);
             if (conn < 0) continue;

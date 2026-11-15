@@ -197,7 +197,7 @@ pub const Input = struct {
     last_touched: u32 = 0,
     grips: bool = true, // Off while controls sit where a thumb usually rests
     edge_zones: bool = true, // Off while handles can sit at the screen edges
-    tick_us: u64 = 0, // When set, `next` returns .tick this often
+    tick_us: u64 = 0, // When set, `poll` returns .tick this often
     last_tick: u64 = 0,
     drag_slot: ?u32 = null,
     drag_y: i32 = 0,
@@ -289,81 +289,11 @@ pub const Input = struct {
         assert(std.meta.eql(in.modes(), m));
     }
 
-    /// For a screen opening: takes touches as `m` says, ticks every `tick_us` (0:
-    /// never) counting from now, with no control exempt from the grip zones. Returns
-    /// how it all was, for `leave` when the screen closes:
-    ///
-    ///     const was = in.enter(modes, tick_us);
-    ///     defer in.leave(was);
-    // Assertions: it saves fields and sets them, each to a value that's always valid; `take`
-    // asserts the modes.
-    pub fn enter(in: *Input, m: Modes, tick_us: u64) Scope {
-        const was = Scope{
-            .modes = in.modes(),
-            .tick_us = in.tick_us,
-            .grip_exempt = in.grip_exempt,
-        };
-        in.take(m);
-        in.tick_us = tick_us;
-        in.last_tick = now_us();
-        in.grip_exempt = null;
-        return was;
-    }
-
-    /// Puts back what `enter` changed.
-    // Assertions: it puts back what `enter` saved; `take` asserts the modes.
-    pub fn leave(in: *Input, was: Scope) void {
-        in.take(was.modes);
-        in.tick_us = was.tick_us;
-        in.grip_exempt = was.grip_exempt;
-    }
-
-    /// Keeps `action` back, for the next call to `next`: for a screen that ends because
-    /// of it, so the one underneath acts on it in turn.
+    /// Keeps `action` back, for the next call to `poll`: a lock noface starts under,
+    /// say.
     // Assertions: it sets one field, for which every action is valid.
     pub fn hold_back(in: *Input, action: Action) void {
         in.stashed = action;
-    }
-
-    /// An action kept back for the next call to `next`, if any: a lock or a stop that
-    /// closed a screen, or something that turned up while a drag was being followed.
-    // Assertions: it reads one field.
-    pub fn held_back(in: *const Input) ?Action {
-        return in.stashed;
-    }
-
-    /// For a screen of its own (a sheet, a list, a card): the next action, or null when
-    /// the Kindle locks or noface is told to leave. That action is kept for the loop
-    /// underneath, and the screen should close.
-    pub fn next_for(in: *Input) ?Action {
-        const action = in.next();
-        switch (action) {
-            .lock, .power, .computer, .stop => {
-                in.stashed = action;
-                // Kept for the loop underneath, as `next_tap` relies on
-                assert(in.stashed != null);
-                return null;
-            },
-            else => {
-                // What ends a screen never reaches it
-                assert(action != .lock);
-                assert(action != .stop);
-                return action;
-            },
-        }
-    }
-
-    /// The next tap, anything else passed over; null as with `next_for`.
-    pub fn next_tap(in: *Input) ?Tap {
-        while (in.next_for()) |action| {
-            switch (action) {
-                .tap => |tap| return tap,
-                else => {},
-            }
-        }
-        // `next_for` keeps what ended it for the screen underneath
-        assert(in.stashed != null);
-        return null;
     }
 
     pub const ignores = gestures.ignores;
@@ -461,7 +391,7 @@ pub const Input = struct {
     }
 
     /// Skips to the newest finger position already waiting, if any.
-    /// Anything else that turns up is kept for the next call to `next`.
+    /// Anything else that turns up is kept for the next call to `poll`.
     pub fn latest_drag(in: *Input) ?i32 {
         var latest: ?i32 = null;
         while (in.stashed == null) {
@@ -471,13 +401,13 @@ pub const Input = struct {
                 else => in.stashed = action,
             }
         }
-        // Stopped by something other than a drag, kept for the next call to `next`
+        // Stopped by something other than a drag, kept for the next call to `poll`
         assert(in.stashed != null);
         return latest;
     }
 
     /// Sums page-turn taps already waiting, so fast tapping jumps instead of lagging.
-    /// Anything else that turns up is kept for the next call to `next`.
+    /// Anything else that turns up is kept for the next call to `poll`.
     pub fn take_turns(in: *Input) i32 {
         var delta: i32 = 0;
         while (in.stashed == null) {
@@ -493,31 +423,29 @@ pub const Input = struct {
                 else => in.stashed = action,
             }
         }
-        // Stopped by something other than a page turn, kept for the next call to `next`
+        // Stopped by something other than a page turn, kept for the next call to `poll`
         assert(in.stashed != null);
         return delta;
     }
 
-    /// The next action: a touch, the power button, the Kindle locking or waking, a USB
-    /// computer, a tick of the timer, or a request to stop. Waits until there is one.
-    pub fn next(in: *Input) Action {
+    /// The next action, if one comes: a touch, the power button, the Kindle locking or
+    /// waking, a USB computer, a tick of the timer, or a request to stop. Waits once,
+    /// until something happens or the next tick is due, and returns null when that was
+    /// nothing to act on: one turn of noface's event loop (screens/screen.zig).
+    pub fn poll(in: *Input) ?Action {
         in.invariants();
-        // Unbounded: the reader's event loop, which waits for as long as they read, on
-        // the Kindle and in the simulator alike
-        while (true) {
-            if (in.ready()) |action| return action;
-            if (in.remote >= 0) {
-                // The simulator has no Kindle to keep awake, and no watchers
-                in.wait_for_remote();
-                continue;
-            }
-            in.keep_alive();
-            in.wait_for_events();
-            if (in.from_power_key()) |action| return action;
-            if (in.restart_watcher_if_dead()) |action| return action;
-            if (in.from_usb_watcher()) |action| return action;
-            if (in.from_power_watcher()) |action| return action;
+        if (in.ready()) |action| return action;
+        if (in.remote >= 0) {
+            // The simulator has no Kindle to keep awake, and no watchers
+            in.wait_for_remote();
+            return null;
         }
+        in.keep_alive();
+        in.wait_for_events();
+        if (in.from_power_key()) |action| return action;
+        if (in.restart_watcher_if_dead()) |action| return action;
+        if (in.from_usb_watcher()) |action| return action;
+        return in.from_power_watcher();
     }
 
     /// An action already known, without waiting: a request to stop, one kept back for

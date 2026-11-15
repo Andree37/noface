@@ -76,7 +76,6 @@ pub const Writer = struct {
         assert(w.used <= w.buffer.len);
         if (w.used > 0 and !file.write_all(w.fd, w.buffer[0..w.used])) w.broken = true;
         w.used = 0;
-        assert(w.used == 0);
     }
 
     /// Writes what's left and closes the file: its size, or an error if any write

@@ -111,10 +111,10 @@ comptime {
     assert(order.next() == .recent);
 }
 
+// Assertions: a comparison, true or false for any two books; `sort_by` checks the order.
 fn before(order: Order, a: Entry, b: Entry) bool {
     // A series stays together, downloaded or not
     if (order == .series) return by_series(a, b);
-    assert(order != .series);
     // Books on this Kindle always come first: cloud ones can't be opened yet.
     if (a.is_local() != b.is_local()) return a.is_local();
     return switch (order) {
@@ -129,13 +129,12 @@ fn before(order: Order, a: Entry, b: Entry) bool {
 
 /// Series first, the one read most lately at the top, each in its order; then the
 /// books outside any series, most recent first.
+// Assertions: a comparison, true or false for any two books; `sort_by` checks the order.
 fn by_series(a: Entry, b: Entry) bool {
     const in_a = a.series.len > 0;
     const in_b = b.series.len > 0;
     if (in_a != in_b) return in_a;
     if (!in_a) return a.last > b.last;
-    assert(in_a);
-    assert(in_b);
     if (!same_series(a.series, b.series)) {
         if (a.series_last != b.series_last) return a.series_last > b.series_last;
         return std.ascii.lessThanIgnoreCase(without_the(a.series), without_the(b.series));
@@ -224,6 +223,7 @@ pub fn title_key(e: Entry) []const u8 {
 /// the series in its order, then by title. One key decides everything, so the order
 /// holds together however the books are sorted (a comparator that disagrees with
 /// itself can crash the sort).
+// Assertions: a comparison, true or false for any two books; `sort_by` checks the order.
 fn by_title(a: Entry, b: Entry) bool {
     const ka = title_key(a);
     const kb = title_key(b);
@@ -231,7 +231,6 @@ fn by_title(a: Entry, b: Entry) bool {
     const in_a = a.series.len > 0;
     const in_b = b.series.len > 0;
     if (in_a != in_b) return in_b;
-    assert(in_a == in_b);
     if (in_a and series_place(a) != series_place(b)) return series_place(a) < series_place(b);
     return std.ascii.lessThanIgnoreCase(a.title, b.title);
 }
@@ -386,11 +385,11 @@ pub fn surname(author: []const u8) []const u8 {
 }
 
 /// By surname, then the rest of the name, then title. Books with no author go last.
+// Assertions: a comparison, true or false for any two books; `sort_by` checks the order.
 fn by_author(a: Entry, b: Entry) bool {
     const sa = surname(a.author);
     const sb = surname(b.author);
     if ((sa.len == 0) != (sb.len == 0)) return sb.len == 0;
-    assert((sa.len == 0) == (sb.len == 0));
     if (!std.ascii.eqlIgnoreCase(sa, sb)) return std.ascii.lessThanIgnoreCase(sa, sb);
     if (!std.ascii.eqlIgnoreCase(a.author, b.author)) {
         return std.ascii.lessThanIgnoreCase(a.author, b.author);
@@ -410,7 +409,6 @@ const Listed = struct {
 
     pub fn set_series_last(_: Listed, e: *Entry, last: u64) void {
         e.series_last = last;
-        assert(e.series_last == last);
     }
 };
 

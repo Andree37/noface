@@ -108,7 +108,6 @@ pub fn run() void {
 fn copy_place(catalog_bytes: u64) [*:0]const u8 {
     if (catalog_bytes == 0) return copy_on_drive;
     if (catalog_bytes > copy_to_ram_bytes_max) return copy_on_drive;
-    assert(catalog_bytes <= copy_to_ram_bytes_max);
     return copy_in_ram;
 }
 

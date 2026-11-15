@@ -115,7 +115,6 @@ pub const Header = extern struct {
 
     pub fn seal(h: *Header) void {
         h.checksum = checksum_of(h);
-        assert(h.checksum == checksum_of(h));
         assert(h.count <= books_max);
     }
 

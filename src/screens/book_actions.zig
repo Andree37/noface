@@ -48,7 +48,6 @@ pub fn forget_finished(a: *app.App, e: *const catalog.Entry) !void {
 pub fn mark_read(a: *app.App, e: *catalog.Entry, done: bool) void {
     store.mark_read(e.key, e.kind, done);
     e.finished = done;
-    assert(e.finished == done);
     if (done) assert(e.is_read());
     if (e.is_epub()) {
         var path_buffer: [320]u8 = undefined;

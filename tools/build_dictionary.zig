@@ -494,7 +494,6 @@ fn write_dictionary(io: std.Io, b: *const Builder, path: []const u8) !u64 {
 /// Appends `value` as a little-endian u32: the file's offsets and count are u32s.
 fn append_u32(gpa: std.mem.Allocator, out: *std.ArrayList(u8), value: u64) !void {
     if (value > std.math.maxInt(u32)) return error.DictionaryTooLarge;
-    assert(value <= std.math.maxInt(u32));
     var bytes: [4]u8 = undefined;
     std.mem.writeInt(u32, &bytes, @intCast(value), .little);
     try out.appendSlice(gpa, &bytes);

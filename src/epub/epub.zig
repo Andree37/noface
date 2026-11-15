@@ -503,7 +503,6 @@ const Builder = struct {
         if (b.link_start != null) b.link_target = try b.alloc.dupe(u8, b.link_target);
         // Set again by the next chapter before it's read
         b.skipping = null;
-        assert(b.skipping == null);
     }
 
     fn open_tag(b: *Builder, tag: *const xml.Tag) !void {

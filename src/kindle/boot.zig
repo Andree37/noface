@@ -44,7 +44,6 @@ pub fn decide(settings: *const settings_model.Settings, attempts_text: []const u
     if (!settings.autostart) return .off;
     const attempts = parse_attempts(attempts_text);
     if (attempts >= attempts_max) return .give_up;
-    assert(attempts < attempts_max);
     return .{ .start = attempts + 1 };
 }
 
@@ -64,7 +63,6 @@ pub fn first_this_boot() bool {
     const mark = paths.autostart_ran;
     comptime assert(std.mem.startsWith(u8, mark, "/tmp/"));
     if (file.exists(mark)) return false;
-    assert(!file.exists(mark));
     const rc = calls.open(mark, .{ .ACCMODE = .WRONLY, .CREAT = true, .CLOEXEC = true }, 0o644);
     if (!failed(rc)) _ = calls.close(@intCast(rc)); // Made: it says all it needs to
     return true;

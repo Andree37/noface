@@ -1134,7 +1134,6 @@ fn decode_dc(d: *Decoder, n: u8) Error!i32 {
     const difference = if (t > 0) extend_receive(d, @intCast(t)) else 0;
     const dc = std.math.add(i32, component.dc_prediction, difference) catch return error.BadJpeg;
     component.dc_prediction = dc;
-    assert(component.dc_prediction == dc);
     return dc;
 }
 

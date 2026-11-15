@@ -257,7 +257,6 @@ pub const Session = struct {
     pub fn pause_clock(s: *Session) void {
         s.tick();
         s.shown_us = 0;
-        assert(s.shown_us == 0); // Paused: `tick` adds nothing until the clock resumes
     }
 
     /// Starts the clock again when the page is back in front of the reader.

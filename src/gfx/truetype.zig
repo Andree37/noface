@@ -89,7 +89,6 @@ fn is_font(data: []const u8) bool {
 fn first_font_offset(data: []const u8) ?u32 {
     assert(data.len <= std.math.maxInt(u32));
     if (is_font(data)) return 0;
-    assert(!is_font(data));
     if (!tag_at(data, 0, "ttcf")) return null;
     const version = ulong(data, 4);
     if (version != 0x00010000 and version != 0x00020000) return null;
@@ -303,7 +302,6 @@ pub fn kern_advance(info: *const Info, first: u32, second: u32) i32 {
     assert(info.data.len > 0);
     if (info.gpos != 0) return gpos_advance(info, first, second);
     if (info.kern != 0) return kern_table_advance(info, first, second);
-    assert(info.kern == 0);
     return 0;
 }
 
@@ -807,7 +805,6 @@ const Walk = struct {
     fn add(walk: *Walk, out: []Vertex, kind: Vertex.Kind, xy: [4]i32) void {
         // Room was made for every vertex a glyph can make; a damaged one loses the rest
         if (walk.made >= out.len) return;
-        assert(walk.made < out.len);
         out[walk.made] = .{
             .kind = kind,
             .x = @truncate(xy[0]),

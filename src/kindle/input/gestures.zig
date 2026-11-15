@@ -137,8 +137,7 @@ pub fn on_packet_end(in: *Input) ?Action {
         assert(slot < slots_count); // One of the panel's, as `begin_drag` took it
         in.pending = null;
         const point = screen_point(in, slot);
-        in.drag_y = point.y;
-        return .{ .drag = point.x };
+        return .{ .drag = .{ .x = point.x, .y = point.y } };
     }
     if (in.top_slot) |slot| {
         assert(slot < slots_count); // One of the panel's, as `touched_down` took it
@@ -265,8 +264,9 @@ test "a followed finger drags, then ends on lift" {
     var in = test_input();
     _ = press(&in, 0, 300, 900, true);
     in.begin_drag();
-    try std.testing.expectEqual(@as(i32, 420), press(&in, 0, 420, 910, false).?.drag);
-    try std.testing.expectEqual(@as(i32, 910), in.drag_y);
+    const at = press(&in, 0, 420, 910, false).?.drag;
+    try std.testing.expectEqual(@as(i32, 420), at.x);
+    try std.testing.expectEqual(@as(i32, 910), at.y);
     try std.testing.expect(lift(&in, 0).? == .drag_end);
 }
 

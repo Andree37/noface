@@ -538,6 +538,13 @@ pub fn Drag(comptime Follow: type) type {
         follow: Follow,
         marker: ?u32,
 
+        /// The finger of the touch that opened it is the one followed from now on.
+        pub fn on_open(d: *D) !screen.Step(void) {
+            d.a.input.begin_drag();
+            if (d.marker) |m| assert(m < d.a.screen.next_marker);
+            return .stay;
+        }
+
         /// Where it began is drawn as it begins.
         pub fn draw(d: *D, part: screen.Part) !void {
             assert(part == .all);
@@ -553,10 +560,10 @@ pub fn Drag(comptime Follow: type) type {
 
         pub fn on_action(d: *D, action: input_mod.Action) !screen.Step(void) {
             switch (action) {
-                .drag => |x0| {
+                .drag => |first| {
                     if (d.marker) |m| try d.a.screen.wait_complete(m);
-                    const x = d.a.input.latest_drag() orelse x0;
-                    d.marker = try d.follow.moved(x, d.a.input.drag_y);
+                    const at = d.a.input.latest_drag() orelse first;
+                    d.marker = try d.follow.moved(at.x, at.y);
                     if (d.marker) |m| assert(m < d.a.screen.next_marker);
                     return .stay;
                 },

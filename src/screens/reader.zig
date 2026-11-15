@@ -608,6 +608,10 @@ pub const Reader = struct {
         switch (action) {
             .lock => return r.on_lock(),
             .tick => try r.on_tick_any(),
+            .charger => {
+                r.a.quick = lipc.read(r.a.quick);
+                try r.show_status();
+            },
             .power, .computer, .stop => return r.finish(.quit),
             .unlock, .drag, .drag_end => {},
             .tap, .hold, .swipe, .pull => {
@@ -776,12 +780,6 @@ pub const Reader = struct {
 
     fn on_tick_any(r: *Reader) !void {
         const a = r.a;
-        if (a.input.charger_changed) { // A charger came or went: the bolt follows
-            a.input.charger_changed = false;
-            a.quick = lipc.read(a.quick);
-            try r.show_status();
-        }
-        assert(!a.input.charger_changed);
         if (r.s.layout_pending()) { // A first open laid out a little more
             if (try r.s.layout_step()) try r.show_page_count();
             return;

@@ -124,7 +124,6 @@ const SliderFollow = struct {
 /// open over the panel.
 fn drag_row(a: *app.App, sd: *SliderDrag, row: menu.Row, first_x: i32) !screen.Frame {
     assert(row.y == menu.warmth_row.y or row.y == menu.brightness_row.y);
-    a.input.begin_drag();
     sd.row = row;
     sd.knob = menu.knob_at(row, row_value(a, row));
     sd.path = .{ sd.knob, sd.knob };

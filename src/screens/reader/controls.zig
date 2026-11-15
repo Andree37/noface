@@ -122,7 +122,6 @@ fn show_scrub(a: *app.App) !u32 {
 /// over the book.
 pub fn drag_scrub(p: *Pending, a: *app.App, s: *sess.Session, first_x: i32) !screen.Frame {
     assert(s.pages.len > 0);
-    a.input.begin_drag();
     p.kind = .scrub;
     p.page_count = s.page_count();
     p.target = toolbar.page_at(first_x, p.page_count);
@@ -183,7 +182,6 @@ fn drag_setting(p: *Pending, a: *app.App, row: aa.Row, first_x: i32) !screen.Fra
     p.value = aa.step_at(row, first_x);
     assert(p.value < row.steps);
     p.started = row_value(a, row);
-    a.input.begin_drag();
     try aa.draw_row(a.ui, a.page(a.screen.pixels), row, p.value, true);
     const first = try a.screen.show_region(0, row.top, a.screen.width, aa.row_height, .quick);
     p.setting = .{ .a = a, .follow = .{ .a = a, .row = row, .value = &p.value }, .marker = first };

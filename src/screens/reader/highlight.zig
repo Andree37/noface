@@ -308,7 +308,6 @@ pub fn extend_highlight(
     const whole = highlights.extent(s.highlights.items, id) orelse return null;
     assert(range.lo <= range.hi);
     assert(range.hi < words.len);
-    a.input.begin_drag();
     sel.id = id;
     sel.whole = whole;
     sel.grab_start = grab_start;

@@ -52,10 +52,11 @@ pub const Action = union(enum) {
     tap: Tap,
     hold: struct { x: i32, y: i32 },
     pull,
-    drag: i32, // Finger x while a drag is being followed
+    drag: Point, // Where a finger being followed is
     swipe: i32, // A sideways stroke that lifted: 1 is on (leftwards), -1 back
     drag_end,
     tick,
+    charger, // A charger came or went: the status bar's bolt follows
     lock,
     unlock,
     power,
@@ -163,6 +164,9 @@ pub const Script = struct {
 };
 
 /// An area of the screen, in screen pixels.
+/// A place on the screen, in its pixels.
+pub const Point = struct { x: i32, y: i32 };
+
 pub const Zone = struct { x: i32, y: i32, w: i32, h: i32 };
 
 /// Turns raw touch events into taps.
@@ -200,7 +204,6 @@ pub const Input = struct {
     tick_us: u64 = 0, // When set, `poll` returns .tick this often
     last_tick: u64 = 0,
     drag_slot: ?u32 = null,
-    drag_y: i32 = 0,
     last_input: u64 = 0,
     stashed: ?Action = null,
     locked: bool = false, // Nothing to check on a timer, so sleep until an event
@@ -211,7 +214,6 @@ pub const Input = struct {
     remote: i32 = -1,
     /// Set when powerd said a charger came or went: whoever shows the status bar reads it
     /// again and clears this.
-    charger_changed: bool = false,
     /// A control inside the grip zones (the reader's Back button): touches there count.
     grip_exempt: ?Zone = null,
 
@@ -390,12 +392,12 @@ pub const Input = struct {
 
     /// Skips to the newest finger position already waiting, if any.
     /// Anything else that turns up is kept for the next call to `poll`.
-    pub fn latest_drag(in: *Input) ?i32 {
-        var latest: ?i32 = null;
+    pub fn latest_drag(in: *Input) ?Point {
+        var latest: ?Point = null;
         while (in.stashed == null) {
             const action = in.waiting() orelse return latest;
             switch (action) {
-                .drag => |x| latest = x,
+                .drag => |point| latest = point,
                 else => in.stashed = action,
             }
         }

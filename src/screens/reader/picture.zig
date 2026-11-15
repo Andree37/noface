@@ -326,20 +326,20 @@ pub const Viewer = struct {
         switch (viewer.phase) {
             .idle, .waiting => return .stay,
             .following => switch (action) {
-                .drag => |x0| {
+                .drag => |first| {
                     const a = viewer.a;
                     if (viewer.marker) |m| try a.screen.wait_complete(m);
-                    const x = a.input.latest_drag() orelse x0;
-                    viewer.marker = try viewer.follow.moved(x, a.input.drag_y);
+                    const at = a.input.latest_drag() orelse first;
+                    viewer.marker = try viewer.follow.moved(at.x, at.y);
                     return .stay;
                 },
                 .drag_end => return viewer.lifted(),
                 else => return .stay,
             },
             .second => switch (action) {
-                .drag => |drag_x| {
+                .drag => |at| {
                     const t = viewer.first;
-                    const moved = touch_zones.moved_off(t.x, t.y, drag_x, viewer.a.input.drag_y);
+                    const moved = touch_zones.moved_off(t.x, t.y, at.x, at.y);
                     if (moved) viewer.still = false;
                     return .stay;
                 },

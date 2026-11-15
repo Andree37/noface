@@ -262,6 +262,10 @@ const Browser = struct {
             .swipe => |direction| b.turn(direction),
             .pull => b.open_panel(),
             .lock => b.on_lock(),
+            .charger => blk: {
+                try b.refresh_status(.strip);
+                break :blk .nothing;
+            },
             .power, .computer, .stop => .leave,
             .drag, .drag_end, .unlock => .nothing,
         };
@@ -653,12 +657,10 @@ const Browser = struct {
         assert(b.over == .none); // In front, ticking
         const now = now_us();
         // The status: the whole screen while it's settling after a book; else just the
-        // strip, once a minute or at once when a charger comes or goes
-        const charger = b.a.input.charger_changed;
-        b.a.input.charger_changed = false;
+        // strip, once a minute (a charger coming or going is an action of its own)
         if (now < b.status_until) {
             try b.refresh_status(.screen);
-        } else if (charger or now >= b.watch_until) {
+        } else if (now >= b.watch_until) {
             try b.refresh_status(.strip);
         }
         // A download being watched: the library again, in case it's finished. When the

@@ -168,10 +168,7 @@ pub fn from_power_watcher(in: *Input) ?Action {
     if (touch_zones.last_power_event(line)) |event| {
         return if (event == .lock) .lock else unlocked(in);
     }
-    if (touch_zones.charger_changed(line)) {
-        in.charger_changed = true;
-        return .tick; // For the status bar to catch up
-    }
+    if (touch_zones.charger_changed(line)) return .charger;
     return null;
 }
 

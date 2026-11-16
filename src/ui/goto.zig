@@ -117,10 +117,12 @@ pub const Pages = struct {
             .none => .none,
             .close => .close,
             .tab => |t| .{ .tab = t },
-            .row => |i| .{ .row = i },
+            .row => |i| row: {
+                assert(i < count);
+                break :row .{ .row = i };
+            },
         };
-        if (result == .row) assert(result.row < count);
-        if (result == .turned) assert(p.page < page_count(count));
+        assert(p.page < page_count(count)); // Turned or not, still a page of the list
         return result;
     }
 

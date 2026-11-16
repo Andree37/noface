@@ -68,7 +68,7 @@ fn first_position(s: *const sess.Session, page_index: u32) ?struct { para: u32, 
             if (para > end.para) return null;
             if (para == end.para and byte >= end.byte) return null;
         }
-        if (s.paragraphs[para].position == 0) continue;
+        if (s.paragraphs[para].position == null) continue; // Not numbered: no place to mark
         assert(para >= from.para);
         assert(byte <= s.paragraphs[para].text.len);
         return .{ .para = @intCast(para), .byte = @intCast(byte) };

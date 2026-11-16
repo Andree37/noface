@@ -104,18 +104,19 @@ pub fn locate(
     paragraphs: []const book_model.Paragraph,
     short: u32,
 ) ?struct { para: u32, byte: u32 } {
-    var found: ?u32 = null;
+    var found: ?struct { para: u32, position: u32 } = null;
     for (paragraphs, 0..) |p, i| {
-        if (p.position == 0) continue;
-        if (p.position <= short) found = @intCast(i) else break;
+        const position = p.position orelse continue; // Not numbered
+        if (position > short) break;
+        found = .{ .para = @intCast(i), .position = position };
     }
-    const index = found orelse return null;
-    assert(index < paragraphs.len);
-    const p = paragraphs[index];
-    assert(p.position <= short);
-    const byte = book_model.byte_offset(p.text, short - p.position);
-    assert(byte <= p.text.len);
-    return .{ .para = index, .byte = byte };
+    const f = found orelse return null;
+    assert(f.para < paragraphs.len);
+    assert(f.position <= short);
+    const text = paragraphs[f.para].text;
+    const byte = book_model.byte_offset(text, short - f.position);
+    assert(byte <= text.len);
+    return .{ .para = f.para, .byte = byte };
 }
 
 /// A highlight or bookmark as it's stored: its id and Amazon's character positions,

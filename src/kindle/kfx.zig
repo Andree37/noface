@@ -288,7 +288,7 @@ const Parser = struct {
         }
         assert(starts.get(0) == null); // Element 0 is no element
         for (p.paragraphs.items) |*para| {
-            para.position = starts.get(para.element) orelse 0;
+            para.position = starts.get(para.element); // None for one Amazon doesn't number
         }
     }
 

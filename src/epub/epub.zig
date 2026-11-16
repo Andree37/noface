@@ -796,8 +796,8 @@ fn parse_positions(paragraphs: []book.Paragraph) void {
         paragraph.position = position;
         position += book.char_offset(paragraph.text, @intCast(paragraph.text.len)) + 1;
     }
-    assert(paragraphs[0].position == 1);
-    assert(paragraphs[paragraphs.len - 1].position < position);
+    assert(paragraphs[0].position.? == 1);
+    assert(paragraphs[paragraphs.len - 1].position.? < position);
 }
 
 const sample = @embedFile("testdata/sample.epub");
@@ -836,8 +836,8 @@ test "a small EPUB reads into paragraphs, styles, links and contents" {
     try std.testing.expect(b.paragraphs[b.chapters[1].para].section == 2);
     const last = b.paragraphs[b.paragraphs.len - 1];
     try std.testing.expectEqualStrings("Caf\u{e9} \u{2014} done", last.text);
-    try std.testing.expectEqual(@as(u32, 1), b.paragraphs[0].position);
-    try std.testing.expect(b.paragraphs[1].position > b.paragraphs[0].position);
+    try std.testing.expectEqual(@as(u32, 1), b.paragraphs[0].position.?);
+    try std.testing.expect(b.paragraphs[1].position.? > b.paragraphs[0].position.?);
 }
 
 test "a heading's text after a picture and a line break stays a heading" {

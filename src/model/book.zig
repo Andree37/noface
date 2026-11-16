@@ -72,7 +72,7 @@ pub const Paragraph = struct {
     links: []const Link = &.{},
     section: u32 = 0,
     element: u32 = 0, // Position IDs Amazon uses for this text
-    position: u32 = 0,
+    position: ?u32 = null, // Amazon's number for its first character; null if it has none
     note: bool = false, // Part of a note, so hidden from the flow
     note_start: bool = false, // First paragraph of a note: what references point at
 };

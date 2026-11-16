@@ -17,12 +17,12 @@ pub fn point_for(s: *sess.Session, para: u32, byte: u32) ?annotations.Point {
 
 fn point_in(p: *const book_model.Paragraph, byte: u32) ?annotations.Point {
     assert(byte <= p.text.len);
-    if (p.position == 0) return null;
+    const position = p.position orelse return null; // Not numbered
     const chars = book_model.char_offset(p.text, byte);
     assert(chars <= byte); // A character takes at least a byte
     // A KFX's positions are sums of its own numbers, which stop at the largest
-    const short = std.math.add(u32, p.position, chars) catch return null;
-    assert(short >= p.position);
+    const short = std.math.add(u32, position, chars) catch return null;
+    assert(short >= position);
     return .{ .element = p.element, .offset = chars, .short = short };
 }
 
@@ -35,6 +35,6 @@ test "a place past the largest position can't be saved, and never overflows" {
     p.position = max - 5;
     try std.testing.expectEqual(@as(u32, max), point_in(&p, 5).?.short);
     try std.testing.expectEqual(@as(?annotations.Point, null), point_in(&p, 6));
-    p.position = 0; // Not numbered at all
+    p.position = null; // Not numbered at all
     try std.testing.expectEqual(@as(?annotations.Point, null), point_in(&p, 0));
 }

@@ -141,12 +141,18 @@ pub const Getting = struct {
         const a = g.a;
         assert(g.phase == .starting);
         assert(g.background.len == a.screen.pixels.len);
-        // The reader's own airplane mode is theirs to turn off; noface's own pause it undoes
-        const paused = wifi_saver.marked();
-        if (lipc.airplane_on() == true and !paused) {
-            return g.tell("Airplane mode is on", "Turn it off in the light panel, then try again.");
+        // The reader's own airplane mode is theirs to turn off; noface's pause it undoes.
+        // Unknown: tried, and the connection's wait says if Wi-Fi came
+        const airplane = wifi_saver.airplane();
+        const paused = airplane == .noface;
+        switch (airplane) {
+            .reader => return g.tell(
+                "Airplane mode is on",
+                "Turn it off in the light panel, then try again.",
+            ),
+            .noface => wifi_saver.restore(),
+            .off, .unknown => {},
         }
-        if (paused) wifi_saver.restore();
         // Kept on until it's done, then back to whatever else was keeping it on
         g.put_back = .{ .wifi_paused = paused, .downloads_until = a.downloads_until };
         a.downloads_until = os.now_us() + awake_us_max;

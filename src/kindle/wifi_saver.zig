@@ -56,6 +56,17 @@ fn marker_is_note() bool {
     return std.mem.endsWith(u8, path, "/" ++ paths.data.wifi_paused);
 }
 
+/// Whose airplane mode is on, if it is: noface's own pause (its note is there), which
+/// noface undoes, or the reader's, which is theirs. Unknown when the Kindle didn't say.
+pub const Airplane = enum { off, noface, reader, unknown };
+
+pub fn airplane() Airplane {
+    assert(marker_is_note());
+    const on = lipc.airplane_on() orelse return .unknown;
+    if (!on) return .off;
+    return if (marked()) .noface else .reader;
+}
+
 pub const Outcome = enum {
     paused, // Off now
     later, // Not now (a download, Bluetooth, or lipc not answering): try again
@@ -70,7 +81,12 @@ pub fn pause(downloading: bool) Outcome {
     if (downloading) return .later;
     // On already: noface's own doing if its note is there (a switch that answered late),
     // else the reader's
-    if (lipc.airplane_on() orelse return .later) return if (marked()) .paused else .never;
+    switch (airplane()) {
+        .off => {},
+        .noface => return .paused,
+        .reader => return .never,
+        .unknown => return .later,
+    }
     if (lipc.bluetooth_on() orelse return .later) return .later;
     file.write_small(marker, "1\n");
     if (!marked()) return .never;
@@ -102,11 +118,13 @@ pub fn restore() void {
     assert(marker_is_note());
     if (!marked()) return;
     lipc.set_airplane(false);
-    if (lipc.airplane_on() == false) {
-        forget();
-        std.debug.print("wifi: back on\n", .{});
-    } else {
-        std.debug.print("wifi: couldn't turn it back on yet\n", .{});
+    // Seen off: the note goes. Still on, or no answer: it stays, to try again
+    switch (airplane()) {
+        .off => {
+            forget();
+            std.debug.print("wifi: back on\n", .{});
+        },
+        .noface, .reader, .unknown => std.debug.print("wifi: couldn't turn it back on yet\n", .{}),
     }
 }
 

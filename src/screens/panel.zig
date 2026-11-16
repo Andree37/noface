@@ -220,7 +220,7 @@ fn panel_control_shortcut(a: *app.App, choice: menu.Hit) !void {
         },
     }
     try a.screen.wait_complete(marker);
-    if (choice == .sync and a.quick.airplane and lipc.airplane_on() == false) {
+    if (choice == .sync and a.quick.airplane and wifi_saver.airplane() == .off) {
         // The airplane tile said on: show it off now
         a.quick.airplane = false;
         const plane = menu.shortcut_box(.airplane).?;

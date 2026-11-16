@@ -27,6 +27,9 @@ pub const Entry = struct {
     /// When any book of its series was last read, for sorting by series: at most
     /// `series_last_max`.
     series_last: u64 = 0,
+    /// The name its author sorts under (`surname`), for sorting by author: found once
+    /// a book, as a sort compares each book a few dozen times.
+    surname: []const u8 = "",
 
     pub fn is_read(e: Entry) bool {
         return e.finished or e.percent >= finished_percent;
@@ -399,8 +402,8 @@ fn by_author(a: Entry, b: Entry) bool {
     // An author's series in order, among their other books. First, as a sort compares
     // books of one author most: their surnames needn't be found
     if (std.ascii.eqlIgnoreCase(a.author, b.author)) return by_title(a, b);
-    const sa = surname(a.author);
-    const sb = surname(b.author);
+    const sa = a.surname;
+    const sb = b.surname;
     if ((sa.len == 0) != (sb.len == 0)) return sb.len == 0;
     if (!std.ascii.eqlIgnoreCase(sa, sb)) return std.ascii.lessThanIgnoreCase(sa, sb);
     return std.ascii.lessThanIgnoreCase(a.author, b.author);
@@ -419,6 +422,10 @@ const Listed = struct {
     pub fn set_series_last(_: Listed, e: *Entry, last: u64) void {
         e.series_last = last;
     }
+
+    pub fn set_surname(_: Listed, e: *Entry) void {
+        e.surname = surname(e.author);
+    }
 };
 
 /// The latest `series_last`, in seconds since 1970: 2106, which a u32 holds, so the
@@ -428,10 +435,14 @@ pub const series_last_max: u64 = std.math.maxInt(u32);
 
 /// Sorts `items`, each standing for a book, as `order` has the books: entries, or ids
 /// of books kept elsewhere. `books.entry(item)` is an item's book, its `series_last` as
-/// `books.set_series_last(&item, last)` last set it, never past `series_last_max`.
+/// `books.set_series_last(&item, last)` last set it, never past `series_last_max`, and
+/// its `surname` as `books.set_surname(&item)` set it.
 pub fn sort_by(comptime T: type, items: []T, order: Order, books: anytype) void {
     assert(items.len <= std.math.maxInt(u32)); // A book's place in them is a u32
     if (order == .series) series_last_set(T, items, books);
+    if (order == .author) {
+        for (items) |*item| books.set_surname(item);
+    }
     const Books = @TypeOf(books);
     const by = struct {
         books: Books,

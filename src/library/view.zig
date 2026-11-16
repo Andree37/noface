@@ -46,22 +46,39 @@ pub fn sort(ix: *const index.Index, items: []Item, order: catalog.Order) []Item 
     const sorted = items[0..ix.header.count];
     for (sorted, 0..) |*item, id| item.* = .{ .id = @intCast(id), .key = 0 };
     if (order.reads_texts()) {
-        catalog.sort_by(Item, sorted, order, Books{ .ix = ix });
+        catalog.sort_by(Item, sorted, order, Books{ .ix = ix, .order = order });
     } else {
         catalog.sort_by(Item, sorted, order, Numbers{ .ix = ix });
     }
     return sorted;
 }
 
-/// The books of an index, for `catalog.sort_by`: an item's key is when its series was
-/// last read, which a u32 holds (`catalog.series_last_max`).
+/// The books of an index, for `catalog.sort_by`. By series, an item's key is when its
+/// series was last read, which a u32 holds (`catalog.series_last_max`); by author,
+/// where its author's surname is in their name: its start, then its length, 16 bits
+/// each.
 const Books = struct {
     ix: *const index.Index,
+    order: catalog.Order,
 
     pub fn entry(b: Books, item: Item) catalog.Entry {
         var e = b.ix.entry(item.id);
-        e.series_last = item.key;
+        switch (b.order) {
+            .series => e.series_last = item.key,
+            .author => e.surname = e.author[item.key >> 16 ..][0 .. item.key & 0xffff],
+            else => {},
+        }
         return e;
+    }
+
+    pub fn set_surname(b: Books, item: *Item) void {
+        assert(b.order == .author);
+        const author = b.ix.entry(item.id).author;
+        const surname = catalog.surname(author);
+        const start = @intFromPtr(surname.ptr) - @intFromPtr(author.ptr);
+        comptime assert(index.text_bytes_max <= std.math.maxInt(u16));
+        assert(start + surname.len <= author.len); // A part of the name
+        item.key = @intCast(start << 16 | surname.len);
     }
 
     pub fn set_series_last(_: Books, item: *Item, last: u64) void {
@@ -81,6 +98,10 @@ const Numbers = struct {
 
     pub fn set_series_last(_: Numbers, _: *Item, _: u64) void {
         unreachable; // Only an order by series sets it, which reads texts
+    }
+
+    pub fn set_surname(_: Numbers, _: *Item) void {
+        unreachable; // Only an order by author sets it, which reads texts
     }
 };
 

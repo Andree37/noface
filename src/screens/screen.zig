@@ -133,7 +133,7 @@ pub const Frame = struct {
         takes: Takes,
         /// Its own touches, or null to keep those of the screen it opens over.
         touches: ?input_mod.Input.Modes,
-        tick_us: u64,
+        tick_us: ?u64, // Null: no ticks
         resumes: bool, // It has `on_resume`, so it may open others
         opens: bool, // It has `on_open`, called once it's drawn as it opens
         call: *const fn (screen: *anyopaque, ending: *anyopaque, c: Call) anyerror!Turn,
@@ -182,7 +182,7 @@ fn Kinds(comptime S: type) type {
             .name = short_name(@typeName(S)),
             .takes = if (@hasDecl(S, "takes")) S.takes else .{},
             .touches = if (@hasDecl(S, "touches")) S.touches else null,
-            .tick_us = if (@hasDecl(S, "tick_us")) S.tick_us else 0,
+            .tick_us = if (@hasDecl(S, "tick_us")) S.tick_us else null,
             .resumes = @hasDecl(S, "on_resume"),
             .opens = @hasDecl(S, "on_open"),
             .call = call,

@@ -38,12 +38,12 @@ pub fn Drag(comptime Follow: type) type {
         /// A tap while a finger is followed: nothing to do.
         pub fn on_tap(d: *D, _: screen.Tap) !screen.Step(void) {
             if (d.marker) |m| assert(m < d.a.screen.next_marker);
-            assert(d.a.input.tick_us == 0); // It never ticks
+            assert(d.a.input.tick_us == null); // It never ticks
             return .stay;
         }
 
         pub fn on_action(d: *D, action: input_mod.Action) !screen.Step(void) {
-            assert(d.a.input.tick_us == 0); // It never ticks
+            assert(d.a.input.tick_us == null); // It never ticks
             switch (action) {
                 .drag => |first| {
                     if (d.marker) |m| try d.a.screen.wait_complete(m);

@@ -146,7 +146,7 @@ pub const Script = struct {
     fn next_tick(script: *Script, in: *Input) ?Action {
         assert(script.waiting_us > 0);
         const now = now_us();
-        const tick_at = if (in.tick_us != 0) in.last_tick + in.tick_us else std.math.maxInt(u64);
+        const tick_at = if (in.tick_us) |every| in.last_tick + every else std.math.maxInt(u64);
         if (tick_at <= now + script.waiting_us) {
             const step = tick_at -| now;
             assert(step <= script.waiting_us);
@@ -199,7 +199,7 @@ pub const Input = struct {
     last_touched: u32 = 0,
     grips: bool = true, // Off while controls sit where a thumb usually rests
     edge_zones: bool = true, // Off while handles can sit at the screen edges
-    tick_us: u64 = 0, // When set, `poll` returns .tick this often
+    tick_us: ?u64 = null, // How often `poll` returns .tick, or null for never
     last_tick: u64 = 0,
     drag_slot: ?u32 = null,
     last_input: u64 = 0,
@@ -236,11 +236,11 @@ pub const Input = struct {
     };
 
     /// Everything about taking input that a screen sets for itself while it's open:
-    /// how touches are taken, how often it ticks (0: never), a control exempt from the
+    /// how touches are taken, how often it ticks (null: never), a control exempt from the
     /// grip zones, and whether the Kindle is asleep under it (the lock screen).
     pub const Scope = struct {
         modes: Modes,
-        tick_us: u64,
+        tick_us: ?u64,
         grip_exempt: ?Zone = null,
         locked: bool = false,
     };
@@ -253,8 +253,8 @@ pub const Input = struct {
         in.grip_exempt = scope.grip_exempt;
         in.locked = scope.locked;
         if (opened) in.last_tick = now_us();
-        assert(in.tick_us == scope.tick_us);
         assert(in.locked == scope.locked);
+        if (in.tick_us) |every| assert(every > 0); // A tick, when there is one, takes time
     }
 
     /// What holds of the input's state between any two calls: the events read are
@@ -295,8 +295,8 @@ pub const Input = struct {
     /// How long to wait for input with a tick due: no longer than until the tick, so a
     /// short one (a double tap's window) isn't stretched, and no longer than a second.
     fn wait_ms_for_tick(in: *const Input, now: u64) i32 {
-        if (in.tick_us == 0) return wait_ms_max;
-        const until_tick_ms = (in.last_tick + in.tick_us -| now) / 1000;
+        const every = in.tick_us orelse return wait_ms_max;
+        const until_tick_ms = (in.last_tick + every -| now) / 1000;
         const wait_ms_tick: i32 = @intCast(@max(1, @min(wait_ms_max, until_tick_ms)));
         assert(wait_ms_tick >= 1);
         assert(wait_ms_tick <= wait_ms_max);
@@ -420,10 +420,10 @@ pub const Input = struct {
     /// A tick, if one is due. It waits for powerd and USB news already in: with short
     /// ticks (a book laid out in idle moments) they'd otherwise go unread for seconds.
     fn tick_due(in: *Input) ?Action {
-        if (in.tick_us == 0) return null;
+        const every = in.tick_us orelse return null;
         const now = now_us();
         assert(in.last_tick <= now);
-        if (now - in.last_tick < in.tick_us) return null;
+        if (now - in.last_tick < every) return null;
         if (in.news_waiting()) return null;
         in.last_tick = now_us();
         return .tick;
@@ -448,7 +448,7 @@ pub const Input = struct {
 
     fn wait_ms(in: *const Input) i32 {
         if (in.top_slot != null) return hold_poll_ms; // A press that may become a hold
-        if (in.locked and in.tick_us == 0) {
+        if (in.locked and in.tick_us == null) {
             return if (in.power_watcher == null) watchers.watcher_retry_ms else -1;
         }
         const wait = in.wait_ms_for_tick(now_us());

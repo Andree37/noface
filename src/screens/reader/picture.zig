@@ -295,7 +295,7 @@ pub const Viewer = struct {
     /// Ticks only for the double tap's moment, which ends with the tick.
     pub fn setting(viewer: *const Viewer) input_mod.Input.Scope {
         assert(viewer.v.step < steps.len);
-        const tick_us: u64 = if (viewer.phase == .waiting) double_tap_us else 0;
+        const tick_us: ?u64 = if (viewer.phase == .waiting) double_tap_us else null;
         return .{ .modes = touches, .tick_us = tick_us };
     }
 

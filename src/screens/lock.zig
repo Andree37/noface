@@ -89,7 +89,7 @@ pub const Lock = struct {
     /// draw over it again. Asleep: the input sleeps too, between events.
     pub fn setting(l: *const Lock) input_mod.Input.Scope {
         assert(l.redraws <= lock_redraws);
-        const tick_us: u64 = if (l.redraws < lock_redraws) lock_redraw_us else 0;
+        const tick_us: ?u64 = if (l.redraws < lock_redraws) lock_redraw_us else null;
         return .{ .modes = l.modes, .tick_us = tick_us, .locked = true };
     }
 

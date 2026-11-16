@@ -21,21 +21,58 @@ const os = @import("../sys/os.zig");
 
 const failed = os.failed;
 
-const log_path = paths.data_dir ++ "/" ++ paths.data.log;
-const log_old_path = paths.data_dir ++ "/" ++ paths.data.log_old;
-const attempts_path = paths.data_dir ++ "/" ++ paths.data.boot_attempts;
 const fonts = paths.kindle_fonts;
 
-/// The command line noface reads with: the library, four fonts and the data folder (src/main.zig).
-const reader_argv = [_:null]?[*:0]const u8{
-    paths.reader,
-    paths.data_dir ++ "/" ++ paths.data.library,
-    fonts ++ "/Bookerly-Regular.ttf",
-    fonts ++ "/Bookerly-Bold.ttf",
-    fonts ++ "/Amazon-Ember-Regular.ttf",
-    fonts ++ "/Amazon-Ember-Bold.ttf",
-    paths.data_dir,
+/// Where a run of noface keeps what it writes (its data, its log, the boot count) and
+/// finds its books: the Kindle's own, or a test's (`noface-launch e2e <folder>`), so a
+/// test run never touches the reader's places, settings or books.
+pub const Folders = struct {
+    data: []const u8,
+    library: []const u8, // The book list noface reads
+    documents: ?[]const u8 = null, // The EPUBs, when not the Kindle's own folder
 };
+
+pub const kindle_folders: Folders = .{
+    .data = paths.data_dir,
+    .library = paths.data_dir ++ "/" ++ paths.data.library,
+};
+
+/// The paths of a run, from its folders, made once as it starts.
+const Paths = struct {
+    buffers: [6][320]u8 = undefined,
+    log: [:0]const u8 = "",
+    log_old: [:0]const u8 = "",
+    attempts: [:0]const u8 = "",
+    library: [:0]const u8 = "",
+    data: [:0]const u8 = "",
+    documents_env: [:0]const u8 = "", // NOFACE_DOCUMENTS=<folder>, for a test's books
+
+    fn make(p: *Paths, folders: Folders) !void {
+        assert(folders.data.len > 0);
+        const b = &p.buffers;
+        p.log = try std.fmt.bufPrintSentinel(&b[0], "{s}/" ++ paths.data.log, .{folders.data}, 0);
+        p.log_old =
+            try std.fmt.bufPrintSentinel(&b[1], "{s}/" ++ paths.data.log_old, .{folders.data}, 0);
+        p.attempts = try std.fmt.bufPrintSentinel(
+            &b[2],
+            "{s}/" ++ paths.data.boot_attempts,
+            .{folders.data},
+            0,
+        );
+        p.library = try std.fmt.bufPrintSentinel(&b[3], "{s}", .{folders.library}, 0);
+        p.data = try std.fmt.bufPrintSentinel(&b[4], "{s}", .{folders.data}, 0);
+        if (folders.documents) |d| {
+            p.documents_env = try std.fmt.bufPrintSentinel(&b[5], "NOFACE_DOCUMENTS={s}", .{d}, 0);
+        }
+        assert(std.mem.startsWith(u8, p.log, folders.data));
+    }
+};
+
+/// This run's paths: one run a process.
+var run_paths: Paths = .{};
+
+/// The most variables kept from the launcher's environment for noface's.
+const environment_max = 256;
 
 /// Past this, the log starts over, keeping one old copy.
 const log_bytes_max = 512 << 10;
@@ -67,7 +104,6 @@ const timing_kindle: Timing = .{
 };
 
 comptime {
-    assert(reader_argv.len == 7); // As src/main.zig's reader_arguments_count
     // A beat comes every 30 s: a couple can be late before noface is called stuck
     assert(heartbeat_stale_s * 1000 >= watch_every_ms * 4);
     assert(good_start_ms > watch_every_ms);
@@ -76,35 +112,70 @@ comptime {
     assert(power_poll_ms < power_check_ms);
 }
 
-/// Runs noface until it ends, with `envp` as its environment, and puts the stock
-/// screens back. Returns noface's exit code, as a shell's `$?` gives it.
-pub fn run(envp: [*:null]const ?[*:0]const u8) u32 {
+/// Runs noface until it ends, with `envp` as its environment and `folders` for its
+/// books and data, and puts the stock screens back. Returns noface's exit code, as a
+/// shell's `$?` gives it.
+pub fn run(envp: [*:null]const ?[*:0]const u8, folders: Folders) u32 {
     assert(!stock_ui.paused);
+    run_paths.make(folders) catch return exit_not_started;
+    const p = &run_paths;
+    // The command line noface reads with: the library, four fonts and the data folder
+    // (src/main.zig)
+    const reader_argv = [_:null]?[*:0]const u8{
+        paths.reader,
+        p.library,
+        fonts ++ "/Bookerly-Regular.ttf",
+        fonts ++ "/Bookerly-Bold.ttf",
+        fonts ++ "/Amazon-Ember-Regular.ttf",
+        fonts ++ "/Amazon-Ember-Bold.ttf",
+        p.data,
+    };
+    comptime assert(reader_argv.len == 7); // As src/main.zig's reader_arguments_count
+    var environment: [environment_max + 2:null]?[*:0]const u8 = undefined;
+    const reader_envp = with_documents(envp, p.documents_env, &environment);
     // Signals first: from here, a request to stop reaches noface instead of ending
     // this before it can put the stock screens back
     const listening = service.listen_for_signals();
     stock_ui.pause();
     rotate_log();
-    const code = if (service.spawn_to_file(&reader_argv, envp, log_path, .append, true)) |pid|
+    const code = if (service.spawn_to_file(&reader_argv, reader_envp, p.log, .append, true)) |pid|
         watch(pid, listening, timing_kindle, &power_argv)
     else
         exit_not_started;
     var line: [32]u8 = undefined;
     const said = std.fmt.bufPrint(&line, "exit code {d}\n", .{code}) catch "exit\n";
-    file.append_file(log_path, said);
+    file.append_file(p.log, said);
     // Leaving on purpose is a good start too, even within the first minute
-    if (code == 0) _ = calls.unlink(attempts_path); // Gone already: nothing to reset
+    if (code == 0) _ = calls.unlink(p.attempts); // Gone already: nothing to reset
     stock_ui.restore();
     assert(!stock_ui.paused);
     return code;
 }
 
+/// `envp` with `documents_env` added when it's set, into `out`: noface's environment.
+fn with_documents(
+    envp: [*:null]const ?[*:0]const u8,
+    documents_env: [:0]const u8,
+    out: *[environment_max + 2:null]?[*:0]const u8,
+) [*:null]const ?[*:0]const u8 {
+    if (documents_env.len == 0) return envp;
+    var count: u32 = 0;
+    while (envp[count]) |variable| : (count += 1) {
+        if (count == environment_max) break; // More than any Kindle's: the rest left out
+        out[count] = variable;
+    }
+    out[count] = documents_env.ptr;
+    out[count + 1] = null;
+    assert(count <= environment_max);
+    return out;
+}
+
 /// Keeps the log small: once it passes 512 KB it starts over, keeping one old copy.
 fn rotate_log() void {
-    const size = file.size_of(log_path);
+    const size = file.size_of(run_paths.log);
     if (size <= log_bytes_max) return;
-    if (failed(calls.rename(log_path, log_old_path))) {
-        std.debug.print("log: couldn't set aside {s}\n", .{log_path});
+    if (failed(calls.rename(run_paths.log, run_paths.log_old))) {
+        std.debug.print("log: couldn't set aside {s}\n", .{run_paths.log});
     }
     assert(size > log_bytes_max);
 }
@@ -144,7 +215,7 @@ fn watch(
             if (answer == .awake) look(pid);
         }
         if (now_us >= next_look_us) {
-            if (!good_start_noted) _ = calls.unlink(attempts_path); // Gone: nothing to reset
+            if (!good_start_noted) _ = calls.unlink(run_paths.attempts); // Gone: nothing to reset
             // With the last question still out, this look waits for its answer instead
             if (good_start_noted and check == null) {
                 const deadline_us = now_us + @as(u64, timing.power_check_ms) * 1000;
@@ -215,7 +286,7 @@ fn look(pid: i32) void {
     const beat = file.read_small(paths.heartbeat, &beat_buffer);
     assert(beat.len <= beat_buffer.len);
     if (!stuck(os.unix_time(), beat)) return;
-    file.append_file(log_path, "watchdog: no heartbeat for 2 minutes, stopping noface\n");
+    file.append_file(run_paths.log, "watchdog: no heartbeat for 2 minutes, stopping noface\n");
     _ = linux.kill(pid, linux.SIG.KILL); // Ended already: then the next turn reaps it
 }
 
@@ -243,6 +314,8 @@ test "the watchdog's question to powerd never holds up noface's exit" {
     _ = linux.close(noface.out); // Its output isn't wanted here
     const hung_lipc = [_:null]?[*:0]const u8{ "/bin/sleep", "10" };
     const timing: Timing = .{ .good_start_ms = 10, .watch_every_ms = 100, .power_check_ms = 50 };
+    // A good start resets the boot count: here, one in a folder of the test's own
+    try run_paths.make(.{ .data = "/tmp/noface-supervisor-test", .library = "/tmp/none" });
     const started = os.now_us();
     const code = watch(noface.pid, false, timing, &hung_lipc);
     try std.testing.expectEqual(@as(u32, 0), code);

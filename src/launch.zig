@@ -8,6 +8,9 @@
 //!   noface-launch now       The same without the wait: over SSH, or after an update.
 //!   noface-launch autostart From the system's startup file, at boot (src/kindle/boot.zig).
 //!   noface-launch export    Writes the book list (src/kindle/catalog_export.zig).
+//!   noface-launch e2e <dir> noface on the test books in <dir>/documents, keeping what
+//!                           it writes in <dir>/data, for the end-to-end tests
+//!                           (tools/e2e.zig): the reader's own are never touched.
 //!
 //! KPM's launch.sh passes no argument, which means "kpm".
 //! What it prints goes to noface-data/launch.log; noface's own output to noface.log.
@@ -24,7 +27,7 @@ const os = @import("sys/os.zig");
 
 const launch_log = paths.data_dir ++ "/" ++ paths.data.launch_log;
 
-const Mode = enum { kpm, now, autostart, export_list };
+const Mode = enum { kpm, now, autostart, export_list, e2e };
 
 /// From the search bar, KPM repaints the stock screen about 2 s after launching:
 /// noface starts after that, so it isn't drawn over.
@@ -60,6 +63,7 @@ pub fn main(init: std.process.Init.Minimal) void {
     switch (mode) {
         .export_list => catalog_export.run(),
         .autostart => autostart(envp),
+        .e2e => e2e(envp, if (argv.len >= 3) std.mem.sliceTo(argv[2], 0) else ""),
         .kpm, .now => {
             // KPM (or the shell) gets its prompt back straight away
             const side = service.detach(launch_log) catch |err| {
@@ -68,15 +72,38 @@ pub fn main(init: std.process.Init.Minimal) void {
             };
             if (side == .parent) return;
             if (mode == .kpm) os.sleep_ms(kpm_wait_ms);
-            start(envp);
+            start(envp, supervisor.kindle_folders);
         },
     }
 }
 
+/// Runs noface on a test's folder, from SSH: returns at once, as `now` does. Its books are
+/// the EPUBs in <dir>/documents (no Kindle books: its book list is empty), and all it
+/// writes goes in <dir>/data, its log too.
+fn e2e(envp: [*:null]const ?[*:0]const u8, dir: []const u8) void {
+    if (dir.len == 0 or dir[0] != '/') {
+        std.debug.print("e2e: give the test folder by its full path\n", .{});
+        std.process.exit(2);
+    }
+    var buffers: [3][320]u8 = undefined;
+    const folders: supervisor.Folders = .{
+        .data = std.fmt.bufPrint(&buffers[0], "{s}/data", .{dir}) catch std.process.exit(2),
+        .library = std.fmt.bufPrint(&buffers[1], "{s}/library.tsv", .{dir}) catch
+            std.process.exit(2),
+        .documents = std.fmt.bufPrint(&buffers[2], "{s}/documents", .{dir}) catch
+            std.process.exit(2),
+    };
+    assert(std.mem.startsWith(u8, folders.data, dir));
+    const side = service.detach(launch_log) catch std.process.exit(1);
+    if (side == .parent) return;
+    start(envp, folders);
+}
+
 /// Which mode an argument asks for; anything not named is KPM's.
 pub fn mode_of(argument: []const u8) Mode {
-    assert(@typeInfo(Mode).@"enum".field_names.len == 4);
+    assert(@typeInfo(Mode).@"enum".field_names.len == 5);
     if (std.mem.eql(u8, argument, "now")) return .now;
+    if (std.mem.eql(u8, argument, "e2e")) return .e2e;
     if (std.mem.eql(u8, argument, "export")) return .export_list;
     if (std.mem.eql(u8, argument, "autostart")) return .autostart;
     return .kpm;
@@ -109,17 +136,17 @@ fn autostart(envp: [*:null]const ?[*:0]const u8) void {
     };
     if (side == .parent) return;
     os.sleep_ms(boot_wait_ms);
-    start(envp);
+    start(envp, supervisor.kindle_folders);
 }
 
 /// Opens noface: ends Amazon's jobman (which competes for the screen), writes the book
 /// list, then runs noface until it ends. Ends the process.
-fn start(envp: [*:null]const ?[*:0]const u8) noreturn {
+fn start(envp: [*:null]const ?[*:0]const u8, folders: supervisor.Folders) noreturn {
     assert(!stock_ui.paused);
     print_launch_time(os.unix_time());
     _ = service.signal_named("jobman", .TERM);
     catalog_export.run();
-    const code = supervisor.run(envp);
+    const code = supervisor.run(envp, folders);
     assert(!stock_ui.paused);
     std.process.exit(@intCast(@min(code, 255)));
 }
@@ -154,4 +181,5 @@ test "each way in is told apart" {
     try std.testing.expectEqual(Mode.now, mode_of("now"));
     try std.testing.expectEqual(Mode.export_list, mode_of("export"));
     try std.testing.expectEqual(Mode.autostart, mode_of("autostart"));
+    try std.testing.expectEqual(Mode.e2e, mode_of("e2e"));
 }

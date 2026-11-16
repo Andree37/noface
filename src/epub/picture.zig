@@ -59,8 +59,7 @@ pub fn image(entry: *const zip.Entry) ?book.Image {
         .data = entry.data,
         .width = found.width,
         .height = found.height,
-        .deflated = true,
-        .inflated_size = entry.size,
+        .inflate_to = entry.size,
     };
 }
 
@@ -157,15 +156,15 @@ test "a deflated picture's size comes from inflating its header alone" {
     defer std.testing.allocator.free(deflated);
     const entry = zip.Entry{ .name = "a.jpg", .method = 8, .data = deflated, .size = 70_000 };
     const found = image(&entry).?;
-    try std.testing.expect(found.deflated);
-    try std.testing.expectEqual(@as(u32, 70_000), found.inflated_size);
+    try std.testing.expect(found.inflate_to != null);
+    try std.testing.expectEqual(@as(u32, 70_000), found.inflate_to.?);
     try std.testing.expect(found.data.ptr == deflated.ptr); // Kept deflated, not copied
     try std.testing.expectEqual(@as(u32, 80), found.width);
     try std.testing.expectEqual(@as(u32, 50), found.height);
     const stored = zip.Entry{ .name = "a.jpg", .method = 0, .data = &test_jpeg, .size = 18 };
     const kept = image(&stored).?;
     try std.testing.expect(kept.data.ptr == &test_jpeg); // The archive's own bytes
-    try std.testing.expect(!kept.deflated);
+    try std.testing.expect(kept.inflate_to == null);
     const broken = zip.Entry{ .name = "a.jpg", .method = 8, .data = "\xff\xff", .size = 9 };
     try std.testing.expect(image(&broken) == null);
 }

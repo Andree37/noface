@@ -136,11 +136,10 @@ pub fn prepare(
 }
 
 /// A picture's bytes as its book keeps them: the JPEG or PNG itself, or that deflated
-/// (as an EPUB may keep it), to be inflated to `inflated_size` bytes when it's drawn.
+/// (as an EPUB may keep it), to be inflated to `inflate_to` bytes when it's drawn.
 pub const Encoded = struct {
     bytes: []const u8,
-    deflated: bool = false,
-    inflated_size: u32 = 0,
+    inflate_to: ?u32 = null, // Null: kept as it is
 };
 
 /// Decodes a picture as its book keeps it, scaled to `w` x `h` as its rows come and
@@ -195,7 +194,9 @@ fn decoded_into(sink: *scaler.Sink, source: Encoded, parent: std.mem.Allocator) 
     var work = workspace.Workspace.init(parent, workspace.bytes_max);
     defer work.reset();
     var encoded = source.bytes;
-    if (source.deflated) encoded = inflated(work.allocator(), source) orelse return null;
+    if (source.inflate_to) |size| {
+        encoded = inflated(work.allocator(), source.bytes, size) orelse return null;
+    }
     const is_png = png_decoder.is_png(encoded);
     if (!is_png and !jpeg_decoder.is_jpeg(encoded)) return null;
     const target = sink.target;
@@ -232,13 +233,12 @@ fn log_shrunk(sink: *const scaler.Sink, shrink: u8) void {
     });
 }
 
-/// A deflated picture's bytes, inflated into `alloc`, or null for data that doesn't
-/// inflate to the size the book gave.
-fn inflated(alloc: std.mem.Allocator, source: Encoded) ?[]u8 {
-    assert(source.deflated);
-    assert(source.bytes.len <= std.math.maxInt(u32));
-    const out = alloc.alloc(u8, source.inflated_size) catch return null;
-    var input: std.Io.Reader = .fixed(source.bytes);
+/// A deflated picture's `bytes`, inflated into `alloc`, or null for data that doesn't
+/// inflate to `size`, the size the book gave.
+fn inflated(alloc: std.mem.Allocator, bytes: []const u8, size: u32) ?[]u8 {
+    assert(bytes.len <= std.math.maxInt(u32));
+    const out = alloc.alloc(u8, size) catch return null;
+    var input: std.Io.Reader = .fixed(bytes);
     // The output holds the history the inflater looks back into: no window needed
     var inflater: std.compress.flate.Decompress = .init(&input, .raw, &.{});
     var writer: std.Io.Writer = .fixed(out);
@@ -648,7 +648,7 @@ test "a deflated picture draws as the same picture kept as it is" {
     defer decoder_memory.stop_using(&decoders);
     const plain = prepare_from(alloc, .{ .bytes = data }, 20, 14).?;
     defer alloc.free(plain);
-    const source = Encoded{ .bytes = deflated, .deflated = true, .inflated_size = length };
+    const source = Encoded{ .bytes = deflated, .inflate_to = length };
     const from = prepare_from(alloc, source, 20, 14).?;
     defer alloc.free(from);
     try std.testing.expectEqualSlices(u8, plain, from);
@@ -661,7 +661,7 @@ test "a deflated picture draws as the same picture kept as it is" {
     try std.testing.expectEqual(@as(u32, 21), half.width);
     try std.testing.expectEqual(@as(u32, 15), half.height);
     try std.testing.expect(decode_gray_from(alloc, source, 2) == null);
-    const short = Encoded{ .bytes = deflated, .deflated = true, .inflated_size = length + 1 };
+    const short = Encoded{ .bytes = deflated, .inflate_to = length + 1 };
     try std.testing.expect(prepare_from(alloc, short, 20, 14) == null);
 }
 

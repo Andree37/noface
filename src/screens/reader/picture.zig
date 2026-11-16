@@ -64,8 +64,7 @@ fn decode(alloc: std.mem.Allocator, img: book_model.Image) ?image.Gray {
         break :blk .{ .pixels = x.pixels, .width = x.width, .height = x.height };
     } else image.decode_gray_from(alloc, .{
         .bytes = img.data,
-        .deflated = img.deflated,
-        .inflated_size = img.inflated_size,
+        .inflate_to = img.inflate_to,
     }, pixels_max) orelse return null;
     if (!decodable(g.width, g.height)) return null;
     return g;

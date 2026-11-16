@@ -271,14 +271,12 @@ pub const App = struct {
         assert(a.layout.images.?.ctx == ctx);
         const ready = a.pictures.get(image.data.ptr, w, h) orelse blk: {
             var made: ?[]u8 = null;
-            if (!image.deflated and jpegxr.is_jpeg_xr(image.data)) {
+            if (image.inflate_to == null and jpegxr.is_jpeg_xr(image.data)) {
                 made = prepared_jpeg_xr(a.alloc, image.data, w, h);
             } else {
-                made = cover.prepare_from(a.alloc, .{
-                    .bytes = image.data,
-                    .deflated = image.deflated,
-                    .inflated_size = image.inflated_size,
-                }, w, h);
+                const encoded: cover.Encoded =
+                    .{ .bytes = image.data, .inflate_to = image.inflate_to };
+                made = cover.prepare_from(a.alloc, encoded, w, h);
             }
             const pixels = made orelse {
                 // Not kept, so a picture that fails for want of memory is tried again

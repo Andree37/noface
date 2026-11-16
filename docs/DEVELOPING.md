@@ -18,7 +18,6 @@ Needs [Zig](https://ziglang.org) 0.17.
   file and line, short of an exception marked in the code with its reason
   ([TIGER_STYLE.md](TIGER_STYLE.md#how-its-kept)).
 - `zig build scenarios`: scripted runs of the real app (see Tests).
-- `zig build sim`: the real app in a browser on this computer (see below).
 - `zig build tools`: development tools, also for the Kindle.
 - `zig build host-tools`: the tools that run on this computer, in `zig-out/bin`: the
   dictionary builder, the snapshot converter and the packer.
@@ -114,14 +113,13 @@ Code is split by who owns it. `zig build check` fails if a file imports across t
 - `src/base/`: building blocks every folder may use: memory budgets, checks.
 - `src/screens/`: the flow of each screen. Of the folders, the only one that calls
   into `kindle/`.
-- `src/testing/`: the pretend Kindle the scenario tests and the simulator run against.
+- `src/testing/`: the pretend Kindle the scenario tests run against.
   No other folder may import it.
 - Files at the top of `src/` may import anything: `app.zig` (what screens share),
-  `setup.zig` (putting an App together, the same way for the Kindle, the simulator and
-  the tests), `main.zig` (startup), `sim.zig` (the simulator), `scenarios.zig` (the
+  `setup.zig` (putting an App together, the same way for the Kindle and the
+  tests), `main.zig` (startup), `scenarios.zig` (the
   scenario tests, also run on the Kindle as `noface selftest`), `core.zig` (the parts
-  the tools share) and `tests.zig` (every unit test). The simulator and the scenarios
-  stay at the top because a Zig program's main file can only import files below it.
+  the tools share) and `tests.zig` (every unit test). The scenarios stay at the top because a Zig program's main file can only import files below it.
 - Every place on the Kindle noface reads or writes is named in `src/kindle/paths.zig`,
   for the app and its launcher alike; a test checks that KPM's `launch.sh` and the
   startup file name the launcher it does.
@@ -192,23 +190,6 @@ book is Project Gutenberg's edition of *Pride and Prejudice*, with Hugh Thomson'
 illustrations.
 
 
-## The simulator
-
-noface runs on a computer too, without a Kindle:
-
-```sh
-zig build sim                     # with a small test book
-zig build sim -Dbooks=$HOME/Books # with the EPUBs in a folder (a full path)
-```
-
-Then open http://localhost:8080. It's the real app (library, reader, Aa, the
-dictionary, everything) on a screen in memory, against the pretend Kindle the tests
-use, so it starts no programs and changes nothing outside `./noface-sim-data`, where
-it keeps positions and settings. Click to tap, press and hold to hold, drag sideways
-to turn a page, drag down from the top for the light panel; the arrow keys turn
-pages. It sets text in the Go fonts, as the Kindle's own aren't on a computer, and
-reads only EPUBs. `NOFACE_SIM_PORT` picks another port.
-
 ## Tests
 
 - `zig build test`: unit tests, on this computer (GitHub runs them on Linux).
@@ -243,5 +224,5 @@ it. The build or a test fails if a second place is needed and missed.
 | A tone, corner or the status strip's height | `ui/style.zig` | every screen using it |
 | An item in the reader's ⋮ menu | `screens/reader/more.zig` | |
 | A sheet, card or list | a struct opened with `screen.open` (see above) | its waiting, touches and redraws |
-| An App-wide font size or page margin | `setup.zig` | the Kindle, the simulator and the tests alike |
+| An App-wide font size or page margin | `setup.zig` | the Kindle and the tests alike |
 

@@ -20,10 +20,6 @@ pub const FakeKindle = struct {
     sets: std.ArrayList([]const u8) = .empty,
     /// Every other program noface asked to run, by name.
     ran: std.ArrayList([]const u8) = .empty,
-    /// What `date` prints, "12:00 - 01 Jan 2026", when set: the simulator's real clock.
-    /// Otherwise a fixed time, so tests see the same screen every run. Returns how many
-    /// bytes of `out` it wrote.
-    clock: ?*const fn (out: []u8) u32 = null,
     /// A property that stops answering once it's been set once, as cmd can while it
     /// takes the radio down: reads time out, though the set went through.
     busy_after_set: ?[]const u8 = null,
@@ -118,14 +114,8 @@ pub const FakeKindle = struct {
         if (std.mem.eql(u8, program, "lipc-set-prop") and args.len >= 3) {
             return k.answer_set(args) orelse return null;
         }
-        if (std.mem.eql(u8, program, "date")) {
-            if (k.clock) |read| {
-                const written = read(out);
-                assert(written <= out.len);
-                return written;
-            }
-            return answer_copy(date_fixed, out);
-        }
+        // A fixed time, so tests see the same screen every run
+        if (std.mem.eql(u8, program, "date")) return answer_copy(date_fixed, out);
         k.ran.append(k.alloc, k.alloc.dupe(u8, program) catch return null) catch return null;
         return 0;
     }

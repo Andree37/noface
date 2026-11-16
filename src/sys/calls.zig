@@ -1,6 +1,6 @@
 //! The system calls noface makes, under Linux's names. On Linux (the Kindle, and the
 //! tests on GitHub) they are Linux's own, made directly, exactly as before. Anywhere
-//! else (a Mac running the simulator) the same names go through the C library, and
+//! else (a Mac running the tests) the same names go through the C library, and
 //! report errors the way Linux does: as values in the top 4096 of the range, so
 //! `os.failed` reads both alike. Only what noface uses is here.
 const std = @import("std");

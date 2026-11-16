@@ -15,7 +15,7 @@
 //!   library The library's index on the user drive: its books found, kept, sorted and
 //!           read back in memory of a fixed size. Imports library, sys, model, epub
 //!           and kindle.
-//!   testing What only the tests and the simulator use: the pretend Kindle. Imports
+//!   testing What only the tests use: the pretend Kindle. Imports
 //!           testing, kindle, sys and model. No folder above may import it.
 //!   screens, and files at the top of src/: may import anything.
 //! Every folder may import base.
@@ -45,7 +45,7 @@ comptime {
     for (rules) |rule| {
         // A folder may always use its own files, and lists itself first.
         assert(std.mem.eql(u8, rule.allowed[0], rule.folder));
-        // Only the tests and the simulator may use the pretend Kindle.
+        // Only the tests may use the pretend Kindle.
         if (!std.mem.eql(u8, rule.folder, "testing")) {
             for (rule.allowed) |allowed| assert(!std.mem.eql(u8, allowed, "testing"));
         }

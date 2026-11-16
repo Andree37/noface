@@ -1,7 +1,7 @@
 //! Putting an App together: its fonts at their sizes, its screen buffers, the files
-//! it keeps in the data folder, and the page layout's margins. The Kindle (main.zig),
-//! the simulator (sim.zig) and the scenario tests (scenarios.zig) all start here, so
-//! a size or margin changed here changes in all three.
+//! it keeps in the data folder, and the page layout's margins. The Kindle (main.zig)
+//! and the scenario tests (scenarios.zig) both start here, so a size or margin changed
+//! here changes in both.
 const std = @import("std");
 const assert = std.debug.assert;
 const app = @import("app.zig");
@@ -24,7 +24,7 @@ const png = @import("gfx/png.zig");
 
 /// What each memory region reserves, taken once at startup (`memory.Region`). Pages
 /// come in as they're first touched, so a region costs what's used, not its size.
-/// Sized from the peaks the simulator logged opening eight books of 1 to 70 MB (the
+/// Sized from the peaks logged opening eight books of 1 to 70 MB (the
 /// largest used 78 MB of the book's region), with room to spare.
 pub const region_bytes = struct {
     /// Screen buffers (seven, 2 MB each), fonts and their glyphs, the open book's
@@ -165,7 +165,7 @@ fn reserve_reading() !*Reading {
 }
 
 /// The decoders' region and budget, reserved by the first call and kept for good: the
-/// Kindle, the simulator and the scenario tests all decode in the same region, so a
+/// Kindle and the scenario tests decode in the same region, so a
 /// picture or font with no room shows off the Kindle too.
 var decoders_region: memory.Region = undefined;
 var decoders_budget: memory.Budget = undefined;
@@ -189,7 +189,7 @@ pub fn decoders() !*memory.Budget {
 }
 
 /// The glyph cache and its regions, made by the first call and kept for good, as the
-/// decoders' are: the Kindle, the simulator and the scenario tests draw through the
+/// decoders' are: the Kindle and the scenario tests draw through the
 /// same one.
 var glyphs: glyph_cache.Reserved = undefined;
 var glyphs_reserved = false;

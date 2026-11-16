@@ -24,4 +24,3 @@ jobs:
       - run: zig build check
       - run: zig build test
       - run: zig build scenarios
-      - run: zig build sim-build

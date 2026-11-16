@@ -65,9 +65,6 @@ pub const Action = union(enum) {
 };
 
 comptime {
-    // The simulator writes whole Actions to a pipe: one that size is written at once,
-    // never split, as long as it's within PIPE_BUF (at least 512 bytes on any system)
-    assert(@sizeOf(Action) <= 512);
     assert(wait_ms_max >= 1);
     // A hold is noticed within a small part of the time it takes
     assert(hold_poll_ms * 10 <= touch_zones.hold_ms);
@@ -210,8 +207,6 @@ pub const Input = struct {
     watcher_retry_us: u64 = 0, // When to restart a power-event watcher that died
     told_powerd_us: u64 = 0, // When powerd last heard the reader is active
     script: ?*Script = null, // Set in scenario tests: actions to play instead of the panel
-    /// Set in the simulator: a pipe of whole Actions, written by its web page's taps.
-    remote: i32 = -1,
     /// Set when powerd said a charger came or went: whoever shows the status bar reads it
     /// again and clears this.
     /// A control inside the grip zones (the reader's Back button): touches there count.
@@ -274,8 +269,6 @@ pub const Input = struct {
         if (in.drag_slot) |slot| assert(slot < slots_count);
         assert(in.x_max >= 1);
         assert(in.y_max >= 1);
-        // Actions come from one place: the panel, a test's script or the simulator
-        if (in.script != null) assert(in.remote < 0);
     }
 
     pub fn modes(in: *const Input) Modes {
@@ -297,43 +290,6 @@ pub const Input = struct {
     }
 
     pub const ignores = gestures.ignores;
-
-    /// The next action from the simulator's pipe, or a tick when one is due first; null
-    /// when neither is, without waiting.
-    fn from_remote(in: *Input) ?Action {
-        assert(in.remote >= 0);
-        assert(in.script == null);
-        const now = now_us();
-        assert(in.last_tick <= now);
-        if (in.tick_us != 0 and now - in.last_tick >= in.tick_us) {
-            in.last_tick = now;
-            return .tick;
-        }
-        var fds = [_]linux.pollfd{.{ .fd = in.remote, .events = linux.POLL.IN, .revents = 0 }};
-        const woke = linux.poll(&fds, 1, 0);
-        if (failed(woke) or woke == 0) return null;
-        var action: Action = undefined;
-        const got = linux.read(in.remote, @ptrCast(&action), @sizeOf(Action));
-        if (got == 0) return .stop; // The simulator closed it
-        // Whole Actions only are written, each at once (see the comptime check above)
-        if (got != @sizeOf(Action)) return null;
-        in.last_input = now_us();
-        // The page's click is the finger touching, now
-        switch (action) {
-            .tap => |*tap| tap.us = in.last_input,
-            else => {},
-        }
-        return action;
-    }
-
-    /// Sleeps until the simulator's pipe has something, or the next tick is due.
-    fn wait_for_remote(in: *const Input) void {
-        assert(in.remote >= 0);
-        assert(in.script == null);
-        var fds = [_]linux.pollfd{.{ .fd = in.remote, .events = linux.POLL.IN, .revents = 0 }};
-        // Woken, timed out or interrupted, the loop looks again alike
-        _ = linux.poll(&fds, 1, in.wait_ms_for_tick(now_us()));
-    }
 
     /// How long to wait for input with a tick due: no longer than until the tick, so a
     /// short one (a double tap's window) isn't stretched, and no longer than a second.
@@ -435,11 +391,6 @@ pub const Input = struct {
     pub fn poll(in: *Input) ?Action {
         in.invariants();
         if (in.ready()) |action| return action;
-        if (in.remote >= 0) {
-            // The simulator has no Kindle to keep awake, and no watchers
-            in.wait_for_remote();
-            return null;
-        }
         in.keep_alive();
         in.wait_for_events();
         if (in.from_power_key()) |action| return action;
@@ -449,7 +400,7 @@ pub const Input = struct {
     }
 
     /// An action already known, without waiting: a request to stop, one kept back for
-    /// the next call, the tests' script or the simulator's, touches already read, a
+    /// the next call, the tests' script, touches already read, a
     /// press held long enough to be a hold, or a tick that's due.
     fn ready(in: *Input) ?Action {
         if (stop_requested.load(.acquire)) return .stop;
@@ -458,7 +409,6 @@ pub const Input = struct {
             return action;
         }
         if (in.script) |script| return script.next(in);
-        if (in.remote >= 0) return in.from_remote();
         if (in.waiting()) |action| return action;
         if (in.held_long_enough()) |action| return action;
         return in.tick_due();
@@ -575,10 +525,9 @@ pub fn open(width: u32, height: u32) !Input {
 
 /// Gives the touchscreen back to the stock UI.
 pub fn release(in: *const Input) void {
-    // Only an Input from `open` has devices to give back: not a test's or the simulator's
+    // Only an Input from `open` has devices to give back: not a test's
     assert(in.touch >= 0);
     assert(in.script == null);
-    assert(in.remote < 0);
     // On the way out: if the grab won't let go, closing the device does it anyway
     _ = linux.ioctl(in.touch, eviocgrab, 0);
     for ([_]i32{ in.watcher_pid, in.usb_watcher_pid }) |pid| {

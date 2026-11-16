@@ -1,6 +1,6 @@
 //! Where the font and picture decoders take their memory from: a budget, like
 //! everything else, so glyph bitmaps and decoded pictures show up in its numbers.
-//! There is none until one is given: the Kindle, the simulator and the scenarios give
+//! There is none until one is given: the Kindle and the scenarios give
 //! the decoders' region (`setup.decoders`), and each tool or test its own, so nothing
 //! decodes on memory nobody chose.
 const std = @import("std");

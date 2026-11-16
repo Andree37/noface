@@ -4,8 +4,8 @@
 //! Their signatures are Linux's own (std.os.linux), `usize` results and all, so
 //! calls.zig can pick either set under the same names.
 //!
-//! A file descriptor isn't asserted: -1 stands for a device that isn't there (the
-//! simulator has no touch panel), and a call on it fails harmlessly, as on Linux.
+//! A file descriptor isn't asserted: -1 stands for a device that isn't there (a
+//! computer has no touch panel), and a call on it fails harmlessly, as on Linux.
 const std = @import("std");
 const builtin = @import("builtin");
 const assert = std.debug.assert;

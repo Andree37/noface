@@ -49,7 +49,6 @@ pub fn build(b: *std.Build) void {
     build_host_tools(b);
     build_package(b, app);
     build_scenarios(b, target);
-    build_sim(b);
     build_tests(b);
 }
 
@@ -299,34 +298,6 @@ fn build_scenarios(b: *std.Build, target: std.Build.ResolvedTarget) void {
         const host_scenarios = scenario_exe(b, b.graph.host, "noface-scenarios-host");
         scenarios_step.dependOn(&b.addRunArtifact(host_scenarios).step);
     }
-}
-
-/// The simulator: noface on this computer, shown in a browser.
-fn build_sim(b: *std.Build) void {
-    const sim_step = b.step(
-        "sim",
-        "Run noface on this computer, in a browser (-Dbooks=<folder of EPUBs>)",
-    );
-    const sim_books = b.option(
-        []const u8,
-        "books",
-        "The simulator's books: a folder of EPUBs (the test book if not given)",
-    );
-    const sim = b.addExecutable(.{
-        .name = "noface-sim",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/sim.zig"),
-            .target = b.graph.host,
-            .optimize = .ReleaseSafe,
-            .link_libc = true,
-        }),
-    });
-    b.step("sim-build", "Build the simulator without running it")
-        .dependOn(&b.addInstallArtifact(sim, .{}).step);
-    const run_sim = b.addRunArtifact(sim);
-    if (sim_books) |folder| run_sim.addArg(folder);
-    sim_step.dependOn(&run_sim.step);
-    assert(sim.root_module.link_libc == true); // Its system calls go through the C library
 }
 
 /// `zig build test`: every unit test, listed in src/tests.zig, on this computer.

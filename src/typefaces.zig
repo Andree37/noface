@@ -59,7 +59,7 @@ pub const Typefaces = struct {
     samples: [samples_kept]?SampleSlot = @splat(null),
     /// Counts every use, to tell which was used least lately.
     clock: u64 = 0,
-    /// Every family's four files, for the simulator and the tests, which have none of
+    /// Every family's four files, for the tests, which have none of
     /// the Kindle's: null to map each family's own.
     stand_in: ?[4][]const u8 = null,
 

@@ -147,25 +147,27 @@ fn chapter_target_previous(sections: []const u32, current: u32) u32 {
     return start;
 }
 
+/// Where the reader is in the book: a page of how many.
+pub const Position = struct { index: u32, total: u32 };
+
 /// Band that changes while dragging, redrawn alone in pure black and white when `mono`.
-/// The page slider. A `total` of 0 means the pages are still being laid out: it says
-/// so, and has no knob until there's a place to put it.
-pub fn draw_scrub(fonts: Fonts, page: Page, index: u32, total: u32, mono: bool) !void {
-    if (total > 0) assert(index < total);
+/// The page slider, at `at`, or null while the pages are still being laid out: it
+/// says so, and has no knob until there's a place to put it.
+pub fn draw_scrub(fonts: Fonts, page: Page, at: ?Position, mono: bool) !void {
+    assert(page.height > scrub_top);
     page.fill_rect(0, scrub_top, page.width, screen_height - scrub_top, 0xff);
-    var label: [32]u8 = undefined;
-    var s: []const u8 = "Laying out pages\u{2026}";
-    if (total > 0) {
-        s = std.fmt.bufPrint(&label, "Page {d} of {d}", .{ index + 1, total }) catch "";
-    }
     const centre: f32 = @floatFromInt(page.width / 2);
-    try draw.centered(fonts.small, page, centre, scrub_top + 56, s);
-    if (total == 0) {
+    const p = at orelse {
+        try draw.centered(fonts.small, page, centre, scrub_top + 56, "Laying out pages\u{2026}");
         page.tint(0, scrub_top + 20, page.width, 50, style.faded);
         if (mono) page.threshold(scrub_top, screen_height - scrub_top);
         return;
-    }
-    const knob = slider.knob_at(scrub, index, @max(total, 1) - 1);
+    };
+    assert(p.index < p.total);
+    var label: [32]u8 = undefined;
+    const s = std.fmt.bufPrint(&label, "Page {d} of {d}", .{ p.index + 1, p.total }) catch "";
+    try draw.centered(fonts.small, page, centre, scrub_top + 56, s);
+    const knob = slider.knob_at(scrub, p.index, p.total - 1);
     slider.draw(page, scrub, knob);
     if (mono) page.threshold(scrub_top, screen_height - scrub_top);
 }
@@ -174,14 +176,13 @@ pub fn render(
     fonts: Fonts,
     page: Page,
     title: []const u8,
-    index: u32,
-    total: u32,
+    at: ?Position,
     quick: *const quick_model.Quick,
     sheet: ?aa.Tab,
     chosen: settings_model.Settings,
     bookmarked: bool,
 ) !void {
-    if (total > 0) assert(index < total);
+    assert(page.width > 2 * margin);
     const w: f32 = @floatFromInt(page.width);
     page.fill_rect(0, 0, page.width, top_height, 0xff);
 
@@ -205,7 +206,7 @@ pub fn render(
     page.fill_rect(0, bottom_top, page.width, 4, 0x00);
     icons.skip(page, skip_inset, bottom_top + 46, false);
     icons.skip(page, w - skip_inset, bottom_top + 46, true);
-    try draw_scrub(fonts, page, index, total, false);
+    try draw_scrub(fonts, page, at, false);
 }
 
 /// One tool's icon, at its place in `tools`.

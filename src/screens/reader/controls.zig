@@ -29,8 +29,9 @@ pub const Drawn = struct { sheet_open: bool, whole_page: bool };
 pub fn draw_toolbar(a: *app.App, s: *sess.Session, title: []const u8, drawn: Drawn) !void {
     assert(s.current < s.pages.len);
     @memcpy(a.overlay, try s.ensure(s.current, s.current));
-    const total = if (s.layout_pending()) 0 else s.page_count(); // No page count until it's known
-    assert(total == 0 or total > s.current);
+    // No page count until the pages are known
+    const at: ?toolbar.Position =
+        if (s.layout_pending()) null else .{ .index = s.current, .total = s.page_count() };
     var fonts = a.ui;
     if (drawn.sheet_open and a.aa_kept.tab == .font) {
         fonts.families = a.load_family_samples();
@@ -40,8 +41,7 @@ pub fn draw_toolbar(a: *app.App, s: *sess.Session, title: []const u8, drawn: Dra
         fonts,
         a.page(a.overlay),
         title,
-        s.current,
-        total,
+        at,
         &a.quick,
         if (drawn.sheet_open) a.aa_kept.tab else null,
         a.settings,
@@ -108,7 +108,7 @@ const ScrubFollow = struct {
         if (next == f.target.*) return null;
         f.target.* = next;
         const pixels = f.a.page(f.a.screen.pixels);
-        try toolbar.draw_scrub(f.a.ui, pixels, next, f.page_count, true);
+        try toolbar.draw_scrub(f.a.ui, pixels, .{ .index = next, .total = f.page_count }, true);
         return try show_scrub(f.a);
     }
 };
@@ -128,7 +128,8 @@ pub fn drag_scrub(p: *Pending, a: *app.App, s: *sess.Session, first_x: i32) !scr
     p.page_count = s.page_count();
     p.target = toolbar.page_at(first_x, p.page_count);
     assert(p.target < p.page_count);
-    try toolbar.draw_scrub(a.ui, a.page(a.screen.pixels), p.target, p.page_count, true);
+    const at: toolbar.Position = .{ .index = p.target, .total = p.page_count };
+    try toolbar.draw_scrub(a.ui, a.page(a.screen.pixels), at, true);
     const first = try show_scrub(a);
     const follow = ScrubFollow{ .a = a, .page_count = p.page_count, .target = &p.target };
     p.scrub = .{ .a = a, .follow = follow, .marker = first };

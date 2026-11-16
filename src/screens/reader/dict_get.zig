@@ -103,7 +103,7 @@ pub fn begin(g: *Getting, a: *app.App, background: []const u8, lang: hyphen.Lang
     assert(background.len == a.screen.pixels.len);
     g.* = .{ .a = a, .background = background, .lang = lang, .l = language_of(lang) };
     assert(g.phase == .starting);
-    assert(!g.prepared);
+    assert(g.put_back == null);
 }
 
 pub const Getting = struct {
@@ -113,14 +113,17 @@ pub const Getting = struct {
     lang: hyphen.Lang,
     l: dict_download.Language,
     phase: enum { starting, waiting, telling } = .starting,
-    /// Wi-Fi turned on for it and the Kindle kept awake: both put back as it ends.
-    prepared: bool = false,
-    ours: bool = false, // Wi-Fi was off by noface's own pause, back off after
-    downloads_until: u64 = 0, // What kept Wi-Fi on before
+    /// Once Wi-Fi is turned on for it and the Kindle kept awake, how to put both back
+    /// as it ends.
+    put_back: ?PutBack = null,
     progress: Progress = undefined,
     progress_ending: ?screen.Ending(Waited) = null,
     told: card_screen.Card = undefined,
     told_ending: ?screen.Ending(u32) = null,
+
+    /// What getting a dictionary changed, to undo: Wi-Fi turned back on from noface's
+    /// own pause (off again after), and what kept the Kindle awake before.
+    const PutBack = struct { wifi_paused: bool, downloads_until: u64 };
 
     /// Never shown itself: its cards are.
     pub fn draw(g: *Getting, part: screen.Part) !void {
@@ -139,15 +142,14 @@ pub const Getting = struct {
         assert(g.phase == .starting);
         assert(g.background.len == a.screen.pixels.len);
         // The reader's own airplane mode is theirs to turn off; noface's own pause it undoes
-        g.ours = wifi_saver.marked();
-        if (lipc.airplane_on() == true and !g.ours) {
+        const paused = wifi_saver.marked();
+        if (lipc.airplane_on() == true and !paused) {
             return g.tell("Airplane mode is on", "Turn it off in the light panel, then try again.");
         }
-        if (g.ours) wifi_saver.restore();
+        if (paused) wifi_saver.restore();
         // Kept on until it's done, then back to whatever else was keeping it on
-        g.downloads_until = a.downloads_until;
+        g.put_back = .{ .wifi_paused = paused, .downloads_until = a.downloads_until };
         a.downloads_until = os.now_us() + awake_us_max;
-        g.prepared = true;
         g.phase = .waiting;
         var title_buffer: [64]u8 = undefined;
         const title_format = "Getting the {s} dictionary";
@@ -167,8 +169,7 @@ pub const Getting = struct {
     }
 
     pub fn on_resume(g: *Getting) !screen.Step(bool) {
-        // Waiting needs Wi-Fi on; only the card saying it's off is shown without
-        if (!g.prepared) assert(g.phase == .telling);
+        assert(g.background.len == g.a.screen.pixels.len); // What its cards sit over
         switch (g.phase) {
             .starting => unreachable, // Nothing is open before it starts
             .waiting => {
@@ -190,7 +191,7 @@ pub const Getting = struct {
 
     fn after_waiting(g: *Getting, w: Waited) screen.Step(bool) {
         assert(g.phase == .waiting);
-        assert(g.prepared);
+        assert(g.put_back != null); // Waiting has Wi-Fi on for it
         return switch (w) {
             .finished => {
                 g.a.forget_dictionary(g.lang);
@@ -212,7 +213,7 @@ pub const Getting = struct {
     }
 
     fn cant_start(g: *Getting) screen.Step(bool) {
-        assert(g.prepared);
+        assert(g.put_back != null);
         assert(g.phase == .waiting);
         return g.tell("Couldn't start the download", "Try again in a moment.");
     }
@@ -228,11 +229,11 @@ pub const Getting = struct {
 
     /// Done: Wi-Fi and the Kindle's waking put back as they were.
     fn finish(g: *Getting, ready: bool) screen.Step(bool) {
-        if (ready) assert(g.prepared);
         assert(g.phase != .starting); // Something it opened has ended
-        if (g.prepared) {
-            g.a.downloads_until = g.downloads_until;
-            if (g.ours) _ = wifi_saver.pause(false); // Off again for reading
+        assert(g.background.len == g.a.screen.pixels.len);
+        if (g.put_back) |back| {
+            g.a.downloads_until = back.downloads_until;
+            if (back.wifi_paused) _ = wifi_saver.pause(false); // Off again for reading
         }
         return .{ .done = ready };
     }
@@ -258,8 +259,8 @@ const Progress = struct {
     title_buffer: [64]u8,
     title_size: u32,
     connect_until: u64,
-    download: ?dict_download.Download = null,
-    deadline_us: u64 = 0, // Set as the download starts
+    /// Once started, the download and when it's given up on.
+    running: ?struct { download: dict_download.Download, deadline_us: u64 } = null,
     subtitle_buffer: [64]u8 = undefined,
 
     pub fn draw(p: *Progress, _: screen.Part) !void {
@@ -274,9 +275,10 @@ const Progress = struct {
     }
 
     fn subtitle(p: *Progress) []const u8 {
-        if (p.download != null) assert(p.deadline_us > 0);
-        const d = p.download orelse return "Connecting to Wi-Fi\u{2026}";
+        const r = p.running orelse return "Connecting to Wi-Fi\u{2026}";
+        const d = r.download;
         assert(d.pid > 0);
+        assert(r.deadline_us > 0); // Set as it started
         return std.fmt.bufPrint(
             &p.subtitle_buffer,
             "{d} MB of about {d}",
@@ -296,7 +298,8 @@ const Progress = struct {
     pub fn on_tick(p: *Progress) !screen.Step(Waited) {
         const now = os.now_us();
         assert(p.connect_until > 0);
-        const d = p.download orelse {
+        assert(p.background.len == p.a.overlay.len); // What its card is drawn over
+        const r = p.running orelse {
             if (lipc.wifi_connected() == true) {
                 if (!p.start()) return .{ .done = .cant_start };
             } else if (now >= p.connect_until) {
@@ -304,31 +307,30 @@ const Progress = struct {
             }
             return .{ .redraw = .all };
         };
-        if (d.done()) |ok| return .{ .done = if (ok) .finished else .failed };
-        if (now >= p.deadline_us) {
-            d.cancel();
+        if (r.download.done()) |ok| return .{ .done = if (ok) .finished else .failed };
+        if (now >= r.deadline_us) {
+            r.download.cancel();
             return .{ .done = .too_long };
         }
-        assert(p.deadline_us > 0);
         return .{ .redraw = .all };
     }
 
     /// Starts the download. False when it couldn't.
     fn start(p: *Progress) bool {
-        assert(p.download == null);
+        assert(p.running == null);
         const a = p.a;
-        p.download = dict_download.start(a.state_dir, a.dictionary_base, p.l) orelse return false;
+        const d = dict_download.start(a.state_dir, a.dictionary_base, p.l) orelse return false;
         const download_us = @as(u64, dict_download.download_s_max) * 1_000_000;
-        p.deadline_us = os.now_us() + download_us;
-        assert(p.download.?.pid > 0);
+        p.running = .{ .download = d, .deadline_us = os.now_us() + download_us };
+        assert(d.pid > 0);
         return true;
     }
 
     /// Stops the download, if it started.
     fn cancel(p: *const Progress) void {
-        const d = p.download orelse return;
-        assert(p.deadline_us > 0); // Set as it started
-        assert(d.pid > 0);
-        d.cancel();
+        const r = p.running orelse return;
+        assert(r.download.pid > 0);
+        assert(r.deadline_us > 0); // Set as it started
+        r.download.cancel();
     }
 };

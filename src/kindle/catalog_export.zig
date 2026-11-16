@@ -24,8 +24,11 @@ const sqlite_places = [_][*:0]const u8{
     "/bin/sqlite3",
     "/usr/bin/sqlite3",
 };
-/// Longest the query may take. A catalog of thousands of books takes well under a second.
-const query_timeout_ms = 60_000;
+/// Longest the whole export may take, the copy and the query: past it sqlite3 is
+/// stopped and the copy removed, so whoever runs the export waits a little longer than
+/// this and it always cleans up after itself. A catalog of thousands of books takes
+/// well under a second.
+pub const time_max_ms = 60_000;
 
 /// One line per book: its file, title, author, progress, last opened, read state,
 /// cover, modified, whether it's on the Kindle (0), in the cloud (1) or downloading
@@ -67,6 +70,7 @@ comptime {
 
 /// Writes library.tsv afresh. A catalog that can't be read leaves the old list.
 pub fn run() void {
+    const deadline = os.now_us() + time_max_ms * std.time.us_per_ms;
     const sqlite = find_sqlite() orelse {
         std.debug.print("export: no sqlite3\n", .{});
         return;
@@ -82,13 +86,13 @@ pub fn run() void {
     const finished = finished: {
         const pid = service.spawn_to_file(&argv, &envp, library_tmp, .replace, false) orelse
             break :finished false;
-        const deadline = os.now_us() + query_timeout_ms * std.time.us_per_ms;
         // Its exit code isn't the measure, as it wasn't before: what it wrote is
         break :finished process.wait_until(pid, deadline) != null;
     };
     // Cut short, the list may be part of one: the old one stays
     if (!finished) {
         std.debug.print("export: sqlite3 didn't finish\n", .{});
+        _ = calls.unlink(library_tmp); // Ignored: the next export replaces it
         return;
     }
     if (file.size_of(library_tmp) == 0) return;

@@ -8,6 +8,8 @@ const assert = std.debug.assert;
 const paths = @import("paths.zig");
 const library = @import("../model/catalog.zig");
 const process = @import("../sys/process.zig");
+const os = @import("../sys/os.zig");
+const catalog_export = @import("catalog_export.zig");
 
 const read_state_finished = 2; // Kindle's own "finished" mark
 
@@ -30,8 +32,11 @@ pub fn export_library() void {
     comptime assert(paths.launcher[0] == '/');
     const argv = [_:null]?[*:0]const u8{ paths.launcher, "export" };
     var out: [16]u8 = undefined;
-    // It prints nothing worth reading: library.tsv is what it makes.
-    _ = process.run(&argv, &out);
+    // It prints nothing worth reading: library.tsv is what it makes. Given time past
+    // its own limit, so it's never stopped before removing its copy of the catalog
+    const grace_ms = 5_000;
+    const deadline = os.now_us() + (catalog_export.time_max_ms + grace_ms) * std.time.us_per_ms;
+    _ = process.run_until(&argv, &out, deadline);
 }
 
 /// Filename conversion turned ":" into "_", and some titles carry a series prefix

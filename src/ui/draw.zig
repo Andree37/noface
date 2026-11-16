@@ -143,7 +143,7 @@ pub fn choice(
 pub const Pager = struct {
     top: u32,
     bottom: u32,
-    reach: u32 = 0, // Taps count down to here, when that's past `bottom`
+    reach: ?u32 = null, // Taps count down to here, past `bottom`; else to `bottom`
 
     const button = 200;
     pub const prev_left = 340;
@@ -153,8 +153,9 @@ pub const Pager = struct {
 
     pub fn hit(p: Pager, x: i32, y: i32) ?Hit {
         assert(p.top < p.bottom);
-        if (p.reach != 0) assert(p.reach > p.bottom);
-        if (y < p.top or y >= @max(p.bottom, p.reach)) return null;
+        const taps_bottom = p.reach orelse p.bottom;
+        assert(taps_bottom >= p.bottom); // A reach takes more taps, never fewer
+        if (y < p.top or y >= taps_bottom) return null;
         if (x >= prev_left and x < prev_left + button) return .prev;
         if (x >= next_left and x < next_left + button) return .next;
         return null;
@@ -191,7 +192,7 @@ comptime {
     assert(Pager.prev_left + Pager.button <= Pager.next_left);
     assert(Pager.next_left + Pager.button <= style.screen_width);
     assert(bottom_pager.top < bottom_pager.bottom);
-    assert(bottom_pager.reach >= bottom_pager.bottom);
+    assert(bottom_pager.reach.? > bottom_pager.bottom);
 }
 
 test "the shared pager takes taps to the bottom edge" {

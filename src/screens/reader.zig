@@ -61,9 +61,26 @@ comptime {
 /// couldn't be read (the library says so).
 pub const Outcome = enum { library, quit, failed };
 
-/// What the reader shows: the page alone, or something over it. The toolbar may have
-/// its Aa sheet open below it (`Reader.sheet_open`).
-pub const View = enum { page, toolbar, note, highlight };
+/// What the reader shows: the page alone, or something over it, with what that one
+/// holds: the toolbar whether its Aa sheet is open below it, the highlight view which
+/// highlight is selected.
+pub const View = union(enum) {
+    page,
+    toolbar: struct { sheet_open: bool = false },
+    note,
+    highlight: struct {
+        id: []const u8,
+        delete_top: ?u32 = null, // Where its Delete bubble is, when there is one
+    },
+
+    /// The Aa sheet's tab, while it's open.
+    fn sheet(v: View, kept: aa.Tab) ?aa.Tab {
+        return switch (v) {
+            .toolbar => |t| if (t.sheet_open) kept else null,
+            else => null,
+        };
+    }
+};
 
 /// What a view means for the rest of the reader. While `reading`, the page alone is in
 /// front of the reader: the reading clock runs, the clock in the corner keeps time,
@@ -71,6 +88,7 @@ pub const View = enum { page, toolbar, note, highlight };
 /// a hold, so taps wait for the finger to lift; controls that sit where a thumb rests
 /// turn the thumb filter off; a highlight's handles can reach the screen's edges.
 /// How each view takes touches.
+// Assertions: a table, which the switch keeps complete.
 fn touches_for(view: View) input_mod.Input.Modes {
     const modes: input_mod.Input.Modes = switch (view) {
         // Taps on the lift, so a press can become a hold; a resting thumb is ignored
@@ -82,7 +100,6 @@ fn touches_for(view: View) input_mod.Input.Modes {
     };
     // Only the page waits for a lift, as only there a press may become a hold
     assert(modes.deferred == (view == .page));
-    if (view == .highlight) assert(!modes.edge_zones);
     return modes;
 }
 
@@ -95,7 +112,7 @@ fn needs_all_pages(
     s: *const sess.Session,
 ) bool {
     assert(s.layout_pending());
-    if (sheet != null) assert(view == .toolbar);
+    assert(s.current < s.pages.len);
     return switch (action) {
         .tick, .drag, .drag_end => false,
         .tap => |t| switch (view) {
@@ -264,6 +281,7 @@ fn read_book_pages(
     },
 ) !Opened {
     assert(options.progress.* == null);
+    assert(paragraphs.len > 0); // Parsing refuses a book without any
     var pages_buffer: [320]u8 = undefined;
     const pages_name = try page_store.path_for(&pages_buffer, options.state_path);
     const pages_path = try alloc.dupeSentinel(u8, pages_name, 0);
@@ -370,6 +388,7 @@ fn read_book_notes(
     session: *sess.Session,
 ) !void {
     const paragraphs = session.paragraphs;
+    assert(paragraphs.len > 0); // Parsing refuses a book without any
     const words_before = try alloc.alloc(u64, paragraphs.len + 1);
     words_before[0] = 0;
     for (paragraphs, 0..) |p, i| {
@@ -414,9 +433,6 @@ pub const Reader = struct {
     reading_started: bool = false, // The first page shown, so its place is saved on leaving
     failed: ?anyerror = null, // The first page couldn't be shown
     view: View = .page,
-    sheet_open: bool = false, // The toolbar's Aa sheet, in the toolbar view
-    active: ?[]const u8 = null, // The highlight being changed, in the highlight view
-    delete_top: ?u32 = null, // Where its Delete bubble is, when there is one
     since_save: u32 = 0,
     last_place: u32 = 0,
     wifi_try_at: ?u64 = null, // When to turn Wi-Fi off; null once that's settled
@@ -537,11 +553,11 @@ pub const Reader = struct {
             .picture => try picture_view.ended(&r.picture),
             .extending => {
                 try hl.extend_ended(&r.selecting, r.a, s, r.alloc);
-                try r.show_highlight_page(r.active.?);
+                try r.show_highlight_page();
             },
             .controls => {
                 const title = r.entry.title;
-                try controls.resumed(&r.pending, r.a, s, title, r.sheet_open);
+                try controls.resumed(&r.pending, r.a, s, title, r.sheet() != null);
             },
             .searching => |c| try r.paged(c.ended()),
             .going => |c| try r.paged(c.ended()),
@@ -551,6 +567,8 @@ pub const Reader = struct {
 
     /// After search or Go To: the page chosen, or the toolbar back.
     fn paged(r: *Reader, ending: screen.Ending(u32)) !void {
+        r.invariants();
+        assert(r.view == .toolbar); // Search and Go To open from the toolbar
         switch (ending) {
             .done => |target| {
                 assert(target < r.s.pages.len);
@@ -639,7 +657,6 @@ pub const Reader = struct {
     fn ready(r: *Reader) screen.Step(Outcome) {
         r.scratch_budget.reset(.keep);
         assert(r.s.current < r.s.pages.len);
-        if (r.view != .toolbar) assert(!r.sheet_open);
         r.save_after_jump();
         if (r.reading()) r.s.resume_clock() else r.s.pause_clock();
         return .stay;
@@ -660,8 +677,7 @@ pub const Reader = struct {
 
     /// The book closes: its place saved, Wi-Fi back, and its memory let go of.
     fn finish(r: *Reader, outcome: Outcome) screen.Step(Outcome) {
-        // A failure says what went wrong first
-        if (outcome == .failed) assert(r.failed != null);
+        assert(r.data.len > 0); // Its file mapped until `release` lets go of it
         if (r.reading_started) {
             sess.save_progress(r.entry, r.state_path, r.s);
             wifi_saver.restore(); // Leaving the book, Wi-Fi comes back
@@ -691,19 +707,22 @@ pub const Reader = struct {
         a.decoders_budget.report();
     }
 
+    /// What holds of an open book between actions: its first page shown, and the page
+    /// up one of its pages, from its file, still mapped.
+    fn invariants(r: *const Reader) void {
+        assert(r.reading_started);
+        assert(r.s.current < r.s.pages.len);
+        assert(r.data.len > 0);
+    }
+
     /// The page alone is up: the reading clock runs, and the page's own corners count.
     fn reading(r: *const Reader) bool {
-        // Nothing is open over the page while it's alone
-        if (r.view == .page) assert(!r.sheet_open);
-        if (r.view == .page) assert(r.active == null);
         return r.view == .page;
     }
 
     /// The Aa sheet's tab, while it's open.
     fn sheet(r: *const Reader) ?aa.Tab {
-        if (r.sheet_open) assert(r.view == .toolbar);
-        if (r.view != .toolbar) assert(!r.sheet_open);
-        return if (r.sheet_open) r.a.aa_kept.tab else null;
+        return r.view.sheet(r.a.aa_kept.tab);
     }
 
     /// A jump (Go To, search, a chapter, the slider) is saved at once: turning page by
@@ -740,8 +759,7 @@ pub const Reader = struct {
 
     /// After the clock, battery or charger changed: wherever they show.
     fn show_status(r: *Reader) !void {
-        assert(r.s.current < r.s.pages.len);
-        if (r.view != .toolbar) assert(!r.sheet_open);
+        r.invariants();
         switch (r.view) {
             .page => try r.a.update_clock(),
             .toolbar => try r.draw_toolbar(false),
@@ -764,7 +782,8 @@ pub const Reader = struct {
     fn draw_toolbar(r: *Reader, whole_page: bool) !void {
         assert(r.view == .toolbar);
         assert(r.s.current < r.s.pages.len);
-        const drawn: controls.Drawn = .{ .sheet_open = r.sheet_open, .whole_page = whole_page };
+        const sheet_open = r.sheet() != null;
+        const drawn: controls.Drawn = .{ .sheet_open = sheet_open, .whole_page = whole_page };
         try controls.draw_toolbar(r.a, r.s, r.entry.title, drawn);
     }
 
@@ -772,7 +791,6 @@ pub const Reader = struct {
     fn to_page(r: *Reader, target: u32) !void {
         assert(target < r.s.pages.len);
         r.view = .page;
-        r.sheet_open = false;
         try r.s.show(target, null, true);
         assert(r.s.current == target);
         assert(r.reading());
@@ -791,6 +809,7 @@ pub const Reader = struct {
     }
 
     fn on_tick_any(r: *Reader) !void {
+        r.invariants();
         const a = r.a;
         if (r.s.layout_pending()) { // A first open laid out a little more
             if (try r.s.layout_step()) try r.show_page_count();
@@ -827,8 +846,8 @@ pub const Reader = struct {
     // The page alone
 
     fn on_page(r: *Reader, action: input_mod.Action) !?Outcome {
+        r.invariants();
         assert(r.view == .page);
-        assert(!r.sheet_open);
         switch (action) {
             .tap => |t| try r.tap_page(t.x, t.y, t.us),
             .hold => |h| try r.hold_page(h.x, h.y),
@@ -843,8 +862,8 @@ pub const Reader = struct {
     }
 
     fn tap_page(r: *Reader, x: i32, y: i32, us: u64) !void {
+        r.invariants();
         assert(r.view == .page);
-        assert(r.active == null);
         const a = r.a;
         if (r.s.on_back(x, y)) {
             if (r.s.back_page()) |back| try r.s.show(back, us, false);
@@ -862,8 +881,8 @@ pub const Reader = struct {
     /// Holding a picture shows it whole; holding a highlight selects it; holding a word
     /// looks it up; holding and dragging highlights.
     fn hold_page(r: *Reader, x: i32, y: i32) !void {
+        r.invariants();
         assert(r.view == .page);
-        assert(r.active == null);
         const a = r.a;
         if (try r.s.picture_at(x, y)) |img| {
             a.input.drag_slot = null;
@@ -882,7 +901,6 @@ pub const Reader = struct {
     /// The hold lifted: a word held still is looked up, words dragged over highlighted.
     fn held_ended(r: *Reader) !void {
         assert(r.view == .page);
-        assert(r.active == null);
         const a = r.a;
         const held = try hl.hold_ended(&r.selecting, a, r.s) orelse return;
         r.held = held;
@@ -947,8 +965,9 @@ pub const Reader = struct {
 
     /// Drawn with the last status at once, then again if it has changed since.
     fn open_toolbar(r: *Reader) !void {
-        r.view = .toolbar;
-        r.sheet_open = false;
+        r.invariants();
+        assert(r.view == .page); // From a tap at the top of the page
+        r.view = .{ .toolbar = .{} };
         // Its controls reach the bottom edge before the next touch arrives
         r.a.input.apply(r.setting(), false);
         try r.draw_toolbar(false);
@@ -956,11 +975,10 @@ pub const Reader = struct {
         if (fresh.same(&r.a.quick)) return;
         r.a.quick = fresh;
         try r.draw_toolbar(false);
-        assert(r.view == .toolbar);
-        assert(!r.sheet_open);
     }
 
     fn on_toolbar(r: *Reader, action: input_mod.Action) !?Outcome {
+        r.invariants();
         assert(r.view == .toolbar);
         const t = switch (action) {
             .tap => |t| t,
@@ -972,15 +990,15 @@ pub const Reader = struct {
             .stay => {},
             .home => return .library,
             .close => {
-                try controls.close_toolbar(a, s, r.sheet_open);
+                try controls.close_toolbar(a, s, r.sheet() != null);
                 r.view = .page;
-                r.sheet_open = false;
                 try a.update_clock();
             },
             .text => {
-                r.sheet_open = !r.sheet_open;
+                const opening = r.sheet() == null;
+                r.view = .{ .toolbar = .{ .sheet_open = opening } };
                 // Closing it needs the page back under where it was
-                try r.draw_toolbar(!r.sheet_open);
+                try r.draw_toolbar(!opening);
             },
             .more => {
                 // Made in place: it points into itself
@@ -1020,27 +1038,27 @@ pub const Reader = struct {
 
     fn select_highlight(r: *Reader, id: []const u8) !void {
         assert(r.view == .page);
-        assert(r.active == null);
-        r.view = .highlight;
-        r.active = id;
-        try r.show_highlight_page(id);
+        r.view = .{ .highlight = .{ .id = id } };
+        try r.show_highlight_page();
     }
 
     fn unselect_highlight(r: *Reader) !void {
         assert(r.view == .highlight);
-        assert(r.active != null);
         r.view = .page;
-        r.active = null;
-        try r.show_highlight_page(null);
+        try r.show_highlight_page();
     }
 
-    /// The page with `active` selected, or none, and where its Delete bubble went.
-    fn show_highlight_page(r: *Reader, active: ?[]const u8) !void {
-        // The highlight view, and only it, has one selected
-        assert((r.view == .highlight) == (active != null));
-        assert((r.active != null) == (active != null));
-        const top = try hl.show_page(r.a, r.s, active);
-        r.delete_top = if (top) |bubble_top| @as(u32, @intCast(bubble_top)) else null;
+    /// The page, with the highlight view's highlight selected, and where its Delete
+    /// bubble went.
+    fn show_highlight_page(r: *Reader) !void {
+        r.invariants();
+        switch (r.view) {
+            .highlight => |*h| {
+                const top = try hl.show_page(r.a, r.s, h.id);
+                h.delete_top = if (top) |bubble_top| @as(u32, @intCast(bubble_top)) else null;
+            },
+            else => _ = try hl.show_page(r.a, r.s, null),
+        }
     }
 
     /// Delete in its bubble, or a handle dragged to change it; any other tap lets go.
@@ -1051,8 +1069,8 @@ pub const Reader = struct {
             else => return null,
         };
         const a = r.a;
-        const id = r.active.?;
-        if (r.delete_top) |top| {
+        const id = r.view.highlight.id;
+        if (r.view.highlight.delete_top) |top| {
             if (hl.in_delete_bubble(a, top, t.x, t.y)) {
                 try hl.remove_highlight(a, r.s, r.alloc, id);
                 try r.unselect_highlight();
@@ -1071,7 +1089,7 @@ pub const Reader = struct {
                     r.open_over(.extending, opened);
                     return null;
                 }
-                try r.show_highlight_page(id);
+                try r.show_highlight_page();
                 return null;
             }
         }

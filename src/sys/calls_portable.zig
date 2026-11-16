@@ -41,6 +41,7 @@ pub const ACCMODE = enum { RDONLY, WRONLY, RDWR };
 pub const O = struct {
     ACCMODE: ACCMODE = .RDONLY,
     CREAT: bool = false,
+    EXCL: bool = false, // With CREAT: fails when the file is there
     TRUNC: bool = false,
     APPEND: bool = false,
     CLOEXEC: bool = false,
@@ -52,6 +53,7 @@ fn c_flags(options: O) c.O {
     // Creating or emptying a file is only done to write it, and a folder is only read
     if (options.CREAT) assert(options.ACCMODE != .RDONLY);
     if (options.TRUNC) assert(options.ACCMODE != .RDONLY);
+    if (options.EXCL) assert(options.CREAT);
     if (options.DIRECTORY) assert(options.ACCMODE == .RDONLY);
     var flags: c.O = .{};
     flags.ACCMODE = switch (options.ACCMODE) {
@@ -60,6 +62,7 @@ fn c_flags(options: O) c.O {
         .RDWR => .RDWR,
     };
     flags.CREAT = options.CREAT;
+    flags.EXCL = options.EXCL;
     flags.TRUNC = options.TRUNC;
     flags.APPEND = options.APPEND;
     flags.CLOEXEC = options.CLOEXEC;

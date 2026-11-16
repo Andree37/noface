@@ -56,15 +56,22 @@ pub fn parse_attempts(text: []const u8) u32 {
     return attempts;
 }
 
-/// Runs once per boot: the user drive comes back after every USB unplug, and an older
-/// install's startup file may call this too. /tmp is in RAM, so the mark is gone on the
-/// next boot. True the first time.
+/// Runs once per boot: the user drive comes back after every USB unplug. /tmp is in
+/// RAM, so the mark is gone on the next boot. True the first time: the one run that
+/// makes the mark, so two at once can't both start noface.
 pub fn first_this_boot() bool {
     const mark = paths.autostart_ran;
     comptime assert(std.mem.startsWith(u8, mark, "/tmp/"));
+    const flags: calls.O = .{ .ACCMODE = .WRONLY, .CREAT = true, .EXCL = true, .CLOEXEC = true };
+    const rc = calls.open(mark, flags, 0o644);
+    if (!failed(rc)) {
+        _ = calls.close(@intCast(rc)); // Made: it says all it needs to
+        return true;
+    }
     if (file.exists(mark)) return false;
-    const rc = calls.open(mark, .{ .ACCMODE = .WRONLY, .CREAT = true, .CLOEXEC = true }, 0o644);
-    if (!failed(rc)) _ = calls.close(@intCast(rc)); // Made: it says all it needs to
+    // Not made, and not there: start anyway, as a boot that can't be marked is still
+    // the first one
+    file.append_file(log_path, "autostart: couldn't mark this boot as started\n");
     return true;
 }
 

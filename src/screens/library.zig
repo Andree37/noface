@@ -187,8 +187,9 @@ const Browser = struct {
     count: u32 = 0, // How many books the filter and search let through
     notice: []const u8 = "", // A line for the next drawing only
     /// Set only for a download started here: the library is reloaded every few seconds
-    /// until then. Catalog flags can stay stuck, so they never drive this.
-    watch_until: u64 = 0,
+    /// until then, and once more as it runs out. Catalog flags can stay stuck, so they
+    /// never drive this.
+    watch_until: ?u64 = null,
     /// After a book, Wi-Fi takes a while to come back: the status is read again until then.
     status_until: u64 = 0,
     /// The screen open over the library, if one is, with how it ended once it has.
@@ -226,13 +227,19 @@ const Browser = struct {
         assert(b.index < library.page_count(b.count));
     }
 
+    /// Whether a download is being watched at `now`.
+    fn watching(b: *const Browser, now: u64) bool {
+        const until = b.watch_until orelse return false;
+        return now < until;
+    }
+
     /// The library's `touches`, set each time round as a book changes them. It ticks
     /// often while watching a download or the status, else once a minute for the clock
     /// and the battery.
     pub fn setting(b: *const Browser) input_mod.Input.Scope {
         const now = now_us();
         var tick_us: u64 = idle_tick_us;
-        if (now < b.watch_until) {
+        if (b.watching(now)) {
             tick_us = download_poll_us;
         } else if (now < b.status_until) {
             tick_us = status_poll_us;
@@ -642,9 +649,9 @@ const Browser = struct {
             .other => b.reload(.export_first),
             .downloading => {
                 // Only a download finishes later, so only it is watched
-                b.watch_until = now_us() + download_watch_us;
-                b.a.downloads_until = b.watch_until; // Wi-Fi stays on for it while reading
-                assert(b.watch_until > 0);
+                const until = now_us() + download_watch_us;
+                b.watch_until = until;
+                b.a.downloads_until = until; // Wi-Fi stays on for it while reading
                 b.reload(.export_first);
             },
         }
@@ -658,15 +665,13 @@ const Browser = struct {
         // strip, once a minute (a charger coming or going is an action of its own)
         if (now < b.status_until) {
             try b.refresh_status(.screen);
-        } else if (now >= b.watch_until) {
+        } else if (!b.watching(now)) {
             try b.refresh_status(.strip);
         }
         // A download being watched: the library again, in case it's finished. When the
         // watch runs out, one last look, for one that finished since the last
-        if (b.watch_until == 0) return .nothing;
-        if (now >= b.watch_until) b.watch_until = 0;
-        // Still watching, or the watch just ended
-        if (b.watch_until != 0) assert(now < b.watch_until);
+        const until = b.watch_until orelse return .nothing;
+        if (now >= until) b.watch_until = null;
         return b.reload_if_downloaded();
     }
 
@@ -681,7 +686,7 @@ const Browser = struct {
         const before = b.lib.shelf();
         b.lib.reload();
         if (std.meta.eql(before, b.lib.shelf())) return .nothing; // Nothing to show for it
-        if (before.local != b.lib.local_count()) b.watch_until = 0;
+        if (before.local != b.lib.local_count()) b.watch_until = null;
         return .everything;
     }
 

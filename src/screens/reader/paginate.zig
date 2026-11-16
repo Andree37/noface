@@ -17,11 +17,12 @@ pub fn book(
     alloc: std.mem.Allocator,
     paragraphs: []const book_model.Paragraph,
 ) ![]const book_model.Pos {
+    assert(paragraphs.len > 0); // Parsing refuses a book without any
     var pages: std.ArrayList(book_model.Pos) = .empty;
     const rest = try run(a, alloc, paragraphs, .{}, null, &pages, book_pages_max);
     // With no stop and no page limit worth the name, only the book's end stops it
     assert(rest == null);
-    if (pages.items.len > 0) assert(std.meta.eql(pages.items[0], book_model.Pos{}));
+    assert(std.meta.eql(pages.items[0], book_model.Pos{})); // A book's first page starts it
     return pages.items;
 }
 
@@ -91,10 +92,13 @@ pub const Progressive = struct {
     alloc: std.mem.Allocator,
     paragraphs: []const book_model.Paragraph,
     anchor: book_model.Pos,
-    forward: std.ArrayList(book_model.Pos) = .empty,
-    next_forward: ?book_model.Pos,
-    before: std.ArrayList(book_model.Pos) = .empty,
-    next_before: ?book_model.Pos,
+    forward: std.ArrayList(book_model.Pos) = .empty, // From the place on: never empty
+    before: std.ArrayList(book_model.Pos) = .empty, // From the book's start to the place
+    phase: Phase,
+
+    /// Where the layout carries on: forward from the place first, so turning on never
+    /// waits, then the pages before it, then nothing.
+    const Phase = union(enum) { forward: book_model.Pos, before: book_model.Pos, done };
 
     /// Pages laid out at the start: the reader's page and a few to turn to.
     const first_pages = 4;
@@ -106,43 +110,60 @@ pub const Progressive = struct {
         assert(step_pages >= first_pages);
     }
 
+    /// The first few pages from `anchor`, or null when the book ends there and there's
+    /// nothing to show from it.
     pub fn start(
         a: *app.App,
         alloc: std.mem.Allocator,
         paragraphs: []const book_model.Paragraph,
         anchor: book_model.Pos,
-    ) !Progressive {
+    ) !?Progressive {
         assert(anchor.para <= paragraphs.len);
-        const at_start = std.meta.eql(anchor, book_model.Pos{});
         var p = Progressive{
             .alloc = alloc,
             .paragraphs = paragraphs,
             .anchor = anchor,
-            .next_forward = anchor,
-            .next_before = if (at_start) null else book_model.Pos{},
+            .phase = .done,
         };
-        p.next_forward = try run(a, alloc, paragraphs, anchor, null, &p.forward, first_pages);
+        const rest = try run(a, alloc, paragraphs, anchor, null, &p.forward, first_pages);
+        if (p.forward.items.len == 0) return null;
+        p.phase = p.after_forward(rest);
         assert(p.forward.items.len <= first_pages);
-        if (p.forward.items.len > 0) assert(std.meta.eql(p.forward.items[0], anchor));
+        assert(std.meta.eql(p.forward.items[0], anchor));
         return p;
     }
 
+    /// What follows a forward step that left off at `rest`: more forward, or the
+    /// pages before the place, or nothing when the place is the book's start.
+    fn after_forward(p: *const Progressive, rest: ?book_model.Pos) Phase {
+        if (rest) |from| return .{ .forward = from };
+        if (std.meta.eql(p.anchor, book_model.Pos{})) return .done;
+        return .{ .before = .{} };
+    }
+
     pub fn done(p: *const Progressive) bool {
-        // The pages before the place are laid out only once the forward part is done
-        if (p.before.items.len > 0) assert(p.next_forward == null);
-        // Laying out from the place always places a page, unless the book ends there
-        if (p.next_forward != null) assert(p.forward.items.len > 0);
-        return p.next_forward == null and p.next_before == null;
+        return p.phase == .done;
+    }
+
+    /// Whether every page from the place on is laid out.
+    pub fn forward_done(p: *const Progressive) bool {
+        return p.phase != .forward;
     }
 
     /// Lays out one step: forward first, so turning on never waits, then before.
     pub fn step(p: *Progressive, a: *app.App) !void {
         const count_before = p.forward.items.len + p.before.items.len;
-        if (p.next_forward) |from| {
-            p.next_forward = try run(a, p.alloc, p.paragraphs, from, null, &p.forward, step_pages);
-        } else if (p.next_before) |from| {
-            const stop = p.anchor;
-            p.next_before = try run(a, p.alloc, p.paragraphs, from, stop, &p.before, step_pages);
+        switch (p.phase) {
+            .forward => |from| {
+                const rest = try run(a, p.alloc, p.paragraphs, from, null, &p.forward, step_pages);
+                p.phase = p.after_forward(rest);
+            },
+            .before => |from| {
+                const stop = p.anchor;
+                const rest = try run(a, p.alloc, p.paragraphs, from, stop, &p.before, step_pages);
+                p.phase = if (rest) |at| .{ .before = at } else .done;
+            },
+            .done => {},
         }
         const count_after = p.forward.items.len + p.before.items.len;
         assert(count_after >= count_before);
@@ -151,18 +172,17 @@ pub const Progressive = struct {
 
     /// The pages so far: the forward part while running, the whole book once done.
     pub fn pages(p: *const Progressive) []const book_model.Pos {
-        if (p.next_forward != null) assert(p.forward.items.len > 0);
-        if (p.forward.items.len > 0) assert(std.meta.eql(p.forward.items[0], p.anchor));
+        assert(std.meta.eql(p.forward.items[0], p.anchor));
         return p.forward.items;
     }
 
     /// The whole book's pages, once done, and how many come before the reader's place.
     pub fn joined(p: *Progressive) !struct { pages: []const book_model.Pos, before: u32 } {
         check.that(p.done(), "joined only once laid out");
+        const count_before = p.before.items.len;
         try p.before.appendSlice(p.alloc, p.forward.items);
-        assert(p.before.items.len >= p.forward.items.len);
-        if (p.before.items.len > 0) assert(std.meta.eql(p.before.items[0], book_model.Pos{}));
-        const count_before = p.before.items.len - p.forward.items.len;
+        assert(std.meta.eql(p.before.items[0], book_model.Pos{})); // The book's start
+        assert(p.before.items.len == count_before + p.forward.items.len);
         return .{ .pages = p.before.items, .before = @intCast(count_before) };
     }
 };

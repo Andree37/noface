@@ -342,9 +342,8 @@ fn read_book_progressive(
     // One outside the book starts it from the beginning
     const place = place_in(paragraphs, saved.para, saved.byte) orelse book_model.Pos{};
     assert(place.para <= paragraphs.len);
-    const progress = try paginate.Progressive.start(a, alloc, paragraphs, place);
-    // Nothing from there on: lay it all out
-    if (progress.pages().len == 0) return null;
+    // Nothing from there on: null, and it's all laid out instead
+    const progress = try paginate.Progressive.start(a, alloc, paragraphs, place) orelse return null;
     assert(std.meta.eql(progress.pages()[0], place));
     return progress;
 }

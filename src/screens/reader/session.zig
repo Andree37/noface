@@ -138,7 +138,7 @@ pub const Session = struct {
         assert(index > s.current);
         while (s.progress) |p| {
             if (index < s.pages.len) return;
-            if (p.next_forward == null) return;
+            if (p.forward_done()) return;
             _ = try s.layout_step();
         }
     }
@@ -577,7 +577,8 @@ pub fn relayout(a: *app.App, s: *Session) !void {
         // The reader's page at once, laid out from its first word with the new
         // settings; the rest follows in idle moments, as on a first open
         const p = try alloc.create(paginate.Progressive);
-        p.* = try paginate.Progressive.start(a, alloc, s.paragraphs, s.anchor);
+        // The anchor starts the page that was on screen, so a page is laid out from it
+        p.* = (try paginate.Progressive.start(a, alloc, s.paragraphs, s.anchor)).?;
         s.progress = p;
         s.pages = p.pages();
         s.current = 0;

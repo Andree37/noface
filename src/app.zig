@@ -65,7 +65,7 @@ comptime {
     assert(book_model.normal_size < book_model.size_scales.len);
 }
 
-pub const Slot = struct { page: i64 = -1, buf: []u8, hits: text.Hits = .{} };
+pub const Slot = struct { page: ?u32 = null, buf: []u8, hits: text.Hits = .{} }; // Null: empty
 
 /// What the Aa sheet keeps from one book to the next: only the reader's controls use
 /// it (screens/reader/controls.zig).
@@ -393,11 +393,11 @@ pub const App = struct {
 
     /// The cached page buffer holding `page`, if any.
     pub fn slot_for(a: *App, page_index: u32) ?*Slot {
-        const wanted: i64 = page_index;
-        assert(wanted >= 0); // -1 marks an empty slot, never a page asked for
+        assert(a.slots.len > 0);
         for (&a.slots) |*slot| {
             assert(slot.buf.len == a.screen.pixels.len); // Each holds a whole screen
-            if (slot.page == wanted) return slot;
+            const held = slot.page orelse continue;
+            if (held == page_index) return slot;
         }
         return null;
     }
@@ -406,8 +406,7 @@ pub const App = struct {
     pub fn forget_pages(a: *App) void {
         for (&a.slots) |*slot| {
             assert(slot.buf.len == a.screen.pixels.len); // Each holds a whole screen
-            assert(slot.page >= -1); // A page, or -1 for none
-            slot.page = -1;
+            slot.page = null;
         }
     }
 

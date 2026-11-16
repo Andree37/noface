@@ -298,7 +298,7 @@ pub const Session = struct {
         _ = try s.ensure(s.current, s.current);
         const slot = s.app.slot_for(s.current) orelse return null;
         // Just drawn: the slot holds the page on screen
-        assert(slot.page == @as(i64, @intCast(s.current)));
+        assert(slot.page.? == s.current); // Found by its page
         const para = slot.hits.picture_at(x, y) orelse return null;
         assert(para < s.paragraphs.len); // Set by layout, from this book's paragraphs
         return s.paragraphs[para].image;
@@ -307,7 +307,7 @@ pub const Session = struct {
     pub fn reference_at(s: *Session, x: i32, y: i32) ?u32 {
         assert(s.current < s.pages.len);
         const slot = s.app.slot_for(s.current) orelse return null;
-        assert(slot.page == @as(i64, @intCast(s.current)));
+        assert(slot.page.? == s.current); // Found by its page
         return slot.hits.find(x, y);
     }
 
@@ -443,7 +443,7 @@ pub const Session = struct {
         check.thatf(center < s.pages.len, "page {d} of {d}", .{ center, s.pages.len });
         const a = s.app;
         if (a.slot_for(index)) |slot| return slot.buf;
-        var cached: [3]i64 = undefined;
+        var cached: [3]?u32 = undefined;
         for (&a.slots, &cached) |*slot, *c| c.* = slot.page;
         const victim = cache.victim(cached, center);
         assert(victim < a.slots.len);

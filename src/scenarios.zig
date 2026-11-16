@@ -1110,10 +1110,12 @@ pub const panic = std.debug.FullPanic(struct {
     }
 }.crash);
 
-/// Wall time, for how long a scenario really took: the app's own clock is the fake one.
+/// Real time, for how long a scenario really took: the app's own clock is the fake one.
+/// Monotonic: the wall clock can be set back mid-run, as the Kindle does after waking,
+/// and a time taken from it then would be less than zero.
 fn real_ms() u64 {
     var ts: linux.timespec = undefined;
-    _ = linux.clock_gettime(.REALTIME, &ts);
+    _ = linux.clock_gettime(.MONOTONIC, &ts);
     return @as(u64, @intCast(ts.sec)) * 1000 + @as(u64, @intCast(ts.nsec)) / 1_000_000;
 }
 

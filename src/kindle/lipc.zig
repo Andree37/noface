@@ -101,8 +101,7 @@ pub fn read(previous: quick_model.Quick) quick_model.Quick {
         const text = std.mem.trim(u8, buffer[0 .. length orelse 0], " \n");
         if (text.len > 0) reading.apply(&quick, text);
     }
-    // Wi-Fi's state is applied before its signal, so no bars show while it's off
-    if (!quick.wifi_on) assert(quick.wifi_bars == 0);
+    assert(quick.wifi_bars <= 3);
     assert(quick.clock_len <= quick.clock.len);
     // Plugged in, whether or not it's charging: a computer's port can be too weak to
     // charge, and a full battery stops; the stock Kindle shows the bolt either way.
@@ -169,13 +168,11 @@ fn flag(comptime field: []const u8, comptime on_when: OnWhen) Apply {
 fn apply_wifi_state(quick: *quick_model.Quick, text: []const u8) void {
     assert(text.len > 0);
     quick.wifi_on = std.mem.eql(u8, text, "CONNECTED");
-    if (!quick.wifi_on) quick.wifi_bars = 0;
-    assert(quick.wifi_bars <= 3);
 }
 
 fn apply_wifi_signal(quick: *quick_model.Quick, text: []const u8) void {
     assert(text.len > 0);
-    quick.wifi_bars = if (quick.wifi_on) signal_bars(text) else 0;
+    quick.wifi_bars = signal_bars(text);
     assert(quick.wifi_bars <= 3);
 }
 

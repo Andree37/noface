@@ -24,8 +24,8 @@ pub const Quick = struct {
     syncing: bool = false,
     battery: u32 = 0,
     plugged: bool = false, // On a charger or a computer: the status bar shows a bolt
-    wifi_on: bool = false,
-    wifi_bars: u32 = 0, // 0 to 3
+    wifi_on: bool = false, // Connected
+    wifi_bars: u32 = 0, // The signal, 0 to 3: shown only while connected
     clock: [40]u8 = undefined,
     clock_len: u32 = 0,
 

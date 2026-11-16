@@ -58,6 +58,20 @@ pub const Journal = struct {
         assert(j.len > 0);
     }
 
+    /// A book marked finished then unread: taken back from the last day, up to `day`,
+    /// that counted one. Which day the book itself was counted on isn't kept; when
+    /// marked and unmarked in one sitting, as is usual, it's that day.
+    pub fn unfinish(j: *Journal, day: i32) void {
+        assert(j.len <= kept);
+        var i = j.len;
+        while (i > 0) {
+            i -= 1;
+            if (j.days[i].day > day or j.days[i].finished == 0) continue;
+            j.days[i].finished -= 1;
+            return;
+        }
+    }
+
     pub fn get(j: *const Journal, day: i32) Day {
         assert(j.len <= kept);
         var i = j.len;
@@ -335,6 +349,21 @@ test "a year so far counts finished books and time" {
     const y = j.since(19_750, 19_900);
     try std.testing.expectEqual(@as(u32, 1), y.finished);
     try std.testing.expectEqual(@as(u64, 900), y.seconds);
+}
+
+test "a book marked finished, unread and finished again counts once" {
+    var j = Journal{};
+    j.finish(19_700);
+    j.finish(19_800);
+    j.unfinish(19_800);
+    j.finish(19_800);
+    try std.testing.expectEqual(@as(u32, 2), j.since(19_000, 19_900).finished);
+    j.unfinish(19_900); // Taken from the last day that counted one
+    try std.testing.expectEqual(@as(u16, 0), j.get(19_800).finished);
+    try std.testing.expectEqual(@as(u16, 1), j.get(19_700).finished);
+    j.unfinish(19_900);
+    j.unfinish(19_900); // None left to take back
+    try std.testing.expectEqual(@as(u32, 0), j.since(19_000, 19_900).finished);
 }
 
 test "journal survives saving, and a damaged file starts over" {

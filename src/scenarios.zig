@@ -1009,6 +1009,23 @@ const scenarios = [_]Scenario{
         }.run,
     },
     .{
+        .name = "a book marked finished then unread starts again, and stays unread",
+        .run = struct {
+            fn run() !void {
+                const read_row = tap(600, 1600); // The ⋮ menu's last row
+                const r = try play(&.{
+                    forward, forward,                     forward,
+                    top,     tap(1176, toolbar_button_y), read_row,
+                    top,     tap(1176, toolbar_button_y), read_row,
+                });
+                try expect(!r.finished[0], "it's still marked finished");
+                try expect(r.saved.para == 0, "it didn't start again");
+                try expect(r.saved.byte == 0, "it didn't start again");
+                try expect((r.saved.percent orelse 0) < 99, "it's saved as read by its percent");
+            }
+        }.run,
+    },
+    .{
         .name = "changing the text size again and again takes no more memory",
         .run = struct {
             fn run() !void {

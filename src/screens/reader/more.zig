@@ -145,9 +145,15 @@ pub const More = struct {
                 m.details();
                 return m.show_card(&m.details_rows, m.entry.title, m.entry.author);
             },
-            .finished, .unread => |choice| {
-                book_actions.mark_read(m.a, m.entry, choice == .finished);
+            .finished => {
+                book_actions.mark_read(m.a, m.entry, true);
                 return .{ .done = .stay };
+            },
+            // Unread starts again from the beginning, so the place saved on closing
+            // isn't the last page, which would count it read again
+            .unread => {
+                book_actions.mark_read(m.a, m.entry, false);
+                return .{ .done = .{ .page = 0 } };
             },
         }
     }

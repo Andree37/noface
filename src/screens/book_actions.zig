@@ -25,48 +25,44 @@ comptime {
     assert(cover_image.height / 2 > 0);
 }
 
-/// Saves the book as unread, so the reload that follows doesn't bring back 100%.
-/// Dated just after the last time it was opened anywhere: newer than stock's
-/// percent, so it wins, without moving the book up in recent order.
-pub fn forget_finished(a: *app.App, e: *const catalog.Entry) !void {
-    assert(e.is_local());
+/// Marks a book read or unread, from its sheet here or the reader's menu. The Kindle
+/// keeps this for its own books; an EPUB's is kept with its place. Marked unread, it
+/// starts again from the beginning: a book at its last page is read, marked or not.
+pub fn mark_read(a: *app.App, e: *catalog.Entry, done: bool) void {
+    const counted = e.finished; // The journal counts a book while it's marked finished
+    store.mark_read(e.key, e.kind, done);
+    e.finished = done;
+    if (!done) e.percent = 0;
+    assert(e.is_read() == done);
+    if (e.is_epub() or (!done and e.is_local())) {
+        save_marked(a, e) catch |err| {
+            std.debug.print("marked, not saved with its place: {s}\n", .{@errorName(err)});
+        };
+    }
+    if (done != counted) {
+        if (done) a.journal.finish(a.today()) else a.journal.unfinish(a.today());
+        app.save_journal(a);
+    }
+    std.debug.print("marked {s}\n", .{if (done) "read" else "unread"});
+}
+
+/// Saves whether the book is finished with its place, in one write. Unread, the place
+/// is its beginning, dated just after the last time it was opened anywhere: newer than
+/// stock's place and percent, so ours win, without moving it up in recent order.
+fn save_marked(a: *app.App, e: *const catalog.Entry) !void {
     var path_buffer: [320]u8 = undefined;
     const path = try a.state_path(&path_buffer, e.path);
     var saved = state.load(path);
-    saved.percent = 0;
-    // Saturating: both times come from files, and a broken one mustn't stop the reader
-    saved.opened = @max(saved.opened, e.kindle_last) +| 1;
-    // Newer than stock's record, so the 0% wins over its 100%: newer always, but for a
-    // broken file at the very end of time
-    assert(saved.opened >= e.kindle_last);
+    saved.finished = e.finished;
+    if (!e.finished) {
+        saved.para = 0;
+        saved.byte = 0;
+        saved.percent = 0;
+        // Saturating: both times come from files, and a broken one mustn't stop this
+        saved.opened = @max(saved.opened, e.kindle_last) +| 1;
+        assert(!state.prefer_kindle(saved, e.kindle_last));
+    }
     state.save(path, saved);
-}
-
-/// Marks a book read or unread, from its sheet here or the reader's menu. The Kindle
-/// keeps this for its own books; an EPUB's is kept with its place. Marked unread, it
-/// also starts again from the beginning.
-pub fn mark_read(a: *app.App, e: *catalog.Entry, done: bool) void {
-    store.mark_read(e.key, e.kind, done);
-    e.finished = done;
-    if (done) assert(e.is_read());
-    if (e.is_epub()) {
-        var path_buffer: [320]u8 = undefined;
-        if (a.state_path(&path_buffer, e.path)) |p| {
-            var saved = state.load(p);
-            saved.finished = done;
-            state.save(p, saved);
-        } else |_| {}
-    }
-    if (done) {
-        a.journal.finish(a.today());
-        app.save_journal(a);
-    }
-    if (!done and e.is_local()) {
-        forget_finished(a, e) catch |err| {
-            std.debug.print("unread not saved with its place: {s}\n", .{@errorName(err)});
-        };
-    }
-    std.debug.print("marked {s}\n", .{if (done) "read" else "unread"});
 }
 
 /// What a book's actions changed, which decides what the library does next.

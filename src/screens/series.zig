@@ -135,14 +135,10 @@ pub const Series = struct {
     /// The library's series, once each, by name, and the first list's rows.
     names: std.ArrayList([]const u8) = .empty,
     rows: std.ArrayList(goto_ui.Row) = .empty,
-    /// The series being put together, and where each book stands in it.
-    name: []const u8 = "",
-    places: []Place = &.{},
     changed: bool = false,
-    /// The books listed, and which of them is being numbered.
+    /// The books listed.
     order: std.ArrayList(u32) = .empty,
     listed: Listed = .{ .in_series = 0, .next = 1 },
-    numbering: u32 = 0,
     number_rows: [numbers + 1]goto_ui.Row = undefined,
     /// The list or keyboard open over it, and how it ended.
     choices: Choices = undefined,
@@ -152,7 +148,15 @@ pub const Series = struct {
 
     /// What's open over it: the first list (a series, a new one or none), the keyboard
     /// for a new one's name, the series' books, or the numbers for one of them.
-    const Phase = enum { choosing, naming, listing, numbering };
+    const Phase = union(enum) {
+        choosing,
+        naming,
+        listing: Managing,
+        numbering: struct { managing: Managing, book: u32 },
+    };
+
+    /// The series being put together, and where each book of the library stands in it.
+    const Managing = struct { name: []const u8, places: []Place };
 
     /// Never shown itself: what it opens is.
     pub fn draw(s: *Series, part: screen.Part) !void {
@@ -188,9 +192,6 @@ pub const Series = struct {
     }
 
     pub fn on_resume(s: *Series) !screen.Step(bool) {
-        // Set as a series is chosen to put together, for every book in the library
-        if (s.phase == .listing) assert(s.places.len == s.entries.len);
-        if (s.phase == .numbering) assert(s.numbering < s.entries.len);
         return switch (s.phase) {
             .choosing => s.chosen(),
             .naming => {
@@ -232,61 +233,59 @@ pub const Series = struct {
     fn manage(s: *Series, name: []const u8) !screen.Step(bool) {
         assert(name.len > 0);
         assert(s.e.is_local());
-        s.name = name;
-        s.places = try s.arena.allocator().alloc(Place, s.entries.len);
-        for (s.entries, s.places) |e, *p| p.* = .{ .series = e.series, .index = e.series_index };
-        return s.list();
+        const places = try s.arena.allocator().alloc(Place, s.entries.len);
+        for (s.entries, places) |e, *p| p.* = .{ .series = e.series, .index = e.series_index };
+        return s.list(.{ .name = name, .places = places });
     }
 
-    fn list(s: *Series) !screen.Step(bool) {
-        assert(s.name.len > 0);
-        assert(s.places.len == s.entries.len);
-        s.phase = .listing;
+    fn list(s: *Series, m: Managing) !screen.Step(bool) {
+        assert(m.name.len > 0);
+        assert(m.places.len == s.entries.len); // A place for every book in the library
+        s.phase = .{ .listing = m };
         s.listed = try manage_list(
             s.arena.allocator(),
             s.entries,
-            s.places,
-            s.name,
+            m.places,
+            m.name,
             s.e,
             &s.order,
             &s.rows,
         );
         const about = "Tap a book to add it, or to change its number";
-        return s.pick(s.name, about, s.rows.items);
+        return s.pick(m.name, about, s.rows.items);
     }
 
     /// A book tapped in the series' list: one of the rest is added as the next number,
     /// one in the series is given a number to choose.
     fn tapped(s: *Series) !screen.Step(bool) {
-        assert(s.phase == .listing);
+        const m = s.phase.listing;
         const tapped_index = s.row_picked() orelse return s.finish();
         assert(tapped_index < s.order.items.len);
         const i = s.order.items[tapped_index];
         if (tapped_index >= s.listed.in_series) {
-            s.places[i] = .{ .series = s.name, .index = s.listed.next };
-            try save(s.a, s.entries[i].path, s.places[i]);
+            m.places[i] = .{ .series = m.name, .index = s.listed.next };
+            try save(s.a, s.entries[i].path, m.places[i]);
             s.changed = true;
-            return s.list();
+            return s.list(m);
         }
-        s.phase = .numbering;
-        s.numbering = i;
-        return s.number_for(i);
+        s.phase = .{ .numbering = .{ .managing = m, .book = i } };
+        return s.number_for(m, i);
     }
 
     /// A new number for the book being numbered, or out of the series; nothing
     /// changes when the list is left.
     fn numbered(s: *Series) !screen.Step(bool) {
-        assert(s.phase == .numbering);
-        const i = s.numbering;
-        const n = s.row_picked() orelse return s.list();
+        const m = s.phase.numbering.managing;
+        const i = s.phase.numbering.book;
+        const n = s.row_picked() orelse return s.list(m);
         assert(n <= numbers);
-        s.places[i] = if (n == 0) .{ .series = "", .index = 0 } else .{
-            .series = s.name,
+        m.places[i] = if (n == 0) .{ .series = "", .index = 0 } else .{
+            .series = m.name,
             .index = @floatFromInt(n),
         };
-        try save(s.a, s.entries[i].path, s.places[i]);
+        try save(s.a, s.entries[i].path, m.places[i]);
         s.changed = true;
-        return s.list();
+        return s.list(m);
     }
 
     /// Opens a page of `rows` under a heading.
@@ -316,22 +315,22 @@ pub const Series = struct {
 
     /// The numbers offered for book `i` in the series, with the books already at each
     /// place beside them, or out of the series.
-    fn number_for(s: *Series, i: u32) !screen.Step(bool) {
+    fn number_for(s: *Series, m: Managing, i: u32) !screen.Step(bool) {
         assert(i < s.entries.len);
-        assert(s.places.len == s.entries.len);
+        assert(m.places.len == s.entries.len);
         const alloc = s.arena.allocator();
         s.number_rows[0] = .{ .label = "Take out of this series", .page = 0, .note = "" };
         for (s.number_rows[1..], 1..) |*r, n| {
             var taken: []const u8 = "";
-            for (s.entries, s.places, 0..) |o, p, j| {
+            for (s.entries, m.places, 0..) |o, p, j| {
                 if (j == i) continue;
-                if (!catalog.same_series(p.series, s.name)) continue;
+                if (!catalog.same_series(p.series, m.name)) continue;
                 if (p.index == @as(f32, @floatFromInt(n))) taken = o.title;
             }
             const label = try std.fmt.allocPrint(alloc, "#{d}  {s}", .{ n, taken });
             r.* = .{ .label = label, .page = 0, .note = "" };
         }
-        const heading = try std.fmt.allocPrint(alloc, "Number in {s}", .{s.name});
+        const heading = try std.fmt.allocPrint(alloc, "Number in {s}", .{m.name});
         return s.pick(heading, s.entries[i].title, &s.number_rows);
     }
 
@@ -339,8 +338,6 @@ pub const Series = struct {
     fn finish(s: *Series) screen.Step(bool) {
         // Something it opened has ended, which is what ends it
         assert(s.choices_ending != null or s.naming_ending != null);
-        // Nothing is saved before a series is chosen to put together
-        if (s.changed) assert(s.phase != .naming);
         const changed = s.changed;
         s.arena.deinit();
         return .{ .done = changed };

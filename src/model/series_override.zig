@@ -49,6 +49,7 @@ pub fn format_line(buffer: []u8, path: []const u8, name: []const u8, index: f32)
 
 /// "three body problem" typed on a lowercase keyboard, as a name: "Three Body Problem".
 pub fn title_case(alloc: std.mem.Allocator, typed: []const u8) ![]const u8 {
+    assert(std.mem.trim(u8, typed, " ").len > 0); // A name was typed, not only spaces
     const out = try alloc.dupe(u8, std.mem.trim(u8, typed, " "));
     var start = true;
     for (out) |*c| {
@@ -56,7 +57,7 @@ pub fn title_case(alloc: std.mem.Allocator, typed: []const u8) ![]const u8 {
         start = c.* == ' ';
     }
     assert(out.len <= typed.len);
-    if (out.len > 0) assert(!std.ascii.isLower(out[0]));
+    assert(!std.ascii.isLower(out[0])); // A name starts with a capital
     return out;
 }
 

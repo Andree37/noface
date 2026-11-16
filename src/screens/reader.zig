@@ -494,7 +494,6 @@ pub const Reader = struct {
         const tick_us: u64 = if (r.s.layout_pending()) layout_tick_us else clock_check_us;
         // The Back button counts, where a resting thumb otherwise wouldn't
         const exempt = if (r.reading()) r.s.back_zone() else null;
-        if (!r.reading()) assert(exempt == null);
         assert(tick_us > 0);
         return .{ .modes = touches_for(r.view), .tick_us = tick_us, .grip_exempt = exempt };
     }

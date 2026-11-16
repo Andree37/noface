@@ -137,7 +137,6 @@ fn run_after(run_before_day: u32, day: Day, next_day: i32) u32 {
     assert(next_day > day.day); // Days stay in order
     const read = day.seconds >= streak_seconds;
     const run: u32 = if (read) run_before_day + 1 else 0;
-    if (!read) assert(run == 0);
     return if (next_day == day.day + 1) run else 0;
 }
 
@@ -221,7 +220,6 @@ fn count_days(content: []const u8) ?u32 {
         count += 1;
     }
     assert(count <= content.len);
-    if (count == 0) assert(last == null);
     return count;
 }
 

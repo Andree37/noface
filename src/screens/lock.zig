@@ -278,7 +278,6 @@ pub fn same_shape(x: []const u8, y: []const u8) bool {
     const rhs = @as(u64, q.width) * p.height;
     const difference = if (lhs > rhs) lhs - rhs else rhs - lhs;
     assert(difference <= @max(lhs, rhs));
-    if (lhs == rhs) assert(difference == 0);
     return difference * 100 <= @max(lhs, rhs) * shape_tolerance_percent;
 }
 

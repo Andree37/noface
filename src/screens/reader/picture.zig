@@ -54,8 +54,6 @@ comptime {
 /// 32, and a corrupt header's 70000 x 70000 would overflow it.
 fn decodable(width: u64, height: u64) bool {
     const ok = width > 0 and height > 0 and width * height <= pixels_max;
-    if (ok) assert(width <= pixels_max);
-    if (ok) assert(height <= pixels_max);
     return ok;
 }
 

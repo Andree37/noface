@@ -234,7 +234,6 @@ fn step(value: []const u8, count: u32, fallback: u32) u32 {
     assert(count > 0);
     const n = std.fmt.parseInt(u32, value, 10) catch return fallback;
     const chosen = if (n < count) n else fallback;
-    if (chosen != fallback) assert(chosen < count);
     return chosen;
 }
 

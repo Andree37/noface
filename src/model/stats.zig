@@ -74,7 +74,6 @@ pub const Speed = struct {
     /// Enough reading to give honest estimates.
     pub fn known(s: Speed) bool {
         const enough = s.pages >= learn_pages and s.seconds >= learn_seconds;
-        if (enough) assert(s.seconds > 0);
         return enough;
     }
 

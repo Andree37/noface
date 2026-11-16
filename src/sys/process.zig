@@ -236,7 +236,6 @@ pub fn exit_code(status: u32) u32 {
     const ended_itself = linux.W.IFEXITED(status);
     const code: u32 = if (ended_itself) linux.W.EXITSTATUS(status) else 128 + (status & 0x7f);
     assert(code < 256);
-    if (status == 0) assert(code == 0);
     return code;
 }
 

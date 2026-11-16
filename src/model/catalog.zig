@@ -136,14 +136,13 @@ fn by_series(a: Entry, b: Entry) bool {
     const in_b = b.series.len > 0;
     if (in_a != in_b) return in_a;
     if (!in_a) return a.last > b.last;
-    if (!same_series(a.series, b.series)) {
+    const key_a = series_key(a);
+    const key_b = series_key(b);
+    if (!std.ascii.eqlIgnoreCase(key_a, key_b)) {
         if (a.series_last != b.series_last) return a.series_last > b.series_last;
-        return std.ascii.lessThanIgnoreCase(without_the(a.series), without_the(b.series));
+        return std.ascii.lessThanIgnoreCase(key_a, key_b);
     }
-    const place_a = series_place(a);
-    const place_b = series_place(b);
-    if (place_a != place_b) return place_a < place_b;
-    return by_title(a, b);
+    return by_title(a, b); // One series: in its order
 }
 
 /// A book's place in its series, for comparing: one that isn't a number (an EPUB can
@@ -213,7 +212,7 @@ fn by_progress(a: Entry, b: Entry) bool {
 /// What a book sorts under alphabetically: its series, so a series stays together,
 /// or else its title.
 pub fn title_key(e: Entry) []const u8 {
-    const key = if (e.series.len > 0) without_the(e.series) else e.title;
+    const key = if (e.series.len > 0) series_key(e) else e.title;
     // A series' name sorts without its "The", and never as nothing
     if (e.series.len > 0) assert(key.len > 0);
     assert(key.len <= @max(e.series.len, e.title.len));
@@ -388,14 +387,14 @@ pub fn surname(author: []const u8) []const u8 {
 /// By surname, then the rest of the name, then title. Books with no author go last.
 // Assertions: a comparison, true or false for any two books; `sort_by` checks the order.
 fn by_author(a: Entry, b: Entry) bool {
+    // An author's series in order, among their other books. First, as a sort compares
+    // books of one author most: their surnames needn't be found
+    if (std.ascii.eqlIgnoreCase(a.author, b.author)) return by_title(a, b);
     const sa = surname(a.author);
     const sb = surname(b.author);
     if ((sa.len == 0) != (sb.len == 0)) return sb.len == 0;
     if (!std.ascii.eqlIgnoreCase(sa, sb)) return std.ascii.lessThanIgnoreCase(sa, sb);
-    if (!std.ascii.eqlIgnoreCase(a.author, b.author)) {
-        return std.ascii.lessThanIgnoreCase(a.author, b.author);
-    }
-    return by_title(a, b); // An author's series in order, among their other books
+    return std.ascii.lessThanIgnoreCase(a.author, b.author);
 }
 
 pub fn sort(entries: []Entry, order: Order) void {
@@ -978,15 +977,22 @@ test "sorting by title holds together when one series is named with and without 
         "Restaurant",
         "Last Chance to See",
     };
-    var perm = [_]usize{ 0, 1, 2, 3 };
-    for (0..24) |_| {
+    var seen: std.StaticBitSet(256) = .empty;
+    for (0..24) |n| {
+        // The nth order: Fisher-Yates, its choices the digits of n, base 4, 3, 2, 1
+        var perm = [_]usize{ 0, 1, 2, 3 };
+        var digits = n;
+        for (0..perm.len) |i| {
+            std.mem.swap(usize, &perm[i], &perm[i + digits % (perm.len - i)]);
+            digits /= perm.len - i;
+        }
+        seen.set(perm[0] << 6 | perm[1] << 4 | perm[2] << 2 | perm[3]);
         var shuffled: [4]Entry = undefined;
         for (perm, &shuffled) |p, *e| e.* = rows[p];
         sort(&shuffled, .title);
         for (want, shuffled) |w, e| try std.testing.expectEqualStrings(w, e.title);
-        std.mem.reverse(usize, perm[1..]);
-        std.mem.rotate(usize, &perm, 1);
     }
+    try std.testing.expectEqual(24, seen.count()); // Each order once
     for (0..rows.len) |i| for (0..rows.len) |j| {
         // Never both before the other
         try std.testing.expect(!(by_title(rows[i], rows[j]) and by_title(rows[j], rows[i])));

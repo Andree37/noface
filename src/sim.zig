@@ -37,6 +37,7 @@ const data_name = "noface-sim-data";
 /// with `/`, as every one on the Kindle does.
 var data_buffer: [std.c.PATH_MAX]u8 = undefined;
 var books_buffer: [std.c.PATH_MAX]u8 = undefined;
+var library_buffer: [std.c.PATH_MAX]u8 = undefined;
 
 const port_default = 8080;
 
@@ -62,13 +63,9 @@ comptime {
 pub fn main(init: std.process.Init.Minimal) !void {
     const alloc = std.heap.smp_allocator;
     const port = main_port(init);
-    _ = sys.mkdir(data_name, 0o755);
-    const data = try full_path(&data_buffer, data_name);
-    const books = try main_books(init.args.vector, data);
-    // No Amazon books: only the EPUBs
-    var library_buffer: [std.c.PATH_MAX]u8 = undefined;
-    const library_path = try std.fmt.bufPrintSentinel(&library_buffer, "{s}/library.tsv", .{data}, 0);
-    try write_file(library_path, "\n");
+    const folders = try main_folders(init.args.vector);
+    const data = folders.data;
+    const books = folders.books;
 
     // The pretend Kindle answers the system; the Wi-Fi saver's note stays in the folder
     var fake = try FakeKindle.init(alloc);
@@ -117,7 +114,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         .kit = &kit,
         .data_dir = data,
         .files = &files,
-        .library_path = library_path,
+        .library_path = folders.library,
     });
     a.documents = books;
     // Every typeface is the Go font: the Kindle's own aren't on a computer
@@ -137,6 +134,22 @@ fn main_port(init: std.process.Init.Minimal) u16 {
     comptime assert(port_default > 1024); // One a user may open
     const text = init.environ.getPosix("NOFACE_SIM_PORT") orelse return port_default;
     return std.fmt.parseInt(u16, text, 10) catch port_default;
+}
+
+/// The data folder, made, with an empty list of Amazon books (the simulator reads only
+/// EPUBs), and the books' folder: each by its full path.
+fn main_folders(args: []const [*:0]const u8) !struct {
+    data: [:0]const u8,
+    books: []const u8,
+    library: [:0]const u8,
+} {
+    _ = sys.mkdir(data_name, 0o755);
+    const data = try full_path(&data_buffer, data_name);
+    const books = try main_books(args, data);
+    const library = try std.fmt.bufPrintSentinel(&library_buffer, "{s}/library.tsv", .{data}, 0);
+    try write_file(library, "\n");
+    assert(std.mem.startsWith(u8, library, data));
+    return .{ .data = data, .books = books, .library = library };
 }
 
 /// The books' folder, by its full path: a folder given, or `data`'s, with the test book.

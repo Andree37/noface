@@ -177,7 +177,8 @@ fn reference_image(comptime name: []const u8) []const u8 {
 const Snapshot = enum { page, toolbar, @"aa-font", definition, library };
 
 /// Whether `pixels` match the reference image `name`, allowing for anti-aliasing:
-/// pixels more than a few grays apart may be at most 0.3% of the screen.
+/// pixels more than a few grays apart may be at most 1 in 5,000 (about 430), fewer
+/// than a short line of text has, so one added or lost is seen.
 fn matches_reference(alloc: std.mem.Allocator, which: Snapshot, pixels: []const u8) !bool {
     assert(pixels.len == width * height); // The whole screen, as the script left it
     const name = @tagName(which);
@@ -196,7 +197,7 @@ fn matches_reference(alloc: std.mem.Allocator, which: Snapshot, pixels: []const 
         if (@max(got, w) - @min(got, w) > 48) off += 1;
     }
     assert(off <= pixels.len);
-    if (@as(u64, off) * 1000 > pixels.len * 3) {
+    if (@as(u64, off) * 5000 > pixels.len) {
         std.debug.print("    {d} pixels differ from the {s} reference\n", .{ off, name });
         return false;
     }

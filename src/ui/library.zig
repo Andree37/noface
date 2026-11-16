@@ -606,11 +606,13 @@ pub fn render(
     @memset(page.buf, 0xff);
     try draw_status(fonts, page, quick);
 
+    var hero_drawn = false;
     if (with_hero) {
         if (query.len > 0) {
             try draw_search_header(fonts, page, query, books.count);
         } else if (books.hero) |h| {
             try draw_hero(pool, fonts, page, h, now);
+            hero_drawn = true;
         }
     }
     try draw_tabs(fonts, page, tabs_top(with_hero), filter, order, query.len > 0);
@@ -620,7 +622,8 @@ pub fn render(
         const at = cell_origin(@intCast(i), with_hero);
         try draw_cell(pool, fonts, page, e, at.x, at.y);
     }
-    if (books.count == 0) {
+    // Nothing at all shown: the hero, when there is one, is a book here too
+    if (books.count == 0 and !hero_drawn) {
         const empty = if (query.len > 0) "No books match." else "No books here yet.";
         try fonts.small.draw(page, margin, @intCast(top + 60), empty);
     }

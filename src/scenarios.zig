@@ -874,6 +874,30 @@ const scenarios = [_]Scenario{
             }
         }.run,
     },
+    .{
+        .name = "after Go to beginning, Back is still there when the book is opened again",
+        .run = struct {
+            fn run() !void {
+                const menu = tap(1176, toolbar_button_y);
+                const beginning = tap(636, 1265); // Its second row
+                const back_button = tap(205, 1626);
+                const home = tap(150, toolbar_button_y);
+                const hero = tap_in(library_ui.hero_rect(width));
+                const library: Kindle = .{ .library = true, .read_before = 0 };
+                const kept_on = try play_on(library, &.{
+                    hero, wait(2_000), forward, forward, forward, top, home,
+                });
+                const reopened = try play_on(library, &.{
+                    hero, wait(2_000), forward, forward,     forward,     top, menu, beginning,
+                    top,  home,        hero,    wait(2_000), back_button,
+                });
+                try expect(
+                    same_place(kept_on.saved, reopened.saved),
+                    "Back didn't last through closing the book",
+                );
+            }
+        }.run,
+    },
     .{ .name = "a quick look into a book leaves Wi-Fi alone", .run = struct {
         fn run() !void {
             const r = try play(&.{ wait(60_000), forward });

@@ -201,6 +201,8 @@ fn open_book(r: *Reader) !void {
         .seconds_read = opened.seconds_read,
         .pages_path = opened.pages_path,
         .book_bytes = r.data.len,
+        .back = opened.back,
+        .turns_since_jump = opened.back_turns,
     };
     if (r.progress) |*p| r.session.progress = p;
     r.s = &r.session;
@@ -244,6 +246,8 @@ const Opened = struct {
     start: u32,
     seconds_read: u64,
     source: PagesSource,
+    back: ?book_model.Pos, // The Back button's place, as the book was closed
+    back_turns: u32,
 };
 
 /// The pages: saved ones, or a first few laid out from the reader's place (the rest
@@ -293,12 +297,19 @@ fn read_book_pages(
         .progressive = source == .@"first pages",
     });
     assert(start < pages.len);
+    // Stock's reader on the book since: its place is elsewhere, and so is Back's
+    var back: ?book_model.Pos = null;
+    if (saved.back_para) |para| {
+        if (!from_kindle) back = place_in(paragraphs, para, saved.back_byte);
+    }
     return .{
         .pages = pages,
         .pages_path = pages_path,
         .start = start,
         .seconds_read = saved.seconds,
         .source = source,
+        .back = back,
+        .back_turns = saved.back_turns,
     };
 }
 
@@ -310,22 +321,23 @@ fn read_book_progressive(
     paragraphs: []const book_model.Paragraph,
     saved: state.State,
 ) !?paginate.Progressive {
-    var place = book_model.Pos{
-        .para = book_model.from_text_index(paragraphs, saved.para),
-        .byte = saved.byte,
-    };
-    // The place comes from a file: one outside the book starts it from the beginning
-    if (place.para >= paragraphs.len) {
-        place = .{};
-    } else if (place.byte > paragraphs[place.para].text.len) {
-        place = .{};
-    }
+    // One outside the book starts it from the beginning
+    const place = place_in(paragraphs, saved.para, saved.byte) orelse book_model.Pos{};
     assert(place.para <= paragraphs.len);
     const progress = try paginate.Progressive.start(a, alloc, paragraphs, place);
     // Nothing from there on: lay it all out
     if (progress.pages().len == 0) return null;
     assert(std.meta.eql(progress.pages()[0], place));
     return progress;
+}
+
+/// A place saved in a file, by its paragraph's text index, in the book: null for one
+/// outside it, as the file may be from another edition or damaged.
+fn place_in(paragraphs: []const book_model.Paragraph, text_para: u32, byte: u32) ?book_model.Pos {
+    const para = book_model.from_text_index(paragraphs, text_para);
+    if (para >= paragraphs.len) return null;
+    if (byte > paragraphs[para].text.len) return null;
+    return .{ .para = para, .byte = byte };
 }
 
 /// The page to open at: the place itself on a first open, stock's percent when the

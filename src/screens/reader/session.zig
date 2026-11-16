@@ -521,6 +521,9 @@ pub fn save_progress(entry: *catalog.Entry, path: [*:0]const u8, s: *Session) vo
     saved.opened = now;
     saved.seconds = seconds;
     saved.finished = entry.finished;
+    saved.back_para = if (s.back) |b| book_model.text_index(s.paragraphs, b.para) else null;
+    saved.back_byte = if (s.back) |b| b.byte else 0;
+    saved.back_turns = s.turns_since_jump;
     state.save(path, saved);
     app.save_speed(s.app);
     app.save_journal(s.app);

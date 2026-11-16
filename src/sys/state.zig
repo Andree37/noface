@@ -11,6 +11,11 @@ pub const State = struct {
     seconds: u64 = 0, // Time spent reading this book
     // Marked read: kept here for EPUBs, which the Kindle's catalog doesn't know
     finished: bool = false,
+    // The Back button's place, when a jump left one, and the pages turned since: kept
+    // so it's still there when the book is opened again
+    back_para: ?u32 = null,
+    back_byte: u32 = 0,
+    back_turns: u32 = 0,
 };
 
 const failed = @import("os.zig").failed;

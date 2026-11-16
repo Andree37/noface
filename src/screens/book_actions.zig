@@ -58,6 +58,7 @@ fn save_marked(a: *app.App, e: *const catalog.Entry) !void {
         saved.para = 0;
         saved.byte = 0;
         saved.percent = 0;
+        saved.back_para = null; // Nowhere to go back to from a fresh start
         // Saturating: both times come from files, and a broken one mustn't stop this
         saved.opened = @max(saved.opened, e.kindle_last) +| 1;
         assert(!state.prefer_kindle(saved, e.kindle_last));

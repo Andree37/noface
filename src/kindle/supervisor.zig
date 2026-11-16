@@ -45,7 +45,7 @@ const Paths = struct {
     attempts: [:0]const u8 = "",
     library: [:0]const u8 = "",
     data: [:0]const u8 = "",
-    documents_env: [:0]const u8 = "", // NOFACE_DOCUMENTS=<folder>, for a test's books
+    documents_env: ?[:0]const u8 = null, // NOFACE_DOCUMENTS=<folder>, for a test's books
 
     fn make(p: *Paths, folders: Folders) !void {
         assert(folders.data.len > 0);
@@ -155,16 +155,16 @@ pub fn run(envp: [*:null]const ?[*:0]const u8, folders: Folders) u32 {
 /// `envp` with `documents_env` added when it's set, into `out`: noface's environment.
 fn with_documents(
     envp: [*:null]const ?[*:0]const u8,
-    documents_env: [:0]const u8,
+    documents_env: ?[:0]const u8,
     out: *[environment_max + 2:null]?[*:0]const u8,
 ) [*:null]const ?[*:0]const u8 {
-    if (documents_env.len == 0) return envp;
+    const added = documents_env orelse return envp;
     var count: u32 = 0;
     while (envp[count]) |variable| : (count += 1) {
         if (count == environment_max) break; // More than any Kindle's: the rest left out
         out[count] = variable;
     }
-    out[count] = documents_env.ptr;
+    out[count] = added.ptr;
     out[count + 1] = null;
     assert(count <= environment_max);
     return out;

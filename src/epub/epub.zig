@@ -322,8 +322,8 @@ const Builder = struct {
     bold: u32 = 0, // How many bold tags are open
     italic: u32 = 0,
     run_start: ?u32 = null, // Where the current bold or italic stretch began
-    link_start: ?u32 = null,
-    link_target: []const u8 = "",
+    // A link not yet closed: where its text starts, and where it goes
+    link: ?struct { start: u32, target: []const u8 } = null,
     section: u32 = 0,
     file: []const u8 = "",
     dir: []const u8 = "", // The chapter file's folder, for the paths it refers to
@@ -502,7 +502,7 @@ const Builder = struct {
     /// link not yet closed. The markup itself goes before the next chapter is read.
     fn keep_pending(b: *Builder) !void {
         assert(b.text.items.len == 0); // The chapter's text is all in paragraphs
-        if (b.link_start != null) b.link_target = try b.alloc.dupe(u8, b.link_target);
+        if (b.link) |*l| l.target = try b.alloc.dupe(u8, l.target);
         // Set again by the next chapter before it's read
         b.skipping = null;
     }
@@ -582,19 +582,19 @@ const Builder = struct {
         const href = xml.attribute(tag.attributes, "href") orelse return;
         if (href.len == 0) return; // Nowhere to go, and `end_link` reads its first byte
         if (std.mem.indexOf(u8, href, "://") != null) return;
-        b.link_start = b.text_length();
-        b.link_target = href;
-        assert(b.link_target.len > 0);
+        b.link = .{ .start = b.text_length(), .target = href };
+        assert(href.len > 0);
     }
 
     /// The link that started ends here, over the text since, its target resolved
     /// against this chapter: "#note1" or "notes.xhtml#note1".
     fn end_link(b: *Builder) !void {
-        const start = b.link_start orelse return;
-        b.link_start = null;
+        const link = b.link orelse return;
+        b.link = null;
+        const start = link.start;
         const end = b.text_length();
         if (end <= start) return;
-        const href = b.link_target;
+        const href = link.target;
         assert(href.len > 0);
         const fragment = href[std.mem.indexOfScalar(u8, href, '#') orelse href.len ..];
         const file = if (href[0] == '#') b.file else try resolve(b.alloc, b.dir, href);

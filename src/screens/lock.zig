@@ -221,7 +221,7 @@ fn picture_key(data: []const u8) u64 {
 fn key_for(e: *const catalog.Entry) u64 {
     var h = std.hash.Wyhash.init(0);
     h.update(e.path);
-    h.update(e.thumbnail);
+    h.update(e.thumbnail orelse "");
     return h.final();
 }
 
@@ -232,7 +232,7 @@ fn draw_cover(a: *app.App, e: *const catalog.Entry, target: []u8) bool {
     assert(target.len == a.screen.pixels.len);
     assert(a.screen.stride >= a.screen.width);
     var thumbnail: ?[]const u8 = null;
-    if (e.thumbnail.len > 0) thumbnail = file.map(e.thumbnail) catch null;
+    if (e.thumbnail) |t| thumbnail = file.map(t) catch null;
     defer if (thumbnail) |t| file.unmap(t);
     const width = a.screen.width;
     const height = a.screen.height;

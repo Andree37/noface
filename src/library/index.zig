@@ -366,7 +366,11 @@ fn entry_of(r: *const Record, texts: *const [8][:0]const u8) catalog.Entry {
         .seconds_read = r.seconds_read,
         .kindle_percent = r.kindle_percent,
         .kindle_last = r.kindle_last,
-        .thumbnail = texts[@backingInt(Field.thumbnail)],
+        // An empty path in the file: no cover
+        .thumbnail = if (texts[@backingInt(Field.thumbnail)].len > 0)
+            texts[@backingInt(Field.thumbnail)]
+        else
+            null,
         .added = r.added,
         .availability = @fromBackingInt(@intCast(r.availability)),
         .key = texts[@backingInt(Field.key)],
@@ -402,7 +406,7 @@ fn split_blob(bytes: []const u8, out: *[8][:0]const u8) bool {
 pub fn write_blob(out: *[blob_bytes_max]u8, e: *const catalog.Entry) u32 {
     var texts: [8][]const u8 = undefined;
     texts[@backingInt(Field.path)] = cut(e.path, files.path_bytes_max);
-    texts[@backingInt(Field.thumbnail)] = cut(e.thumbnail, files.path_bytes_max);
+    texts[@backingInt(Field.thumbnail)] = cut(e.thumbnail orelse "", files.path_bytes_max);
     texts[@backingInt(Field.title)] = clip(e.title);
     texts[@backingInt(Field.author)] = clip(e.author);
     texts[@backingInt(Field.series)] = if (e.series) |s| clip(s.name) else "";
@@ -501,6 +505,8 @@ test "a book's record and texts read back as the entry they were made from" {
     inline for (info.field_names, info.field_types) |name, T| {
         if (T == []const u8 or T == [:0]const u8) {
             try std.testing.expectEqualStrings(@field(e, name), @field(back, name));
+        } else if (T == ?[:0]const u8) {
+            try std.testing.expectEqualStrings(@field(e, name).?, @field(back, name).?);
         } else if (T == ?catalog.Series) {
             try std.testing.expectEqualStrings(e.series.?.name, back.series.?.name);
             try std.testing.expectEqual(e.series.?.index, back.series.?.index);

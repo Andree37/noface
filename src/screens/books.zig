@@ -395,7 +395,7 @@ pub const Library = struct {
             if (e.series) |series| {
                 copy.series = .{ .name = try alloc.dupe(u8, series.name), .index = series.index };
             }
-            copy.thumbnail = "";
+            copy.thumbnail = null;
             copy.key = "";
             copy.kind = "";
             copy.guid = "";
@@ -696,7 +696,7 @@ test "hundreds of EPUBs list in memory that doesn't grow with them, read once" {
     library.arrange(.title, .all, "");
     const listed = library.count() + @intFromBool(library.hero() != null);
     try std.testing.expectEqual(@as(u32, epubs), listed);
-    try std.testing.expect(library.page(0)[0].thumbnail.len > 0); // Its cover saved, and found
+    try std.testing.expect(library.page(0)[0].thumbnail != null); // Its cover saved, and found
     // A library takes the same, whatever it holds
     try std.testing.expectEqual(before + library_bytes, t.budget.live);
     // Built again (an EPUB more), with every book read before now unreadable: what the

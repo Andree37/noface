@@ -43,30 +43,25 @@ pub const Pool = struct {
     pub fn clear(pool: *Pool) void {
         pool.grid.clear();
         pool.hero.clear();
-        assert(pool.grid.keys[0] == empty_key);
-        assert(pool.hero.keys[0] == empty_key);
+        assert(pool.grid.keys[0] == null);
+        assert(pool.hero.keys[0] == null);
     }
 
     /// The grid-sized cover of the picture at `path`, or null for none (no path, or a
     /// picture that won't decode, which isn't tried again while it's kept).
-    pub fn grid_cover(pool: *Pool, path: [:0]const u8) ?[]const u8 {
+    pub fn grid_cover(pool: *Pool, path: ?[:0]const u8) ?[]const u8 {
         const cover = pool.grid.get(path) orelse return null;
         assert(cover.len == grid_cover_bytes);
-        assert(path.len > 0); // No path, no cover
         return cover;
     }
 
     /// The hero-sized cover of the picture at `path`, as `grid_cover`.
-    pub fn hero_cover(pool: *Pool, path: [:0]const u8) ?[]const u8 {
+    pub fn hero_cover(pool: *Pool, path: ?[:0]const u8) ?[]const u8 {
         const cover = pool.hero.get(path) orelse return null;
         assert(cover.len == hero_cover_bytes);
-        assert(path.len > 0); // No path, no cover
         return cover;
     }
 };
-
-/// A slot no cover is in. A path's key is never it.
-const empty_key: u64 = 0;
 
 /// `slots` covers of `width` x `height`, each found by its picture's path, given back
 /// by CLOCK: the hand passes over slots used since it last came round (clearing that),
@@ -79,26 +74,27 @@ fn Shelf(comptime slots: u32, comptime width: u32, comptime height: u32) type {
         const Pixels = [slots][width * height]u8;
 
         pixels: *Pixels,
-        keys: [slots]u64 = @splat(empty_key),
+        keys: [slots]?u64 = @splat(null), // Null: no cover in it
         decoded: [slots]bool = @splat(false), // False: tried, and no picture
         used: [slots]bool = @splat(false),
         hand: u32 = 0,
 
         fn clear(s: *S) void {
-            s.keys = @splat(empty_key);
+            assert(s.hand < slots);
+            s.keys = @splat(null);
             s.used = @splat(false);
             s.hand = 0;
-            assert(s.keys[slots - 1] == empty_key);
-            assert(!s.used[0]);
         }
 
-        fn get(s: *S, path: [:0]const u8) ?[]const u8 {
+        /// The cover of the picture at `path`, or null for none: no path (a book without
+        /// a thumbnail), or a picture that doesn't decode.
+        fn get(s: *S, path: ?[:0]const u8) ?[]const u8 {
             assert(s.hand < slots);
-            if (path.len == 0) return null;
-            const key = key_of(path);
+            const p = path orelse return null;
+            const key = key_of(p);
             const slot = for (s.keys, 0..) |k, i| {
                 if (k == key) break @as(u32, @intCast(i));
-            } else s.fill(key, path);
+            } else s.fill(key, p);
             assert(s.keys[slot] == key);
             s.used[slot] = true;
             return if (s.decoded[slot]) &s.pixels[slot] else null;
@@ -106,7 +102,7 @@ fn Shelf(comptime slots: u32, comptime width: u32, comptime height: u32) type {
 
         /// Decodes the picture at `path` into the slot the hand gives, and returns it.
         fn fill(s: *S, key: u64, path: [:0]const u8) u32 {
-            assert(key != empty_key);
+            assert(path.len > 0);
             // Twice round at most: the first pass clears every slot's use
             const slot = for (0..2 * slots) |_| {
                 const at = s.hand;
@@ -125,9 +121,7 @@ fn Shelf(comptime slots: u32, comptime width: u32, comptime height: u32) type {
 /// A picture's path as a number: two different paths giving one is about 2^-64.
 fn key_of(path: []const u8) u64 {
     assert(path.len > 0);
-    const key = std.hash.Wyhash.hash(0x6e6f66616365, path) | 1; // Never `empty_key`
-    assert(key != empty_key);
-    return key;
+    return std.hash.Wyhash.hash(0x6e6f66616365, path);
 }
 
 test "the pool keeps every cover it can and gives back the least lately used" {
@@ -146,15 +140,15 @@ test "the pool keeps every cover it can and gives back the least lately used" {
     for (paths[0..grid_slots]) |path| try std.testing.expect(pool.grid_cover(path) == null);
     for (paths[0..grid_slots]) |path| {
         const key = key_of(path);
-        try std.testing.expect(std.mem.indexOfScalar(u64, &pool.grid.keys, key) != null);
+        try std.testing.expect(std.mem.indexOfScalar(?u64, &pool.grid.keys, key) != null);
     }
     // More than fit: older ones give way, and every new one has a slot
     for (paths[grid_slots..]) |path| _ = pool.grid_cover(path);
     for (paths[grid_slots..]) |path| {
         const key = key_of(path);
-        try std.testing.expect(std.mem.indexOfScalar(u64, &pool.grid.keys, key) != null);
+        try std.testing.expect(std.mem.indexOfScalar(?u64, &pool.grid.keys, key) != null);
     }
-    try std.testing.expect(pool.grid_cover("") == null);
+    try std.testing.expect(pool.grid_cover(null) == null); // No picture, no cover
     pool.clear();
-    try std.testing.expect(std.mem.indexOfScalar(u64, &pool.grid.keys, key_of(paths[0])) == null);
+    try std.testing.expect(std.mem.indexOfScalar(?u64, &pool.grid.keys, key_of(paths[0])) == null);
 }

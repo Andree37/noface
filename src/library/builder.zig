@@ -284,7 +284,7 @@ fn add_epub(b: *Build, path: [:0]const u8) void {
     defer b.scratch.rewind(each);
     const known = if (b.last) |*last| last.find(path, facts) else null;
     const about = known orelse read_epub(b, path, cover_path) orelse return;
-    const e = epub_entry(path, &about, if (about.has_cover) cover_path else "");
+    const e = epub_entry(path, &about, if (about.has_cover) cover_path else null);
     b.add(&e, facts);
 }
 
@@ -330,7 +330,7 @@ fn read_about(scratch: *memory.Budget, data: []const u8, with_cover: bool) ?epub
 }
 
 /// An EPUB's entry: the book's own title and series, else its file name's.
-fn epub_entry(path: [:0]const u8, about: *const About, cover: [:0]const u8) catalog.Entry {
+fn epub_entry(path: [:0]const u8, about: *const About, cover: ?[:0]const u8) catalog.Entry {
     assert(path.len > 0);
     const e: catalog.Entry = .{
         .path = path,
@@ -387,7 +387,7 @@ const EpubsRead = struct {
                 .title = e.title,
                 .author = e.author,
                 .series = e.series,
-                .has_cover = e.thumbnail.len > 0,
+                .has_cover = e.thumbnail != null,
             };
         }
         return null;

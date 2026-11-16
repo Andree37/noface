@@ -240,8 +240,8 @@ pub fn up_next(
     const cover_width = cover_image.width / 2;
     const cover_height = cover_image.height / 2;
     offer.small = null;
-    if (next.thumbnail.len > 0) {
-        offer.small = cover_image.load(a.alloc, next.thumbnail, cover_width, cover_height);
+    if (next.thumbnail) |t| {
+        offer.small = cover_image.load(a.alloc, t, cover_width, cover_height);
     }
     var book_cover: ?card.Cover = null;
     if (offer.small) |pixels| {

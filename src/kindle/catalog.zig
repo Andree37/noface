@@ -130,7 +130,7 @@ pub fn parse_line(alloc: std.mem.Allocator, line: []const u8) !?library.Entry {
         .finished = read_state == read_state_finished,
         .kindle_percent = percent_whole,
         .kindle_last = last,
-        .thumbnail = try alloc.dupeSentinel(u8, thumbnail, 0),
+        .thumbnail = if (thumbnail.len > 0) try alloc.dupeSentinel(u8, thumbnail, 0) else null,
         .added = added,
         .availability = availability,
         .key = key,

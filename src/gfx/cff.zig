@@ -278,49 +278,53 @@ fn cid_glyph_subrs(font: *const Font, glyph: u32) Buffer {
     return get_subrs(font.cff, index_get(font.font_dicts, chosen));
 }
 
-/// Where a charstring draws to: counting vertices and their bounds, or writing them.
+/// Where a charstring draws to: counting vertices and their bounds (none until the
+/// first point), or writing them.
 pub const Context = struct {
-    bounds: bool,
-    started: bool = false,
+    out: union(enum) { bounds: ?Box, vertices: []Vertex },
     first_x: f32 = 0,
     first_y: f32 = 0,
     x: f32 = 0,
     y: f32 = 0,
-    min_x: i32 = 0,
-    max_x: i32 = 0,
-    min_y: i32 = 0,
-    max_y: i32 = 0,
-    vertices: []Vertex = &.{},
     vertex_count: u32 = 0,
 
-    fn track(c: *Context, x: i32, y: i32) void {
-        assert(c.bounds);
-        if (x > c.max_x or !c.started) c.max_x = x;
-        if (y > c.max_y or !c.started) c.max_y = y;
-        if (x < c.min_x or !c.started) c.min_x = x;
-        if (y < c.min_y or !c.started) c.min_y = y;
-        c.started = true;
-        assert(c.min_x <= c.max_x);
+    pub const Box = struct { min_x: i32, max_x: i32, min_y: i32, max_y: i32 };
+
+    /// The box grown to take in (x, y): one of just that point, for the first.
+    fn take_in(box: ?Box, x: i32, y: i32) Box {
+        const b = box orelse return .{ .min_x = x, .max_x = x, .min_y = y, .max_y = y };
+        const grown: Box = .{
+            .min_x = @min(b.min_x, x),
+            .max_x = @max(b.max_x, x),
+            .min_y = @min(b.min_y, y),
+            .max_y = @max(b.max_y, y),
+        };
+        assert(grown.min_x <= grown.max_x);
+        assert(grown.min_y <= grown.max_y);
+        return grown;
     }
 
     fn vertex(c: *Context, kind: Vertex.Kind, points: [3][2]i32) void {
         assert(c.vertex_count < std.math.maxInt(u32));
-        if (c.bounds) {
-            c.track(points[0][0], points[0][1]);
-            if (kind == .cubic) {
-                c.track(points[1][0], points[1][1]);
-                c.track(points[2][0], points[2][1]);
-            }
-        } else if (c.vertex_count < c.vertices.len) {
-            c.vertices[c.vertex_count] = .{
-                .kind = kind,
-                .x = @truncate(points[0][0]),
-                .y = @truncate(points[0][1]),
-                .cx = @truncate(points[1][0]),
-                .cy = @truncate(points[1][1]),
-                .cx1 = @truncate(points[2][0]),
-                .cy1 = @truncate(points[2][1]),
-            };
+        switch (c.out) {
+            .bounds => |*box| {
+                box.* = take_in(box.*, points[0][0], points[0][1]);
+                if (kind == .cubic) {
+                    box.* = take_in(box.*, points[1][0], points[1][1]);
+                    box.* = take_in(box.*, points[2][0], points[2][1]);
+                }
+            },
+            .vertices => |vertices| if (c.vertex_count < vertices.len) {
+                vertices[c.vertex_count] = .{
+                    .kind = kind,
+                    .x = @truncate(points[0][0]),
+                    .y = @truncate(points[0][1]),
+                    .cx = @truncate(points[1][0]),
+                    .cy = @truncate(points[1][1]),
+                    .cx1 = @truncate(points[2][0]),
+                    .cy1 = @truncate(points[2][1]),
+                };
+            },
         }
         c.vertex_count += 1;
         assert(c.vertex_count > 0);
@@ -328,21 +332,24 @@ pub const Context = struct {
 
     fn close_shape(c: *Context) void {
         assert(c.vertex_count <= std.math.maxInt(u32) - 1);
+        const before = c.vertex_count;
         if (c.first_x != c.x or c.first_y != c.y) {
             c.vertex(.line, .{ .{ to_int(c.first_x), to_int(c.first_y) }, .{ 0, 0 }, .{ 0, 0 } });
         }
-        if (c.bounds) assert(c.started or c.vertex_count == 0);
+        assert(c.vertex_count - before <= 1); // A line back to the start, at most
     }
 
     fn move_to(c: *Context, dx: f32, dy: f32) void {
+        const before = c.vertex_count;
         c.close_shape();
         c.x += dx;
         c.y += dy;
         c.first_x = c.x;
         c.first_y = c.y;
         c.vertex(.move, .{ .{ to_int(c.x), to_int(c.y) }, .{ 0, 0 }, .{ 0, 0 } });
-        assert(c.vertex_count > 0);
-        if (c.bounds) assert(c.started);
+        // The move, after the last shape's closing line if it needed one
+        assert(c.vertex_count - before >= 1);
+        assert(c.vertex_count - before <= 2);
     }
 
     fn line_to(c: *Context, dx: f32, dy: f32) void {
@@ -350,10 +357,11 @@ pub const Context = struct {
         c.y += dy;
         c.vertex(.line, .{ .{ to_int(c.x), to_int(c.y) }, .{ 0, 0 }, .{ 0, 0 } });
         assert(c.vertex_count > 0);
-        if (c.bounds) assert(c.started);
     }
 
     fn curve_to(c: *Context, d: [6]f32) void {
+        const before = c.vertex_count;
+        assert(before < std.math.maxInt(u32)); // Room to count one more
         const cx1 = c.x + d[0];
         const cy1 = c.y + d[1];
         const cx2 = cx1 + d[2];
@@ -365,8 +373,7 @@ pub const Context = struct {
             .{ to_int(cx1), to_int(cy1) },
             .{ to_int(cx2), to_int(cy2) },
         });
-        assert(c.vertex_count > 0);
-        if (c.bounds) assert(c.started);
+        assert(c.vertex_count == before + 1); // One curve, its two control points in it
     }
 };
 

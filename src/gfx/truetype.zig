@@ -516,10 +516,10 @@ const GlyphBox = struct { x0: i32 = 0, y0: i32 = 0, x1: i32 = 0, y1: i32 = 0 };
 /// A glyph's bounds in font units: TrueType's from its header, CFF's by drawing it.
 fn glyph_box(info: *const Info, glyph: u32) GlyphBox {
     if (info.cff) |*font| {
-        var c: cff.Context = .{ .bounds = true };
+        var c: cff.Context = .{ .out = .{ .bounds = null } };
         if (!cff.run(font, glyph, &c)) return .{};
-        assert(c.started or c.vertex_count == 0);
-        return .{ .x0 = c.min_x, .y0 = c.min_y, .x1 = c.max_x, .y1 = c.max_y };
+        const box = c.out.bounds orelse return .{}; // A glyph with no outline: a space
+        return .{ .x0 = box.min_x, .y0 = box.min_y, .x1 = box.max_x, .y1 = box.max_y };
     }
     const g = glyf_offset(info, glyph) orelse return .{};
     assert(g >= 0);
@@ -535,11 +535,11 @@ fn glyph_box(info: *const Info, glyph: u32) GlyphBox {
 /// with none, or a damaged one.
 fn glyph_shape(info: *const Info, alloc: std.mem.Allocator, glyph: u32) Error![]Vertex {
     if (info.cff) |*font| {
-        var counting: cff.Context = .{ .bounds = true };
+        var counting: cff.Context = .{ .out = .{ .bounds = null } };
         if (!cff.run(font, glyph, &counting)) return &.{};
         const vertices = try alloc.alloc(Vertex, counting.vertex_count);
         errdefer alloc.free(vertices);
-        var drawing: cff.Context = .{ .bounds = false, .vertices = vertices };
+        var drawing: cff.Context = .{ .out = .{ .vertices = vertices } };
         if (!cff.run(font, glyph, &drawing)) {
             alloc.free(vertices);
             return &.{};

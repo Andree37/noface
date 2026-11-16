@@ -196,7 +196,6 @@ const Browser = struct {
     over: Over = .none,
     query_kept: search.Query = .{}, // The search before the sheet, kept if it's cancelled
     offered: ?*catalog.Entry = null, // The book the up-next card offers
-    book_was_read: bool = false, // The book open was read before it was opened
 
     /// The screens the library opens over itself, each kept with its ending.
     const Over = union(enum) {
@@ -208,7 +207,8 @@ const Browser = struct {
         search: screen.Child(LibrarySearch),
         sheet: screen.Child(actions.Sheet),
         up_next: actions.UpNext,
-        book: screen.Child(reader.Reader),
+        /// A book open, and whether it was read before it was opened.
+        book: struct { child: screen.Child(reader.Reader), was_read: bool },
     };
 
     pub const Result = void;
@@ -334,12 +334,13 @@ const Browser = struct {
                 return step(b.acted(change));
             },
             .up_next => return step(try b.offer_ended()),
-            .book => |*c| {
+            .book => |*open| {
                 // A book takes the lock and leaving, so it only ever ends itself
-                const outcome = c.ended().done;
-                const entry = c.screen.entry;
+                const outcome = open.child.ended().done;
+                const entry = open.child.screen.entry;
+                const was_read = open.was_read;
                 b.over = .none;
-                return step(try b.book_closed(entry, outcome));
+                return step(try b.book_closed(entry, outcome, was_read));
             },
         }
     }
@@ -584,19 +585,24 @@ const Browser = struct {
         // next of a series
         assert(entry.is_local());
         assert(b.lib.local_count() > 0);
-        b.book_was_read = entry.is_read();
-        b.over = .{ .book = .{ .screen = undefined } };
-        reader.open(&b.over.book.screen, b.a, entry) catch |err| {
+        const was_read = entry.is_read();
+        b.over = .{ .book = .{ .child = .{ .screen = undefined }, .was_read = was_read } };
+        reader.open(&b.over.book.child.screen, b.a, entry) catch |err| {
             std.debug.print("could not open book: {s}\n", .{@errorName(err)});
             b.over = .none;
-            return b.book_closed(entry, .failed);
+            return b.book_closed(entry, .failed, was_read);
         };
-        return .{ .open = b.over.book.frame() };
+        return .{ .open = b.over.book.child.frame() };
     }
 
     /// The book ended, `outcome` saying how: noface leaves, or the library is back,
     /// offering the next of a series just finished.
-    fn book_closed(b: *Browser, entry: *catalog.Entry, outcome: reader.Outcome) !Next {
+    fn book_closed(
+        b: *Browser,
+        entry: *catalog.Entry,
+        outcome: reader.Outcome,
+        was_read: bool, // Read before it was opened: finishing it now offers no next
+    ) !Next {
         const a = b.a;
         assert(entry.is_local());
         assert(b.over == .none);
@@ -604,7 +610,7 @@ const Browser = struct {
         b.lib.save(entry); // Its place and time read, in the library's index
         if (outcome == .quit) return .leave;
         b.status_until = now_us() + status_watch_us; // Wi-Fi coming back, and the like
-        if (b.book_was_read or !entry.is_read()) return .everything;
+        if (was_read or !entry.is_read()) return .everything;
         const next = b.lib.next_in_series(entry) orelse return .everything;
         // The next is one not read yet, so never the book just finished
         assert(!next.is_read());

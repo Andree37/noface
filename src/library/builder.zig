@@ -67,12 +67,16 @@ pub const Places = struct {
 /// folders, no file opened).
 pub fn sources_now(scratch: *memory.Budget, places: Places) index.Sources {
     assert(places.dir.len > 0);
+    assert(scratch.region.?.kind == .bump); // Its listing goes, rewound, as it ends
     const start = scratch.mark();
     defer scratch.rewind(start);
     const catalog_facts = file.facts_of(places.catalog_path);
     var series_buffer: [files.path_bytes_max]u8 = undefined;
-    const series_path = files.path_in(&series_buffer, places.state_dir, "series") catch "";
-    const series_facts = if (series_path.len > 0) file.facts_of(series_path) else null;
+    // A path too long to make: no overrides file to read
+    const series_facts = if (files.path_in(&series_buffer, places.state_dir, "series")) |p|
+        file.facts_of(p)
+    else |_|
+        null;
     var hash: EpubHash = .{};
     const documents = places.documents;
     const walked = dir.walk(scratch.allocator(), documents, ".epub", &hash, EpubHash.add) catch
@@ -87,7 +91,6 @@ pub fn sources_now(scratch: *memory.Budget, places: Places) index.Sources {
         .epubs = hash.sum,
         .places = places_hash(places),
     };
-    assert(sources.places != 0);
     return sources;
 }
 
@@ -106,13 +109,12 @@ const EpubHash = struct {
 /// writes the index differently, builds it again.
 fn places_hash(places: Places) u64 {
     assert(places.documents.len > 0);
+    assert(places.catalog_path[0] == '/'); // Never relative to where noface runs
     var hasher = std.hash.Wyhash.init(@sizeOf(index.Record) + @sizeOf(index.Header));
     hasher.update(std.mem.span(places.catalog_path));
     hasher.update("\x00");
     hasher.update(places.documents);
-    const hash = hasher.final() | 1; // Never 0, which no index has
-    assert(hash != 0);
-    return hash;
+    return hasher.final();
 }
 
 /// A build under way: its files, and what it has counted.
@@ -405,6 +407,7 @@ fn by_key(_: void, a: Item, b: Item) bool {
 
 /// The first of `sorted` (by key) whose key isn't below `key`.
 fn first_with(sorted: []const Item, key: u32) u32 {
+    assert(sorted.len <= index.books_max); // A place among them fits a u32
     const at = std.sort.lowerBound(Item, sorted, key, struct {
         fn order(k: u32, item: Item) std.math.Order {
             return std.math.order(k, item.key);

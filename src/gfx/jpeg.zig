@@ -803,15 +803,15 @@ fn grow_buffer(d: *Decoder) void {
     }
 }
 
-/// Decodes one Huffman symbol, or -1 for a code the table doesn't have.
-fn huffman_decode(d: *Decoder, h: *const Huffman) i32 {
+/// Decodes one Huffman symbol: an error for a code the table doesn't have.
+fn huffman_decode(d: *Decoder, h: *const Huffman) Error!u8 {
     if (d.code_bits < 16) grow_buffer(d);
     const fast_index = (d.code_buffer >> (32 - fast_bits)) & (fast_size - 1);
     const symbol = h.fast[fast_index];
     if (symbol < fast_none) {
         const size = h.size[symbol];
         assert(size <= fast_bits);
-        if (size > d.code_bits) return -1;
+        if (size > d.code_bits) return error.BadJpeg;
         d.code_buffer = std.math.shl(u32, d.code_buffer, size);
         d.code_bits -= size;
         return h.values[symbol];
@@ -821,11 +821,11 @@ fn huffman_decode(d: *Decoder, h: *const Huffman) i32 {
     var length: u5 = fast_bits + 1;
     while (length < 17 and top >= h.maxcode[length]) length += 1;
     assert(length <= 17);
-    if (length == 17) return -1;
-    if (length > d.code_bits) return -1;
+    if (length == 17) return error.BadJpeg;
+    if (length > d.code_bits) return error.BadJpeg;
     const index = @as(i32, @intCast((d.code_buffer >> @intCast(32 - @as(u32, length))) &
         bit_mask[length])) + h.delta[length];
-    if (index < 0 or index >= 256) return -1;
+    if (index < 0 or index >= 256) return error.BadJpeg;
     d.code_bits -= length;
     d.code_buffer = std.math.shl(u32, d.code_buffer, length);
     return h.values[@intCast(index)];
@@ -1127,8 +1127,8 @@ const Sparse = struct {
 /// The DC difference, added to the component's running prediction.
 fn decode_dc(d: *Decoder, n: u8) Error!i32 {
     const component = &d.component[n];
-    const t = huffman_decode(d, &d.tables.dc[component.dc_table]);
-    if (t < 0 or t > 15) return error.BadJpeg;
+    const t = try huffman_decode(d, &d.tables.dc[component.dc_table]);
+    if (t > 15) return error.BadJpeg;
     const difference = if (t > 0) extend_receive(d, @intCast(t)) else 0;
     const dc = std.math.add(i32, component.dc_prediction, difference) catch return error.BadJpeg;
     component.dc_prediction = dc;
@@ -1167,8 +1167,7 @@ fn decode_block(
             block[zig] = @truncate(@as(i32, fast >> 8) *% dequant[zig]);
             continue;
         }
-        const rs = huffman_decode(d, ac);
-        if (rs < 0) return error.BadJpeg;
+        const rs = try huffman_decode(d, ac);
         const s: u8 = @intCast(rs & 15);
         const r: u32 = @intCast(rs >> 4);
         if (s == 0) {
@@ -1262,8 +1261,7 @@ fn decode_block_ac_first(
             k += 1;
             continue;
         }
-        const rs = huffman_decode(d, ac);
-        if (rs < 0) return error.BadJpeg;
+        const rs = try huffman_decode(d, ac);
         const s: u8 = @intCast(rs & 15);
         const r: u8 = @intCast(rs >> 4);
         if (s == 0) {
@@ -1311,8 +1309,7 @@ fn decode_block_ac_refine(
     var k: u32 = d.spec_start;
     // Each turn moves at least one coefficient on, or ends the band
     while (k <= d.spec_end) {
-        const rs = huffman_decode(d, ac);
-        if (rs < 0) return error.BadJpeg;
+        const rs = try huffman_decode(d, ac);
         const s = rs & 15;
         var r: i32 = rs >> 4;
         var value: i16 = 0;

@@ -307,10 +307,12 @@ pub const Library = struct {
         r.seconds_read = e.seconds_read;
         if (e.finished) r.flags |= index.Record.finished else r.flags &= ~index.Record.finished;
         s.ix.write_record(id, &r) catch |err| {
-            // Read again from its state file at the next load, which builds anew
+            // Read again from its state file at the next load, which builds anew: with
+            // no header (read only as the index opens, never mapped) there's no index
             log("library: place not saved ({s}), index built again\n", .{@errorName(err)});
-            s.ix.header.sources.places = 0; // Matches nothing: built again
-            s.ix.write_header() catch {}; // Ignored: the record still reads as it was
+            var header_buffer: [files.path_bytes_max]u8 = undefined;
+            const header = files.path_in(&header_buffer, s.dir(), "header") catch return;
+            files.remove(header);
             return;
         };
         s.sorted = false;

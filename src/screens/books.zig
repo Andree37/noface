@@ -81,8 +81,7 @@ pub const Shelf = struct { generation: u64, local: u32, downloading: u32 };
 /// A library's index open, its arrangement, and its books read back: one block of the
 /// library's region.
 const State = struct {
-    ix: index.Index = undefined,
-    open: bool = false, // `ix` is open: false for a library whose index won't read
+    ix: ?index.Index = null, // Null for a library whose index won't read
     rebuilt: bool = false, // Built again once since loaded, after none was found
     dir_buffer: [files.path_bytes_max]u8 = undefined,
     dir_len: u32 = 0,
@@ -111,6 +110,12 @@ const State = struct {
         return s.dir_buffer[0..s.dir_len];
     }
 
+    /// The index, when one is open.
+    fn opened(s: *State) ?*index.Index {
+        if (s.ix) |*ix| return ix;
+        return null;
+    }
+
     fn look(s: *const State) view.Look {
         assert(s.words.len <= s.words.buf.len);
         return .{ .filter = s.filter, .words = s.words.words() };
@@ -125,14 +130,13 @@ pub const Library = struct {
     pub fn deinit(l: *Library) void {
         assert(l.sources.budget.live >= @sizeOf(State));
         assert(l.shared.in_use);
-        if (l.state.open) l.state.ix.close();
+        if (l.state.opened()) |ix| ix.close();
         l.sources.budget.allocator().destroy(l.state);
         l.shared.in_use = false;
     }
 
     pub fn count(l: *const Library) u32 {
         assert(l.state.count <= books_max);
-        assert(!l.state.sorted or l.state.count <= l.state.ix.header.count);
         return l.state.count;
     }
 
@@ -145,8 +149,8 @@ pub const Library = struct {
     }
 
     pub fn shelf(l: *const Library) Shelf {
-        if (!l.state.open) return .{ .generation = 0, .local = 0, .downloading = 0 };
-        const header = &l.state.ix.header;
+        const ix = l.state.ix orelse return .{ .generation = 0, .local = 0, .downloading = 0 };
+        const header = &ix.header;
         assert(header.local <= header.count);
         assert(header.downloading <= header.count);
         return .{
@@ -163,11 +167,11 @@ pub const Library = struct {
     pub fn watch_download(l: *Library) Download {
         const s = l.state;
         assert(l.shared.in_use);
-        if (!s.open) return .catalog_changed; // Nothing to watch by: read it again
-        assert(s.ix.header.downloading <= s.ix.header.count);
-        if (s.ix.header.downloading > 0) {
-            for (0..s.ix.header.count) |id| {
-                const e = s.ix.entry(@intCast(id));
+        const ix = s.opened() orelse return .catalog_changed; // Nothing to watch by: read it again
+        assert(ix.header.downloading <= ix.header.count);
+        if (ix.header.downloading > 0) {
+            for (0..ix.header.count) |id| {
+                const e = ix.entry(@intCast(id));
                 if (e.availability != .downloading) continue;
                 if (builder.is_complete_book(e.path)) return .arrived;
             }
@@ -205,15 +209,15 @@ pub const Library = struct {
         s.hero_slot.id = null;
         // No index found as loaded: built now, once, and a drive that won't take it
         // leaves the library empty till the next load
-        if (!s.open) l.rebuild();
-        if (!s.open) return;
-        const all = l.shared.items[0..s.ix.header.count];
-        const in_order = if (s.sorted) all else view.sort(&s.ix, l.shared.items, s.order);
-        const hero_id = catalog.pick_hero(view.ById{ .ix = &s.ix });
-        if (hero_id) |h| s.ix.read(h, &s.hero_slot);
+        if (s.ix == null) l.rebuild();
+        const ix = s.opened() orelse return;
+        const all = l.shared.items[0..ix.header.count];
+        const in_order = if (s.sorted) all else view.sort(ix, l.shared.items, s.order);
+        const hero_id = catalog.pick_hero(view.ById{ .ix = ix });
+        if (hero_id) |h| ix.read(h, &s.hero_slot);
         // While searching, every match is listed, the hero too
         const leave_out = if (s.words.len == 0) hero_id else null;
-        s.count = view.count_through(&s.ix, in_order, s.look(), leave_out);
+        s.count = view.count_through(ix, in_order, s.look(), leave_out);
         s.sorted = true;
         assert(s.count <= in_order.len);
         // The hero leads, ahead of the list, unless a search lists every match
@@ -222,18 +226,18 @@ pub const Library = struct {
 
     /// The shared items sorted and counted for this library's arrangement: again, if a
     /// book saved since may have moved.
-    fn sorted(l: *Library) []const index.Item {
+    fn sorted(l: *Library, ix: *const index.Index) []const index.Item {
         const s = l.state;
-        assert(s.open);
+        assert(&s.ix.? == ix); // This library's own index, open
         if (!s.sorted) l.lay_out();
         assert(s.sorted);
-        return l.shared.items[0..s.ix.header.count];
+        return l.shared.items[0..ix.header.count];
     }
 
     /// Builds the index, where none was found as the library was loaded: once.
     fn rebuild(l: *Library) void {
         const s = l.state;
-        assert(!s.open);
+        assert(s.ix == null);
         if (s.rebuilt or !l.sources.scratch.empty()) return;
         s.rebuilt = true;
         open_index(l.sources, s);
@@ -253,12 +257,12 @@ pub const Library = struct {
         assert(page_index < library_ui.page_count(s.count));
         s.page_read = page_index;
         s.page_filled = 0;
-        if (!s.open) return &.{};
+        const ix = s.opened() orelse return &.{};
         const range = library_ui.page_range(page_index, s.count);
         var ids: [library_ui.page_books_max]u32 = undefined;
-        const filled = view.page(l.sorted(), range.first, range.end, &ids);
+        const filled = view.page(l.sorted(ix), range.first, range.end, &ids);
         for (ids[0..filled], s.page_slots[0..filled], s.page_entries[0..filled]) |id, *slot, *e| {
-            s.ix.read(id, slot);
+            ix.read(id, slot);
             e.* = slot.entry;
         }
         s.page_filled = filled;
@@ -283,12 +287,13 @@ pub const Library = struct {
     /// Gets the covers of library page `page_index` ready, so turning to it doesn't wait.
     pub fn prepare_covers(l: *Library, pool: *covers.Pool, page_index: u32) void {
         const s = l.state;
-        if (!s.open or page_index >= library_ui.page_count(s.count)) return;
+        const ix = s.opened() orelse return;
+        if (page_index >= library_ui.page_count(s.count)) return; // Past the last page
         const range = library_ui.page_range(page_index, s.count);
         var ids: [library_ui.page_books_max]u32 = undefined;
-        const filled = view.page(l.sorted(), range.first, range.end, &ids);
+        const filled = view.page(l.sorted(ix), range.first, range.end, &ids);
         assert(filled == range.end - range.first);
-        for (ids[0..filled]) |id| _ = pool.grid_cover(s.ix.entry(id).thumbnail);
+        for (ids[0..filled]) |id| _ = pool.grid_cover(ix.entry(id).thumbnail);
         assert(range.end <= s.count);
     }
 
@@ -298,15 +303,15 @@ pub const Library = struct {
     pub fn save(l: *Library, e: *const catalog.Entry) void {
         const s = l.state;
         assert(e.is_local()); // Only a book on the Kindle is read or marked
-        if (!s.open) return;
+        const ix = s.opened() orelse return;
         const id = l.id_of(e) orelse return;
-        assert(id < s.ix.header.count);
-        var r = s.ix.record(id);
+        assert(id < ix.header.count);
+        var r = ix.record(id);
         r.percent = @intCast(@min(e.percent, 100));
         r.last = e.last;
         r.seconds_read = e.seconds_read;
         if (e.finished) r.flags |= index.Record.finished else r.flags &= ~index.Record.finished;
-        s.ix.write_record(id, &r) catch |err| {
+        ix.write_record(id, &r) catch |err| {
             // Read again from its state file at the next load, which builds anew: with
             // no header (read only as the index opens, never mapped) there's no index
             log("library: place not saved ({s}), index built again\n", .{@errorName(err)});
@@ -321,7 +326,7 @@ pub const Library = struct {
     /// Which record a book read back from this library is, by where it was read into.
     fn id_of(l: *Library, e: *const catalog.Entry) ?u32 {
         const s = l.state;
-        assert(s.open);
+        assert(s.ix != null); // Books are read back only from an open index
         for (s.page_entries[0..s.page_filled], s.page_slots[0..s.page_filled]) |*p, *slot| {
             if (p == e) return slot.id;
         }
@@ -339,12 +344,12 @@ pub const Library = struct {
     /// The next book of `e`'s series not read yet, read back, or null.
     pub fn next_in_series(l: *Library, e: *const catalog.Entry) ?*catalog.Entry {
         const s = l.state;
-        if (!s.open) return null;
+        const ix = s.opened() orelse return null;
         s.next_turn +%= 1;
         const slot = &s.next_slots[s.next_turn];
         assert(&slot.entry != e); // Each next goes in the other slot
-        const id = catalog.next_in_series(view.ById{ .ix = &s.ix }, e) orelse return null;
-        s.ix.read(id, slot);
+        const id = catalog.next_in_series(view.ById{ .ix = ix }, e) orelse return null;
+        ix.read(id, slot);
         assert(!slot.entry.is_read());
         return &slot.entry;
     }
@@ -357,12 +362,12 @@ pub const Library = struct {
         const s = l.state;
         assert(words.len > 0);
         s.search_filled = 0;
-        if (!s.open) return .{ .entries = &.{}, .more = false };
+        const ix = s.opened() orelse return .{ .entries = &.{}, .more = false };
         var ids: [search_sheet.max_rows]u32 = undefined;
-        const found = view.first_matches(&s.ix, l.sorted(), words, &ids);
+        const found = view.first_matches(ix, l.sorted(ix), words, &ids);
         const shown = @min(found, ids.len);
         for (ids[0..shown], s.search_slots[0..shown], s.search_entries[0..shown]) |id, *slot, *e| {
-            s.ix.read(id, slot);
+            ix.read(id, slot);
             e.* = slot.entry;
         }
         s.search_filled = shown;
@@ -373,9 +378,9 @@ pub const Library = struct {
     /// What the stats screen counts of the library, this year being from `year_start`.
     pub fn totals(l: *Library, year_start: i32, utc_offset: i64) view.Totals {
         const s = l.state;
-        if (!s.open) return .{};
-        const t = view.totals(&s.ix, year_start, utc_offset, journal.day_of);
-        assert(t.books == s.ix.header.count);
+        const ix = s.opened() orelse return .{};
+        const t = view.totals(ix, year_start, utc_offset, journal.day_of);
+        assert(t.books == ix.header.count);
         return t;
     }
 
@@ -383,12 +388,12 @@ pub const Library = struct {
     /// series screens, which list them. An error when `alloc` runs out of room.
     pub fn local_books(l: *Library, alloc: std.mem.Allocator) ![]catalog.Entry {
         const s = l.state;
-        if (!s.open) return &.{};
-        assert(s.ix.header.local <= s.ix.header.count);
+        const ix = s.opened() orelse return &.{};
+        assert(ix.header.local <= ix.header.count);
         var list: std.ArrayList(catalog.Entry) = .empty;
-        try list.ensureTotalCapacity(alloc, s.ix.header.local);
-        for (0..s.ix.header.count) |id| {
-            const e = s.ix.entry(@intCast(id));
+        try list.ensureTotalCapacity(alloc, ix.header.local);
+        for (0..ix.header.count) |id| {
+            const e = ix.entry(@intCast(id));
             if (!e.is_local()) continue;
             var copy = e;
             copy.path = try alloc.dupeSentinel(u8, e.path, 0);
@@ -403,7 +408,7 @@ pub const Library = struct {
             copy.guid = "";
             list.appendAssumeCapacity(copy);
         }
-        assert(list.items.len == s.ix.header.local);
+        assert(list.items.len == ix.header.local);
         return list.items;
     }
 
@@ -412,13 +417,13 @@ pub const Library = struct {
     pub fn reload(l: *Library) void {
         const s = l.state;
         assert(l.shared.in_use);
-        if (s.open) s.ix.close();
-        s.open = false;
+        if (s.opened()) |ix| ix.close();
+        s.ix = null;
         s.rebuilt = false;
         s.sorted = false;
         open_index(l.sources, s);
         l.lay_out();
-        assert(s.sorted == s.open);
+        assert(s.sorted == (s.ix != null)); // Laid out once there's an index to lay out
         // The page last read, if it's still a page: the library may have fewer now
         if (s.page_read) |read| {
             if (read < library_ui.page_count(s.count)) _ = l.page(read);
@@ -460,7 +465,7 @@ pub fn load(sources: Sources) !Library {
 /// Opens `s`'s index, built again first if what it's built from changed, or it doesn't
 /// read as whole; then merges in what noface saved of each book.
 fn open_index(sources: Sources, s: *State) void {
-    assert(!s.open);
+    assert(s.ix == null);
     assert(sources.scratch.empty());
     // Before the list is read, so a change made while it's read shows next time
     s.catalog_seen = CatalogFacts.read();
@@ -480,28 +485,26 @@ fn open_index(sources: Sources, s: *State) void {
     const wanted = builder.sources_now(&scratch, places);
     var last: ?index.Index = index.Index.open(places.dir) catch null;
     if (last) |*ix| {
-        if (std.meta.eql(ix.header.sources, wanted)) {
-            s.ix = ix.*;
-            s.open = true;
-        }
+        if (std.meta.eql(ix.header.sources, wanted)) s.ix = ix.*;
     }
-    if (!s.open) {
+    if (s.ix == null) {
         const t0 = os.now_us();
         const buffers = &sources.shared.buffers;
         const was = if (last) |*ix| ix else null;
-        s.ix = builder.build(buffers, items, &scratch, places, wanted, was) catch |err| {
+        const built = builder.build(buffers, items, &scratch, places, wanted, was) catch |err| {
             log("library: no index ({s})\n", .{@errorName(err)});
             return;
         };
-        s.open = true;
+        s.ix = built;
         const ms = (os.now_us() - t0) / 1000;
-        log("library: index built, {d} books in {d} ms\n", .{ s.ix.header.count, ms });
+        log("library: index built, {d} books in {d} ms\n", .{ built.header.count, ms });
     }
-    builder.merge_states(&s.ix, items, sources.state_dir) catch |err| {
+    const ix = s.opened().?; // Opened as it was, or just built
+    builder.merge_states(ix, items, sources.state_dir) catch |err| {
         log("library: places not merged ({s})\n", .{@errorName(err)});
     };
     s.sorted = false; // The items were sorted by state key
-    assert(s.ix.header.count <= books_max);
+    assert(ix.header.count <= books_max);
 }
 
 /// A line for the log, but not from the tests, where it would read as a failure.
@@ -880,7 +883,7 @@ test "a build whose files can't be put in place leaves the library empty, not cr
     _ = calls.mkdir(try t.data_path(&records_buffer, "library/records"), 0o755);
     var library = try load(t.sources);
     defer library.deinit();
-    try std.testing.expect(!library.state.open);
+    try std.testing.expect(library.state.ix == null);
     try std.testing.expectEqual(0, library.count());
 }
 
@@ -914,8 +917,9 @@ test "every order lists the books as the catalog sorts the same books in a list"
     const entries = blk: {
         library.arrange(.recent, .all, "");
         var all: std.ArrayList(catalog.Entry) = .empty;
-        for (0..library.state.ix.header.count) |id| {
-            const e = library.state.ix.entry(@intCast(id));
+        const ix = library.state.ix.?;
+        for (0..ix.header.count) |id| {
+            const e = ix.entry(@intCast(id));
             var copy = e;
             copy.title = try alloc.dupe(u8, e.title);
             copy.path = try alloc.dupeSentinel(u8, e.path, 0);

@@ -273,15 +273,18 @@ pub const Viewer = struct {
     saved: []u8, // The page under it
     v: View,
     phase: Phase = .idle,
-    follow: Follow = undefined, // While a finger is followed
-    marker: ?u32 = null, // The last update following it
-    first: input_mod.Tap = undefined, // The tap a second one may make a double tap of
-    still: bool = true, // The second tap's finger hasn't moved
     ending: ?screen.Ending(void) = null,
 
-    /// Waiting for a finger; following one; waiting the double tap's moment for a
-    /// second tap; following the second tap's finger to its lift.
-    const Phase = enum { idle, following, waiting, second };
+    /// Waiting for a finger; following one (with the last update made following it);
+    /// waiting the double tap's moment for a second tap; following the second tap's
+    /// finger to its lift (with whether it's stayed put). Each but the first with the
+    /// tap a second one may make a double tap of.
+    const Phase = union(enum) {
+        idle,
+        following: struct { first: input_mod.Tap, follow: Follow, marker: ?u32 = null },
+        waiting: input_mod.Tap,
+        second: struct { first: input_mod.Tap, still: bool = true },
+    };
 
     const touches = input_mod.Input.Modes{ .grips = false, .deferred = false, .edge_zones = false };
 
@@ -295,8 +298,6 @@ pub const Viewer = struct {
     pub fn setting(viewer: *const Viewer) input_mod.Input.Scope {
         assert(viewer.v.step < steps.len);
         const tick_us: u64 = if (viewer.phase == .waiting) double_tap_us else 0;
-        // Waiting for a second tap, no update of the first is still on its way
-        if (viewer.phase == .waiting) assert(viewer.marker == null);
         return .{ .modes = touches, .tick_us = tick_us };
     }
 
@@ -314,10 +315,13 @@ pub const Viewer = struct {
     pub fn on_tick(viewer: *Viewer) !screen.Step(void) {
         assert(viewer.v.step < steps.len);
         assert(viewer.v.fit > 0);
-        if (viewer.phase != .waiting) return .stay;
+        const first = switch (viewer.phase) {
+            .waiting => |first| first,
+            .idle, .following, .second => return .stay,
+        };
         // No second tap in time
         viewer.phase = .idle;
-        return viewer.zoom_in(viewer.first);
+        return viewer.zoom_in(first);
     }
 
     pub fn on_action(viewer: *Viewer, action: input_mod.Action) !screen.Step(void) {
@@ -325,28 +329,28 @@ pub const Viewer = struct {
         assert(viewer.v.fit > 0);
         switch (viewer.phase) {
             .idle, .waiting => return .stay,
-            .following => switch (action) {
-                .drag => |first| {
+            .following => |*f| switch (action) {
+                .drag => |dragged| {
                     const a = viewer.a;
-                    if (viewer.marker) |m| try a.screen.wait_complete(m);
-                    const at = a.input.latest_drag() orelse first;
-                    viewer.marker = try viewer.follow.moved(at.x, at.y);
+                    if (f.marker) |m| try a.screen.wait_complete(m);
+                    const at = a.input.latest_drag() orelse dragged;
+                    f.marker = try f.follow.moved(at.x, at.y);
                     return .stay;
                 },
                 .drag_end => return viewer.lifted(),
                 else => return .stay,
             },
-            .second => switch (action) {
+            .second => |*second| switch (action) {
                 .drag => |at| {
-                    const t = viewer.first;
-                    const moved = touch_zones.moved_off(t.x, t.y, at.x, at.y);
-                    if (moved) viewer.still = false;
+                    const t = second.first;
+                    if (touch_zones.moved_off(t.x, t.y, at.x, at.y)) second.still = false;
                     return .stay;
                 },
                 // A double tap if it stayed put, else a drag after all
                 .drag_end => {
+                    const lifted_second = second.*;
                     viewer.phase = .idle;
-                    if (!viewer.still) return viewer.zoom_in(viewer.first);
+                    if (!lifted_second.still) return viewer.zoom_in(lifted_second.first);
                     if (viewer.v.step == 0) return .stay;
                     viewer.v.whole();
                     return viewer.zoomed();
@@ -364,34 +368,30 @@ pub const Viewer = struct {
         // A thumb resting where the Kindle is held isn't a tap
         if (touch_zones.is_grip(t.x, t.y, a.input.width, a.input.height)) return .stay;
         a.input.begin_drag();
-        assert(viewer.marker == null); // Nothing is followed between fingers
-        viewer.phase = .following;
-        viewer.first = t;
-        viewer.follow = .{
+        viewer.phase = .{ .following = .{ .first = t, .follow = .{
             .a = a,
             .v = v,
             .start_x = t.x,
             .start_y = t.y,
             .start_center_x = v.center_x,
             .start_center_y = v.center_y,
-        };
+        } } };
         return .stay;
     }
 
     /// The finger lifted: a pan's grays back, the close button, or the double tap's
     /// moment to wait.
     fn lifted(viewer: *Viewer) !screen.Step(void) {
-        assert(viewer.phase == .following);
-        assert(viewer.follow.v == &viewer.v); // It moves this viewer's picture
+        const f = viewer.phase.following;
+        assert(f.follow.v == &viewer.v); // It moves this viewer's picture
         const a = viewer.a;
-        if (viewer.marker) |m| try a.screen.wait_complete(m);
-        viewer.marker = null;
+        if (f.marker) |m| try a.screen.wait_complete(m);
         viewer.phase = .idle;
         // Its grays back
-        if (viewer.follow.panned) return if (viewer.v.step > 0) .{ .redraw = .all } else .stay;
+        if (f.follow.panned) return if (viewer.v.step > 0) .{ .redraw = .all } else .stay;
         // Closing on the lift, so a drag that starts by the button still pans
-        if (on_close(viewer.first.x, viewer.first.y)) return .close;
-        viewer.phase = .waiting;
+        if (on_close(f.first.x, f.first.y)) return .close;
+        viewer.phase = .{ .waiting = f.first };
         a.input.last_tick = os.now_us(); // The moment counts from the lift
         return .stay;
     }
@@ -399,15 +399,12 @@ pub const Viewer = struct {
     /// A tap within the double tap's moment: near the first, its finger is followed to
     /// its lift; elsewhere, the first zooms in and this one is a tap of its own.
     fn second_tap(viewer: *Viewer, t: screen.Tap) !screen.Step(void) {
-        assert(viewer.phase == .waiting);
-        assert(viewer.marker == null);
-        const first = viewer.first;
+        const first = viewer.phase.waiting;
         const near_x = @abs(t.x - first.x) <= double_tap_reach;
         const near_y = @abs(t.y - first.y) <= double_tap_reach;
         if (near_x and near_y) {
             viewer.a.input.begin_drag();
-            viewer.phase = .second;
-            viewer.still = true;
+            viewer.phase = .{ .second = .{ .first = first } };
             return .stay;
         }
         viewer.phase = .idle;

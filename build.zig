@@ -110,8 +110,9 @@ fn build_app(b: *std.Build, target: std.Build.ResolvedTarget) App {
         .flags = &.{"-O2"},
     });
     b.installArtifact(jxr);
-    assert(launcher.root_module.link_libc != true); // Static, and needing nothing but Linux
-    assert(noface.root_module.link_libc == true);
+    // Static, and needing nothing but Linux: libc not asked for (unset is not linked)
+    assert(!(launcher.root_module.link_libc orelse false));
+    assert(noface.root_module.link_libc.?); // Asked for, as set above
     return .{ .noface = noface, .launcher = launcher, .jxr = jxr };
 }
 
@@ -311,7 +312,7 @@ fn build_tests(b: *std.Build) void {
         test_step.dependOn(&b.addRunArtifact(tool_tests).step);
     }
     // Tests run on this computer, through its C library
-    assert(tests.root_module.link_libc == true);
+    assert(tests.root_module.link_libc.?); // Asked for, as set above
     assert(tests.root_module.resolved_target != null);
 }
 
@@ -331,7 +332,7 @@ fn unit_tests(b: *std.Build, target: std.Build.ResolvedTarget) *std.Build.Step.C
     tests.root_module.addAnonymousImport("autostart_conf", .{
         .root_source_file = b.path("device/noface-autostart.conf"),
     });
-    assert(tests.root_module.link_libc == true);
+    assert(tests.root_module.link_libc.?); // Asked for, as set above
     return tests;
 }
 

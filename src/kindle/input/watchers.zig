@@ -135,8 +135,10 @@ pub fn restart_watcher_if_dead(in: *Input) ?Action {
     start_watcher(in);
     if (in.power_events >= 0) assert(in.watcher_pid > 0);
     std.debug.print("power watcher restarted: {}\n", .{in.power_events >= 0});
-    if (in.locked and lipc.in_screen_saver() == false) return unlocked(in);
-    return null;
+    if (!in.locked) return null;
+    // No answer: still locked as far as anyone knows, and asked at the next restart
+    const saver = lipc.in_screen_saver() orelse return null;
+    return if (saver) null else unlocked(in);
 }
 
 /// A computer setting up USB for files (not for a network, as SSH uses).

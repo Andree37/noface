@@ -165,7 +165,8 @@ pub fn run_library(a: *app.App) !void {
     // Started while the Kindle is locked: the "going to lock" event has passed, so
     // show the lock screen now, as if it had just arrived. Otherwise the library
     // would sit under a locked Kindle with touch switched off.
-    if (lipc.in_screen_saver() == true) a.input.hold_back(.lock);
+    // No answer: taken as unlocked, the library shown, as the stock screens are
+    if (lipc.in_screen_saver() orelse false) a.input.hold_back(.lock);
     a.quick = lipc.read(a.quick); // Once up front, so the first screen never shows blanks
     const ending = try screen.run_root(a, &b);
     // Only leaving ends it: a lock or a stop goes to it, never past it

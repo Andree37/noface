@@ -416,7 +416,7 @@ fn play_on_fake(alloc: std.mem.Allocator, kindle: Kindle) !FakeKindle {
     if (kindle.bluetooth) try fake.put("com.lab126.btfd BTstate", "1");
     if (kindle.radio_slow) fake.busy_after_set = wifi_key;
     assert(fake.sets.items.len == 0); // Nothing asked of it yet
-    assert(fake.busy == false);
+    assert(!fake.busy);
     return fake;
 }
 

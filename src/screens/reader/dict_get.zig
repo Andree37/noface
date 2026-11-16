@@ -168,7 +168,8 @@ pub const Getting = struct {
             .title_size = @intCast(title.len),
             .connect_until = os.now_us() + connect_us_max,
         };
-        if (lipc.wifi_connected() == true) {
+        // No answer: not yet, and the card asks again each second
+        if (lipc.wifi_connected() orelse false) {
             if (!g.progress.start()) return g.cant_start();
         }
         return .{ .push = screen.open(&g.progress, &g.progress_ending) };
@@ -306,7 +307,8 @@ const Progress = struct {
         assert(p.connect_until > 0);
         assert(p.background.len == p.a.overlay.len); // What its card is drawn over
         const r = p.running orelse {
-            if (lipc.wifi_connected() == true) {
+            // No answer: not yet, asked again next second until `connect_until`
+            if (lipc.wifi_connected() orelse false) {
                 if (!p.start()) return .{ .done = .cant_start };
             } else if (now >= p.connect_until) {
                 return .{ .done = .no_wifi };

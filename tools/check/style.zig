@@ -40,6 +40,10 @@ pub const Rule = enum {
     /// return …;` (or `continue`, `break`) then `assert(!c);` or, for one comparison,
     /// its opposite.
     assertion_restated,
+    /// `x == true` or `x == false`: on a bool it says nothing `x` doesn't; on an
+    /// optional one (`?bool`, a question the Kindle may not answer) it quietly decides
+    /// what no answer means. Say so: `x orelse false`, with why.
+    bool_compared,
     /// An `if` or `else` whose body is on the next line without braces.
     if_without_braces,
     /// `catch {}` or `catch unreachable`: every error is handled. Ignoring one counts as
@@ -702,6 +706,9 @@ fn check_zig_statement(scan: *Scan, line: *const Line, line_number: u32, said: S
         try scan.note(.compound_assertion, line_number, 1);
     }
     if (restates(scan.last_code, code)) try scan.note(.assertion_restated, line_number, 1);
+    const compared = count_token(code, "== true") + count_token(code, "== false") +
+        count_token(code, "!= true") + count_token(code, "!= false");
+    try scan.note(.bool_compared, line_number, compared);
     if (std.mem.trim(u8, code, " ").len > 0) scan.last_code = code;
     if (opens_unbraced(code, scan.after_statement)) {
         try scan.note(.if_without_braces, line_number, 1);
@@ -770,6 +777,7 @@ fn advice(rule: Rule) []const u8 {
         .recursion => "no recursion: walk with an explicit, bounded stack",
         .compound_assertion => "split it: `assert(a); assert(b);`",
         .assertion_restated => "remove it, or assert something the line above doesn't say",
+        .bool_compared => "use the bool itself, or `orelse` with why no answer means that",
         .if_without_braces => "a body on its own line takes braces",
         .error_ignored => "handle the error, or say why on that line: `// Ignored: <why>`",
         .comment_style => "comments start with a space, and a sentence with a capital",
@@ -1149,6 +1157,17 @@ test "an assertion of what the line above just made true counts" {
         \\}
     ;
     try std.testing.expectEqual(@as(u32, 3), try count_in(source, .assertion_restated));
+}
+
+test "a bool compared with true or false counts" {
+    const source =
+        \\fn ask(on: ?bool, b: bool) bool {
+        \\    assert(b or !b);
+        \\    if (on == true) return b == false;
+        \\    return on orelse false;
+        \\}
+    ;
+    try std.testing.expectEqual(@as(u32, 2), try count_in(source, .bool_compared));
 }
 
 test "comments start with a capital after a space; a continued sentence needn't" {

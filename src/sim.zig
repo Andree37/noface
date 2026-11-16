@@ -30,8 +30,13 @@ const test_book = @embedFile("testdata/scenario.epub");
 const width_px = 1272;
 const height_px = 1696;
 
-/// Its own folder for what noface keeps.
-const data = "noface-sim-data";
+/// Its own folder for what noface keeps, in the folder it's run from.
+const data_name = "noface-sim-data";
+
+/// The data folder and the books' folder, by their full paths: noface's paths start
+/// with `/`, as every one on the Kindle does.
+var data_buffer: [std.c.PATH_MAX]u8 = undefined;
+var books_buffer: [std.c.PATH_MAX]u8 = undefined;
 
 const port_default = 8080;
 
@@ -57,9 +62,13 @@ comptime {
 pub fn main(init: std.process.Init.Minimal) !void {
     const alloc = std.heap.smp_allocator;
     const port = main_port(init);
-    const books = try main_books(init.args.vector);
+    _ = sys.mkdir(data_name, 0o755);
+    const data = try full_path(&data_buffer, data_name);
+    const books = try main_books(init.args.vector, data);
     // No Amazon books: only the EPUBs
-    try write_file(data ++ "/library.tsv", "\n");
+    var library_buffer: [std.c.PATH_MAX]u8 = undefined;
+    const library_path = try std.fmt.bufPrintSentinel(&library_buffer, "{s}/library.tsv", .{data}, 0);
+    try write_file(library_path, "\n");
 
     // The pretend Kindle answers the system; the Wi-Fi saver's note stays in the folder
     var fake = try FakeKindle.init(alloc);
@@ -108,7 +117,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         .kit = &kit,
         .data_dir = data,
         .files = &files,
-        .library_path = data ++ "/library.tsv",
+        .library_path = library_path,
     });
     a.documents = books;
     // Every typeface is the Go font: the Kindle's own aren't on a computer
@@ -130,16 +139,26 @@ fn main_port(init: std.process.Init.Minimal) u16 {
     return std.fmt.parseInt(u16, text, 10) catch port_default;
 }
 
-/// The data folder made, and the books' folder: a folder given, or the test book.
-fn main_books(args: []const [*:0]const u8) ![]const u8 {
+/// The books' folder, by its full path: a folder given, or `data`'s, with the test book.
+fn main_books(args: []const [*:0]const u8, data: []const u8) ![]const u8 {
     assert(args.len >= 1); // The program's own name comes first
-    _ = sys.mkdir(data, 0o755);
-    if (args.len >= 2) return std.mem.sliceTo(args[1], 0);
-    const dir = data ++ "/books";
+    assert(data[0] == '/');
+    if (args.len >= 2) return full_path(&books_buffer, args[1]);
+    const dir = try std.fmt.bufPrintSentinel(&books_buffer, "{s}/books", .{data}, 0);
     _ = sys.mkdir(dir, 0o755);
-    try write_file(dir ++ "/Scenario Book.epub", test_book);
-    comptime assert(dir.len > data.len); // Inside the data folder
+    var book_buffer: [std.c.PATH_MAX]u8 = undefined;
+    const book = try std.fmt.bufPrintSentinel(&book_buffer, "{s}/Scenario Book.epub", .{dir}, 0);
+    try write_file(book, test_book);
     return dir;
+}
+
+/// `path` by its full path, into `buffer`: noface's paths all start with `/`.
+fn full_path(buffer: *[std.c.PATH_MAX]u8, path: [*:0]const u8) ![:0]const u8 {
+    const resolved = std.c.realpath(path, buffer) orelse return error.NoSuchFolder;
+    const full = std.mem.sliceTo(resolved, 0);
+    assert(full[0] == '/');
+    assert(full.len < buffer.len);
+    return buffer[0..full.len :0];
 }
 
 extern "c" fn time(t: ?*i64) i64;

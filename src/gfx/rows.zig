@@ -130,9 +130,12 @@ pub const Sink = struct {
         return switch (target) {
             .size => |s| s,
             .fit => |box| fitted(source, box),
-            .divided => |by| .{
-                .width = @intCast(divide_up(source.width, by)),
-                .height = @intCast(divide_up(source.height, by)),
+            .divided => |by| divided: {
+                assert(by > 0);
+                break :divided .{
+                    .width = @intCast(divide_up(source.width, by)),
+                    .height = @intCast(divide_up(source.height, by)),
+                };
             },
         };
     }
@@ -143,7 +146,6 @@ pub const Sink = struct {
         assert(sink.mode == .waiting);
         assert(source.width > 0);
         assert(source.height > 0);
-        if (sink.target == .divided) assert(sink.target.divided > 0);
         const size = size_for(sink.target, source);
         assert(size.width > 0);
         assert(size.height > 0);
@@ -264,9 +266,10 @@ pub const Sink = struct {
     /// The scaled picture, once every row has come. The caller owns it.
     pub fn finish(sink: *Sink) []u8 {
         switch (sink.mode) {
-            .copy, .box => {
+            .copy => assert(sink.rows_in == sink.source.height),
+            .box => {
                 assert(sink.rows_in == sink.source.height);
-                if (sink.mode == .box) assert(sink.rows_out == sink.size.height);
+                assert(sink.rows_out == sink.size.height);
             },
             .cells => if (sink.sums_narrow.len > 0) {
                 sink.finish_cells(u32, sink.sums_narrow);

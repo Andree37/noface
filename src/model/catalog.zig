@@ -22,11 +22,7 @@ pub const Entry = struct {
     key: []const u8 = "",
     kind: []const u8 = "",
     guid: []const u8 = "",
-    series: []const u8 = "", // The series it belongs to, if known
-    series_index: f32 = 0, // Its place in that series: 2 for "#2"
-    /// When any book of its series was last read, for sorting by series: at most
-    /// `series_last_max`.
-    series_last: u64 = 0,
+    series: ?Series = null, // The series it belongs to, if known
     /// The name its author sorts under (`surname`), for sorting by author: found once
     /// a book, as a sort compares each book a few dozen times.
     surname: []const u8 = "",
@@ -143,14 +139,15 @@ fn before(order: Order, a: Entry, b: Entry) bool {
 /// books outside any series, most recent first.
 // Assertions: a comparison, true or false for any two books; `sort_by` checks the order.
 fn by_series(a: Entry, b: Entry) bool {
-    const in_a = a.series.len > 0;
-    const in_b = b.series.len > 0;
-    if (in_a != in_b) return in_a;
-    if (!in_a) return a.last > b.last;
-    const key_a = series_key(a);
-    const key_b = series_key(b);
+    const sa = a.series orelse {
+        if (b.series != null) return false; // A series comes first
+        return a.last > b.last;
+    };
+    const sb = b.series orelse return true;
+    const key_a = series_key(sa);
+    const key_b = series_key(sb);
     if (!std.ascii.eqlIgnoreCase(key_a, key_b)) {
-        if (a.series_last != b.series_last) return a.series_last > b.series_last;
+        if (sa.last != sb.last) return sa.last > sb.last;
         return std.ascii.lessThanIgnoreCase(key_a, key_b);
     }
     return by_title(a, b); // One series: in its order
@@ -158,8 +155,8 @@ fn by_series(a: Entry, b: Entry) bool {
 
 /// A book's place in its series, for comparing: one that isn't a number (an EPUB can
 /// say "nan") goes after every numbered place, so sorting is a strict weak order.
-pub fn series_place(e: Entry) f32 {
-    const place = if (std.math.isNan(e.series_index)) std.math.inf(f32) else e.series_index;
+pub fn series_place(s: Series) f32 {
+    const place = if (std.math.isNan(s.index)) std.math.inf(f32) else s.index;
     assert(!std.math.isNan(place));
     return place;
 }
@@ -181,16 +178,17 @@ pub const InList = struct {
 /// The next book of `e`'s series not yet read, by its place in the series: its index
 /// among `books`.
 pub fn next_in_series(books: anytype, e: *const Entry) ?u32 {
-    if (e.series.len == 0) return null;
+    const mine = e.series orelse return null;
     var best: ?u32 = null;
     var best_place: f32 = 0;
     for (0..books.count()) |i| {
         const o = books.at(@intCast(i));
-        if (!same_series(o.series, e.series)) continue;
-        if (series_place(o) <= series_place(e.*) or o.is_read()) continue;
-        if (best == null or series_place(o) < best_place) {
+        const theirs = o.series orelse continue;
+        if (!same_series(theirs.name, mine.name)) continue;
+        if (series_place(theirs) <= series_place(mine) or o.is_read()) continue;
+        if (best == null or series_place(theirs) < best_place) {
             best = @intCast(i);
-            best_place = series_place(o);
+            best_place = series_place(theirs);
         }
     }
     const found = best orelse return null;
@@ -222,9 +220,8 @@ fn by_progress(a: Entry, b: Entry) bool {
 /// What a book sorts under alphabetically: its series, so a series stays together,
 /// or else its title.
 pub fn title_key(e: Entry) []const u8 {
-    const key = if (e.series.len > 0) series_key(e) else e.title;
-    assert(key.len <= @max(e.series.len, e.title.len));
-    return key;
+    const s = e.series orelse return e.title;
+    return series_key(s);
 }
 
 /// Alphabetical by series or title. Within one key: the books outside a series, then
@@ -236,20 +233,24 @@ fn by_title(a: Entry, b: Entry) bool {
     const ka = title_key(a);
     const kb = title_key(b);
     if (!std.ascii.eqlIgnoreCase(ka, kb)) return std.ascii.lessThanIgnoreCase(ka, kb);
-    const in_a = a.series.len > 0;
-    const in_b = b.series.len > 0;
-    if (in_a != in_b) return in_b;
-    if (in_a and series_place(a) != series_place(b)) return series_place(a) < series_place(b);
+    // The books outside a series first, then the series in its order
+    if (a.series) |x| {
+        const y = b.series orelse return false;
+        if (series_place(x) != series_place(y)) return series_place(x) < series_place(y);
+    } else if (b.series != null) return true;
     return std.ascii.lessThanIgnoreCase(a.title, b.title);
 }
+
+/// A book's series: its name, never empty, and the book's place in it, 2 for "#2".
+/// `last` is when any book of the series was last read, set only while sorting by
+/// series, at most `series_last_max`.
+pub const Series = struct { name: []const u8, index: f32, last: u64 = 0 };
 
 /// A series and a book's place in it, from a file name. The third part names it,
 /// written as "The Hitchhiker's Guide #2, 1980", "Three-Body, 3, 2016" or "The
 /// hitchhiker's guide to the galaxy, bk_ 3"; or the title starts "[Hitchhiker's Guide
 /// to the Galaxy 01] • ...".
-pub const SeriesPlace = struct { name: []const u8, index: f32 };
-
-pub fn series_from_file_name(path: []const u8) ?SeriesPlace {
+pub fn series_from_file_name(path: []const u8) ?Series {
     const slash = std.mem.lastIndexOfScalar(u8, path, '/') orelse return null;
     assert(slash < path.len);
     const name_ext = path[slash + 1 ..];
@@ -283,7 +284,7 @@ pub fn series_from_file_name(path: []const u8) ?SeriesPlace {
 
 /// "[Hitchhiker's Guide to the Galaxy 01] • The Hitchhiker's...": the series and number
 /// in brackets ahead of a title.
-fn bracketed(first: []const u8) ?SeriesPlace {
+fn bracketed(first: []const u8) ?Series {
     if (!std.mem.startsWith(u8, first, "[")) return null;
     const close = std.mem.indexOfScalar(u8, first, ']') orelse return null;
     assert(close > 0); // The first byte is the opening bracket
@@ -325,7 +326,7 @@ comptime {
     }
 }
 
-fn named(name_part: []const u8, number_part: []const u8, sureness: Sureness) ?SeriesPlace {
+fn named(name_part: []const u8, number_part: []const u8, sureness: Sureness) ?Series {
     const name = std.mem.trim(u8, name_part, " ");
     const index = std.fmt.parseFloat(f32, std.mem.trim(u8, number_part, " _")) catch return null;
     // A place in a series, never an ISBN or a year: kept small enough to show as a number
@@ -358,7 +359,9 @@ fn named(name_part: []const u8, number_part: []const u8, sureness: Sureness) ?Se
 /// Whether two series names are the same series: "The Hitchhiker's Guide to the
 /// Galaxy" and "hitchhiker's guide to the galaxy" are.
 pub fn same_series(a: []const u8, b: []const u8) bool {
-    return a.len > 0 and std.ascii.eqlIgnoreCase(without_the(a), without_the(b));
+    assert(a.len > 0); // A series always has a name
+    assert(b.len > 0);
+    return std.ascii.eqlIgnoreCase(without_the(a), without_the(b));
 }
 
 pub fn without_the(name: []const u8) []const u8 {
@@ -368,15 +371,15 @@ pub fn without_the(name: []const u8) []const u8 {
     return bare;
 }
 
-/// "Dune #1" for a line under a title, or "" outside a series.
-pub fn series_label(buf: []u8, e: Entry) []const u8 {
-    if (e.series.len == 0) return "";
-    if (@floor(e.series_index) == e.series_index) {
-        const index: u32 = @intFromFloat(@min(@max(e.series_index, 0), max_index));
+/// "Dune #1" for a line under a title, or null outside a series.
+pub fn series_label(buf: []u8, e: Entry) ?[]const u8 {
+    const s = e.series orelse return null;
+    if (@floor(s.index) == s.index) {
+        const index: u32 = @intFromFloat(@min(@max(s.index, 0), max_index));
         assert(index <= max_index);
-        return std.fmt.bufPrint(buf, "{s} #{d}", .{ e.series, index }) catch e.series;
+        return std.fmt.bufPrint(buf, "{s} #{d}", .{ s.name, index }) catch s.name;
     }
-    return std.fmt.bufPrint(buf, "{s} #{d:.1}", .{ e.series, e.series_index }) catch e.series;
+    return std.fmt.bufPrint(buf, "{s} #{d:.1}", .{ s.name, s.index }) catch s.name;
 }
 
 /// The name an author sorts under: the part before the comma in "Adams, Douglas",
@@ -416,7 +419,7 @@ const Listed = struct {
     }
 
     pub fn set_series_last(_: Listed, e: *Entry, last: u64) void {
-        e.series_last = last;
+        e.series.?.last = last; // Only a book in a series is given one
     }
 
     pub fn set_surname(_: Listed, e: *Entry) void {
@@ -424,15 +427,15 @@ const Listed = struct {
     }
 };
 
-/// The latest `series_last`, in seconds since 1970: 2106, which a u32 holds, so the
+/// The latest `Series.last`, in seconds since 1970: 2106, which a u32 holds, so the
 /// library can keep it in 4 bytes. A later time can only come from a broken file, and
 /// sorts as this one.
 pub const series_last_max: u64 = std.math.maxInt(u32);
 
 /// Sorts `items`, each standing for a book, as `order` has the books: entries, or ids
-/// of books kept elsewhere. `books.entry(item)` is an item's book, its `series_last` as
-/// `books.set_series_last(&item, last)` last set it, never past `series_last_max`, and
-/// its `surname` as `books.set_surname(&item)` set it.
+/// of books kept elsewhere. `books.entry(item)` is an item's book, its series' `last`
+/// as `books.set_series_last(&item, last)` last set it (only for a book in a series),
+/// never past `series_last_max`, and its `surname` as `books.set_surname(&item)` set it.
 pub fn sort_by(comptime T: type, items: []T, order: Order, books: anytype) void {
     assert(items.len <= std.math.maxInt(u32)); // A book's place in them is a u32
     if (order == .series) series_last_set(T, items, books);
@@ -459,7 +462,7 @@ fn series_last_set(comptime T: type, items: []T, books: anytype) void {
     const Books = @TypeOf(books);
     const by_name = struct {
         fn less(b: Books, x: T, y: T) bool {
-            return std.ascii.lessThanIgnoreCase(series_key(b.entry(x)), series_key(b.entry(y)));
+            return std.ascii.lessThanIgnoreCase(group_key(b.entry(x)), group_key(b.entry(y)));
         }
     }.less;
     std.mem.sort(T, items, books, by_name);
@@ -468,29 +471,36 @@ fn series_last_set(comptime T: type, items: []T, books: anytype) void {
     for (1..items.len + 1) |i| {
         const first = books.entry(items[run_first]);
         const ends = i == items.len or
-            !std.ascii.eqlIgnoreCase(series_key(books.entry(items[i])), series_key(first));
+            !std.ascii.eqlIgnoreCase(group_key(books.entry(items[i])), group_key(first));
         if (!ends) continue;
+        defer run_first = @intCast(i);
+        // The books outside any series are one run, with nothing to set
+        if (first.series == null) continue;
         var latest: u64 = 0;
         // Only books opened: a download's date isn't reading
         for (items[run_first..i]) |item| {
             const e = books.entry(item);
             if (e.was_opened()) latest = @max(latest, @min(e.last, series_last_max));
         }
-        const in_series = first.series.len > 0;
-        for (items[run_first..i]) |*item| books.set_series_last(item, if (in_series) latest else 0);
-        run_first = @intCast(i);
+        for (items[run_first..i]) |*item| books.set_series_last(item, latest);
     }
     assert(run_first == items.len);
-    for (items) |item| {
-        const e = books.entry(item);
-        if (e.series.len == 0) assert(e.series_last == 0);
-    }
+}
+
+/// What `series_last_set` groups a book under: its series' key, or nothing (sorting
+/// first) for one outside any.
+fn group_key(e: Entry) []const u8 {
+    const s = e.series orelse return "";
+    const key = series_key(s);
+    assert(key.len > 0); // A series' run never mixes with the books outside any
+    return key;
 }
 
 /// The name a series is grouped under: without its "The", ignoring case.
-pub fn series_key(e: Entry) []const u8 {
-    const key = without_the(e.series);
-    assert(key.len <= e.series.len);
+pub fn series_key(s: Series) []const u8 {
+    assert(s.name.len > 0);
+    const key = without_the(s.name);
+    assert(key.len > 0);
     return key;
 }
 
@@ -556,8 +566,8 @@ pub fn select(
 /// Whether a book's title, author or series has `query` in it.
 pub fn matches_query(e: Entry, query: []const u8) bool {
     assert(query.len > 0);
-    return search.contains(e.title, query) or search.contains(e.author, query) or
-        search.contains(e.series, query);
+    const in_series = if (e.series) |s| search.contains(s.name, query) else false;
+    return search.contains(e.title, query) or search.contains(e.author, query) or in_series;
 }
 
 test "sort orders by title and by date added" {
@@ -681,10 +691,9 @@ test "series come from file names" {
         .author = "",
         .percent = 0,
         .last = 0,
-        .series = "S",
-        .series_index = max_index,
+        .series = .{ .name = "S", .index = max_index },
     };
-    try std.testing.expectEqualStrings("S #16777215", series_label(&label, e));
+    try std.testing.expectEqualStrings("S #16777215", series_label(&label, e).?);
     // The series named last, right before the extension
     const scarlet = "/d/A Study in Scarlet -- Arthur Conan Doyle -- Sherlock Holmes #1.epub";
     const last = series_from_file_name(scarlet).?;
@@ -704,8 +713,7 @@ test "a series stays together and in order when sorted" {
             .author = "Adams, Douglas",
             .percent = 0,
             .last = 1,
-            .series = "Hitchhiker's Guide",
-            .series_index = 5,
+            .series = .{ .name = "Hitchhiker's Guide", .index = 5 },
         },
         .{ .path = "/b", .title = "Artemis", .author = "Andy Weir", .percent = 0, .last = 1 },
         .{
@@ -714,8 +722,7 @@ test "a series stays together and in order when sorted" {
             .author = "Adams, Douglas",
             .percent = 0,
             .last = 1,
-            .series = "hitchhiker's guide",
-            .series_index = 2,
+            .series = .{ .name = "hitchhiker's guide", .index = 2 },
         },
         .{ .path = "/d", .title = "Zed", .author = "", .percent = 0, .last = 1 },
     };
@@ -727,7 +734,7 @@ test "a series stays together and in order when sorted" {
     try std.testing.expectEqualStrings("The Restaurant", rows[0].title);
     try std.testing.expectEqualStrings("Mostly Harmless", rows[1].title);
     var buf: [64]u8 = undefined;
-    try std.testing.expectEqualStrings("Hitchhiker's Guide #5", series_label(&buf, rows[1]));
+    try std.testing.expectEqualStrings("Hitchhiker's Guide #5", series_label(&buf, rows[1]).?);
 }
 
 test "a series place that isn't a number sorts last and keeps the sort whole" {
@@ -743,8 +750,10 @@ test "a series place that isn't a number sorts last and keeps the sort whole" {
                 .author = "Same Author",
                 .percent = 0,
                 .last = 1,
-                .series = if (in_series) "Saga" else "",
-                .series_index = if (i == 3) std.math.nan(f32) else @floatFromInt(i + 1),
+                .series = if (in_series) .{
+                    .name = "Saga",
+                    .index = if (i == 3) std.math.nan(f32) else @floatFromInt(i + 1),
+                } else null,
             };
         }
         prng.random().shuffle(Entry, &rows);
@@ -753,8 +762,8 @@ test "a series place that isn't a number sorts last and keeps the sort whole" {
             var places: [9]f32 = undefined;
             var count: u32 = 0;
             for (rows) |row| {
-                if (row.series.len == 0) continue;
-                places[count] = row.series_index;
+                const s = row.series orelse continue;
+                places[count] = s.index;
                 count += 1;
             }
             try std.testing.expectEqual(@as(u32, titles.len), count);
@@ -881,8 +890,7 @@ test "by series: the latest series first, each in order, then the rest" {
             .author = "",
             .percent = 0,
             .last = 1,
-            .series = "Dune",
-            .series_index = 2,
+            .series = .{ .name = "Dune", .index = 2 },
         },
         .{
             .path = "/c",
@@ -890,8 +898,7 @@ test "by series: the latest series first, each in order, then the rest" {
             .author = "",
             .percent = 100,
             .last = 30,
-            .series = "Three-Body",
-            .series_index = 1,
+            .series = .{ .name = "Three-Body", .index = 1 },
         },
         .{
             .path = "/d",
@@ -899,8 +906,7 @@ test "by series: the latest series first, each in order, then the rest" {
             .author = "",
             .percent = 100,
             .last = 5,
-            .series = "Dune",
-            .series_index = 1,
+            .series = .{ .name = "Dune", .index = 1 },
         },
         .{
             .path = "/e",
@@ -908,8 +914,7 @@ test "by series: the latest series first, each in order, then the rest" {
             .author = "",
             .percent = 40,
             .last = 40,
-            .series = "Three-Body",
-            .series_index = 2,
+            .series = .{ .name = "Three-Body", .index = 2 },
             .availability = .cloud,
         },
     };
@@ -926,8 +931,7 @@ test "next in a series skips what's read" {
             .author = "",
             .percent = 100,
             .last = 0,
-            .series = "S",
-            .series_index = 1,
+            .series = .{ .name = "S", .index = 1 },
         },
         .{
             .path = "/b",
@@ -935,8 +939,7 @@ test "next in a series skips what's read" {
             .author = "",
             .percent = 0,
             .last = 0,
-            .series = "S",
-            .series_index = 3,
+            .series = .{ .name = "S", .index = 3 },
         },
         .{
             .path = "/c",
@@ -944,8 +947,7 @@ test "next in a series skips what's read" {
             .author = "",
             .percent = 100,
             .last = 0,
-            .series = "S",
-            .series_index = 2,
+            .series = .{ .name = "S", .index = 2 },
         },
         .{
             .path = "/d",
@@ -953,8 +955,7 @@ test "next in a series skips what's read" {
             .author = "",
             .percent = 0,
             .last = 0,
-            .series = "T",
-            .series_index = 2,
+            .series = .{ .name = "T", .index = 2 },
         },
     };
     const listed: InList = .{ .entries = &entries };
@@ -970,8 +971,7 @@ test "sorting by title holds together when one series is named with and without 
             .author = "",
             .percent = 0,
             .last = 1,
-            .series = "The Hitchhiker's Guide",
-            .series_index = 1,
+            .series = .{ .name = "The Hitchhiker's Guide", .index = 1 },
         },
         .{
             .path = "/b",
@@ -979,8 +979,7 @@ test "sorting by title holds together when one series is named with and without 
             .author = "",
             .percent = 0,
             .last = 1,
-            .series = "Hitchhiker's Guide",
-            .series_index = 2,
+            .series = .{ .name = "Hitchhiker's Guide", .index = 2 },
         },
         .{ .path = "/c", .title = "Last Chance to See", .author = "", .percent = 0, .last = 1 },
         .{ .path = "/d", .title = "Hitchhiker's Guide", .author = "", .percent = 0, .last = 1 },
@@ -1040,7 +1039,7 @@ test "series with Book inside the name are found, ISBNs after # aren't numbers" 
 }
 
 test "series order gives each book its series' latest reading, as comparing all pairs did" {
-    const names = [_][]const u8{ "", "Dune", "the dune", "Saga", "THE SAGA", "Other" };
+    const names = [_]?[]const u8{ null, "Dune", "the dune", "Saga", "THE SAGA", "Other" };
     var prng = std.Random.DefaultPrng.init(7);
     const random = prng.random();
     var rows: [300]Entry = undefined;
@@ -1052,20 +1051,20 @@ test "series order gives each book its series' latest reading, as comparing all 
             .percent = random.uintLessThan(u32, 101),
             .last = random.uintLessThan(u64, 1000),
             .seconds_read = if (i % 3 == 0) 10 else 0,
-            .series = names[random.uintLessThan(u32, names.len)],
-            .series_index = @floatFromInt(random.uintLessThan(u32, 9)),
+            .series = if (names[random.uintLessThan(u32, names.len)]) |name| .{
+                .name = name,
+                .index = @floatFromInt(random.uintLessThan(u32, 9)),
+            } else null,
         };
     }
     sort(&rows, .series);
     for (rows) |e| {
+        const s = e.series orelse continue;
         var latest: u64 = 0;
-        if (e.series.len > 0) {
-            for (rows) |o| {
-                if (same_series(o.series, e.series) and o.was_opened()) {
-                    latest = @max(latest, o.last);
-                }
-            }
+        for (rows) |o| {
+            const theirs = o.series orelse continue;
+            if (same_series(theirs.name, s.name) and o.was_opened()) latest = @max(latest, o.last);
         }
-        try std.testing.expectEqual(latest, e.series_last);
+        try std.testing.expectEqual(latest, s.last);
     }
 }

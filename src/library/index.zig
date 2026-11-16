@@ -371,8 +371,11 @@ fn entry_of(r: *const Record, texts: *const [8][:0]const u8) catalog.Entry {
         .key = texts[@backingInt(Field.key)],
         .kind = texts[@backingInt(Field.kind)],
         .guid = texts[@backingInt(Field.guid)],
-        .series = texts[@backingInt(Field.series)],
-        .series_index = r.series_index,
+        // An empty name in the file: not in a series
+        .series = if (texts[@backingInt(Field.series)].len > 0)
+            .{ .name = texts[@backingInt(Field.series)], .index = r.series_index }
+        else
+            null,
     };
     assert(e.percent <= 100);
     return e;
@@ -401,7 +404,7 @@ pub fn write_blob(out: *[blob_bytes_max]u8, e: *const catalog.Entry) u32 {
     texts[@backingInt(Field.thumbnail)] = cut(e.thumbnail, files.path_bytes_max);
     texts[@backingInt(Field.title)] = clip(e.title);
     texts[@backingInt(Field.author)] = clip(e.author);
-    texts[@backingInt(Field.series)] = clip(e.series);
+    texts[@backingInt(Field.series)] = if (e.series) |s| clip(s.name) else "";
     texts[@backingInt(Field.key)] = clip(e.key);
     texts[@backingInt(Field.kind)] = clip(e.kind);
     texts[@backingInt(Field.guid)] = clip(e.guid);
@@ -446,7 +449,8 @@ pub fn clip(text: []const u8) []const u8 {
 /// The record of entry `e`, its texts at `text_offset` (`text_len` long).
 pub fn record_of(e: *const catalog.Entry, text_offset: u64, text_len: u32) Record {
     assert(text_len <= blob_bytes_max);
-    const finite = std.math.isFinite(e.series_index) or std.math.isNan(e.series_index);
+    const series_index = if (e.series) |s| s.index else 0;
+    const finite = std.math.isFinite(series_index) or std.math.isNan(series_index);
     var r: Record = .{
         .last = e.last,
         .added = e.added,
@@ -456,7 +460,7 @@ pub fn record_of(e: *const catalog.Entry, text_offset: u64, text_len: u32) Recor
         .file_size = 0,
         .file_modified = 0,
         .text_len = text_len,
-        .series_index = if (finite) e.series_index else 0,
+        .series_index = if (finite) series_index else 0,
         .percent = @intCast(@min(e.percent, 100)),
         .kindle_percent = @intCast(@min(e.kindle_percent, 100)),
         .availability = @backingInt(e.availability),
@@ -484,8 +488,7 @@ test "a book's record and texts read back as the entry they were made from" {
         .key = "B000",
         .kind = "EBOK",
         .guid = "g",
-        .series = "The Dune Saga",
-        .series_index = 1.5,
+        .series = .{ .name = "The Dune Saga", .index = 1.5 },
     };
     var bytes: [blob_bytes_max]u8 = undefined;
     const len = write_blob(&bytes, &e);
@@ -497,7 +500,10 @@ test "a book's record and texts read back as the entry they were made from" {
     inline for (info.field_names, info.field_types) |name, T| {
         if (T == []const u8 or T == [:0]const u8) {
             try std.testing.expectEqualStrings(@field(e, name), @field(back, name));
-        } else if (comptime !std.mem.eql(u8, name, "series_last")) {
+        } else if (T == ?catalog.Series) {
+            try std.testing.expectEqualStrings(e.series.?.name, back.series.?.name);
+            try std.testing.expectEqual(e.series.?.index, back.series.?.index);
+        } else {
             try std.testing.expectEqual(@field(e, name), @field(back, name));
         }
     }

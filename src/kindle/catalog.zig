@@ -40,6 +40,7 @@ pub fn export_library() void {
 
 /// Filename conversion turned ":" into "_", and some titles carry a series prefix
 /// like "[Bobiverse 01] \u{2022} We Are Legion".
+// Assertions: it cleans a title from the Kindle's catalog, which is outside data.
 pub fn fix_title(alloc: std.mem.Allocator, raw: []const u8) ![]const u8 {
     var title = clean_title(raw);
     const bullet = "\u{2022} ";
@@ -118,8 +119,6 @@ pub fn parse_line(alloc: std.mem.Allocator, line: []const u8) !?library.Entry {
     // anyway is left to the library's own walk of the folder, which lists every EPUB
     if (std.ascii.endsWithIgnoreCase(path, ".epub")) return null;
     const series = library.series_from_file_name(path);
-    // A place in a series is a number the library can sort by
-    if (series) |s| assert(std.math.isFinite(s.index));
     const percent_whole: u32 = @intFromFloat(std.math.clamp(percent, 0, percent_max));
     return .{
         .path = try alloc.dupeSentinel(u8, path, 0),
@@ -137,8 +136,7 @@ pub fn parse_line(alloc: std.mem.Allocator, line: []const u8) !?library.Entry {
         .key = key,
         .kind = kind,
         .guid = guid,
-        .series = if (series) |s| s.name else "",
-        .series_index = if (series) |s| s.index else 0,
+        .series = series,
     };
 }
 
@@ -202,12 +200,12 @@ test "a series place or percent that isn't a number counts as none" {
     const rows = try parse(arena.allocator(), data);
     try std.testing.expectEqual(@as(usize, 3), rows.len);
     for (rows) |row| {
-        try std.testing.expect(std.math.isFinite(row.series_index));
+        if (row.series) |series| try std.testing.expect(std.math.isFinite(series.index));
         try std.testing.expectEqual(@as(u32, 0), row.percent);
     }
-    try std.testing.expectEqualStrings("", rows[0].series);
-    try std.testing.expectEqualStrings("", rows[1].series);
-    try std.testing.expectEqual(@as(f32, 2), rows[2].series_index);
+    try std.testing.expect(rows[0].series == null);
+    try std.testing.expect(rows[1].series == null);
+    try std.testing.expectEqual(@as(f32, 2), rows[2].series.?.index);
     for ([_]library.Order{ .title, .author, .series }) |order| library.sort(rows, order);
 }
 

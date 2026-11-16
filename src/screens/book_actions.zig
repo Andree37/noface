@@ -228,7 +228,8 @@ pub fn up_next(
 ) ?screen.Frame {
     if (next.availability != .local) return null;
     assert(next.is_local());
-    const label = catalog.series_label(&offer.label_buffer, next.*);
+    // The next of a series (`next_in_series`), so always in one
+    const label = catalog.series_label(&offer.label_buffer, next.*).?;
     offer.subtitle = std.fmt.bufPrint(&offer.subtitle_buffer, "Up next in {s}", .{label}) catch
         "Up next";
     std.debug.print("up next: {s}\n", .{next.title});

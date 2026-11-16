@@ -292,8 +292,7 @@ fn add_epub(b: *Build, path: [:0]const u8) void {
 const About = struct {
     title: []const u8,
     author: []const u8,
-    series: []const u8,
-    series_index: f32,
+    series: ?catalog.Series,
     has_cover: bool, // Its cover was saved beside its state once
 };
 
@@ -310,7 +309,6 @@ fn read_epub(b: *Build, path: [:0]const u8, cover_path: [:0]const u8) ?About {
         .title = about.title,
         .author = about.author,
         .series = about.series,
-        .series_index = about.series_index,
         .has_cover = have_cover or about.cover != null,
     };
 }
@@ -334,8 +332,6 @@ fn read_about(scratch: *memory.Budget, data: []const u8, with_cover: bool) ?epub
 /// An EPUB's entry: the book's own title and series, else its file name's.
 fn epub_entry(path: [:0]const u8, about: *const About, cover: [:0]const u8) catalog.Entry {
     assert(path.len > 0);
-    const from_file_name = catalog.series_from_file_name(path);
-    const from_book = about.series.len > 0;
     const e: catalog.Entry = .{
         .path = path,
         .title = if (about.title.len > 0) about.title else std.fs.path.stem(path),
@@ -344,10 +340,7 @@ fn epub_entry(path: [:0]const u8, about: *const About, cover: [:0]const u8) cata
         .last = 0,
         .thumbnail = cover,
         .kind = "EPUB",
-        .series = if (from_book) about.series else if (from_file_name) |f| f.name else "",
-        .series_index = if (from_book)
-            about.series_index
-        else if (from_file_name) |f| f.index else 0,
+        .series = about.series orelse catalog.series_from_file_name(path),
     };
     assert(e.is_epub());
     return e;
@@ -394,7 +387,6 @@ const EpubsRead = struct {
                 .title = e.title,
                 .author = e.author,
                 .series = e.series,
-                .series_index = e.series_index,
                 .has_cover = e.thumbnail.len > 0,
             };
         }
@@ -482,8 +474,7 @@ fn set_series(
         if (item.key != high) return;
         var e = ix.entry(item.id);
         if (!std.mem.eql(u8, e.path, o.path)) continue;
-        e.series = o.name;
-        e.series_index = o.index;
+        e.series = o.series;
         const len = index.write_blob(buffers.blob, &e);
         var path_buffer: [files.path_bytes_max]u8 = undefined;
         var text = try files.Writer.append(
@@ -496,10 +487,11 @@ fn set_series(
         var r = ix.record(item.id);
         r.text_offset = offset;
         r.text_len = len;
-        r.series_index = o.index;
+        r.series_index = if (o.series) |s| s.index else 0;
         r.flags |= index.Record.series_by_hand;
         try ix.write_record(item.id, &r);
-        assert(std.mem.eql(u8, ix.entry(item.id).series, index.clip(o.name)));
+        // Reads back as set: in a series, or not
+        assert((ix.entry(item.id).series == null) == (o.series == null));
     }
 }
 

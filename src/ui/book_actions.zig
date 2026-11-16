@@ -48,8 +48,8 @@ pub fn subtitle(buf: []u8, e: *const catalog.Entry, confirming: bool) []const u8
     // The author, then the series and time read here when known, dot between each
     var w: std.Io.Writer = .fixed(buf);
     w.writeAll(e.author) catch return e.author;
-    for ([_][]const u8{ series, if (time) |t| t else "" }, 0..) |part, i| {
-        if (part.len == 0) continue;
+    for ([_]?[]const u8{ series, time }, 0..) |known, i| {
+        const part = known orelse continue;
         if (w.buffered().len > 0) w.writeAll("  \u{b7}  ") catch return e.author;
         if (i == 1) w.writeAll("read here for ") catch return e.author;
         w.writeAll(part) catch return e.author;

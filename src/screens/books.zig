@@ -394,7 +394,9 @@ pub const Library = struct {
             copy.path = try alloc.dupeSentinel(u8, e.path, 0);
             copy.title = try alloc.dupe(u8, e.title);
             copy.author = try alloc.dupe(u8, e.author);
-            copy.series = try alloc.dupe(u8, e.series);
+            if (e.series) |series| {
+                copy.series = .{ .name = try alloc.dupe(u8, series.name), .index = series.index };
+            }
             copy.thumbnail = "";
             copy.key = "";
             copy.kind = "";
@@ -917,7 +919,9 @@ test "every order lists the books as the catalog sorts the same books in a list"
             copy.title = try alloc.dupe(u8, e.title);
             copy.path = try alloc.dupeSentinel(u8, e.path, 0);
             copy.author = try alloc.dupe(u8, e.author);
-            copy.series = try alloc.dupe(u8, e.series);
+            if (e.series) |series| {
+                copy.series = .{ .name = try alloc.dupe(u8, series.name), .index = series.index };
+            }
             try all.append(alloc, copy);
         }
         break :blk all.items;

@@ -405,9 +405,8 @@ fn draw_hero_byline(
     assert(author_y > hero_top);
     var byline_buf: [256]u8 = undefined;
     var series_buf: [160]u8 = undefined;
-    const series = catalog.series_label(&series_buf, e.*);
     var byline: []const u8 = e.author;
-    if (series.len > 0) {
+    if (catalog.series_label(&series_buf, e.*)) |series| {
         if (e.author.len == 0) {
             byline = series;
         } else {
@@ -478,7 +477,7 @@ fn draw_cell(
     if (e.is_read()) {
         icons.check(page, @floatFromInt(x + cover.width - 32), @floatFromInt(y + 32));
     }
-    if (e.series.len > 0) try series_badge(fonts.caption, page, x, y, e.series_index);
+    if (e.series) |s| try series_badge(fonts.caption, page, x, y, s.index);
     _ = try draw.wrapped(fonts.caption, page, left, title_y, 30, e.title, title_width, 1);
 }
 

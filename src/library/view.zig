@@ -64,7 +64,9 @@ const Books = struct {
     pub fn entry(b: Books, item: Item) catalog.Entry {
         var e = b.ix.entry(item.id);
         switch (b.order) {
-            .series => e.series_last = item.key,
+            .series => if (e.series) |*s| {
+                s.last = item.key;
+            },
             .author => e.surname = e.author[item.key >> 16 ..][0 .. item.key & 0xffff],
             else => {},
         }

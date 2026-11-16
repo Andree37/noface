@@ -17,8 +17,7 @@ pub const Info = struct {
     title: []const u8,
     author: []const u8,
     cover: ?[]const u8 = null,
-    series: []const u8 = "",
-    series_index: f32 = 0,
+    series: ?catalog.Series = null,
 };
 
 /// The package document: metadata, every file it lists, and the reading order.
@@ -30,7 +29,8 @@ const Package = struct {
     spine: []const []const u8, // Item ids, in reading order
     toc_ncx: ?[]const u8 = null, // EPUB 2 contents, an item id
     cover_id: ?[]const u8 = null,
-    series: []const u8 = "", // From Calibre's metadata, which most EPUBs carry
+    // From Calibre's metadata, which most EPUBs carry: an empty name is none
+    series_name: []const u8 = "",
     series_index: f32 = 0,
 
     const Item = struct {
@@ -228,7 +228,7 @@ fn read_package_meta(p: *Package, meta: *const xml.Tag) void {
     const name = xml.attribute(meta.attributes, "name") orelse "";
     const content = xml.attribute(meta.attributes, "content");
     if (std.mem.eql(u8, name, "cover")) p.cover_id = content;
-    if (std.mem.eql(u8, name, "calibre:series")) p.series = content orelse "";
+    if (std.mem.eql(u8, name, "calibre:series")) p.series_name = content orelse "";
     if (std.mem.eql(u8, name, "calibre:series_index")) {
         p.series_index = series_place(content orelse "");
     }
@@ -255,8 +255,10 @@ pub fn info(alloc: std.mem.Allocator, data: []const u8, with_cover: bool) !Info 
         .title = p.title,
         .author = p.author,
         .cover = cover,
-        .series = p.series,
-        .series_index = p.series_index,
+        .series = if (p.series_name.len > 0)
+            .{ .name = p.series_name, .index = p.series_index }
+        else
+            null,
     };
 }
 

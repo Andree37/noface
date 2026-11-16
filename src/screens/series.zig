@@ -174,17 +174,17 @@ pub const Series = struct {
         assert(s.phase == .choosing);
         const alloc = s.arena.allocator();
         for (s.entries) |o| {
-            if (o.series.len == 0) continue;
+            const series = o.series orelse continue;
             const seen = for (s.names.items) |n| {
-                if (catalog.same_series(n, o.series)) break true;
+                if (catalog.same_series(n, series.name)) break true;
             } else false;
-            if (!seen) try s.names.append(alloc, o.series);
+            if (!seen) try s.names.append(alloc, series.name);
         }
         std.mem.sort([]const u8, s.names.items, {}, by_name);
         try s.rows.append(alloc, .{ .label = "New series\u{2026}", .page = 0, .note = "" });
         try s.rows.append(alloc, .{ .label = "Not in a series", .page = 0, .note = "" });
         for (s.names.items) |n| {
-            const note = if (catalog.same_series(n, s.e.series)) "Now" else "";
+            const note = if (is_in(s.e.series, n)) "Now" else "";
             try s.rows.append(alloc, .{ .label = n, .page = 0, .note = note });
         }
         assert(s.rows.items.len == s.names.items.len + rows_before_series);
@@ -213,7 +213,7 @@ pub const Series = struct {
         assert(s.phase == .choosing);
         const picked = s.row_picked() orelse return s.finish();
         if (picked == 1) {
-            try save(s.a, s.e.path, .{ .series = "", .index = 0 });
+            try save(s.a, s.e.path, null);
             s.changed = true;
             return s.finish();
         }
@@ -234,7 +234,7 @@ pub const Series = struct {
         assert(name.len > 0);
         assert(s.e.is_local());
         const places = try s.arena.allocator().alloc(Place, s.entries.len);
-        for (s.entries, places) |e, *p| p.* = .{ .series = e.series, .index = e.series_index };
+        for (s.entries, places) |e, *p| p.* = e.series;
         return s.list(.{ .name = name, .places = places });
     }
 
@@ -263,7 +263,7 @@ pub const Series = struct {
         assert(tapped_index < s.order.items.len);
         const i = s.order.items[tapped_index];
         if (tapped_index >= s.listed.in_series) {
-            m.places[i] = .{ .series = m.name, .index = s.listed.next };
+            m.places[i] = .{ .name = m.name, .index = s.listed.next };
             try save(s.a, s.entries[i].path, m.places[i]);
             s.changed = true;
             return s.list(m);
@@ -279,10 +279,7 @@ pub const Series = struct {
         const i = s.phase.numbering.book;
         const n = s.row_picked() orelse return s.list(m);
         assert(n <= numbers);
-        m.places[i] = if (n == 0) .{ .series = "", .index = 0 } else .{
-            .series = m.name,
-            .index = @floatFromInt(n),
-        };
+        m.places[i] = if (n == 0) null else .{ .name = m.name, .index = @floatFromInt(n) };
         try save(s.a, s.entries[i].path, m.places[i]);
         s.changed = true;
         return s.list(m);
@@ -322,10 +319,9 @@ pub const Series = struct {
         s.number_rows[0] = .{ .label = "Take out of this series", .page = 0, .note = "" };
         for (s.number_rows[1..], 1..) |*r, n| {
             var taken: []const u8 = "";
-            for (s.entries, m.places, 0..) |o, p, j| {
-                if (j == i) continue;
-                if (!catalog.same_series(p.series, m.name)) continue;
-                if (p.index == @as(f32, @floatFromInt(n))) taken = o.title;
+            for (s.entries, m.places, 0..) |o, place, j| {
+                if (j == i or !is_in(place, m.name)) continue;
+                if (place.?.index == @as(f32, @floatFromInt(n))) taken = o.title;
             }
             const label = try std.fmt.allocPrint(alloc, "#{d}  {s}", .{ n, taken });
             r.* = .{ .label = label, .page = 0, .note = "" };
@@ -345,8 +341,14 @@ pub const Series = struct {
 };
 
 /// Where each book stands while a series is being put together: what the library
-/// said, changed by what's been set here.
-const Place = struct { series: []const u8, index: f32 };
+/// said, changed by what's been set here. Null outside any series.
+const Place = ?catalog.Series;
+
+/// Whether `place` is in the series named `name`.
+fn is_in(place: Place, name: []const u8) bool {
+    const p = place orelse return false;
+    return catalog.same_series(p.name, name);
+}
 
 /// The books `manage` lists: how many of them are in the series, and the number the
 /// next one added would take.
@@ -368,7 +370,7 @@ fn manage_list(
     order.clearRetainingCapacity();
     rows.clearRetainingCapacity();
     for (entries, 0..) |e, i| {
-        if (e.is_local() and catalog.same_series(places[i].series, name)) {
+        if (e.is_local() and is_in(places[i], name)) {
             try order.append(alloc, @intCast(i));
         }
     }
@@ -376,25 +378,23 @@ fn manage_list(
     const in_series: u32 = @intCast(order.items.len);
     for (entries, 0..) |e, i| {
         const is_first = std.mem.eql(u8, e.path, first.path);
-        if (is_first and !catalog.same_series(places[i].series, name)) {
+        if (is_first and !is_in(places[i], name)) {
             try order.append(alloc, @intCast(i));
         }
     }
     for (entries, 0..) |e, i| {
         if (!e.is_local()) continue;
-        if (catalog.same_series(places[i].series, name)) continue;
+        if (is_in(places[i], name)) continue;
         if (std.mem.eql(u8, e.path, first.path)) continue;
         try order.append(alloc, @intCast(i));
     }
     var next: f32 = 1;
     for (order.items[0..in_series]) |i| {
         // Beyond it, a number isn't kept
-        next = @min(@max(next, @floor(places[i].index) + 1), catalog.max_index);
-        const label = try std.fmt.allocPrint(
-            alloc,
-            "#{d}  {s}",
-            .{ places[i].index, entries[i].title },
-        );
+        // In the series: listed first, as `is_in` chose them
+        const index = places[i].?.index;
+        next = @min(@max(next, @floor(index) + 1), catalog.max_index);
+        const label = try std.fmt.allocPrint(alloc, "#{d}  {s}", .{ index, entries[i].title });
         try rows.append(alloc, .{ .label = label, .page = 0, .note = "" });
     }
     for (order.items[in_series..]) |i| {
@@ -411,15 +411,14 @@ fn manage_list(
 fn manage_list_less(places: []const Place, x: u32, y: u32) bool {
     assert(x < places.len);
     assert(y < places.len);
-    return places[x].index < places[y].index;
+    return places[x].?.index < places[y].?.index; // Only books in the series are sorted
 }
 
 /// Saves one book's series and number in the overrides file: every other book's line
 /// is copied through as it is, however many there are, and the file replaced whole.
 fn save(a: *app.App, book: []const u8, place: Place) !void {
-    // Out of a series, a book has no number in one
-    if (place.series.len == 0) assert(place.index == 0);
-    assert(place.index >= 0);
+    assert(book.len > 0);
+    if (place) |p| assert(p.index >= 0);
     var path_buffer: [files.path_bytes_max]u8 = undefined;
     const target = try path(&path_buffer, a.state_dir);
     var new_buffer: [files.path_bytes_max + 4]u8 = undefined;
@@ -430,11 +429,14 @@ fn save(a: *app.App, book: []const u8, place: Place) !void {
     errdefer out.abandon();
     try save_others(&out, target, book);
     var line_buffer: [line_bytes_max]u8 = undefined;
-    out.write(try overrides.format_line(&line_buffer, book, place.series, place.index));
+    out.write(try overrides.format_line(&line_buffer, book, place));
     _ = try out.finish();
     try files.replace(fresh, target);
-    const said = if (place.series.len > 0) place.series else "(none)";
-    std.debug.print("series set: {s} #{d}\n", .{ said, place.index });
+    if (place) |p| {
+        std.debug.print("series set: {s} #{d}\n", .{ p.name, p.index });
+    } else {
+        std.debug.print("series set: (none)\n", .{});
+    }
 }
 
 /// The longest line the overrides file has: a path, a series name and a number.

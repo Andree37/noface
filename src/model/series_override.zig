@@ -5,7 +5,8 @@ const std = @import("std");
 const assert = std.debug.assert;
 const catalog = @import("catalog.zig");
 
-pub const Override = struct { path: []const u8, name: []const u8, index: f32 };
+/// A book's series set by hand: null for "not in one".
+pub const Override = struct { path: []const u8, series: ?catalog.Series };
 
 /// The overrides in `text`; lines that don't parse are skipped.
 // Assertions: it reads the overrides file, which is outside data.
@@ -19,7 +20,10 @@ pub fn parse(alloc: std.mem.Allocator, text: []const u8) ![]Override {
         const index = std.fmt.parseFloat(f32, fields.next() orelse continue) catch continue;
         if (path.len == 0 or std.math.isNan(index)) continue;
         if (index < 0 or index > catalog.max_index) continue;
-        try out.append(alloc, .{ .path = path, .name = name, .index = index });
+        // An empty name in the file: not in a series
+        const series: ?catalog.Series =
+            if (name.len > 0) .{ .name = name, .index = index } else null;
+        try out.append(alloc, .{ .path = path, .series = series });
     }
     return out.items;
 }
@@ -39,9 +43,11 @@ pub fn is_for(text: []const u8, path: []const u8) bool {
     return std.mem.startsWith(u8, text, path) and text[path.len] == '\t';
 }
 
-/// `path`'s line, with its break, in `buffer`.
-pub fn format_line(buffer: []u8, path: []const u8, name: []const u8, index: f32) ![]const u8 {
+/// `path`'s line, with its break, in `buffer`: an empty name and 0 for no series.
+pub fn format_line(buffer: []u8, path: []const u8, series: ?catalog.Series) ![]const u8 {
     assert(path.len > 0);
+    const name = if (series) |s| s.name else "";
+    const index = if (series) |s| s.index else 0;
     const text = try std.fmt.bufPrint(buffer, "{s}\t{s}\t{d}\n", .{ path, name, index });
     assert(is_for(text, path));
     return text;
@@ -65,10 +71,11 @@ test "a line reads back as written, and is known by its book's path" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     var buffer: [128]u8 = undefined;
-    const text = try format_line(&buffer, "/b/dark.kfx", "Three-Body", 2);
+    const text = try format_line(&buffer, "/b/dark.kfx", .{ .name = "Three-Body", .index = 2 });
     const list = try parse(arena.allocator(), text);
-    try std.testing.expectEqualStrings("Three-Body", find(list, "/b/dark.kfx").?.name);
-    try std.testing.expectEqual(@as(f32, 2), find(list, "/b/dark.kfx").?.index);
+    const series = find(list, "/b/dark.kfx").?.series.?;
+    try std.testing.expectEqualStrings("Three-Body", series.name);
+    try std.testing.expectEqual(@as(f32, 2), series.index);
     try std.testing.expect(is_for(text, "/b/dark.kfx"));
     // A path that only begins the same is another book's
     try std.testing.expect(!is_for(text, "/b/dark"));

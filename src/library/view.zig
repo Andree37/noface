@@ -45,7 +45,11 @@ pub fn sort(ix: *const index.Index, items: []Item, order: catalog.Order) []Item 
     assert(items.len >= ix.header.count);
     const sorted = items[0..ix.header.count];
     for (sorted, 0..) |*item, id| item.* = .{ .id = @intCast(id), .key = 0 };
-    catalog.sort_by(Item, sorted, order, Books{ .ix = ix });
+    if (order.reads_texts()) {
+        catalog.sort_by(Item, sorted, order, Books{ .ix = ix });
+    } else {
+        catalog.sort_by(Item, sorted, order, Numbers{ .ix = ix });
+    }
     return sorted;
 }
 
@@ -63,6 +67,20 @@ const Books = struct {
     pub fn set_series_last(_: Books, item: *Item, last: u64) void {
         comptime assert(catalog.series_last_max == std.math.maxInt(u32));
         item.key = @intCast(last); // At most `series_last_max`, as sort_by gives it
+    }
+};
+
+/// The books of an index by their numbers alone, for an order that reads no texts:
+/// none to find, about half a sort's time.
+const Numbers = struct {
+    ix: *const index.Index,
+
+    pub fn entry(b: Numbers, item: Item) catalog.Entry {
+        return b.ix.numbers(item.id);
+    }
+
+    pub fn set_series_last(_: Numbers, _: *Item, _: u64) void {
+        unreachable; // Only an order by series sets it, which reads texts
     }
 };
 

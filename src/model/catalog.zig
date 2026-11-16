@@ -75,6 +75,15 @@ pub const Order = enum {
     added,
     series,
 
+    /// Whether books sort in it by their texts (title, author, series), or by their
+    /// numbers alone: `before` reads nothing else for these.
+    pub fn reads_texts(o: Order) bool {
+        return switch (o) {
+            .recent, .progress, .added => false,
+            .title, .author, .series => true,
+        };
+    }
+
     pub fn label(o: Order) []const u8 {
         const text = switch (o) {
             .recent => "Recent",

@@ -252,6 +252,16 @@ pub const Index = struct {
         return entry_of(&r, &texts);
     }
 
+    /// Book `id` without its texts, all empty: for sorting by an order that reads
+    /// only numbers, which needn't find them.
+    pub fn numbers(ix: *const Index, id: u32) catalog.Entry {
+        const r = ix.record(id);
+        const none: [8][:0]const u8 = @splat("");
+        const e = entry_of(&r, &none);
+        assert(e.title.len == 0);
+        return e;
+    }
+
     /// Book `id` read into `slot`, its texts copied: valid after the index is closed.
     pub fn read(ix: *const Index, id: u32, slot: *Slot) void {
         const r = ix.record(id);

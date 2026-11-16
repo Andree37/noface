@@ -862,6 +862,25 @@ test "an index torn, damaged or cut short is built again as it's loaded" {
     try std.testing.expectEqual(count, rebuilt.count());
 }
 
+test "a build whose files can't be put in place leaves the library empty, not crashed" {
+    var buffer: [64]u8 = undefined;
+    const root = try test_folder(&buffer, 5, 0, 1 << 10);
+    defer test_folder_remove(root);
+    var t: TestLibrary = undefined;
+    try t.init(root);
+    defer t.deinit();
+    // A folder where the records go: renaming the new ones over it fails, as on a
+    // drive that's full, after both new files were written and closed
+    var dir_buffer: [320]u8 = undefined;
+    var records_buffer: [320]u8 = undefined;
+    _ = calls.mkdir(try t.data_path(&dir_buffer, "library"), 0o755);
+    _ = calls.mkdir(try t.data_path(&records_buffer, "library/records"), 0o755);
+    var library = try load(t.sources);
+    defer library.deinit();
+    try std.testing.expect(!library.state.open);
+    try std.testing.expectEqual(0, library.count());
+}
+
 test "every order lists the books as the catalog sorts the same books in a list" {
     var buffer: [64]u8 = undefined;
     const root = try test_folder(&buffer, 0, 0, 1 << 10);

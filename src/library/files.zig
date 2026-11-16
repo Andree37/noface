@@ -91,12 +91,13 @@ pub const Writer = struct {
         return w.size;
     }
 
-    /// Closes the file without finishing it, after an error: the caller removes it.
+    /// After an error, closes the file unless `finish` already has (it closes it
+    /// whether or not it fails), so it can be deferred over the whole of a write: the
+    /// caller removes the file.
     pub fn abandon(w: *Writer) void {
-        assert(w.fd >= 0);
+        if (w.fd < 0) return; // Closed by `finish`
         _ = calls.close(w.fd); // Ignored: the file is removed, whole or not
         w.fd = -1;
-        assert(w.fd < 0);
     }
 };
 

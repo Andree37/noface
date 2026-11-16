@@ -50,7 +50,7 @@ pub fn sort(ix: *const index.Index, items: []Item, order: catalog.Order) []Item 
 }
 
 /// The books of an index, for `catalog.sort_by`: an item's key is when its series was
-/// last read, in seconds since 1970, which a u32 holds until 2106.
+/// last read, which a u32 holds (`catalog.series_last_max`).
 const Books = struct {
     ix: *const index.Index,
 
@@ -61,8 +61,8 @@ const Books = struct {
     }
 
     pub fn set_series_last(_: Books, item: *Item, last: u64) void {
-        item.key = @intCast(@min(last, std.math.maxInt(u32)));
-        assert(item.key <= last);
+        comptime assert(catalog.series_last_max == std.math.maxInt(u32));
+        item.key = @intCast(last); // At most `series_last_max`, as sort_by gives it
     }
 };
 

@@ -899,8 +899,10 @@ test "every order lists the books as the catalog sorts the same books in a list"
         const percent = (i * 37) % 120;
         const series = .{ i % 7, i % 5 + 1 };
         const cloud = @intFromBool(i % 9 == 0);
+        // Some read past 2106, as only a broken catalog says: they sort alike either way
+        const last: u64 = if (i % 13 == 0) (1 << 32) + @as(u64, i) else i * 997 % 5000;
         try rows.print(alloc, row, .{
-            root, i, series[0], series[1], i, i % 11, percent, i * 997 % 5000, i * 31, cloud,
+            root, i, series[0], series[1], i, i % 11, percent, last, i * 31, cloud,
         });
     }
     try test_write(t.sources.catalog_path, rows.items);

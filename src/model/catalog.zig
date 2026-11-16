@@ -24,7 +24,8 @@ pub const Entry = struct {
     guid: []const u8 = "",
     series: []const u8 = "", // The series it belongs to, if known
     series_index: f32 = 0, // Its place in that series: 2 for "#2"
-    /// When any book of its series was last read, for sorting by series.
+    /// When any book of its series was last read, for sorting by series: at most
+    /// `series_last_max`.
     series_last: u64 = 0,
 
     pub fn is_read(e: Entry) bool {
@@ -412,9 +413,14 @@ const Listed = struct {
     }
 };
 
+/// The latest `series_last`, in seconds since 1970: 2106, which a u32 holds, so the
+/// library can keep it in 4 bytes. A later time can only come from a broken file, and
+/// sorts as this one.
+pub const series_last_max: u64 = std.math.maxInt(u32);
+
 /// Sorts `items`, each standing for a book, as `order` has the books: entries, or ids
 /// of books kept elsewhere. `books.entry(item)` is an item's book, its `series_last` as
-/// `books.set_series_last(&item, last)` last set it.
+/// `books.set_series_last(&item, last)` last set it, never past `series_last_max`.
 pub fn sort_by(comptime T: type, items: []T, order: Order, books: anytype) void {
     assert(items.len <= std.math.maxInt(u32)); // A book's place in them is a u32
     if (order == .series) series_last_set(T, items, books);
@@ -453,7 +459,7 @@ fn series_last_set(comptime T: type, items: []T, books: anytype) void {
         // Only books opened: a download's date isn't reading
         for (items[run_first..i]) |item| {
             const e = books.entry(item);
-            if (e.was_opened()) latest = @max(latest, e.last);
+            if (e.was_opened()) latest = @max(latest, @min(e.last, series_last_max));
         }
         const in_series = first.series.len > 0;
         for (items[run_first..i]) |*item| books.set_series_last(item, if (in_series) latest else 0);

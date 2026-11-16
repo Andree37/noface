@@ -309,11 +309,11 @@ fn read_book_pages(
     }
     if (pages.len == 0) return error.EmptyBook;
     if (source == .@"laid out") page_store.save(alloc, pages_path, pages_key, pages);
-    const start = read_book_start(pages, paragraphs, entry, .{
-        .saved = &saved,
-        .from_kindle = from_kindle,
-        .progressive = source == .@"first pages",
-    });
+    // A first open is laid out only from the reader's own place, never stock's
+    const from: StartFrom = if (source == .@"first pages")
+        .first_laid_out
+    else if (from_kindle) .kindle_percent else .saved_place;
+    const start = read_book_start(pages, paragraphs, entry, &saved, from);
     assert(start < pages.len);
     // Stock's reader on the book since: its place is elsewhere, and so is Back's
     var back: ?book_model.Pos = null;
@@ -357,23 +357,30 @@ fn place_in(paragraphs: []const book_model.Paragraph, text_para: u32, byte: u32)
     return .{ .para = para, .byte = byte };
 }
 
-/// The page to open at: the place itself on a first open, stock's percent when the
-/// Kindle's own reader was on the book last, else the saved place.
+/// Where the page a book opens at comes from: the first page laid out on a first open
+/// (laid out from the reader's place), stock's percent when the Kindle's own reader
+/// was on the book last, else the saved place.
+const StartFrom = enum { first_laid_out, kindle_percent, saved_place };
+
+/// The page to open at, from `from`.
 fn read_book_start(
     pages: []const book_model.Pos,
     paragraphs: []const book_model.Paragraph,
     entry: *const catalog.Entry,
-    options: struct { saved: *const state.State, from_kindle: bool, progressive: bool },
+    saved: *const state.State,
+    from: StartFrom,
 ) u32 {
     assert(pages.len > 0);
-    // A first open is laid out only from the reader's own place, not stock's
-    if (options.progressive) assert(!options.from_kindle);
-    if (options.progressive) return 0; // The place itself: the first page laid out
-    if (options.from_kindle) {
-        return @intCast(@min(pages.len * entry.kindle_percent / 100, pages.len - 1));
-    }
-    const para = book_model.from_text_index(paragraphs, options.saved.para);
-    return @intCast(sess.page_containing(pages, para, options.saved.byte));
+    assert(entry.kindle_percent <= 100);
+    return switch (from) {
+        .first_laid_out => 0,
+        .kindle_percent => @intCast(@min(pages.len * entry.kindle_percent / 100, pages.len - 1)),
+        .saved_place => @intCast(sess.page_containing(
+            pages,
+            book_model.from_text_index(paragraphs, saved.para),
+            saved.byte,
+        )),
+    };
 }
 
 /// What the reader counts and keeps with the book: words before each paragraph, for

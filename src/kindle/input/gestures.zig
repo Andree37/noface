@@ -9,6 +9,7 @@ const touch_zones = @import("../touch.zig");
 const os = @import("../../sys/os.zig");
 const Input = input.Input;
 const Action = input.Action;
+const Press = input.Press;
 const InputEvent = evdev.InputEvent;
 const now_us = os.now_us;
 const ev_abs = evdev.ev_abs;
@@ -42,14 +43,14 @@ pub fn ignores(in: *const Input, x: i32, y: i32) bool {
 
 /// A press on a page that stayed put long enough: a hold, followed from here as a drag.
 pub fn held_long_enough(in: *Input) ?Action {
-    const slot = in.top_slot orelse return null;
-    assert(slot < slots_count);
-    if (!in.deferred or in.top_moved) return null;
-    if (now_us() -| in.top_us < touch_zones.hold_ms * 1000) return null;
-    in.top_slot = null;
-    in.drag_slot = slot;
+    const down = in.top orelse return null;
+    assert(down.slot < slots_count);
+    if (!in.deferred or down.moved) return null;
+    if (now_us() -| down.us < touch_zones.hold_ms * 1000) return null;
+    in.top = null;
+    in.drag_slot = down.slot;
     in.invariants();
-    return .{ .hold = .{ .x = in.top_x, .y = in.top_y } };
+    return .{ .hold = .{ .x = down.x, .y = down.y } };
 }
 
 /// One raw event from the touch panel, turned into an action when one is complete.
@@ -104,30 +105,28 @@ pub fn finger_up(in: *Input) ?Action {
         in.drag_slot = null;
         return .drag_end;
     }
-    if (in.top_slot == in.slot) {
-        in.top_slot = null;
-        return lifted(in);
-    }
-    return null;
+    const down = in.top orelse return null;
+    if (down.slot != in.slot) return null; // Another finger, not watched
+    in.top = null;
+    return lifted(in, down);
 }
 
 /// A finger lifted that nothing was following: a sideways stroke is a swipe, and a
 /// finger that stayed put or only rolled a little a tap where it began. A real
 /// stroke some other way is neither: turning a page by where an arc began would be
 /// a guess, often the wrong way.
-pub fn lifted(in: *Input) ?Action {
-    // `finger_up` lets go of the finger before asking what it did
-    assert(in.top_slot == null);
+pub fn lifted(in: *Input, down: Press) ?Action {
+    assert(down.slot == in.slot); // The finger that lifted
     const point = screen_point(in, in.slot);
-    if (in.top_moved) {
-        const swipe = touch_zones.swipe_direction(in.top_x, in.top_y, point.x, point.y);
+    if (down.moved) {
+        const swipe = touch_zones.swipe_direction(down.x, down.y, point.x, point.y);
         if (swipe) |direction| {
             assert(direction == 1 or direction == -1);
             return .{ .swipe = direction };
         }
-        if (touch_zones.is_stroke(in.top_x, in.top_y, point.x, point.y)) return null;
+        if (touch_zones.is_stroke(down.x, down.y, point.x, point.y)) return null;
     }
-    return .{ .tap = .{ .x = in.top_x, .y = in.top_y, .us = in.top_us } };
+    return .{ .tap = .{ .x = down.x, .y = down.y, .us = down.us } };
 }
 
 /// The end of a packet: a followed finger moved, a pressed one moved or pulled
@@ -139,12 +138,12 @@ pub fn on_packet_end(in: *Input) ?Action {
         const point = screen_point(in, slot);
         return .{ .drag = .{ .x = point.x, .y = point.y } };
     }
-    if (in.top_slot) |slot| {
-        assert(slot < slots_count); // One of the panel's, as `touched_down` took it
-        const point = screen_point(in, slot);
-        if (touch_zones.moved_off(in.top_x, in.top_y, point.x, point.y)) in.top_moved = true;
-        if (in.top_y < touch_zones.top_zone and touch_zones.is_pull(in.top_y, point.y)) {
-            in.top_slot = null;
+    if (in.top) |*down| {
+        assert(down.slot < slots_count); // One of the panel's, as `touched_down` took it
+        const point = screen_point(in, down.slot);
+        if (touch_zones.moved_off(down.x, down.y, point.x, point.y)) down.moved = true;
+        if (down.y < touch_zones.top_zone and touch_zones.is_pull(down.y, point.y)) {
+            in.top = null;
             return .pull;
         }
     }
@@ -166,11 +165,7 @@ pub fn touched_down(in: *Input, slot: u32) ?Action {
     if (ignores(in, x, y)) return null;
     const watch = in.deferred or (in.edge_zones and y < touch_zones.top_zone);
     if (!watch) return .{ .tap = .{ .x = x, .y = y, .us = in.down_us } };
-    in.top_slot = slot;
-    in.top_x = x;
-    in.top_y = y;
-    in.top_us = in.down_us;
-    in.top_moved = false;
+    in.top = .{ .slot = slot, .x = x, .y = y, .us = in.down_us };
     return null;
 }
 

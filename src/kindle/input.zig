@@ -163,6 +163,10 @@ pub const Script = struct {
 
 /// An area of the screen, in screen pixels.
 /// A place on the screen, in its pixels.
+/// A finger watched from where it touched: its slot, where and when it touched, and
+/// whether it has moved off that place since.
+pub const Press = struct { slot: u32, x: i32, y: i32, us: u64, moved: bool = false };
+
 pub const Point = struct { x: i32, y: i32 };
 
 pub const Zone = struct { x: i32, y: i32, w: i32, h: i32 };
@@ -190,11 +194,9 @@ pub const Input = struct {
     ys: [slots_count]i32 = .{ 0, 0 },
     pending: ?u32 = null,
     down_us: u64 = 0,
-    top_slot: ?u32 = null,
-    top_x: i32 = 0,
-    top_y: i32 = 0,
-    top_us: u64 = 0,
-    top_moved: bool = false,
+    /// A finger down that may yet become a tap, a hold, a swipe or a pull, watched
+    /// until it lifts, moves or is held.
+    top: ?Press = null,
     deferred: bool = false, // On book pages: taps wait for lift, so a press can become a hold
     last_touched: u32 = 0,
     grips: bool = true, // Off while controls sit where a thumb usually rests
@@ -266,7 +268,7 @@ pub const Input = struct {
         assert(in.slot < slots_count);
         assert(in.last_touched < slots_count);
         if (in.pending) |slot| assert(slot < slots_count);
-        if (in.top_slot) |slot| assert(slot < slots_count);
+        if (in.top) |press| assert(press.slot < slots_count);
         if (in.drag_slot) |slot| assert(slot < slots_count);
         assert(in.x_max >= 1);
         assert(in.y_max >= 1);
@@ -447,7 +449,7 @@ pub const Input = struct {
     }
 
     fn wait_ms(in: *const Input) i32 {
-        if (in.top_slot != null) return hold_poll_ms; // A press that may become a hold
+        if (in.top != null) return hold_poll_ms; // A press that may become a hold
         if (in.locked and in.tick_us == null) {
             return if (in.power_watcher == null) watchers.watcher_retry_ms else -1;
         }

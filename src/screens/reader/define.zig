@@ -32,7 +32,6 @@ const Sheet = struct {
     pub fn draw(sh: *Sheet, _: screen.Part) !void {
         const a = sh.a;
         assert(sh.page_copy.len == a.screen.pixels.len);
-        if (sh.found.no_dictionary) assert(sh.found.entry == null);
         @memcpy(a.screen.pixels, sh.page_copy); // Not over a card that was just answered
         try definition.render(a.ui, a.page(a.screen.pixels), sh.found);
         try a.show_band(0, a.screen.height);
@@ -51,26 +50,21 @@ const Sheet = struct {
 
     /// Downloads the book's dictionary from "Get dictionary".
     fn get_dictionary(sh: *Sheet) screen.Step(Choice) {
-        const l = sh.lang orelse return .stay;
-        if (!sh.found.no_dictionary) return .stay;
-        assert(sh.found.entry == null); // Nothing found without a dictionary
-        assert(sh.found.can_get != null); // Offered, as it was tapped
-        dict_get.begin(&sh.getting, sh.a, sh.page_copy, l);
+        // Only where the button is drawn: a dictionary to get
+        const g = definition.gettable(sh.found) orelse return .stay;
+        dict_get.begin(&sh.getting, sh.a, sh.page_copy, g.lang);
         return .{ .push = screen.open(&sh.getting, &sh.getting_ending) };
     }
 
     /// The download's cards were over it: drawn again, with the definition if it came.
     pub fn on_resume(sh: *Sheet) !screen.Step(Choice) {
-        const l = sh.lang.?; // Only a book's known language is downloaded
         assert(sh.page_copy.len == sh.a.screen.pixels.len);
+        assert(sh.lang != null); // Only a book's known language is downloaded
         const ready = switch (sh.getting_ending.?) {
             .done => |ready| ready,
             .closed, .interrupted => false,
         };
         if (ready) sh.found = find(sh.a, sh.s, sh.word, sh.lang);
-        if (sh.found.no_dictionary) sh.found.can_get = dict_get.language_of(l).name;
-        // Offered again exactly when it's still missing
-        assert((sh.found.can_get != null) == sh.found.no_dictionary);
         return .{ .redraw = .all };
     }
 };
@@ -86,20 +80,16 @@ pub fn find(
     assert(word.start <= word.end);
     assert(word.end <= s.paragraphs[word.para].text.len);
     const text = dictionary.trimmed(s.paragraphs[word.para].text[word.start..word.end]);
-    var found = definition.Found{ .word = text };
     const d = a.dictionary_for(lang) orelse {
-        found.no_dictionary = true;
-        assert(found.entry == null);
-        return found;
+        // The book's language's, to get, when it's known
+        const gettable: ?definition.Gettable =
+            if (lang) |l| .{ .lang = l, .name = dict_get.language_of(l).name } else null;
+        return .{ .word = text, .looked_up = .{ .no_dictionary = gettable } };
     };
-    found.entry = d.lookup(text);
-    if (found.entry) |e| {
-        if (e.base_form()) |b| found.base = d.lookup(b);
-    }
-    // Only a word that was found can be the form of another
-    if (found.base != null) assert(found.entry != null);
-    assert(!found.no_dictionary);
-    return found;
+    const entry = d.lookup(text) orelse return .{ .word = text, .looked_up = .not_found };
+    const base = if (entry.base_form()) |b| d.lookup(b) else null;
+    assert(entry.word.len > 0);
+    return .{ .word = text, .looked_up = .{ .found = .{ .entry = entry, .base = base } } };
 }
 
 /// Starts looking up `word` in `d`, where it stays while it's open (`screen.open`):
@@ -115,10 +105,7 @@ pub fn begin(
 ) !void {
     assert(word.para < s.paragraphs.len);
     const found = find(a, s, word, lang);
-    std.debug.print(
-        "lookup: found {}, form of another {}\n",
-        .{ found.entry != null, found.base != null },
-    );
+    std.debug.print("lookup: {s}\n", .{@tagName(found.looked_up)});
     // The page as it was: what the sheet and any card about getting a dictionary sit
     // over, and what's put back when they close
     const page_copy = try a.alloc.dupe(u8, a.screen.pixels);
@@ -159,13 +146,12 @@ pub const Define = struct {
     pub fn on_open(d: *Define) !screen.Step(Choice) {
         assert(d.phase == .asking);
         assert(d.page_copy.len == d.a.screen.pixels.len);
-        if (d.found.no_dictionary) if (d.lang) |l| {
-            d.found.can_get = dict_get.language_of(l).name;
+        if (definition.gettable(d.found)) |g| {
             if (d.a.settings.offer_dictionary) {
-                d.ask_card = dict_get.ask(d.a, d.page_copy, l, &d.asking);
+                d.ask_card = dict_get.ask(d.a, d.page_copy, g.lang, &d.asking);
                 return .{ .push = screen.open(&d.ask_card, &d.ask_ending) };
             }
-        };
+        }
         return d.show_sheet();
     }
 
@@ -176,7 +162,8 @@ pub const Define = struct {
                 const answer = try dict_get.asked(d.a, d.page_copy, d.ask_ending.?);
                 if (answer != .download) return d.show_sheet();
                 d.phase = .getting;
-                dict_get.begin(&d.getting, d.a, d.page_copy, d.lang.?);
+                // Asked only with a dictionary to get
+                dict_get.begin(&d.getting, d.a, d.page_copy, definition.gettable(d.found).?.lang);
                 return .{ .push = screen.open(&d.getting, &d.getting_ending) };
             },
             .getting => {
@@ -202,8 +189,8 @@ pub const Define = struct {
     }
 
     fn show_sheet(d: *Define) screen.Step(Choice) {
-        if (d.found.can_get != null) assert(d.found.no_dictionary);
         assert(d.phase != .sheet);
+        assert(d.page_copy.len == d.a.screen.pixels.len);
         d.phase = .sheet;
         d.sheet = .{
             .a = d.a,

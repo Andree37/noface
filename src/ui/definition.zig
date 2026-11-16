@@ -5,6 +5,7 @@ const assert = std.debug.assert;
 const Page = @import("../gfx/page.zig").Page;
 const draw = @import("draw.zig");
 const style = @import("style.zig");
+const hyphen = @import("../layout/hyphen.zig");
 const dictionary = @import("../model/dictionary.zig");
 const Fonts = @import("fonts.zig").Fonts;
 
@@ -46,15 +47,23 @@ pub fn hit(x: i32, y: i32) Hit {
     return .none;
 }
 
-/// What to show: the entry found (if any), and the entry for the word it's a form of.
+/// What to show for a word held in the book.
 pub const Found = struct {
     word: []const u8, // As held in the book, trimmed
-    entry: ?dictionary.Entry = null,
-    base: ?dictionary.Entry = null,
-    no_dictionary: bool = false,
-    /// With no dictionary: the one that could be downloaded, like "English".
-    can_get: ?[]const u8 = null,
+    looked_up: Lookup,
 };
+
+/// What the dictionary said: there's none for the book's language on the Kindle (with
+/// the one that could be downloaded, if any), it hasn't the word, or its entry, with
+/// the entry for the word it's a form of.
+pub const Lookup = union(enum) {
+    no_dictionary: ?Gettable,
+    not_found,
+    found: struct { entry: dictionary.Entry, base: ?dictionary.Entry },
+};
+
+/// A dictionary that can be downloaded: for the book's language, named like "English".
+pub const Gettable = struct { lang: hyphen.Lang, name: []const u8 };
 
 /// Bytes of `s` that fit in `avail`, ending at a space when it can.
 const Writer = struct {
@@ -133,31 +142,36 @@ pub fn render(fonts: Fonts, page: Page, found: Found) !void {
     draw.sheet(page, top);
     const avail: f32 = @floatFromInt(page.width - 2 * style.margin);
 
-    const shown = if (found.entry) |e| e.word else found.word;
+    const shown = switch (found.looked_up) {
+        .found => |f| f.entry.word,
+        .no_dictionary, .not_found => found.word,
+    };
     try draw.clipped(fonts.hero, page, style.margin, top + 104, shown, avail);
     var w = Writer{ .fonts = fonts, .page = page, .y = text_top };
-    if (found.no_dictionary) {
-        if (found.can_get) |name| {
+    switch (found.looked_up) {
+        .no_dictionary => |to_get| if (to_get) |g| {
             var buffer: [96]u8 = undefined;
             const missing = "The {s} dictionary isn't on this Kindle yet.";
-            const line = std.fmt.bufPrint(&buffer, missing, .{name}) catch "";
+            const line = std.fmt.bufPrint(&buffer, missing, .{g.name}) catch "";
             try fonts.small.draw(page, style.margin, w.y, line);
         } else {
             const none = "No dictionary for this book's language.";
             try fonts.small.draw(page, style.margin, w.y, none);
-        }
-    } else if (found.entry) |e| {
-        try w.entry(e);
-        if (found.base) |b| {
-            if (!w.full and w.room()) {
-                w.y += 20;
-                try fonts.title.draw(page, style.margin, w.y, b.word);
-                w.y += line_step;
-                try w.entry(b);
+        },
+        .found => |f| {
+            try w.entry(f.entry);
+            if (f.base) |b| {
+                if (!w.full and w.room()) {
+                    w.y += 20;
+                    try fonts.title.draw(page, style.margin, w.y, b.word);
+                    w.y += line_step;
+                    try w.entry(b);
+                }
             }
-        }
-    } else {
-        try fonts.small.draw(page, style.margin, w.y, "This word isn't in the dictionary.");
+        },
+        .not_found => {
+            try fonts.small.draw(page, style.margin, w.y, "This word isn't in the dictionary.");
+        },
     }
 
     // Actions along the bottom: Highlight, and where the words come from
@@ -165,7 +179,7 @@ pub fn render(fonts: Fonts, page: Page, found: Found) !void {
     draw.box(page, style.margin, actions_top + 4, button_width, button_height);
     const highlight_x = style.margin + button_width / 2;
     try draw.centered(fonts.small, page, highlight_x, actions_baseline, "Highlight");
-    if (found.no_dictionary and found.can_get != null) {
+    if (gettable(found) != null) {
         draw.box(page, get_left, actions_top + 4, get_width, button_height);
         const get_x = get_left + get_width / 2;
         try draw.centered(fonts.small, page, get_x, actions_baseline, "Get dictionary");
@@ -175,6 +189,14 @@ pub fn render(fonts: Fonts, page: Page, found: Found) !void {
     const baseline = actions_baseline; // In line with "Highlight"
     try fonts.caption.draw(page, right - try fonts.caption.measure(credit), baseline, credit);
     page.tint(@intFromFloat(right - 360), baseline - 28, 360, 36, style.faded);
+}
+
+/// The dictionary the sheet offers to download, if it offers one.
+pub fn gettable(found: Found) ?Gettable {
+    return switch (found.looked_up) {
+        .no_dictionary => |g| g,
+        .not_found, .found => null,
+    };
 }
 
 test "taps above close, the button highlights, the rest stays" {

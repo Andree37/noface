@@ -35,6 +35,11 @@ pub const Rule = enum {
     recursion,
     /// `assert(a and b)`: split it, so a failure says which part broke.
     compound_assertion,
+    /// An assertion of what the line of code above just made true, so it can never
+    /// fail and only pads the count: `x = v;` then `assert(x == v);`, or `if (c)
+    /// return …;` (or `continue`, `break`) then `assert(!c);` or, for one comparison,
+    /// its opposite.
+    assertion_restated,
     /// An `if` or `else` whose body is on the next line without braces.
     if_without_braces,
     /// `catch {}` or `catch unreachable`: every error is handled. Ignoring one counts as
@@ -304,6 +309,74 @@ fn has_compound_assertion(code: []const u8, expects_assert: bool) bool {
     return false;
 }
 
+/// Whether `code` asserts only what `before`, the line of code above it, made true: the
+/// value it just set, or the opposite of the condition it just left on.
+// Assertions: it reads two lines of a file, which are outside data to the check.
+fn restates(before: []const u8, code: []const u8) bool {
+    const line = std.mem.trim(u8, code, " ");
+    if (!std.mem.startsWith(u8, line, "assert(") or !std.mem.endsWith(u8, line, ");")) {
+        return false;
+    }
+    const claim = line["assert(".len .. line.len - ");".len];
+    const above = std.mem.trim(u8, before, " ");
+    if (std.mem.startsWith(u8, above, "if (")) {
+        const condition = condition_of(above["if (".len..]) orelse return false;
+        const rest = std.mem.trimStart(u8, above["if (".len + condition.len + 1 ..], " ");
+        const leaves = std.mem.startsWith(u8, rest, "return") or
+            std.mem.startsWith(u8, rest, "continue") or std.mem.startsWith(u8, rest, "break");
+        return leaves and is_opposite(condition, claim);
+    }
+    // `x = v;`: its claim `x == v`
+    if (!std.mem.endsWith(u8, above, ";")) return false;
+    const at = std.mem.indexOf(u8, above, " = ") orelse return false;
+    const name = above[0..at];
+    const value = above[at + " = ".len .. above.len - 1];
+    if (std.mem.indexOfScalar(u8, name, ' ') != null) return false; // A declaration
+    return claim.len == name.len + " == ".len + value.len and
+        std.mem.startsWith(u8, claim, name) and std.mem.endsWith(u8, claim, value) and
+        std.mem.eql(u8, claim[name.len..][0..4], " == ");
+}
+
+/// An `if`'s condition, from just after its `(`, to before the `)` that closes it.
+fn condition_of(after_open: []const u8) ?[]const u8 {
+    var depth: u32 = 0;
+    for (after_open, 0..) |c, index| {
+        if (c == '(') depth += 1;
+        if (c != ')') continue;
+        if (depth == 0) return after_open[0..index];
+        depth -= 1;
+    }
+    return null;
+}
+
+/// Whether `claim` says exactly that `condition` is false: `!c`, `!(c)`, or the one
+/// comparison `a < b` as `a >= b`, and so on.
+// Assertions: it compares two pieces of a file's text, outside data to the check.
+fn is_opposite(condition: []const u8, claim: []const u8) bool {
+    if (claim.len == condition.len + 1 and claim[0] == '!') {
+        if (std.mem.eql(u8, claim[1..], condition)) return true;
+    }
+    if (claim.len == condition.len + 3 and std.mem.startsWith(u8, claim, "!(")) {
+        if (std.mem.eql(u8, claim[2 .. claim.len - 1], condition)) return true;
+    }
+    if (std.mem.indexOf(u8, condition, " and ") != null) return false;
+    if (std.mem.indexOf(u8, condition, " or ") != null) return false;
+    const opposites = [_][2][]const u8{
+        .{ " < ", " >= " }, .{ " > ", " <= " },  .{ " <= ", " > " },
+        .{ " >= ", " < " }, .{ " == ", " != " }, .{ " != ", " == " },
+    };
+    for (opposites) |pair| {
+        const at = std.mem.indexOf(u8, condition, pair[0]) orelse continue;
+        const left = condition[0..at];
+        const right = condition[at + pair[0].len ..];
+        if (claim.len != left.len + pair[1].len + right.len) continue;
+        if (!std.mem.startsWith(u8, claim, left)) continue;
+        if (!std.mem.endsWith(u8, claim, right)) continue;
+        return std.mem.eql(u8, claim[left.len..][0..pair[1].len], pair[1]);
+    }
+    return false;
+}
+
 /// Whether the first argument of a call, from just after its `(`, has a top-level `and`.
 fn top_level_and(arguments: []const u8) bool {
     var depth: i32 = 0;
@@ -388,6 +461,7 @@ const Scan = struct {
     previous_comment: bool = false,
     said: Said = .{}, // For the next line of code
     after_statement: bool = false, // The last line of code ended with `;`
+    last_code: []const u8 = "", // The last line with code on it, outside tests
     after_catch: bool = false, // The last line of code ended with `catch`, wrapped
     // The file's functions and their assertions (and those outside any, at compile
     // time), but for the functions excused from them
@@ -627,6 +701,8 @@ fn check_zig_statement(scan: *Scan, line: *const Line, line_number: u32, said: S
     if (has_compound_assertion(code, scan.expects_assert)) {
         try scan.note(.compound_assertion, line_number, 1);
     }
+    if (restates(scan.last_code, code)) try scan.note(.assertion_restated, line_number, 1);
+    if (std.mem.trim(u8, code, " ").len > 0) scan.last_code = code;
     if (opens_unbraced(code, scan.after_statement)) {
         try scan.note(.if_without_braces, line_number, 1);
     }
@@ -693,6 +769,7 @@ fn advice(rule: Rule) []const u8 {
             " or say above one why it can't: `// Assertions: <why>`",
         .recursion => "no recursion: walk with an explicit, bounded stack",
         .compound_assertion => "split it: `assert(a); assert(b);`",
+        .assertion_restated => "remove it, or assert something the line above doesn't say",
         .if_without_braces => "a body on its own line takes braces",
         .error_ignored => "handle the error, or say why on that line: `// Ignored: <why>`",
         .comment_style => "comments start with a space, and a sentence with a capital",
@@ -1050,6 +1127,28 @@ test "compound assertions, unbraced ifs, ignored errors and recursion count" {
     try std.testing.expectEqual(@as(u32, 1), try count_in(source, .if_without_braces));
     try std.testing.expectEqual(@as(u32, 2), try count_in(source, .error_ignored));
     try std.testing.expectEqual(@as(u32, 1), try count_in(source, .recursion));
+}
+
+test "an assertion of what the line above just made true counts" {
+    const source =
+        \\fn walk(w: *W, n: u32) u32 {
+        \\    w.fd = -1;
+        \\    assert(w.fd == -1);
+        \\    if (n < 3) return 0;
+        \\    assert(n >= 3);
+        \\    if (n == 4) return 1;
+        \\    // A comment between
+        \\    assert(!(n == 4));
+        \\    if (n > 9 or n == 7) return 2;
+        \\    assert(n != 7);
+        \\    w.fd = 2;
+        \\    assert(w.fd > 0);
+        \\    const m = n * 2;
+        \\    assert(m == n * 2);
+        \\    return n;
+        \\}
+    ;
+    try std.testing.expectEqual(@as(u32, 3), try count_in(source, .assertion_restated));
 }
 
 test "comments start with a capital after a space; a continued sentence needn't" {

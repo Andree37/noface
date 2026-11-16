@@ -8,6 +8,7 @@ const catalog = @import("catalog.zig");
 pub const Override = struct { path: []const u8, name: []const u8, index: f32 };
 
 /// The overrides in `text`; lines that don't parse are skipped.
+// Assertions: it reads the overrides file, which is outside data.
 pub fn parse(alloc: std.mem.Allocator, text: []const u8) ![]Override {
     var out: std.ArrayList(Override) = .empty;
     var lines = std.mem.tokenizeScalar(u8, text, '\n');
@@ -18,8 +19,6 @@ pub fn parse(alloc: std.mem.Allocator, text: []const u8) ![]Override {
         const index = std.fmt.parseFloat(f32, fields.next() orelse continue) catch continue;
         if (path.len == 0 or std.math.isNan(index)) continue;
         if (index < 0 or index > catalog.max_index) continue;
-        assert(index >= 0);
-        assert(index <= catalog.max_index);
         try out.append(alloc, .{ .path = path, .name = name, .index = index });
     }
     return out.items;

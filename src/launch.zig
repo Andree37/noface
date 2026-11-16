@@ -79,7 +79,6 @@ pub fn mode_of(argument: []const u8) Mode {
     if (std.mem.eql(u8, argument, "now")) return .now;
     if (std.mem.eql(u8, argument, "export")) return .export_list;
     if (std.mem.eql(u8, argument, "autostart")) return .autostart;
-    assert(!std.mem.eql(u8, argument, "now"));
     return .kpm;
 }
 

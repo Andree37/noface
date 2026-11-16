@@ -77,6 +77,8 @@ on outside data to avoid one either.
     must not.
   - Split compound assertions **[checked]**: `assert(a); assert(b);`, not
     `assert(a and b)`.
+  - Never assert what the line above just made true **[checked]**: `x = v;` then
+    `assert(x == v);`, or `if (c) return;` then `assert(!c);`. It can't fail.
   - `if (a) assert(b)` for an implication.
   - Assert relationships between constants at compile time
     (`comptime { assert(rows * row_height <= screen_height); }`), which checks the

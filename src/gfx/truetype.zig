@@ -32,14 +32,12 @@ comptime {
 fn byte_at(data: []const u8, at: i64) u8 {
     assert(data.len <= std.math.maxInt(u32));
     if (at < 0 or at >= data.len) return 0;
-    assert(at < data.len);
     return data[@intCast(at)];
 }
 
 fn ushort(data: []const u8, at: i64) u16 {
     assert(data.len <= std.math.maxInt(u32));
     if (at < 0 or at + 2 > data.len) return 0;
-    assert(at + 2 <= data.len);
     return std.mem.readInt(u16, data[@intCast(at)..][0..2], .big);
 }
 
@@ -50,7 +48,6 @@ fn short(data: []const u8, at: i64) i16 {
 fn ulong(data: []const u8, at: i64) u32 {
     assert(data.len <= std.math.maxInt(u32));
     if (at < 0 or at + 4 > data.len) return 0;
-    assert(at + 4 <= data.len);
     return std.mem.readInt(u32, data[@intCast(at)..][0..4], .big);
 }
 
@@ -86,6 +83,7 @@ fn is_font(data: []const u8) bool {
 }
 
 /// Where the first font starts: the file's start, or a collection's first.
+// Assertions: it reads a font, outside data: what isn't one gives null.
 fn first_font_offset(data: []const u8) ?u32 {
     assert(data.len <= std.math.maxInt(u32));
     if (is_font(data)) return 0;
@@ -111,6 +109,7 @@ fn find_table(data: []const u8, start: u32, tag: *const [4]u8) u32 {
 }
 
 /// Reads a font (the first, in a collection). Null for one stb_truetype turned down.
+// Assertions: it reads a font, outside data: what it can't use gives null.
 pub fn init(data: []const u8) ?Info {
     if (data.len > std.math.maxInt(u32)) return null;
     const start = first_font_offset(data) orelse return null;
@@ -144,8 +143,6 @@ pub fn init(data: []const u8) ?Info {
     info.index_map = find_index_map(data, cmap);
     if (info.index_map == 0) return null;
     info.index_to_loc_format = ushort(data, @as(i64, info.head) + 50);
-    assert(info.hhea != 0);
-    assert(info.index_map != 0);
     return info;
 }
 
@@ -235,6 +232,8 @@ fn glyph_index_groups(data: []const u8, map: i64, code_point: u32, format: u16) 
     // Halves the range each turn
     while (low < high) {
         const middle = low + ((high - low) >> 1);
+        assert(middle >= low); // Inside the range, so it shrinks each turn
+        assert(middle < high);
         const group = map + 16 + middle * 12;
         const start_char = ulong(data, group);
         const end_char = ulong(data, group + 4);
@@ -248,7 +247,6 @@ fn glyph_index_groups(data: []const u8, map: i64, code_point: u32, format: u16) 
             return start_glyph;
         }
     }
-    assert(low >= high);
     return 0;
 }
 
@@ -318,6 +316,8 @@ fn kern_table_advance(info: *const Info, first: u32, second: u32) i32 {
     // Halves the range each turn
     while (left <= right) {
         const middle = (left + right) >> 1;
+        assert(middle >= left); // Inside the range, so it shrinks each turn
+        assert(middle <= right);
         const straw = ulong(data, kern + 18 + middle * 6);
         if (needle < straw) {
             right = middle - 1;
@@ -327,7 +327,6 @@ fn kern_table_advance(info: *const Info, first: u32, second: u32) i32 {
             return short(data, kern + 22 + middle * 6);
         }
     }
-    assert(left > right);
     return 0;
 }
 
@@ -341,6 +340,8 @@ fn coverage_index(data: []const u8, table: i64, glyph: u32) ?u32 {
     // Halves the range each turn
     while (left <= right) {
         const middle = (left + right) >> 1;
+        assert(middle >= left); // Inside the range, so it shrinks each turn
+        assert(middle <= right);
         switch (format) {
             1 => {
                 const straw = ushort(data, table + 4 + 2 * middle);
@@ -367,7 +368,6 @@ fn coverage_index(data: []const u8, table: i64, glyph: u32) ?u32 {
             else => return null,
         }
     }
-    assert(left > right);
     return null;
 }
 
@@ -390,6 +390,8 @@ fn glyph_class(data: []const u8, table: i64, glyph: u32) ?u32 {
     // Halves the range each turn
     while (left <= right) {
         const middle = (left + right) >> 1;
+        assert(middle >= left); // Inside the range, so it shrinks each turn
+        assert(middle <= right);
         const record = table + 4 + 6 * middle;
         if (glyph < ushort(data, record)) {
             right = middle - 1;
@@ -399,7 +401,6 @@ fn glyph_class(data: []const u8, table: i64, glyph: u32) ?u32 {
             return ushort(data, record + 4);
         }
     }
-    assert(left > right);
     return 0;
 }
 
@@ -458,6 +459,8 @@ fn pair_by_glyph(data: []const u8, table: i64, coverage: u32, second: u32) PairR
     // Halves the range each turn
     while (left <= right) {
         const middle = (left + right) >> 1;
+        assert(middle >= left); // Inside the range, so it shrinks each turn
+        assert(middle <= right);
         const pair = pair_set + 2 + 4 * middle;
         const straw = ushort(data, pair);
         if (second < straw) {
@@ -468,10 +471,10 @@ fn pair_by_glyph(data: []const u8, table: i64, coverage: u32, second: u32) PairR
             return .{ .found = short(data, pair + 2) };
         }
     }
-    assert(left > right);
     return .next;
 }
 
+// Assertions: it reads a font, outside data: a class out of range gives no kerning.
 fn pair_by_class(data: []const u8, table: i64, first: u32, second: u32) PairResult {
     assert(table >= 0);
     const first_class = glyph_class(data, table + ushort(data, table + 8), first);
@@ -482,7 +485,6 @@ fn pair_by_class(data: []const u8, table: i64, first: u32, second: u32) PairResu
     const class2 = second_class orelse return .{ .found = 0 };
     if (class1 >= class1_count or class2 >= class2_count) return .{ .found = 0 };
     const records = table + 16 + 2 * (@as(i64, class1) * class2_count);
-    assert(class2 < class2_count);
     return .{ .found = short(data, records + 2 * @as(i64, class2)) };
 }
 
@@ -803,6 +805,7 @@ const Walk = struct {
     scy: i32 = 0,
 
     fn add(walk: *Walk, out: []Vertex, kind: Vertex.Kind, xy: [4]i32) void {
+        assert(walk.made <= out.len);
         // Room was made for every vertex a glyph can make; a damaged one loses the rest
         if (walk.made >= out.len) return;
         out[walk.made] = .{
@@ -929,6 +932,7 @@ pub fn glyph_bitmap(
     scale: f32,
     glyph: u32,
 ) Error!Bitmap {
+    assert(scale != 0);
     var bitmap = glyph_bitmap_box(info, scale, glyph);
     // A box with no pixels, or one too large for a glyph, is drawn as nothing
     if (bitmap.width <= 0 or bitmap.height <= 0) return bitmap;

@@ -128,7 +128,6 @@ pub const Reader = struct {
         assert(r.fd >= 0);
         _ = calls.close(r.fd); // Ignored: only read, so nothing is lost
         r.fd = -1;
-        assert(r.fd < 0);
     }
 
     /// The `len` bytes at `offset`, valid until the next read. An error when they run

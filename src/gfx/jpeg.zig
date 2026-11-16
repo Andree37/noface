@@ -211,7 +211,6 @@ const Decoder = struct {
 /// Whether `data` starts like a JPEG: fill bytes, then the start-of-image marker.
 pub fn is_jpeg(data: []const u8) bool {
     if (data.len < 2 or data[0] != 0xff) return false;
-    assert(data.len >= 2);
     for (data[1..]) |byte| {
         if (byte != 0xff) return byte == marker_start;
     }
@@ -1130,7 +1129,6 @@ fn decode_dc(d: *Decoder, n: u8) Error!i32 {
     const component = &d.component[n];
     const t = huffman_decode(d, &d.tables.dc[component.dc_table]);
     if (t < 0 or t > 15) return error.BadJpeg;
-    assert(t <= 15);
     const difference = if (t > 0) extend_receive(d, @intCast(t)) else 0;
     const dc = std.math.add(i32, component.dc_prediction, difference) catch return error.BadJpeg;
     component.dc_prediction = dc;

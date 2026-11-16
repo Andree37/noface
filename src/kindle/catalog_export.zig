@@ -105,7 +105,6 @@ pub fn run() void {
     if (failed(calls.rename(library_tmp, library_path))) {
         std.debug.print("export: couldn't replace {s}\n", .{library_path});
     }
-    assert(finished);
 }
 
 /// Where a catalog of `catalog_bytes` (0: not measured) is copied.

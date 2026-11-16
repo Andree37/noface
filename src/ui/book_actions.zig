@@ -59,42 +59,31 @@ pub fn subtitle(buf: []u8, e: *const catalog.Entry, confirming: bool) []const u8
 }
 
 /// What a book offers. `confirming` swaps the list for the removal question.
+// Assertions: a table by where the book is, which the switch keeps complete.
 pub fn options(e: *const catalog.Entry, confirming: bool, out: *[4]Option) []Option {
     if (confirming) {
         out[0] = .confirm_remove;
         out[1] = .cancel;
         return out[0..2];
     }
-    var count: u32 = 0;
+    const mark: Option = if (e.is_read()) .mark_unread else .mark_read;
+    // No Cancel: tapping above the sheet closes it. The removal question keeps one.
     switch (e.availability) {
         .cloud => {
-            out[0] = .download;
-            count = 1;
+            out[0..2].* = .{ .download, mark };
+            return out[0..2];
         },
-        .downloading => {},
+        // Nothing until it's here
+        .downloading => return out[0..0],
+        // A series can be set for books on the Kindle, which have a file to key it by
         .local => {
-            out[0] = .remove;
-            count = 1;
+            out[0..3].* = .{ .remove, mark, .series };
+            return out[0..3];
         },
     }
-    if (e.availability != .downloading) {
-        out[count] = if (e.is_read()) .mark_unread else .mark_read;
-        count += 1;
-    }
-    // A series can be set for books on the Kindle, which have a file to key it by
-    if (e.availability == .local) {
-        out[count] = .series;
-        count += 1;
-    }
-    // A book being downloaded offers nothing until it's here
-    if (e.availability == .downloading) assert(count == 0);
-    assert(count < out.len);
-    if (e.availability == .local) assert(out[0] == .remove);
-    assert(std.mem.indexOfScalar(Option, out[0..count], .cancel) == null);
-    // No Cancel: tapping above the sheet closes it. The removal question keeps one.
-    return out[0..count];
 }
 
+// Assertions: a table, which the switch keeps complete.
 pub fn label(o: Option) []const u8 {
     return switch (o) {
         .download => "Download",
@@ -107,6 +96,7 @@ pub fn label(o: Option) []const u8 {
     };
 }
 
+// Assertions: a book for the tests, made as they ask.
 fn entry(availability: catalog.Availability, percent: u32) catalog.Entry {
     assert(percent <= 100);
     return .{

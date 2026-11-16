@@ -34,6 +34,7 @@ pub fn mark_read(a: *app.App, e: *catalog.Entry, done: bool) void {
     e.finished = done;
     if (!done) e.percent = 0;
     assert(e.is_read() == done);
+    assert(e.percent <= 100);
     if (e.is_epub() or (!done and e.is_local())) {
         save_marked(a, e) catch |err| {
             std.debug.print("marked, not saved with its place: {s}\n", .{@errorName(err)});
@@ -50,6 +51,7 @@ pub fn mark_read(a: *app.App, e: *catalog.Entry, done: bool) void {
 /// is its beginning, dated just after the last time it was opened anywhere: newer than
 /// stock's place and percent, so ours win, without moving it up in recent order.
 fn save_marked(a: *app.App, e: *const catalog.Entry) !void {
+    assert(e.is_epub() or e.is_local()); // A file of its own to keep its place by
     var path_buffer: [320]u8 = undefined;
     const path = try a.state_path(&path_buffer, e.path);
     var saved = state.load(path);
@@ -130,10 +132,9 @@ pub const Sheet = struct {
         const confirming = s.round == 1;
         const e = s.e;
         s.list = book_actions.options(e, confirming, &s.list_buffer);
-        // Only a book being downloaded has nothing to pick: its card says so, and a
-        // tap above it closes it
-        if (s.list.len == 0) assert(e.availability == .downloading);
-        if (e.availability != .downloading) assert(s.list.len > 0);
+        assert(s.list.len <= s.list_buffer.len);
+        // A book being downloaded has nothing to pick: its card says so, and a tap
+        // above it closes it
         const subtitle = book_actions.subtitle(&s.subtitle_buffer, e, confirming);
         const rows = book_actions.rows(s.list, &s.row_buffer);
         s.card = card_screen.over(s.a, s.background, e.title, subtitle, rows, null);
@@ -142,6 +143,7 @@ pub const Sheet = struct {
     }
 
     pub fn on_resume(s: *Sheet) !screen.Step(Change) {
+        assert(s.background.len == s.a.screen.pixels.len); // What its cards sit over
         switch (s.phase) {
             .card => {
                 try card_screen.closed(s.a, s.background);
@@ -254,10 +256,15 @@ pub fn up_next(
 pub fn up_next_closed(a: *app.App, background: []const u8, offer: *UpNext) !bool {
     if (offer.small) |pixels| a.alloc.free(pixels);
     offer.small = null;
+    assert(background.len == a.screen.pixels.len);
     try card_screen.closed(a, background);
-    const chosen = offer.ending.? == .done;
-    if (chosen) assert(offer.ending.?.done < up_next_rows.len);
-    return chosen;
+    switch (offer.ending.?) {
+        .done => |row| {
+            assert(row < up_next_rows.len);
+            return true;
+        },
+        .closed, .interrupted => return false,
+    }
 }
 
 const up_next_rows = [_]card.Row{.{ .label = "Read it now" }};

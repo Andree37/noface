@@ -3,15 +3,11 @@ const assert = std.debug.assert;
 
 /// The development tools in tools/, each built from tools/<name>.zig.
 const tool_names = [_][]const u8{
-    "latency",
-    "kfxstat",
-    "pagetest",
     "panelshot",
     "touchsim",
     "fbcap",
     "fbrec",
     "xtap",
-    "kfxshape",
 };
 
 /// The tools in tools/ that run on this computer, each built from tools/<name>.zig.

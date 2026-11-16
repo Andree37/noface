@@ -255,8 +255,8 @@ const Server = struct {
             if (action(query)) |act| {
                 var bytes = act;
                 _ = sys.write(s.actions, @ptrCast(&bytes), @sizeOf(input_mod.Action));
-                // Then the finger lifts: a slider or picture follows it until then
-                if (act == .hold or act == .tap) {
+                // A tap's finger lifts at once; a hold's when the page says so ("lift")
+                if (act == .tap) {
                     var lift: input_mod.Action = .drag_end;
                     _ = sys.write(s.actions, @ptrCast(&lift), @sizeOf(input_mod.Action));
                 }
@@ -340,6 +340,8 @@ fn action(query: []const u8) ?input_mod.Action {
     if (std.mem.eql(u8, kind, "tap")) return .{ .tap = .{ .x = x, .y = y, .us = 0 } };
     if (std.mem.eql(u8, kind, "hold")) return .{ .hold = .{ .x = x, .y = y } };
     if (std.mem.eql(u8, kind, "swipe")) return .{ .swipe = if (d < 0) -1 else 1 };
+    if (std.mem.eql(u8, kind, "drag")) return .{ .drag = .{ .x = x, .y = y } };
+    if (std.mem.eql(u8, kind, "lift")) return .drag_end;
     if (std.mem.eql(u8, kind, "pull")) return .pull;
     if (std.mem.eql(u8, kind, "lock")) return .lock;
     if (std.mem.eql(u8, kind, "unlock")) return .unlock;
@@ -376,17 +378,39 @@ const page =
     \\  return [Math.round((e.clientX - r.left) * 1272 / r.width),
     \\    Math.round((e.clientY - r.top) * 1696 / r.height)];
     \\}
-    \\function act(k, x = 0, y = 0, d = 0) { fetch(`/act?k=${k}&x=${x}&y=${y}&d=${d}`); }
+    \\// One at a time, in order: a hold, its drags and its lift arrive as they were made
+    \\let sent = Promise.resolve();
+    \\function act(k, x = 0, y = 0, d = 0) {
+    \\  sent = sent.then(() => fetch(`/act?k=${k}&x=${x}&y=${y}&d=${d}`)).catch(() => {});
+    \\}
+    \\// As on the Kindle: held still for 450 ms is a hold, while the finger is down; then
+    \\// it's followed (to stretch a selection) until it lifts
     \\s.addEventListener('mousedown', e => {
-    \\  down = { p: at(e), t: Date.now() };
+    \\  const d = { p: at(e), held: false, last: at(e) };
+    \\  d.timer = setTimeout(() => { d.held = true; act('hold', d.p[0], d.p[1]); }, 450);
+    \\  down = d;
     \\  e.preventDefault();
+    \\});
+    \\window.addEventListener('mousemove', e => {
+    \\  if (!down) return;
+    \\  const p = at(e);
+    \\  if (!down.held) {
+    \\    if (Math.hypot(p[0] - down.p[0], p[1] - down.p[1]) > 30) clearTimeout(down.timer);
+    \\    return;
+    \\  }
+    \\  if (Math.hypot(p[0] - down.last[0], p[1] - down.last[1]) < 6) return;
+    \\  down.last = p;
+    \\  act('drag', p[0], p[1]);
     \\});
     \\window.addEventListener('mouseup', e => {
     \\  if (!down) return;
-    \\  const p = at(e), dx = p[0] - down.p[0], dy = p[1] - down.p[1], held = Date.now() - down.t;
-    \\  if (Math.abs(dx) > 80 && Math.abs(dx) > Math.abs(dy)) act('swipe', 0, 0, dx < 0 ? 1 : -1);
+    \\  clearTimeout(down.timer);
+    \\  const p = at(e), dx = p[0] - down.p[0], dy = p[1] - down.p[1];
+    \\  if (down.held) act('lift');
+    \\  else if (Math.abs(dx) > 80 && Math.abs(dx) > Math.abs(dy)) {
+    \\    act('swipe', 0, 0, dx < 0 ? 1 : -1);
+    \\  }
     \\  else if (down.p[1] < 200 && dy > 120) act('pull');
-    \\  else if (held > 450) act('hold', down.p[0], down.p[1]);
     \\  else act('tap', down.p[0], down.p[1]);
     \\  down = null;
     \\});

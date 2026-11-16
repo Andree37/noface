@@ -205,7 +205,6 @@ pub fn build(
     errdefer ix.close();
     try apply_overrides(&ix, buffers, items, places);
     try ix.write_header();
-    assert(ix.header.valid());
     return ix;
 }
 

@@ -62,7 +62,6 @@ pub const Record = extern struct {
     pub fn seal(r: *Record) void {
         r.invariants();
         r.checksum = r.checksum_now();
-        assert(r.sound());
     }
 
     /// Whether the checksum matches what the record holds.
@@ -113,9 +112,11 @@ pub const Header = extern struct {
     text_size: u64,
     checksum: u64 = 0, // Of every byte before it
 
+    /// Sets the checksum, as the header is now: last, before it's written, and only
+    /// to a header that reads back as valid.
     pub fn seal(h: *Header) void {
         h.checksum = checksum_of(h);
-        assert(h.count <= books_max);
+        assert(h.valid());
     }
 
     /// Whether the header reads as whole and of this format: a damaged one, or one from
@@ -227,9 +228,11 @@ pub const Index = struct {
         return std.mem.bytesToValue(Record, ix.records_file[at..][0..@sizeOf(Record)]);
     }
 
+    /// Book `id`'s record. Not hashed again: every one was as the index opened
+    /// (`check`), and each write since is sealed and read back (`write_record`), so
+    /// a sort, reading each record a few dozen times, needn't.
     pub fn record(ix: *const Index, id: u32) Record {
         const r = ix.record_unchecked(id);
-        assert(r.sound()); // Checked as opened, and sealed by every write since
         r.invariants();
         return r;
     }
@@ -290,9 +293,8 @@ pub const Index = struct {
 
     /// Writes the header afresh, beside the old one and then over it.
     pub fn write_header(ix: *Index) !void {
-        assert(ix.header.count <= books_max);
+        assert(ix.dir.len > 0);
         try write_header_to(ix.dir, &ix.header);
-        assert(ix.header.valid());
     }
 };
 
@@ -323,7 +325,6 @@ fn read_header(dir: []const u8) !Header {
     if (bytes.len != @sizeOf(Header)) return error.Damaged;
     const header = std.mem.bytesToValue(Header, bytes[0..@sizeOf(Header)]);
     if (!header.valid()) return error.Damaged;
-    assert(header.count <= books_max);
     return header;
 }
 

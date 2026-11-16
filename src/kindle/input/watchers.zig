@@ -12,6 +12,7 @@ const lipc = @import("../lipc.zig");
 const touch_zones = @import("../touch.zig");
 const linux = @import("../../sys/calls.zig");
 const os = @import("../../sys/os.zig");
+const process = @import("../../sys/process.zig");
 const Input = input.Input;
 const Action = input.Action;
 const InputEvent = evdev.InputEvent;
@@ -46,11 +47,18 @@ comptime {
     assert(std.mem.startsWith(u8, heartbeat_path, "/tmp/"));
 }
 
+/// A watcher's pipe to poll, or -1, which poll passes over, when it isn't running.
+pub fn fd_of(watcher: ?process.Child) i32 {
+    const w = watcher orelse return -1;
+    assert(w.out >= 0);
+    return w.out;
+}
+
 /// Whether powerd's or USB's watcher has something to say, without waiting.
 pub fn news_waiting(in: *Input) bool {
     var fds = [_]linux.pollfd{
-        .{ .fd = in.power_events, .events = linux.POLL.IN, .revents = 0 },
-        .{ .fd = in.usb_events, .events = linux.POLL.IN, .revents = 0 },
+        .{ .fd = fd_of(in.power_watcher), .events = linux.POLL.IN, .revents = 0 },
+        .{ .fd = fd_of(in.usb_watcher), .events = linux.POLL.IN, .revents = 0 },
     };
     const n = linux.poll(&fds, fds.len, 0);
     if (failed(n)) return false;
@@ -78,27 +86,15 @@ pub fn unlocked(in: *Input) Action {
 
 /// Starts listening for a computer on USB, from the volume manager.
 pub fn start_usb_watcher(in: *Input) void {
-    assert(in.usb_events < 0);
-    const child = lipc.watch_usb_events() orelse return;
-    assert(child.pid > 0);
-    assert(child.out >= 0);
-    in.usb_events = child.out;
-    in.usb_watcher_pid = child.pid;
+    assert(in.usb_watcher == null);
+    in.usb_watcher = lipc.watch_usb_events();
 }
 
 /// Starts listening for lock and unlock, and the charger, from powerd.
 pub fn start_watcher(in: *Input) void {
     // Only once the last one is gone: two would hear every event twice
-    assert(in.power_events < 0);
-    const child = lipc.watch_power_events() orelse {
-        in.power_events = -1;
-        in.watcher_pid = 0;
-        return;
-    };
-    assert(child.pid > 0);
-    assert(child.out >= 0);
-    in.power_events = child.out;
-    in.watcher_pid = child.pid;
+    assert(in.power_watcher == null);
+    in.power_watcher = lipc.watch_power_events();
 }
 
 /// What noface owes others while it waits: a heartbeat for the launcher's watchdog
@@ -120,7 +116,7 @@ pub fn keep_alive(in: *Input) void {
 pub fn from_power_key(in: *Input) ?Action {
     var drained: [16]InputEvent = undefined;
     const got = linux.read(in.power, @ptrCast(&drained), @sizeOf(@TypeOf(drained)));
-    if (failed(got) or !in.locked or in.power_events >= 0) return null;
+    if (failed(got) or !in.locked or in.power_watcher != null) return null;
     assert(got <= @sizeOf(@TypeOf(drained)));
     const events = drained[0 .. got / @sizeOf(InputEvent)];
     assert(events.len <= drained.len);
@@ -130,11 +126,10 @@ pub fn from_power_key(in: *Input) ?Action {
 /// The power watcher died: start another now and then. A wake-up while no one
 /// listened is gone for good, so then powerd is asked instead.
 pub fn restart_watcher_if_dead(in: *Input) ?Action {
-    if (in.power_events >= 0 or now_us() < in.watcher_retry_us) return null;
+    if (in.power_watcher != null or now_us() < in.watcher_retry_us) return null;
     in.watcher_retry_us = now_us() + watcher_retry_ms * 1000;
     start_watcher(in);
-    if (in.power_events >= 0) assert(in.watcher_pid > 0);
-    std.debug.print("power watcher restarted: {}\n", .{in.power_events >= 0});
+    std.debug.print("power watcher restarted: {}\n", .{in.power_watcher != null});
     if (!in.locked) return null;
     // No answer: still locked as far as anyone knows, and asked at the next restart
     const saver = lipc.in_screen_saver() orelse return null;
@@ -143,13 +138,11 @@ pub fn restart_watcher_if_dead(in: *Input) ?Action {
 
 /// A computer setting up USB for files (not for a network, as SSH uses).
 pub fn from_usb_watcher(in: *Input) ?Action {
-    if (in.usb_events < 0) return null;
+    const w = in.usb_watcher orelse return null;
     var buffer: [512]u8 = undefined;
-    const line = read_watcher(in.usb_events, &buffer) orelse {
-        // That watcher died; handing over to the computer is lost until a restart.
-        // Closing a pipe that's dead already can't fail in a way worth hearing of.
-        _ = linux.close(in.usb_events);
-        in.usb_events = -1;
+    const line = read_watcher(w.out, &buffer) orelse {
+        // That watcher died; handing over to the computer is lost until a restart
+        reap(&in.usb_watcher);
         std.debug.print("usb watcher stopped\n", .{});
         return null;
     };
@@ -160,9 +153,9 @@ pub fn from_usb_watcher(in: *Input) ?Action {
 
 /// Locking, waking, and a charger coming or going, from powerd.
 pub fn from_power_watcher(in: *Input) ?Action {
-    if (in.power_events < 0) return null;
+    const w = in.power_watcher orelse return null;
     var buffer: [512]u8 = undefined;
-    const line = read_watcher(in.power_events, &buffer) orelse {
+    const line = read_watcher(w.out, &buffer) orelse {
         power_watcher_died(in);
         return null;
     };
@@ -176,20 +169,21 @@ pub fn from_power_watcher(in: *Input) ?Action {
 
 /// Without closing it, the dead pipe would wake every wait at once, forever.
 pub fn power_watcher_died(in: *Input) void {
-    assert(in.power_events >= 0);
-    // The pipe is dead already: closing it only frees the number
-    _ = linux.close(in.power_events);
-    in.power_events = -1;
+    assert(in.power_watcher != null);
+    reap(&in.power_watcher);
     in.watcher_retry_us = now_us() + watcher_retry_ms * 1000;
-    // Only the watcher is reaped: any other child (a download, a lipc command) is
-    // waited for by whoever started it, which would otherwise find it gone
-    if (in.watcher_pid > 0) {
-        var status: i32 = 0;
-        _ = linux.waitpid(in.watcher_pid, &status, linux.W.NOHANG); // Ignored: gone is gone
-        in.watcher_pid = 0;
-    }
-    assert(in.power_events < 0);
-    assert(in.watcher_pid == 0);
+}
+
+/// A watcher that died: its pipe closed, which frees the number (it's dead already),
+/// and it reaped. Only the watcher: any other child (a download, a lipc command) is
+/// waited for by whoever started it, which would otherwise find it gone.
+fn reap(watcher: *?process.Child) void {
+    const w = watcher.* orelse return;
+    assert(w.pid > 0);
+    _ = linux.close(w.out); // Dead already: closing only frees the number
+    var status: i32 = 0;
+    _ = linux.waitpid(w.pid, &status, linux.W.NOHANG); // Ignored: gone is gone
+    watcher.* = null;
 }
 
 /// Tell powerd about activity at most once a minute, and only just after a touch:

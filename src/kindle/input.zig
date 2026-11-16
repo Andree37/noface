@@ -15,6 +15,7 @@ const now_us = os.now_us;
 const evdev = @import("input/evdev.zig");
 const gestures = @import("input/gestures.zig");
 const watchers = @import("input/watchers.zig");
+const process = @import("../sys/process.zig");
 pub const eviocgrab = evdev.eviocgrab;
 pub const should_tell_powerd = watchers.should_tell_powerd;
 pub const power_pressed = watchers.power_pressed;
@@ -172,10 +173,10 @@ pub const Zone = struct { x: i32, y: i32, w: i32, h: i32 };
 pub const Input = struct {
     touch: i32,
     power: i32,
-    power_events: i32 = -1,
-    watcher_pid: i32 = 0, // The lipc-wait-event child behind power_events
-    usb_events: i32 = -1, // Lines from a second watcher, on USB connections
-    usb_watcher_pid: i32 = 0,
+    /// The lipc-wait-event children whose lines are powerd's events (lock, unlock, the
+    /// charger) and the volume manager's (a computer on USB), while they run.
+    power_watcher: ?process.Child = null,
+    usb_watcher: ?process.Child = null,
     heartbeat_us: u64 = 0, // When the watchdog last heard noface is alive
     width: i32,
     height: i32,
@@ -434,11 +435,11 @@ pub const Input = struct {
     /// with nothing to tick, it sleeps on (waking now and then to restart a dead watcher).
     fn wait_for_events(in: *Input) void {
         // The power key matters only while locked with no watcher, as the way to unlock
-        const key_fd = if (in.locked and in.power_events < 0) in.power else -1;
+        const key_fd = if (in.locked and in.power_watcher == null) in.power else -1;
         var fds = [_]linux.pollfd{
             .{ .fd = in.touch, .events = linux.POLL.IN, .revents = 0 },
-            .{ .fd = in.power_events, .events = linux.POLL.IN, .revents = 0 },
-            .{ .fd = in.usb_events, .events = linux.POLL.IN, .revents = 0 },
+            .{ .fd = watchers.fd_of(in.power_watcher), .events = linux.POLL.IN, .revents = 0 },
+            .{ .fd = watchers.fd_of(in.usb_watcher), .events = linux.POLL.IN, .revents = 0 },
             .{ .fd = key_fd, .events = linux.POLL.IN, .revents = 0 },
         };
         // Woken, timed out or interrupted, the loop looks at every source alike
@@ -448,7 +449,7 @@ pub const Input = struct {
     fn wait_ms(in: *const Input) i32 {
         if (in.top_slot != null) return hold_poll_ms; // A press that may become a hold
         if (in.locked and in.tick_us == 0) {
-            return if (in.power_events < 0) watchers.watcher_retry_ms else -1;
+            return if (in.power_watcher == null) watchers.watcher_retry_ms else -1;
         }
         const wait = in.wait_ms_for_tick(now_us());
         assert(wait >= 1);
@@ -530,12 +531,12 @@ pub fn release(in: *const Input) void {
     assert(in.script == null);
     // On the way out: if the grab won't let go, closing the device does it anyway
     _ = linux.ioctl(in.touch, eviocgrab, 0);
-    for ([_]i32{ in.watcher_pid, in.usb_watcher_pid }) |pid| {
-        if (pid <= 0) continue;
+    for ([_]?process.Child{ in.power_watcher, in.usb_watcher }) |watcher| {
+        const w = watcher orelse continue;
         // A watcher already gone needs neither: both are only to leave no child behind
-        _ = linux.kill(pid, linux.SIG.TERM);
+        _ = linux.kill(w.pid, linux.SIG.TERM);
         var status: i32 = 0;
-        _ = linux.waitpid(pid, &status, 0);
+        _ = linux.waitpid(w.pid, &status, 0);
     }
 }
 

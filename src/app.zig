@@ -79,10 +79,15 @@ pub const AaKept = struct {
 /// (screens/lock.zig).
 pub const LockKept = struct {
     saved: []u8, // The screen under it, to put back on waking
-    cover: []u8, // The book's cover as last drawn, full screen
-    cover_key: u64 = 0, // Which book's cover `cover` holds, so it isn't decoded again
-    picture_bad: u64 = 0, // A lock screen picture that didn't decode, not to try again
+    cover: []u8, // What the lock screen last drew, full screen
+    shown: ?LockShown = null, // What `cover` holds, so it isn't drawn again; null at first
+    picture_bad: ?u64 = null, // A picture of the reader's that didn't decode, by its hash
 };
+
+/// What the lock screen shows: the reader's own picture, a book's cover (or its title,
+/// for one without), or the title on white for no book. Pictures and books are told
+/// apart by a hash, so a replaced picture or another book is drawn again.
+pub const LockShown = union(enum) { picture: u64, book: u64, no_book };
 
 pub const App = struct {
     alloc: std.mem.Allocator, // Lives as long as the app, counted by app_budget

@@ -17,11 +17,6 @@ pub const lock_redraw_us = 1500 * 1000;
 
 pub const lock_redraws = 2;
 
-/// The key kept when no lock screen is kept, and the key of the title on white drawn
-/// for no book. Every picture's and book's key is above both.
-const key_nothing = 0;
-const key_no_book = 1;
-
 /// Pictures of the same proportions, within this many percent, count as one shape.
 const shape_tolerance_percent = 4;
 
@@ -34,7 +29,6 @@ const title_lines_max = 4;
 comptime {
     assert(lock_redraws > 0);
     assert(lock_redraw_us > 0);
-    assert(key_nothing != key_no_book);
     assert(shape_tolerance_percent < 100);
     assert(title_lines_max > 0);
 }
@@ -78,8 +72,7 @@ pub const Lock = struct {
         const a = l.a;
         @memcpy(a.lock_kept.saved, a.screen.pixels);
         draw_target(a, l.entry);
-        // What's kept is a picture's, a book's, or the title on white's: never nothing
-        assert(a.lock_kept.cover_key != key_nothing);
+        assert(a.lock_kept.shown != null); // Drawn now, or kept from the last lock
         a.present(a.lock_kept.cover, .flash) catch |err| {
             std.debug.print("lock screen not shown: {s}\n", .{@errorName(err)});
         };
@@ -149,53 +142,48 @@ fn draw_target(a: *app.App, entry: ?*const catalog.Entry) void {
     const own = if (a.settings.lock_picture) picture_path(a, &picture_buffer) else null;
     const own_data: ?[]const u8 = if (own) |p| file.map(p) catch null else null;
     defer if (own_data) |d| file.unmap(d);
-    const book_key: u64 = if (entry) |e| key_for(e) else key_no_book;
-    const wanted = if (own_data) |d| picture_key(d) else book_key;
-    if (a.lock_kept.cover_key != wanted) {
-        lock_screen_draw(a, entry, own_data, wanted, book_key);
+    const book: app.LockShown = if (entry) |e| .{ .book = key_for(e) } else .no_book;
+    const wanted: app.LockShown = if (own_data) |d| .{ .picture = picture_key(d) } else book;
+    if (!std.meta.eql(a.lock_kept.shown, @as(?app.LockShown, wanted))) {
+        lock_screen_draw(a, entry, own_data, book);
     } else {
         std.debug.print("locked, cover kept\n", .{});
     }
-    assert(a.lock_kept.cover_key != key_nothing);
-    assert(wanted != key_nothing);
+    assert(a.lock_kept.shown != null);
 }
 
 /// Draws the lock screen into `a.lock_kept.cover`: the reader's picture when it decodes,
-/// else the book's cover, else its title on white. Keeps the key of what it drew.
+/// else the book's cover, else its title on white (`book` says which book). Keeps what
+/// it drew.
 fn lock_screen_draw(
     a: *app.App,
     entry: ?*const catalog.Entry,
     own_data: ?[]const u8,
-    wanted: u64,
-    book_key: u64,
+    book: app.LockShown,
 ) void {
-    // A book's or a picture's key is above the title on white's; that one only for no book
-    if (entry != null) assert(book_key > key_no_book);
-    assert(wanted != key_nothing);
-    assert(book_key != key_nothing);
+    assert(book != .picture);
+    assert(a.lock_kept.cover.len == a.screen.pixels.len);
     const target = a.lock_kept.cover;
-    // The key kept is of what was really drawn: a picture that won't decode leaves
-    // the book's cover, which mustn't be kept as if it were the picture
-    var drew_picture = false;
+    // What's kept is what was really drawn: a picture that won't decode leaves the
+    // book's cover, which mustn't be kept as if it were the picture
+    var drew: ?u64 = null; // The picture drawn, by its hash
     if (own_data) |d| {
-        if (wanted != a.lock_kept.picture_bad) {
-            drew_picture = cover.fill_screen(
-                a.alloc,
-                d,
-                target,
-                a.screen.width,
-                a.screen.height,
-                a.screen.stride,
-            );
-            if (!drew_picture) {
-                a.lock_kept.picture_bad = wanted; // Not decoded again until the file changes
+        const hash = picture_key(d);
+        // One that didn't decode isn't tried again until the file changes
+        const bad = if (a.lock_kept.picture_bad) |b| b == hash else false;
+        if (!bad) {
+            const w = a.screen.width;
+            if (cover.fill_screen(a.alloc, d, target, w, a.screen.height, a.screen.stride)) {
+                drew = hash;
+            } else {
+                a.lock_kept.picture_bad = hash;
                 std.debug.print("lock screen picture can't be read\n", .{});
             }
         }
     }
-    const drawn = drew_picture or (if (entry) |e| draw_cover(a, e, target) else false);
+    const drawn = drew != null or (if (entry) |e| draw_cover(a, e, target) else false);
     if (!drawn) draw_title(a, entry, target);
-    a.lock_kept.cover_key = if (drew_picture) wanted else book_key;
+    a.lock_kept.shown = if (drew) |hash| .{ .picture = hash } else book;
     std.debug.print("locked, cover drawn: {}\n", .{drawn});
 }
 
@@ -222,24 +210,19 @@ pub fn has_picture(a: *const app.App) bool {
 
 /// Tells pictures apart for the kept lock screen, so a replaced one is drawn again.
 fn picture_key(data: []const u8) u64 {
+    assert(data.len > 0); // A mapped file is never empty
     var h = std.hash.Wyhash.init(1);
     h.update(data[0..@min(data.len, 4096)]);
     h.update(std.mem.asBytes(&data.len));
-    const key = h.final() | 2;
-    assert(key != key_nothing);
-    assert(key != key_no_book);
-    return key;
+    return h.final();
 }
 
-/// Tells books apart for the kept lock screen: never 0 (nothing kept) or 1 (no book).
+/// Tells books apart for the kept lock screen.
 fn key_for(e: *const catalog.Entry) u64 {
     var h = std.hash.Wyhash.init(0);
     h.update(e.path);
     h.update(e.thumbnail);
-    const key = h.final() | 2;
-    assert(key != key_nothing);
-    assert(key != key_no_book);
-    return key;
+    return h.final();
 }
 
 /// The cover, filling the screen. The catalog's thumbnail is the cover the library

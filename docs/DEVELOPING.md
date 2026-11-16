@@ -192,20 +192,6 @@ book is Project Gutenberg's edition of *Pride and Prejudice*, with Hugh Thomson'
 illustrations.
 
 
-## Measuring the battery
-
-noface notes the battery level each time it changes (`noface-data/battery`) and how
-long you read each day (`noface-data/journal`). After a few whole days off the charger,
-run this on the Kindle:
-
-```sh
-/mnt/us/noface/noface battery-report
-```
-
-It fits the drain of each unplugged day against that day's reading, and prints the
-drain per hour of reading, the drain per day on standby, and how long a full charge
-lasts at your pace. Days with any charging in them are left out.
-
 ## The simulator
 
 noface runs on a computer too, without a Kindle:

@@ -24,7 +24,6 @@ const library_screen = @import("screens/library.zig");
 const wifi_saver = @import("kindle/wifi_saver.zig");
 const doctor = @import("kindle/doctor.zig");
 const autostart = @import("kindle/autostart.zig");
-const battery_log = @import("kindle/battery_log.zig");
 const dict_download = @import("kindle/dict_download.zig");
 
 /// What noface logs goes to noface.log as plain lines, as its other output does.
@@ -72,15 +71,9 @@ pub fn main(init: std.process.Init.Minimal) !void {
     if (argv.len == 2 and std.mem.eql(u8, std.mem.sliceTo(argv[1], 0), "doctor")) {
         std.process.exit(if (doctor.report(1)) 0 else 1);
     }
-    // `noface battery-report [data folder]`: how the battery has done off the charger
     // `noface selftest`: noface's own checks, run here, changing nothing
     if (argv.len == 2 and std.mem.eql(u8, std.mem.sliceTo(argv[1], 0), "selftest")) {
         std.process.exit(if (scenarios.selftest()) 0 else 1);
-    }
-    if (argv.len >= 2 and std.mem.eql(u8, std.mem.sliceTo(argv[1], 0), "battery-report")) {
-        const data_dir = if (argv.len >= 3) std.mem.sliceTo(argv[2], 0) else paths.data_dir;
-        battery_log.report(1, data_dir);
-        return;
     }
     if (argv.len != reader_arguments_count) return error.Usage;
     try main_reader(init);

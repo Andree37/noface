@@ -38,41 +38,41 @@ pub const Search = struct {
     a: *app.App,
     s: *sess.Session,
     alloc: std.mem.Allocator,
-    typing: bool = true, // The keyboard is up; else the results are
-    results: []const goto.Row = &.{},
-    pages: goto.Pages = .{},
+    shown: Shown = .keyboard,
+
+    /// Under the bar: the keyboard, or a search's results, a page of them at a time.
+    const Shown = union(enum) {
+        keyboard,
+        results: struct { rows: []const goto.Row, pages: goto.Pages = .{} },
+    };
 
     /// The bar always; under it the keyboard or the results when all is drawn.
     pub fn draw(se: *Search, part: screen.Part) !void {
-        assert(se.results.len <= results_max);
-        // Results are shown only for a search that had words to look for
-        if (!se.typing) assert(se.s.query.words().len > 0);
         const a = se.a;
+        assert(a.screen.height > search_sheet.content_top);
         const page = a.page(a.screen.pixels);
         const top = toolbar.status_row;
         const query = se.s.query.slice();
         try search_sheet.render_bar(a.ui, page, top, query, "Search this book", .search);
-        if (part == .all) {
-            if (se.typing) {
+        if (part == .all) switch (se.shown) {
+            .keyboard => {
                 const keyboard_gap = keyboard.top - search_sheet.content_top;
                 page.fill_rect(0, search_sheet.content_top, page.width, keyboard_gap, 0xff);
                 try keyboard.render(a.ui, page);
-            } else {
-                try se.draw_results(page);
-            }
-        }
+            },
+            .results => |r| try se.draw_results(page, r.rows, r.pages),
+        };
         const bottom: u32 = if (part == .all) a.screen.height else search_sheet.content_top;
         try a.show_band(top, bottom - top);
     }
 
-    fn draw_results(se: *Search, page: Page) !void {
-        assert(!se.typing);
-        assert(se.results.len <= results_max);
+    fn draw_results(se: *Search, page: Page, rows: []const goto.Row, pages: goto.Pages) !void {
+        assert(rows.len <= results_max);
         const a = se.a;
         const count_height = goto.list_top - search_sheet.content_top;
         page.fill_rect(0, search_sheet.content_top, page.width, count_height, 0xff);
         var count_buffer: [32]u8 = undefined;
-        const n = se.results.len;
+        const n = rows.len;
         var count: []const u8 = std.fmt.comptimePrint("{d}+ results", .{results_max});
         if (n < results_max) {
             const plural = if (n == 1) "" else "s";
@@ -80,46 +80,54 @@ pub const Search = struct {
         }
         try a.ui.caption.draw(page, style.margin, search_sheet.content_top + 56, count);
         const empty = "No matches in this book.";
-        try goto.render_list(a.ui, page, se.results, null, se.pages.page, empty);
+        try goto.render_list(a.ui, page, rows, null, pages.page, empty);
     }
 
     pub fn on_tap(se: *Search, t: screen.Tap) !screen.Step(u32) {
-        assert(se.results.len <= results_max);
-        if (!se.typing) assert(se.s.query.words().len > 0);
+        assert(se.s.current < se.s.pages.len);
         if (search_sheet.bar_hit(t.x, t.y)) |h| {
             if (h == .cancel) return .close;
-            if (se.typing) return .stay;
-            se.typing = true; // The field: the keyboard back over the results
+            if (se.shown == .keyboard) return .stay;
+            se.shown = .keyboard; // The field: the keyboard back over the results
             return .{ .redraw = .all };
         }
         if (t.y < search_sheet.top) return .close; // Above the sheet
-        return if (se.typing) se.on_keyboard(t) else se.on_results(t);
+        return switch (se.shown) {
+            .keyboard => se.on_keyboard(t),
+            .results => |*r| se.on_results(t, r.rows, &r.pages),
+        };
     }
 
     fn on_keyboard(se: *Search, t: screen.Tap) !screen.Step(u32) {
-        assert(se.typing);
+        assert(se.shown == .keyboard);
         switch (typing.key(&se.s.query, t, typing.anything)) {
             .none => return .stay,
             .changed => return .{ .redraw = .changing },
             .enter => {
                 const words = se.s.query.words();
                 if (words.len == 0) return .stay;
-                se.results = try find(se.alloc, se.s, words);
-                assert(se.results.len <= results_max);
-                std.debug.print("search: {d} results\n", .{se.results.len});
-                se.typing = false;
-                se.pages = .{};
+                const rows = try find(se.alloc, se.s, words);
+                assert(rows.len <= results_max);
+                std.debug.print("search: {d} results\n", .{rows.len});
+                se.shown = .{ .results = .{ .rows = rows } };
                 return .{ .redraw = .all };
             },
         }
     }
 
-    fn on_results(se: *Search, t: screen.Tap) screen.Step(u32) {
-        assert(!se.typing);
-        return switch (se.pages.tap(t.x, t.y, @intCast(se.results.len))) {
+    fn on_results(
+        se: *const Search,
+        t: screen.Tap,
+        rows: []const goto.Row,
+        pages: *goto.Pages,
+    ) screen.Step(u32) {
+        assert(rows.len <= results_max);
+        assert(se.s.pages.len > 0);
+        return switch (pages.tap(t.x, t.y, @intCast(rows.len))) {
             .row => |i| row: {
-                assert(i < se.results.len);
-                break :row .{ .done = se.results[i].page };
+                assert(i < rows.len);
+                assert(rows[i].page < se.s.pages.len); // A page of the book
+                break :row .{ .done = rows[i].page };
             },
             .turned => .{ .redraw = .all },
             .close, .none, .tab => .stay, // The sheet's bar is above the list, not a close

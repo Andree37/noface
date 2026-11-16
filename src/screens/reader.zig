@@ -745,7 +745,7 @@ pub const Reader = struct {
         assert(r.s.current < r.s.pages.len);
         sess.save_progress(r.entry, r.state_path, r.s);
         r.since_save = 0;
-        assert(r.s.shown_us == 0); // Saving stops the reading clock; the loop starts it
+        assert(r.s.shown_us == null); // Saving stops the reading clock; the loop starts it
     }
 
     fn on_touch(r: *Reader, action: input_mod.Action) !?Outcome {
@@ -806,7 +806,6 @@ pub const Reader = struct {
     /// The lock screen over the book, the place saved first.
     fn on_lock(r: *Reader) screen.Step(Outcome) {
         r.s.pause_clock(); // Asleep isn't reading
-        assert(r.s.shown_us == 0);
         r.save(); // A lock is a natural stop, and anything after it may end noface
         assert(r.since_save == 0);
         r.open_child(.{ .lock = .{ .screen = lock.make(r.a, r.entry, .{}) } });

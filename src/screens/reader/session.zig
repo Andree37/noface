@@ -72,7 +72,7 @@ pub const Session = struct {
     query: Query = .{}, // The last search, kept while the book is open
     chapters: []const book_model.Chapter = &.{},
     words_before: []const u64 = &.{}, // Words before each paragraph, for time left
-    shown_us: u64 = 0, // When the clock last started on this page; 0 while paused
+    shown_us: ?u64 = null, // When the clock last started on this page; null while paused
     /// Where the reader was before jumping elsewhere (Go To, search, a chapter, the
     /// slider, a link): a Back button on the page returns there. The first place is
     /// kept through several jumps, and let go after `back_turns` turns from the jump.
@@ -199,10 +199,10 @@ pub const Session = struct {
 
     /// Adds the time since the clock last started to the current page's reading time.
     fn tick(s: *Session) void {
-        if (s.shown_us == 0) return;
+        const shown = s.shown_us orelse return; // Paused: nothing to add
         const page_us_before = s.page_us;
         const now = now_us();
-        s.page_us += now -| s.shown_us;
+        s.page_us += now -| shown;
         s.shown_us = now;
         assert(s.page_us >= page_us_before);
     }
@@ -255,14 +255,15 @@ pub const Session = struct {
 
     /// Stops the reading clock while something covers the page, or the Kindle sleeps.
     pub fn pause_clock(s: *Session) void {
+        assert(s.current < s.pages.len);
         s.tick();
-        s.shown_us = 0;
+        s.shown_us = null;
     }
 
     /// Starts the clock again when the page is back in front of the reader.
     pub fn resume_clock(s: *Session) void {
         assert(s.current < s.pages.len);
-        if (s.shown_us == 0) s.shown_us = now_us();
+        if (s.shown_us == null) s.shown_us = now_us();
     }
 
     /// Where a page ends: the next page's start, or null on the last page.
@@ -287,7 +288,7 @@ pub const Session = struct {
         s.leave_page(index);
         s.current = index;
         s.anchor = s.pages[index];
-        if (s.shown_us != 0) s.shown_us = now_us();
+        if (s.shown_us != null) s.shown_us = now_us();
         assert(s.current == index);
     }
 

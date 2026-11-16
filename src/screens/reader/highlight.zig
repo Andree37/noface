@@ -138,10 +138,8 @@ pub const Selecting = struct {
     previous: selection.Band = .{ .top = 0, .height = 0 },
     drag: drag.Drag(SelectionFollow) = undefined,
     ending: ?screen.Ending(void) = null,
-    /// A highlight's end being dragged: which highlight, all of it, and which end.
-    id: []const u8 = "",
-    whole: highlights.Span = undefined,
-    grab_start: bool = false,
+    /// While a highlight's end is dragged: which highlight, all of it, and which end.
+    extending: ?struct { id: []const u8, whole: highlights.Span, grab_start: bool } = null,
 };
 
 const SelectionFollow = struct {
@@ -309,9 +307,7 @@ pub fn extend_highlight(
     const whole = highlights.extent(s.highlights.items, id) orelse return null;
     assert(range.lo <= range.hi);
     assert(range.hi < words.len);
-    sel.id = id;
-    sel.whole = whole;
-    sel.grab_start = grab_start;
+    sel.extending = .{ .id = id, .whole = whole, .grab_start = grab_start };
     const fixed = if (grab_start) range.hi else range.lo;
     const moving = if (grab_start) range.lo else range.hi;
     return try drag_selection(sel, a, words, fixed, moving);
@@ -324,7 +320,9 @@ pub fn extend_ended(
     s: *sess.Session,
     alloc: std.mem.Allocator,
 ) !void {
-    const id = sel.id;
+    const extending = sel.extending.?; // Set as the drag began, by `extend_highlight`
+    sel.extending = null;
+    const id = extending.id;
     assert(id.len > 0);
     const head = try drag_selection_ended(sel) orelse {
         _ = try show_page(a, s, id); // Back to the highlight as it was
@@ -333,9 +331,10 @@ pub fn extend_ended(
     if (head == sel.moving) return; // Touched without moving, so nothing changed
     const fixed = sel.fixed;
     const words = sel.words;
-    const grab_start = sel.grab_start;
+    const grab_start = extending.grab_start;
     const crossed = if (grab_start) head > fixed else head < fixed;
-    const span = highlights.dragged(sel.whole, words[fixed], words[head], grab_start, crossed);
+    const whole = extending.whole;
+    const span = highlights.dragged(whole, words[fixed], words[head], grab_start, crossed);
     const saved = save_highlight(s, id, span);
     if (saved) s.notes.sync();
     std.debug.print("highlight extended: saved {}\n", .{saved});

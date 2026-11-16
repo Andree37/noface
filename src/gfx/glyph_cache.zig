@@ -77,13 +77,13 @@ comptime {
 }
 
 /// What a glyph's bitmap is, as far as the cache knows.
-const State = enum(u8) {
+const State = union(enum) {
     /// Not drawn yet, or its bitmap given up: drawn when next shown.
     measured,
     /// Draws nothing: no pixels, or more than the scratch could hold.
     blank,
-    /// Its bitmap is in the log, at `cell`.
-    kept,
+    /// Its bitmap is in the log, starting here.
+    kept: u32,
     /// Too large for a segment: drawn from the scratch each time.
     too_large,
 };
@@ -95,7 +95,6 @@ const Entry = struct {
     height: i32 = 0,
     x_offset: i32 = 0,
     y_offset: i32 = 0,
-    cell: u32 = 0, // Where its bitmap starts in the log, when kept
     state: State = .measured,
     uses: u8 = 0,
     drawn_lately: bool = false,
@@ -329,9 +328,7 @@ pub const Cache = struct {
             cache.empty_oldest();
         } else unreachable; // Two rounds of emptying make room, as above
         const cell = cache.write(cache.filling, at, len);
-        const entry = &cache.entries[at];
-        entry.cell = cell;
-        entry.state = .kept;
+        cache.entries[at].state = .{ .kept = cell };
         return cache.log[cell..][0..len];
     }
 
@@ -368,11 +365,16 @@ pub const Cache = struct {
             assert(owner > 0);
             const entry = &cache.entries[owner - 1];
             // A record its glyph no longer points at is one given up already
-            if (entry.state != .kept or entry.cell != cell) continue;
+            const kept_at = switch (entry.state) {
+                .kept => |at| at,
+                .measured, .blank, .too_large => continue,
+            };
+            if (kept_at != cell) continue;
             if (entry.drawn_lately) {
                 entry.drawn_lately = false;
-                entry.cell = cache.write(target, owner - 1, len);
-                @memcpy(cache.log[entry.cell..][0..len], cache.log[cell..][0..len]);
+                const moved = cache.write(target, owner - 1, len);
+                @memcpy(cache.log[moved..][0..len], cache.log[cell..][0..len]);
+                entry.state = .{ .kept = moved };
             } else {
                 entry.state = .measured;
                 cache.bitmaps_given_up += 1;
@@ -399,11 +401,11 @@ pub const Cache = struct {
     }
 
     fn kept_pixels(cache: *const Cache, entry: *const Entry) []const u8 {
-        assert(entry.state == .kept);
+        const cell = entry.state.kept;
         const len: u32 = @intCast(entry.width * entry.height);
         assert(len <= bitmap_bytes_max);
-        assert(entry.cell + len <= cache.log.len);
-        return cache.log[entry.cell..][0..len];
+        assert(cell + len <= cache.log.len);
+        return cache.log[cell..][0..len];
     }
 };
 

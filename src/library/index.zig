@@ -153,12 +153,13 @@ pub const Item = struct { id: u32, key: u32 };
 /// A book read back: its entry, with its texts in `text`, and which record it is.
 pub const Slot = struct {
     entry: catalog.Entry = undefined,
-    id: u32 = std.math.maxInt(u32), // None
+    id: ?u32 = null, // Null while it holds none
     text: [blob_bytes_max]u8 = undefined,
 
     pub fn holds(s: *const Slot) bool {
-        assert(s.id == std.math.maxInt(u32) or s.id < books_max);
-        return s.id != std.math.maxInt(u32);
+        const id = s.id orelse return false;
+        assert(id < books_max);
+        return true;
     }
 };
 

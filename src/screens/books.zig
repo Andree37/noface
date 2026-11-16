@@ -78,8 +78,6 @@ pub const Download = enum {
 /// books are on the Kindle and coming down.
 pub const Shelf = struct { generation: u64, local: u32, downloading: u32 };
 
-const none = std.math.maxInt(u32);
-
 /// A library's index open, its arrangement, and its books read back: one block of the
 /// library's region.
 const State = struct {
@@ -100,7 +98,7 @@ const State = struct {
     page_slots: [library_ui.page_books_max]index.Slot = @splat(.{}),
     page_entries: [library_ui.page_books_max]catalog.Entry = undefined,
     page_filled: u32 = 0,
-    page_read: u32 = none, // The page last read, read again after a reload
+    page_read: ?u32 = null, // The page last read, read again after a reload
     next_slots: [2]index.Slot = @splat(.{}), // The book after the one just read, by turns
     next_turn: u1 = 0,
     search_slots: [search_sheet.max_rows]index.Slot = @splat(.{}),
@@ -204,7 +202,7 @@ pub const Library = struct {
     fn lay_out(l: *Library) void {
         const s = l.state;
         s.count = 0;
-        s.hero_slot.id = none;
+        s.hero_slot.id = null;
         // No index found as loaded: built now, once, and a drive that won't take it
         // leaves the library empty till the next load
         if (!s.open) l.rebuild();
@@ -271,7 +269,7 @@ pub const Library = struct {
     /// The books of the page last read, as `page` gave them.
     pub fn page_shown(l: *Library) []catalog.Entry {
         assert(l.state.page_filled <= l.state.page_entries.len);
-        assert(l.state.page_read != none); // Read since loaded
+        assert(l.state.page_read != null); // Read since loaded
         return l.state.page_entries[0..l.state.page_filled];
     }
 
@@ -328,9 +326,9 @@ pub const Library = struct {
         for (s.search_entries[0..s.search_filled], s.search_slots[0..s.search_filled]) |*p, *slot| {
             if (p == e) return slot.id;
         }
-        if (e == &s.hero_slot.entry and s.hero_slot.holds()) return s.hero_slot.id;
+        if (e == &s.hero_slot.entry) return s.hero_slot.id;
         for (&s.next_slots) |*slot| {
-            if (e == &slot.entry and slot.holds()) return slot.id;
+            if (e == &slot.entry) return slot.id;
         }
         assert(s.page_filled <= s.page_slots.len);
         return null;
@@ -419,8 +417,9 @@ pub const Library = struct {
         open_index(l.sources, s);
         l.lay_out();
         assert(s.sorted == s.open);
-        if (s.page_read != none and s.page_read < library_ui.page_count(s.count)) {
-            _ = l.page(s.page_read);
+        // The page last read, if it's still a page: the library may have fewer now
+        if (s.page_read) |read| {
+            if (read < library_ui.page_count(s.count)) _ = l.page(read);
         }
     }
 };

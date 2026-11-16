@@ -234,9 +234,9 @@ fn parse_day(line: []const u8) ?Day {
 }
 
 /// The lines of the journal file `content` for days before `first_day`, which memory
-/// no longer holds, to be written again ahead of those it does. Empty for a file
-/// that isn't a journal.
-pub fn older_lines(content: []const u8, first_day: i32) []const u8 {
+/// no longer holds, to be written again ahead of those it does: all of them when
+/// memory holds no day (null). Empty for a file that isn't a journal.
+pub fn older_lines(content: []const u8, first_day: ?i32) []const u8 {
     if (count_days(content) == null) return "";
     const start = format_tag.len + 1; // Past the tag's line
     if (content.len <= start) return "";
@@ -244,7 +244,9 @@ pub fn older_lines(content: []const u8, first_day: i32) []const u8 {
     var lines = std.mem.splitScalar(u8, content[start..], '\n');
     while (lines.next()) |line| {
         const d = parse_day(line) orelse break; // The end: an empty last part
-        if (d.day >= first_day) break;
+        if (first_day) |first| {
+            if (d.day >= first) break;
+        }
         end += @intCast(line.len + 1);
     }
     assert(end <= content.len);

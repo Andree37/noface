@@ -481,12 +481,13 @@ pub fn save_journal(a: *const App) void {
     assert(a.journal.len <= a.journal.days.len);
     const content = journal_model.format(&buf, &a.journal);
     assert(content.len >= journal_model.tag_line_bytes); // Sized for the longest journal
-    const old = file.map(a.journal_path) catch "";
-    defer if (old.len > 0) file.unmap(old);
-    const first_day = if (a.journal.len > 0) a.journal.days[0].day else std.math.maxInt(i32);
+    // No file yet, or none to read: nothing older to keep
+    const old: ?[]const u8 = file.map(a.journal_path) catch null;
+    defer if (old) |o| file.unmap(o);
+    const first_day: ?i32 = if (a.journal.len > 0) a.journal.days[0].day else null;
     const parts = [_][]const u8{
         content[0..journal_model.tag_line_bytes],
-        journal_model.older_lines(old, first_day),
+        if (old) |o| journal_model.older_lines(o, first_day) else "",
         content[journal_model.tag_line_bytes..],
     };
     file.write_parts(a.journal_path, &parts);

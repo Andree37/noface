@@ -480,7 +480,7 @@ pub const Reader = struct {
 
     fn show_first(r: *Reader) !void {
         assert(r.start < r.s.pages.len);
-        try r.s.show(r.start, null, true);
+        try r.s.show(r.start, .jump, null, true);
         sess.save_progress(r.entry, r.state_path, r.s);
         assert(r.s.current == r.start);
         r.reading_started = true;
@@ -796,7 +796,7 @@ pub const Reader = struct {
     fn to_page(r: *Reader, target: u32) !void {
         assert(target < r.s.pages.len);
         r.view = .page;
-        try r.s.show(target, null, true);
+        try r.s.show(target, .jump, null, true);
         assert(r.s.current == target);
         assert(r.reading());
     }
@@ -870,7 +870,7 @@ pub const Reader = struct {
         assert(r.view == .page);
         const a = r.a;
         if (r.s.on_back(x, y)) {
-            if (r.s.back_page()) |back| try r.s.show(back, us, false);
+            if (r.s.back_page()) |back| try r.s.show(back, .jump, us, false);
             return;
         }
         if (r.highlight_at(x, y)) |id| return r.select_highlight(id);
@@ -958,8 +958,7 @@ pub const Reader = struct {
         const last: i64 = @intCast(s.pages.len - 1);
         const target = std.math.clamp(current + delta, 0, last);
         if (target == current) return;
-        s.turning = true; // Reading on, not a jump
-        try s.show(@intCast(target), touched_us, false);
+        try s.show(@intCast(target), .turn, touched_us, false);
         r.since_save += 1;
         if (r.since_save >= save_every) r.save();
         assert(r.since_save < save_every);
@@ -1025,7 +1024,7 @@ pub const Reader = struct {
                 const sections = try r.scratch.alloc(u32, s.pages.len);
                 for (s.pages, sections) |p, *out| out.* = s.paragraphs[p.para].section;
                 const forward = direction == .chapter_next;
-                s.set_page(toolbar.chapter_target(sections, s.current, forward));
+                s.set_page(toolbar.chapter_target(sections, s.current, forward), .jump);
                 try r.draw_toolbar(true);
             },
             .scrub => r.open_over(.controls, try controls.drag_scrub(&r.pending, a, s, t.x)),

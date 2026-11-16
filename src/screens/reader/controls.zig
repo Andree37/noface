@@ -324,7 +324,7 @@ pub fn resumed(
     switch (p.kind) {
         .scrub => {
             _ = try drag.ended(&p.scrub, p.drag_ending.?);
-            s.set_page(p.target);
+            s.set_page(p.target, .jump);
             assert(s.current == p.target);
             try draw_toolbar(a, s, title, .{ .sheet_open = sheet_open, .whole_page = true });
             try app.clean_band(a, toolbar.scrub_top, a.screen.height - toolbar.scrub_top);

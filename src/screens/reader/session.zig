@@ -48,6 +48,10 @@ comptime {
     assert(footer_baseline_above_bottom_px < footer_height_px);
 }
 
+/// How the reader got to a page: reading on, a page at a time, or a jump (Go To, a
+/// search, a chapter, the slider, Back), which the Back button remembers.
+pub const Move = enum { turn, jump };
+
 pub const Session = struct {
     app: *app.App,
     paragraphs: []const book_model.Paragraph,
@@ -79,7 +83,6 @@ pub const Session = struct {
     back: ?book_model.Pos = null,
     turns_since_jump: u32 = 0,
     turns: u32 = 0, // Pages shown, for a clean refresh every 20 when asked for
-    turning: bool = false, // Set by a normal page turn, so `show` can tell it from a jump
     page_us: u64 = 0, // Time on the current page before that
     seconds_read: u64 = 0, // Time spent in this book, saved with the position
 
@@ -282,9 +285,9 @@ pub const Session = struct {
     }
 
     /// Every move to another page comes through here, so reading time stays right.
-    pub fn set_page(s: *Session, index: u32) void {
+    pub fn set_page(s: *Session, index: u32, move: Move) void {
         check.thatf(index < s.pages.len, "page {d} of {d}", .{ index, s.pages.len });
-        s.note_jump(index);
+        s.note_jump(index, move);
         s.leave_page(index);
         s.current = index;
         s.anchor = s.pages[index];
@@ -314,11 +317,10 @@ pub const Session = struct {
     /// Keeps the Back button's place up to date for a move to page `index`: a jump
     /// remembers where the reader was (unless an earlier jump's place is still kept),
     /// arriving back there lets go of it, and so does reading on a while.
-    fn note_jump(s: *Session, index: u32) void {
+    fn note_jump(s: *Session, index: u32, move: Move) void {
         assert(index < s.pages.len);
         assert(s.current < s.pages.len);
-        const turning = s.turning;
-        s.turning = false;
+        const turning = move == .turn;
         const before = s.back;
         // Page numbers are only final once the whole book is laid out: until then an
         // earlier place would look like page 0, so nothing is let go of
@@ -471,9 +473,9 @@ pub const Session = struct {
         return buf;
     }
 
-    pub fn show(s: *Session, index: u32, touched_us: ?u64, force_clean: bool) !void {
+    pub fn show(s: *Session, index: u32, move: Move, touched_us: ?u64, force_clean: bool) !void {
         const a = s.app;
-        s.set_page(index);
+        s.set_page(index, move);
         assert(s.current == index);
         const buf = try s.ensure(index, index);
         @memcpy(a.screen.pixels, buf);

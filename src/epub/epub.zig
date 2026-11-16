@@ -328,7 +328,10 @@ const Builder = struct {
     dir: []const u8 = "", // The chapter file's folder, for the paths it refers to
     in_body: bool = false,
     skipping: ?[]const u8 = null, // Inside <head>, <style> or <script>: no text
-    waiting_ids: std.ArrayList([]const u8) = .empty, // Anchors for the next paragraph
+    // Anchors for the next paragraph, whole: "chapter.xhtml#id", or a chapter's own
+    // path for its start. Made when seen, so one carried past its chapter's last
+    // paragraph still names that chapter.
+    waiting_anchors: std.ArrayList([]const u8) = .empty,
 
     /// The paragraph's text so far, in bytes. Text comes from one chapter file, which
     /// the zip reader keeps under `zip.size_max`, and decoding it only shrinks it.
@@ -444,15 +447,12 @@ const Builder = struct {
     fn place_anchors(b: *Builder, index: u32) !void {
         // The paragraph the anchors land on is the one just added
         assert(index + 1 == b.paragraphs.items.len);
-        for (b.waiting_ids.items) |id| {
-            const key = try std.fmt.allocPrint(b.alloc, "{s}#{s}", .{ b.file, id });
+        for (b.waiting_anchors.items) |key| {
             const slot = try b.anchors.getOrPut(b.alloc, key);
             if (!slot.found_existing) slot.value_ptr.* = index;
         }
-        b.waiting_ids.clearRetainingCapacity();
-        const file_slot = try b.anchors.getOrPut(b.alloc, b.file);
-        if (!file_slot.found_existing) file_slot.value_ptr.* = index;
-        assert(b.waiting_ids.items.len == 0);
+        b.waiting_anchors.clearRetainingCapacity();
+        assert(b.waiting_anchors.items.len == 0);
     }
 
     fn add_picture(b: *Builder, dir: []const u8, src: []const u8) !void {
@@ -480,6 +480,9 @@ const Builder = struct {
         assert(b.text.items.len == 0);
         b.file = path;
         b.dir = std.fs.path.dirnamePosix(path) orelse "";
+        // Its start: the first paragraph after it, which is the next chapter's when
+        // this one has none
+        try b.waiting_anchors.append(b.alloc, path);
         b.in_body = false;
         b.skipping = null;
         var t = xml.Tokenizer{ .data = xhtml };
@@ -494,12 +497,10 @@ const Builder = struct {
         assert(b.text.items.len == 0);
     }
 
-    /// Copies into the book what a chapter's markup leaves waiting for the next: ids
-    /// for its first paragraph, and a link not yet closed. The markup itself goes
-    /// before the next chapter is read.
+    /// Copies into the book what a chapter's markup leaves waiting for the next: a
+    /// link not yet closed. The markup itself goes before the next chapter is read.
     fn keep_pending(b: *Builder) !void {
         assert(b.text.items.len == 0); // The chapter's text is all in paragraphs
-        for (b.waiting_ids.items) |*id| id.* = try b.alloc.dupe(u8, id.*);
         if (b.link_start != null) b.link_target = try b.alloc.dupe(u8, b.link_target);
         // Set again by the next chapter before it's read
         b.skipping = null;
@@ -548,12 +549,10 @@ const Builder = struct {
     /// start, and noted as partway in when text has already started.
     fn note_anchor(b: *Builder, id: []const u8) !void {
         assert(b.in_body);
-        if (b.text.items.len > 0) {
-            const key = try std.fmt.allocPrint(b.alloc, "{s}#{s}", .{ b.file, id });
-            try b.inner_anchors.put(b.alloc, key, {});
-        }
-        try b.waiting_ids.append(b.alloc, id);
-        assert(b.waiting_ids.items.len > 0);
+        const key = try std.fmt.allocPrint(b.alloc, "{s}#{s}", .{ b.file, id });
+        if (b.text.items.len > 0) try b.inner_anchors.put(b.alloc, key, {});
+        try b.waiting_anchors.append(b.alloc, key);
+        assert(b.waiting_anchors.items.len > 0);
     }
 
     /// A block begins a paragraph, in its heading's look if it is one. A line break
@@ -908,6 +907,28 @@ test "an empty link goes nowhere, and doesn't stop the reader" {
     try b.chapter("c.xhtml", "<html><body><p><a href=\"\">here</a></p></body></html>");
     try std.testing.expectEqual(@as(usize, 0), b.links.items.len);
     try std.testing.expectEqualStrings("here", b.paragraphs.items[0].text);
+}
+
+test "an id after a chapter's last paragraph, and an empty chapter, keep their own names" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var b = Builder{ .alloc = arena.allocator(), .files = &.{} };
+    const chapters = [_][2][]const u8{
+        .{ "c1.xhtml", "<html><body><p>One.</p><div id=\"late\"></div></body></html>" },
+        .{ "empty.xhtml", "<html><body><div id=\"none\"></div></body></html>" },
+        .{ "c2.xhtml", "<html><body><p id=\"late\">Two.</p><p>Three.</p></body></html>" },
+    };
+    for (chapters) |c| {
+        try b.chapter(c[0], c[1]);
+        try b.keep_pending();
+    }
+    // Each lands on the paragraph after it, in its own chapter's name
+    try std.testing.expectEqual(@as(u32, 1), b.anchors.get("c1.xhtml#late").?);
+    try std.testing.expectEqual(@as(u32, 1), b.anchors.get("empty.xhtml").?);
+    try std.testing.expectEqual(@as(u32, 1), b.anchors.get("empty.xhtml#none").?);
+    try std.testing.expectEqual(@as(u32, 1), b.anchors.get("c2.xhtml#late").?);
+    try std.testing.expectEqual(@as(u32, 0), b.anchors.get("c1.xhtml").?);
+    try std.testing.expectEqual(@as(u32, 1), b.anchors.get("c2.xhtml").?);
 }
 
 test "headings h1 to h6 each have a look, and other tags none" {

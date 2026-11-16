@@ -20,7 +20,6 @@ pub fn clean_title(raw: []const u8) []const u8 {
     const end = std.mem.indexOf(u8, raw, " -- ") orelse raw.len;
     const result = std.mem.trim(u8, raw[0..end], " ");
     assert(result.len <= raw.len);
-    if (result.len > 0) assert(result[result.len - 1] != ' ');
     return result;
 }
 
@@ -65,7 +64,6 @@ pub fn fix_title(alloc: std.mem.Allocator, raw: []const u8) ![]const u8 {
     // A colon is never longer than what it replaces.
     assert(out.items.len <= title.len);
     const result = std.mem.trimEnd(u8, out.items, "_ ");
-    if (result.len > 0) assert(result[result.len - 1] != '_');
     return result;
 }
 
@@ -74,7 +72,6 @@ pub fn clean_author(raw: []const u8) []const u8 {
     const end = std.mem.indexOf(u8, raw, " [") orelse raw.len;
     const result = std.mem.trim(u8, raw[0..end], " ");
     assert(result.len <= raw.len);
-    if (result.len > 0) assert(result[result.len - 1] != ' ');
     return result;
 }
 

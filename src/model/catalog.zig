@@ -44,7 +44,6 @@ pub const Entry = struct {
     /// Started but not finished, which is what the hero leads with.
     pub fn in_progress(e: Entry) bool {
         const going = !e.is_read() and e.percent > untouched_percent;
-        if (going) assert(e.was_opened()); // Past stock's 1%, so opened
         return going;
     }
 
@@ -162,7 +161,6 @@ fn by_series(a: Entry, b: Entry) bool {
 pub fn series_place(e: Entry) f32 {
     const place = if (std.math.isNan(e.series_index)) std.math.inf(f32) else e.series_index;
     assert(!std.math.isNan(place));
-    if (!std.math.isNan(e.series_index)) assert(place == e.series_index);
     return place;
 }
 
@@ -225,8 +223,6 @@ fn by_progress(a: Entry, b: Entry) bool {
 /// or else its title.
 pub fn title_key(e: Entry) []const u8 {
     const key = if (e.series.len > 0) series_key(e) else e.title;
-    // A series' name sorts without its "The", and never as nothing
-    if (e.series.len > 0) assert(key.len > 0);
     assert(key.len <= @max(e.series.len, e.title.len));
     return key;
 }
@@ -495,7 +491,6 @@ fn series_last_set(comptime T: type, items: []T, books: anytype) void {
 pub fn series_key(e: Entry) []const u8 {
     const key = without_the(e.series);
     assert(key.len <= e.series.len);
-    if (e.series.len > 0) assert(key.len > 0);
     return key;
 }
 

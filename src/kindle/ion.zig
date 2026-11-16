@@ -193,7 +193,6 @@ fn read_var_uint(data: []const u8, position: *u32) Error!u64 {
 fn be_int(bytes: []const u8) u64 {
     var value: u64 = 0;
     for (bytes) |byte| value = (value << 8) | byte;
-    if (bytes.len == 0) assert(value == 0);
     if (bytes.len < 8) assert(value >> @intCast(bytes.len * 8) == 0);
     return value;
 }

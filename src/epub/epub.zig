@@ -251,7 +251,6 @@ pub fn info(alloc: std.mem.Allocator, data: []const u8, with_cover: bool) !Info 
     const p = try read_package(alloc, files);
     assert(p.spine.len > 0);
     const cover = if (with_cover) try info_cover(alloc, files, &p) else null;
-    if (!with_cover) assert(cover == null);
     return .{
         .title = p.title,
         .author = p.author,

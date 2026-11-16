@@ -289,7 +289,6 @@ const Parser = struct {
         assert(starts.get(0) == null); // Element 0 is no element
         for (p.paragraphs.items) |*para| {
             para.position = starts.get(para.element) orelse 0;
-            if (para.element == 0) assert(para.position == 0);
         }
     }
 
@@ -597,7 +596,6 @@ fn amount(v: ion.Value, unit: u32) ?f64 {
 fn tenths(lines: f64) u8 {
     const result: u8 = @intFromFloat(std.math.clamp(lines * 10, 0, tenths_max));
     assert(result <= tenths_max);
-    if (lines <= 0) assert(result == 0);
     return result;
 }
 

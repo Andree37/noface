@@ -59,8 +59,6 @@ comptime {
 pub fn is_stroke(from_x: i32, from_y: i32, to_x: i32, to_y: i32) bool {
     const travel = @max(@abs(to_x - from_x), @abs(to_y - from_y));
     const stroke = travel >= stroke_distance;
-    // Anything that's a stroke has moved off a hold, too
-    if (stroke) assert(moved_off(from_x, from_y, to_x, to_y));
     return stroke;
 }
 

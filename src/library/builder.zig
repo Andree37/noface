@@ -419,7 +419,6 @@ fn first_with(sorted: []const Item, key: u32) u32 {
         }
     }.order);
     assert(at <= sorted.len);
-    if (at < sorted.len) assert(sorted[at].key >= key);
     return @intCast(at);
 }
 

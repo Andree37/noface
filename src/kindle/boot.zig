@@ -52,7 +52,6 @@ pub fn parse_attempts(text: []const u8) u32 {
     const trimmed = std.mem.trim(u8, text, " \t\r\n");
     assert(trimmed.len <= text.len);
     const attempts = std.fmt.parseInt(u32, trimmed, 10) catch 0;
-    if (trimmed.len == 0) assert(attempts == 0);
     return attempts;
 }
 

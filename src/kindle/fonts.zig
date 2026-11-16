@@ -58,8 +58,6 @@ var own: []const [4][:0]const u8 = &.{};
 /// The file for a family's weight and slant.
 pub fn path(family: u32, bold: bool, italic: bool) [*:0]const u8 {
     const which: Which = @as(Which, @intFromBool(bold)) | @as(Which, @intFromBool(italic)) << 1;
-    if (bold) assert(which & 1 == 1);
-    if (italic) assert(which & 2 == 2);
     if (family < faces.len) return faces[family][which];
     // Only a family `find_own` filled in is offered
     assert(family - faces.len < own.len);

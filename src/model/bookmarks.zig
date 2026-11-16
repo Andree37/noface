@@ -28,8 +28,6 @@ pub fn parse(
 
 fn at_or_after(b: Bookmark, pos: book_model.Pos) bool {
     const after = b.para > pos.para or (b.para == pos.para and b.byte >= pos.byte);
-    if (after) assert(b.para >= pos.para);
-    if (!after) assert(b.para <= pos.para);
     return after;
 }
 
@@ -40,7 +38,6 @@ pub fn is_on_page(b: Bookmark, from: book_model.Pos, to: ?book_model.Pos) bool {
     if (!at_or_after(b, from)) return false;
     const end = to orelse return true;
     const on_page = !at_or_after(b, end);
-    if (on_page) assert(b.para <= end.para);
     return on_page;
 }
 

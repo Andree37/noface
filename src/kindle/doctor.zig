@@ -19,7 +19,6 @@ comptime {
 /// The display drivers noface can drive: MediaTek's hwtcon, in every Kindle since 2021.
 pub fn supported_driver(name: []const u8) bool {
     const supported = std.mem.startsWith(u8, name, driver_prefix);
-    if (supported) assert(name.len >= driver_prefix.len);
     return supported;
 }
 

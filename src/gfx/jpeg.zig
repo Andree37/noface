@@ -148,8 +148,8 @@ const Decoder = struct {
     rgb_names: u8 = 0,
     scan_count: u8 = 0,
     order: [components_max]u8 = @splat(0),
-    restart_interval: u32 = 0,
-    todo: i32 = 0,
+    restart_interval: ?u16 = null, // MCUs between restart markers; null: none
+    todo: ?u16 = null, // MCUs left before the next restart marker; null: none come
     scans_decoded: u32 = 0,
     needed: Needed,
     /// Components whose samples are kept: only those the gray is made from.
@@ -246,7 +246,7 @@ pub fn decode_rows(work: *Workspace, data: []const u8, sink: *scaler.Sink, shrin
     // Each retry keeps more or streams less, so there are three plans at most
     for (0..3) |_| {
         decode_with(work, data, tables, sink, .{ .shrink = shrink, .plan = plan }) catch |err| {
-            if (sink.mode != .waiting) sink.abandon();
+            sink.abandon();
             work.rewind(tables_made);
             switch (err) {
                 // A colour marker after the first scan changed which components make
@@ -393,7 +393,9 @@ fn process_marker(d: *Decoder, marker: u8) bool {
         marker_none => return false,
         0xdd => {
             if (d.get16() != 4) return false;
-            d.restart_interval = d.get16();
+            // 0 is the format's "no restarts"
+            const interval = d.get16();
+            d.restart_interval = if (interval > 0) @intCast(interval) else null;
             return true;
         },
         0xdb => return read_quantization(d),
@@ -762,9 +764,8 @@ fn reset(d: *Decoder) void {
     d.nomore = false;
     for (&d.component) |*component| component.dc_prediction = 0;
     d.marker = marker_none;
-    d.todo = if (d.restart_interval > 0) @intCast(d.restart_interval) else std.math.maxInt(i32);
+    d.todo = d.restart_interval;
     d.eob_run = 0;
-    assert(d.todo > 0);
 }
 
 /// Notes whether any made-up bit was used: those sit below every real one, so some
@@ -949,16 +950,16 @@ fn decode_scan(d: *Decoder) Error!void {
         try decode_scan_interleaved(d);
     }
     check_made_up(d);
-    assert(d.todo >= 0);
 }
 
 /// After each MCU: at the end of a restart interval, expects a restart marker. Only
 /// the last MCU of a scan may go without one (stb_image stopped the scan there, and
 /// left the rest of the picture blank).
 fn next_restart(d: *Decoder, last: bool) Error!void {
-    assert(d.todo > 0);
-    d.todo -= 1;
-    if (d.todo > 0) return;
+    const left = d.todo orelse return; // No restart markers in this picture
+    assert(left > 0);
+    d.todo = left - 1;
+    if (left > 1) return;
     if (d.code_bits < 24) grow_buffer(d);
     if (!is_restart(d.marker)) {
         if (last) return;

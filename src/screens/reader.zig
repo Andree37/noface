@@ -122,15 +122,17 @@ fn needs_all_pages(
             // Text settings and closing don't count pages; the toolbar's other buttons do
             .toolbar => switch (toolbar.hit(t.x, t.y, sheet)) {
                 .sheet, .close, .stay, .text => false,
-                else => true,
+                .home, .goto, .bookmark, .search, .more => true,
+                .chapter_prev, .chapter_next, .scrub => true,
             },
-            else => true,
+            // A note's panel and a highlight's handles act on the page on screen
+            .note, .highlight => false,
         },
         .swipe => |swipe| swipe.direction < 0 and s.current == 0,
         // Locking, waking and leaving don't count pages, and must not wait for them;
-        // nor does holding a word, which looks it up on the page on screen
-        .lock, .unlock, .power, .computer, .stop, .hold => false,
-        else => true,
+        // nor does holding a word, which looks it up on the page on screen, the
+        // charger's bolt, or the quick panel, which only covers the page
+        .lock, .unlock, .power, .computer, .stop, .hold, .charger, .pull => false,
     };
 }
 

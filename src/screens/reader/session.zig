@@ -104,7 +104,9 @@ pub const Session = struct {
     /// One step of a layout running in the background, for an idle moment. Once the
     /// whole book is laid out, it takes over: page numbers count from the start and
     /// the breaks are saved. True when that just happened, so whatever is on screen
-    /// can show the page count it was missing.
+    /// can show the page count it was missing. Taking over forgets the pages drawn so
+    /// far, so the one on screen is drawn again at once: whatever is over it (a
+    /// highlight's handles, a tap on a link) hit-tests its words.
     pub fn layout_step(s: *Session) !bool {
         assert(s.current < s.pages.len);
         const p = s.progress orelse return false;
@@ -122,6 +124,7 @@ pub const Session = struct {
             .{ s.pages.len, whole.before },
         );
         s.app.forget_pages(); // Indexes moved, so pages drawn so far are stale
+        _ = try s.ensure(s.current, s.current);
         return true;
     }
 
@@ -148,13 +151,10 @@ pub const Session = struct {
     }
 
     /// Finishes a first open's layout now, before anything that needs every page.
-    /// Finishing forgets the pages drawn so far, so the one on screen is drawn again
-    /// at once: what comes next hit-tests its words, links and highlights.
     pub fn finish_layout(s: *Session) !void {
         while (s.progress != null) _ = try s.layout_step();
         assert(s.progress == null);
         assert(s.current < s.pages.len);
-        _ = try s.ensure(s.current, s.current);
     }
 
     /// Words from the start of the book to a position.

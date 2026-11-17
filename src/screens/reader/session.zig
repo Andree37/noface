@@ -579,14 +579,25 @@ fn shaded_in(
     return false;
 }
 
+/// The last page starting at or before a place, or the first page for a place before
+/// them all (pages laid out from the reader's place, while a first open runs).
+/// Called for every highlight on every turn, so it halves rather than walks: pages
+/// only move forward, as pagination and saved breaks check where they're made.
 pub fn page_containing(pages: []const book_model.Pos, para: u32, byte: u32) u32 {
     assert(pages.len > 0);
     assert(pages.len <= std.math.maxInt(u32));
-    var found: u32 = 0;
-    for (pages, 0..) |p, i| {
-        if (p.para < para or (p.para == para and p.byte <= byte)) found = @intCast(i);
+    const at = book_model.Pos{ .para = para, .byte = byte };
+    var low: u32 = 0; // Pages before `low` start at or before the place
+    var high: u32 = @intCast(pages.len); // Pages from `high` on start after it
+    while (low < high) {
+        const middle = low + (high - low) / 2;
+        if (at.is_before(pages[middle])) high = middle else low = middle + 1;
     }
+    const found = low -| 1;
     assert(found < pages.len);
+    // The page found starts at or before the place, and the next one after it
+    if (low > 0) assert(!at.is_before(pages[found]));
+    if (found + 1 < pages.len) assert(at.is_before(pages[found + 1]));
     return found;
 }
 
@@ -658,4 +669,43 @@ test "a page is shaded when a highlight is on it, however many pages it spans" {
     };
     try std.testing.expect(shaded_in(&pages, &before, 1));
     try std.testing.expect(!shaded_in(&pages, &before, 2));
+}
+
+test "the page holding a place is the one a walk over every page finds" {
+    // The walk it replaced, kept as what the halving must agree with
+    const Walk = struct {
+        fn find(pages: []const book_model.Pos, at: book_model.Pos) u32 {
+            var found: u32 = 0;
+            for (pages, 0..) |p, i| {
+                if (!at.is_before(p)) found = @intCast(i);
+            }
+            return found;
+        }
+    };
+    var prng = std.Random.DefaultPrng.init(0x5eed);
+    const random = prng.random();
+    var pages: [64]book_model.Pos = undefined;
+    for (0..200) |_| {
+        // Strictly increasing breaks, from the book's start or from a place later on
+        const count = random.intRangeAtMost(u32, 1, pages.len);
+        var at = book_model.Pos{ .para = random.uintLessThan(u32, 3), .byte = 0 };
+        for (pages[0..count]) |*p| {
+            p.* = at;
+            if (random.boolean()) {
+                at.para += 1 + random.uintLessThan(u32, 2);
+                at.byte = random.uintLessThan(u32, 4);
+            } else {
+                at.byte += 1 + random.uintLessThan(u32, 40);
+            }
+        }
+        for (0..50) |_| {
+            const place = book_model.Pos{
+                .para = random.uintLessThan(u32, at.para + 2),
+                .byte = random.uintLessThan(u32, 200),
+            };
+            const want = Walk.find(pages[0..count], place);
+            const got = page_containing(pages[0..count], place.para, place.byte);
+            try std.testing.expectEqual(want, got);
+        }
+    }
 }

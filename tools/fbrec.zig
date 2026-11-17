@@ -2,7 +2,7 @@
 //! how soon a screen is drawn after a touch. Each frame keeps every `scale`-th pixel
 //! of every `scale`-th row, prefixed by when it was taken (monotonic microseconds,
 //! the clock touchsim prints). It reads only those rows, so the screen's slow memory
-//! isn't read whole.
+//! isn't read whole, and reads them as tools/e2e.zig does: at the driver's stride.
 //! Usage: fbrec <seconds> <frames-per-second> <scale> <out-file>
 //! Output: "FBREC <width> <height>\n", then per frame an 8-byte little-endian
 //! timestamp and width*height gray bytes. Touches on the screen, from anyone or
@@ -12,16 +12,12 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const core = @import("core");
+const e2e = @import("e2e.zig");
 const linux = std.os.linux;
 const now_us = core.os.now_us;
+const Screen = e2e.Screen;
+const row_size_max = e2e.row_size_max;
 
-const fbioget_vscreeninfo: u32 = 0x4600;
-/// The kernel's `fb_var_screeninfo`, read whole; only the first fields matter here.
-const screen_info_size = 160;
-const xres_offset = 0;
-const yres_offset = 4;
-const yoffset_offset = 20;
-const row_size_max = 4096;
 /// Each frame starts with the time it was taken: a little-endian u64.
 const frame_header_size = @sizeOf(u64);
 const ev_abs = 3;
@@ -36,21 +32,15 @@ const InputEvent = extern struct { sec: u32, usec: u32, kind: u16, code: u16, va
 
 comptime {
     assert(@sizeOf(InputEvent) == 16);
-    assert(xres_offset + 4 <= yres_offset);
-    assert(yoffset_offset + 4 <= screen_info_size);
-    // A row of the panel noface is drawn for, 1272 pixels across, fits.
-    assert(row_size_max >= 1272);
 }
 
 /// Where frames are read from and written to, and how they're scaled down.
 const Recording = struct {
-    framebuffer: i32,
+    screen: Screen,
     out: i32,
     /// The touch panel and the log of its touches, or -1 for either that didn't open.
     touch: i32,
     touches_out: i32,
-    width: u32,
-    yoffset: u32,
     scale: u32,
     width_out: u32,
     height_out: u32,
@@ -65,16 +55,9 @@ pub fn main(init: std.process.Init.Minimal) !void {
     const scale = try std.fmt.parseInt(u32, std.mem.sliceTo(argv[3], 0), 10);
     if (frames_per_second == 0 or scale == 0) return error.Usage;
 
-    const framebuffer_rc = linux.open("/dev/fb0", .{ .ACCMODE = .RDONLY }, 0);
-    if (core.os.failed(framebuffer_rc)) return error.NoFramebuffer;
-    const framebuffer: i32 = @intCast(framebuffer_rc);
-    var info: [screen_info_size]u8 align(4) = undefined;
-    _ = linux.ioctl(framebuffer, fbioget_vscreeninfo, @intFromPtr(&info));
-    const width: u32 = std.mem.readInt(u32, info[xres_offset..][0..4], .little);
-    const height: u32 = std.mem.readInt(u32, info[yres_offset..][0..4], .little);
-    const yoffset: u32 = std.mem.readInt(u32, info[yoffset_offset..][0..4], .little);
-    const width_out = width / scale;
-    const height_out = height / scale;
+    const screen = try Screen.open();
+    const width_out = screen.width / scale;
+    const height_out = screen.height / scale;
 
     const rc = linux.open(argv[4], .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, 0o644);
     if (core.os.failed(rc)) return error.CantWrite;
@@ -104,12 +87,10 @@ pub fn main(init: std.process.Init.Minimal) !void {
     _ = linux.clock_gettime(.REALTIME, &wall);
     const wall_us: i64 = @as(i64, wall.sec) * 1_000_000 + @divTrunc(@as(i64, wall.nsec), 1000);
     const recording = Recording{
-        .framebuffer = framebuffer,
+        .screen = screen,
         .out = out,
         .touch = touch,
         .touches_out = touches_out,
-        .width = width,
-        .yoffset = yoffset,
         .scale = scale,
         .width_out = width_out,
         .height_out = height_out,
@@ -117,7 +98,6 @@ pub fn main(init: std.process.Init.Minimal) !void {
     };
 
     const frame = try std.heap.page_allocator.alloc(u8, frame_header_size + width_out * height_out);
-    if (width > row_size_max) return error.ScreenTooWide;
     const frames = record(&recording, frame, seconds, frames_per_second);
     std.debug.print("fbrec: {d} frames of {d}x{d}\n", .{ frames, width_out, height_out });
 }
@@ -152,15 +132,16 @@ fn record_frame(
     row: *[row_size_max]u8,
     time_us: u64,
 ) void {
+    const screen = &recording.screen;
     assert(recording.scale > 0);
-    assert(recording.width <= row.len);
-    assert(recording.width_out * recording.scale <= recording.width);
+    assert(recording.width_out * recording.scale <= screen.width);
+    assert(recording.height_out * recording.scale <= screen.height);
     const width_out = recording.width_out;
     std.mem.writeInt(u64, frame[0..frame_header_size], time_us, .little);
+    // Where the shown screen starts, once a frame: it may flip between two
+    const first = screen.top();
     for (0..recording.height_out) |y| {
-        const row_top: u32 = recording.yoffset + @as(u32, @intCast(y)) * recording.scale;
-        const offset: i64 = @as(i64, row_top) * recording.width;
-        _ = linux.pread(recording.framebuffer, row, recording.width, offset);
+        screen.read_row(row, first, @as(u32, @intCast(y)) * recording.scale);
         const target = frame[frame_header_size + y * width_out ..][0..width_out];
         for (target, 0..) |*pixel, x| pixel.* = row[x * recording.scale];
     }

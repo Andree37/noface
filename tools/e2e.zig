@@ -38,7 +38,8 @@ const yoffset_offset = 20;
 /// And its `fb_fix_screeninfo`, as a 32-bit Kindle lays it out: only the row length.
 const fixed_info_size = 68;
 const line_length_offset = 44;
-const row_size_max = 2048;
+/// The widest row read, in bytes: a row buffer for `Screen.read_row` is this long.
+pub const row_size_max = 2048;
 /// Rows read to tell one screen from another: every `sample_step`-th, so a sample takes
 /// a few milliseconds and still sees any change bigger than a few lines.
 const sample_step = 4;
@@ -63,14 +64,15 @@ comptime {
     assert(still_ms > poll_ms);
 }
 
-/// The screen as noface draws it.
-const Screen = struct {
+/// The screen as noface draws it, read a row at a time at the driver's stride. Also
+/// read by tools/fbcap.zig and tools/fbrec.zig, so every tool reads the panel one way.
+pub const Screen = struct {
     fd: i32,
     width: u32,
     height: u32,
     stride: u32, // Bytes from one row to the next, as the driver lays them out
 
-    fn open() !Screen {
+    pub fn open() !Screen {
         const rc = linux.open("/dev/fb0", .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0);
         if (core.os.failed(rc)) return error.NoFramebuffer;
         const fd: i32 = @intCast(rc);
@@ -97,7 +99,7 @@ const Screen = struct {
     }
 
     /// Where the shown screen starts in the framebuffer: it may flip between two.
-    fn top(screen: *const Screen) u32 {
+    pub fn top(screen: *const Screen) u32 {
         assert(screen.fd >= 0);
         var info: [screen_info_size]u8 align(4) = undefined;
         // Failed: the first screen, where noface always draws on the Kindle
@@ -116,16 +118,18 @@ const Screen = struct {
         const first = screen.top();
         var y: u32 = 0;
         while (y < screen.height) : (y += sample_step) {
-            screen.read_row(&row, first + y);
+            screen.read_row(&row, first, y);
             hash.update(row[0..screen.width]);
         }
         return hash.final();
     }
 
-    fn read_row(screen: *const Screen, row: *[row_size_max]u8, y: u32) void {
+    /// Reads row `y` of the screen shown from framebuffer row `first` (`top()`, read once
+    /// by the caller: the shown screen may flip, and a whole read should be of one).
+    pub fn read_row(screen: *const Screen, row: *[row_size_max]u8, first: u32, y: u32) void {
         assert(screen.width <= row.len);
-        assert(y < screen.top() + screen.height);
-        const offset: i64 = @as(i64, y) * screen.stride;
+        assert(y < screen.height);
+        const offset: i64 = (@as(i64, first) + y) * screen.stride;
         // A short read leaves the row as it was, and shows as a changed screen
         _ = linux.pread(screen.fd, row, screen.width, offset);
     }
@@ -160,15 +164,24 @@ const Screen = struct {
         if (core.os.failed(rc)) return false;
         const fd: i32 = @intCast(rc);
         defer _ = linux.close(fd);
+        return screen.write_pgm(fd, 0, screen.height);
+    }
+
+    /// Writes `band_height` rows of the screen from row `band_top` on to `fd`, as a PGM
+    /// image, and says whether it all went.
+    pub fn write_pgm(screen: *const Screen, fd: i32, band_top: u32, band_height: u32) bool {
+        assert(screen.width <= row_size_max);
+        assert(band_height <= screen.height);
+        assert(band_top <= screen.height - band_height);
         var head: [32]u8 = undefined;
         const format = "P5\n{d} {d}\n255\n";
-        const header = std.fmt.bufPrint(&head, format, .{ screen.width, screen.height }) catch
+        const header = std.fmt.bufPrint(&head, format, .{ screen.width, band_height }) catch
             return false;
         if (!core.file.write_all(fd, header)) return false;
         var row: [row_size_max]u8 = undefined;
         const first = screen.top();
-        for (0..screen.height) |y| {
-            screen.read_row(&row, first + @as(u32, @intCast(y)));
+        for (0..band_height) |y| {
+            screen.read_row(&row, first, band_top + @as(u32, @intCast(y)));
             if (!core.file.write_all(fd, row[0..screen.width])) return false;
         }
         return true;

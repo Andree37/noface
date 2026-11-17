@@ -29,11 +29,15 @@ const now_us = core.os.now_us;
 const sleep_ms = core.os.sleep_ms;
 
 const fbioget_vscreeninfo: u32 = 0x4600;
+const fbioget_fscreeninfo: u32 = 0x4602;
 /// The kernel's `fb_var_screeninfo`, read whole; only the first fields matter here.
 const screen_info_size = 160;
 const xres_offset = 0;
 const yres_offset = 4;
 const yoffset_offset = 20;
+/// And its `fb_fix_screeninfo`, as a 32-bit Kindle lays it out: only the row length.
+const fixed_info_size = 68;
+const line_length_offset = 44;
 const row_size_max = 2048;
 /// Rows read to tell one screen from another: every `sample_step`-th, so a sample takes
 /// a few milliseconds and still sees any change bigger than a few lines.
@@ -53,6 +57,7 @@ const lipc_set: [*:0]const u8 = "/usr/bin/lipc-set-prop";
 comptime {
     assert(xres_offset + 4 <= yres_offset);
     assert(yoffset_offset + 4 <= screen_info_size);
+    assert(line_length_offset + 4 <= fixed_info_size);
     // A row of the panel noface is drawn for, 1272 pixels across, fits.
     assert(row_size_max >= 1272);
     assert(still_ms > poll_ms);
@@ -63,21 +68,29 @@ const Screen = struct {
     fd: i32,
     width: u32,
     height: u32,
+    stride: u32, // Bytes from one row to the next, as the driver lays them out
 
     fn open() !Screen {
-        const rc = linux.open("/dev/fb0", .{ .ACCMODE = .RDONLY }, 0);
+        const rc = linux.open("/dev/fb0", .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0);
         if (core.os.failed(rc)) return error.NoFramebuffer;
         const fd: i32 = @intCast(rc);
+        errdefer _ = linux.close(fd); // Ignored: only read from
         var info: [screen_info_size]u8 align(4) = undefined;
         if (core.os.failed(linux.ioctl(fd, fbioget_vscreeninfo, @intFromPtr(&info)))) {
+            return error.NoFramebuffer;
+        }
+        var fixed: [fixed_info_size]u8 align(4) = undefined;
+        if (core.os.failed(linux.ioctl(fd, fbioget_fscreeninfo, @intFromPtr(&fixed)))) {
             return error.NoFramebuffer;
         }
         const screen = Screen{
             .fd = fd,
             .width = std.mem.readInt(u32, info[xres_offset..][0..4], .little),
             .height = std.mem.readInt(u32, info[yres_offset..][0..4], .little),
+            .stride = std.mem.readInt(u32, fixed[line_length_offset..][0..4], .little),
         };
         if (screen.width > row_size_max) return error.ScreenTooWide;
+        if (screen.stride < screen.width) return error.UnexpectedStride;
         assert(screen.fd >= 0);
         assert(screen.width <= row_size_max);
         return screen;
@@ -112,7 +125,7 @@ const Screen = struct {
     fn read_row(screen: *const Screen, row: *[row_size_max]u8, y: u32) void {
         assert(screen.width <= row.len);
         assert(y < screen.top() + screen.height);
-        const offset: i64 = @as(i64, y) * screen.width;
+        const offset: i64 = @as(i64, y) * screen.stride;
         // A short read leaves the row as it was, and shows as a changed screen
         _ = linux.pread(screen.fd, row, screen.width, offset);
     }
@@ -259,18 +272,18 @@ fn touch(run: *Run, verb: []const u8, words: *std.mem.TokenIterator(u8, .any)) F
         var out: [64]u8 = undefined;
         _ = core.process.run(&argv, &out) orelse return error.Timeout;
     } else if (std.mem.eql(u8, verb, "tap")) {
-        const x = try number(words);
-        const y = try number(words);
+        const x = try coordinate(words);
+        const y = try coordinate(words);
         run.mark();
-        run.panel.down(@intCast(x), @intCast(y));
+        run.panel.down(x, y);
         sleep_ms(touchsim.tap_ms);
         run.panel.up();
     } else if (std.mem.eql(u8, verb, "hold")) {
-        const x = try number(words);
-        const y = try number(words);
+        const x = try coordinate(words);
+        const y = try coordinate(words);
         const hold_ms = try number(words);
         run.mark();
-        run.panel.down(@intCast(x), @intCast(y));
+        run.panel.down(x, y);
         sleep_ms(hold_ms);
         run.panel.up();
     } else if (std.mem.eql(u8, verb, "drag")) {
@@ -285,7 +298,7 @@ fn touch(run: *Run, verb: []const u8, words: *std.mem.TokenIterator(u8, .any)) F
 fn drag(run: *Run, words: *std.mem.TokenIterator(u8, .any)) Failure!void {
     assert(!run.panel.finger_down);
     var at: [4]i32 = undefined;
-    for (&at) |*value| value.* = @intCast(try number(words));
+    for (&at) |*value| value.* = try coordinate(words);
     const total_ms = try number(words);
     // A hold first, for selecting: a word that isn't a number is a mistake, not none
     const hold_ms: u32 = if (words.peek() != null) try number(words) else 0;
@@ -361,6 +374,13 @@ fn log_has(path: [*:0]const u8, from: u64, wanted: []const u8) Failure!bool {
     if (core.os.failed(read)) return error.NoLog;
     assert(read <= log_buffer.len);
     return std.mem.indexOf(u8, log_buffer[0..read], wanted) != null;
+}
+
+/// The next word as a place on the screen, in its pixels: no screen is wider or taller.
+fn coordinate(words: *std.mem.TokenIterator(u8, .any)) Failure!i32 {
+    const word = words.next() orelse return error.Usage;
+    assert(word.len > 0);
+    return std.fmt.parseInt(u16, word, 10) catch return error.Usage;
 }
 
 /// The next word as a number.

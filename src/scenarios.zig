@@ -1304,6 +1304,7 @@ fn selftest_kindle_books(alloc: std.mem.Allocator) ![]const RealBook {
     for (entries) |entry| {
         if (books.items.len == selftest_books_tried_max) break;
         if (!entry.is_local() or entry.is_epub()) continue;
+        if (!file.exists(entry.path)) continue; // Gone since the list was written
         const highlights = annotation_db.read_lines(entry.key, .highlight, stored);
         const highlights_kept = try alloc.dupe(u8, highlights);
         const bookmarks = annotation_db.read_lines(entry.key, .bookmark, stored);

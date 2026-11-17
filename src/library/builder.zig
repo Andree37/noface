@@ -135,7 +135,6 @@ const Build = struct {
     local: u32 = 0,
     downloading: u32 = 0,
     left_out: u32 = 0, // Past `index.books_max`, or the text file's most
-    epubs: u64 = 0, // The EPUBs found, as `EpubHash` adds them
 
     /// Adds book `e` to the index, as the next id; an EPUB with its file's `facts`.
     fn add(b: *Build, e: *const catalog.Entry, facts: calls.Facts) void {
@@ -289,7 +288,6 @@ fn add_epub(b: *Build, path: [:0]const u8) void {
     assert(path.len > 0);
     // Each EPUB, read or not: thousands, or a few slow to read, outlast the watchdog
     if (b.places.heartbeat) |heartbeat| watchers.beat_when_due(heartbeat, &b.beat_us);
-    b.epubs +%= std.hash.Wyhash.hash(0x65, path); // As `EpubHash` adds it
     const facts = file.facts_of(path) orelse return;
     var state_buffer: [files.path_bytes_max]u8 = undefined;
     var cover_buffer: [files.path_bytes_max]u8 = undefined;
@@ -324,7 +322,8 @@ fn read_epub(b: *Build, path: [:0]const u8, cover_path: [:0]const u8) ?About {
         .title = about.title,
         .author = about.author,
         .series = about.series,
-        .has_cover = have_cover or about.cover != null,
+        // Whether it's there now: a cover whose write failed (a full drive) is none
+        .has_cover = file.exists(cover_path),
     };
 }
 

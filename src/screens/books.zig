@@ -759,6 +759,32 @@ test "a build beats the watchdog only once a beat's interval has passed since it
     try std.testing.expect(!file.exists(beat_path));
 }
 
+test "an EPUB whose cover couldn't be saved is listed without one, not with a missing file" {
+    var buffer: [64]u8 = undefined;
+    const root = try test_folder(&buffer, 0, 1, 1 << 10);
+    defer test_folder_remove(root);
+    var t: TestLibrary = undefined;
+    try t.init(root);
+    defer t.deinit();
+    // A folder where the cover's new file goes: writing it fails, as on a full drive
+    var book_buffer: [320]u8 = undefined;
+    var state_buffer: [320]u8 = undefined;
+    var cover_buffer: [320]u8 = undefined;
+    var tmp_buffer: [320]u8 = undefined;
+    const book = try std.fmt.bufPrint(&book_buffer, "{s}/documents/Book 0.epub", .{root});
+    const state_path = try state.path_for(&state_buffer, t.sources.state_dir, book);
+    const cover = try state.sibling(&cover_buffer, state_path, "cover");
+    const tmp = try std.fmt.bufPrintSentinel(&tmp_buffer, "{s}.tmp", .{cover}, 0);
+    try std.testing.expect(!os.failed(calls.mkdir(tmp, 0o755)));
+    var library = try load(t.sources);
+    defer library.deinit();
+    library.arrange(.title, .all, "");
+    const listed = library.hero() orelse &library.page(0)[0];
+    try std.testing.expectEqualStrings("Book 0", listed.title);
+    try std.testing.expect(!file.exists(cover));
+    try std.testing.expectEqual(null, listed.thumbnail);
+}
+
 test "a book's place is read from its state file, found by one listing of the folder" {
     var buffer: [64]u8 = undefined;
     const root = try test_folder(&buffer, 3, 2, 1 << 10);

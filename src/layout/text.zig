@@ -383,8 +383,7 @@ fn layout_page_lines(lines: *const Lines, top: *i32) !?u32 {
         if (i >= text.len) break;
         if (at_stop(l, lines.para_index, i)) return i;
         const avail = lines.line_width - indent;
-        const limit = line_limit(l, lines.para_index, i, @intCast(text.len));
-        const line = try fill_line(l, font, para, i, limit, avail, style.plain, space);
+        const line = try fill_line_to_stop(l, font, lines, i, avail, style.plain, space);
         const baseline = top.* + pf.ascent;
         if (baseline > lines.bottom) return i; // The page is full
         const gap = line_gap(&line, style.justify, avail, space);
@@ -462,14 +461,27 @@ const ParagraphStyle = struct {
     }
 };
 
-/// Where a line starting at byte `i` must end: the paragraph's end, or in the stop's
-/// paragraph, the stop.
-fn line_limit(l: *const Layout, para: u32, i: u32, text_len: u32) u32 {
-    assert(i < text_len);
-    const st = l.stop orelse return text_len;
-    const limit: u32 = if (st.para == para) @intCast(@max(st.byte, i + 1)) else text_len;
-    assert(limit > i);
-    return limit;
+/// The line from byte `i` as it falls without a stop, unless its words run past the
+/// stop: only then is it cut there, set like a paragraph's last line. A stop where a
+/// page breaks anyway so leaves every line as it was, justified and hyphenated.
+fn fill_line_to_stop(
+    l: *const Layout,
+    font: *Font,
+    lines: *const Lines,
+    i: u32,
+    avail: f32,
+    plain: bool,
+    space: f32,
+) !Line {
+    const para = lines.paras[lines.para_index];
+    const line = try fill_line(l, font, para, i, @intCast(para.text.len), avail, plain, space);
+    const st = l.stop orelse return line;
+    // A stop before this line would have ended the page before it
+    assert(st.para >= lines.para_index);
+    if (st.para > lines.para_index) return line;
+    assert(st.byte > i);
+    if (line.words_end(para.text) <= st.byte) return line;
+    return fill_line(l, font, para, i, st.byte, avail, plain, space);
 }
 
 /// The words of one line, as measured, and where the next line starts.
@@ -491,6 +503,15 @@ const Line = struct {
         line.fonts[line.n] = wf;
         line.starts[line.n] = sf;
         line.n += 1;
+    }
+
+    /// Where the line's last word, or the part of it on this line, ends in `text`.
+    fn words_end(line: *const Line, text: []const u8) u32 {
+        assert(line.n > 0);
+        const last = line.words[line.n - 1];
+        const end = @intFromPtr(last.ptr) + last.len - @intFromPtr(text.ptr);
+        assert(end <= text.len);
+        return @intCast(end);
     }
 
     fn width(line: *const Line) f32 {
@@ -762,4 +783,133 @@ test "bold word starts cover half of each word's letters" {
     try std.testing.expectEqualStrings("\u{201c}Bing", quoted[0..bold_start(quoted)]);
     try std.testing.expectEqualStrings("caf", "caf\u{e9}s"[0..bold_start("caf\u{e9}s")]);
     try std.testing.expectEqual(@as(u32, 0), bold_start("\u{2014}"));
+}
+
+/// One page drawn from `start` on a fresh page, its words' places and where it ends.
+const TestPage = struct {
+    pixels: [test_width * test_height]u8 = undefined,
+    hits: Hits = .{},
+    next: book_model.Pos = .{},
+
+    const test_width = 600;
+    const test_height = 420;
+
+    fn draw(
+        out: *TestPage,
+        font: *Font,
+        paras: []const Paragraph,
+        start: book_model.Pos,
+        l: Layout,
+    ) !void {
+        const page = Page{
+            .buf = &out.pixels,
+            .width = test_width,
+            .height = test_height,
+            .stride = test_width,
+        };
+        out.hits.clear();
+        out.next = try render_page(font, page, paras, start, l, &out.hits);
+    }
+
+    fn expect_same(a: *const TestPage, b: *const TestPage) !void {
+        try std.testing.expectEqual(a.next, b.next);
+        try std.testing.expectEqualSlices(u8, &a.pixels, &b.pixels);
+        try std.testing.expectEqual(a.hits.word_count, b.hits.word_count);
+        const count = a.hits.word_count;
+        const Word = book_model.Word;
+        try std.testing.expectEqualSlices(Word, a.hits.words[0..count], b.hits.words[0..count]);
+    }
+};
+
+/// Long words, so that pages often end on a word broken across them.
+const test_text =
+    "Notwithstanding the extraordinary circumstances, the international " ++
+    "representatives demonstrated unquestionable responsibility, understanding " ++
+    "the incomprehensible characteristics of their constitutional arrangements. " ++
+    "Nevertheless, communication between neighbourhoods remained uncharacteristically " ++
+    "straightforward, and the administration acknowledged its disproportionate " ++
+    "contributions to the establishment of interdisciplinary institutions.";
+
+test "a stop at a page's own end draws that page exactly as it falls without one" {
+    // Saved page breaks are drawn with the next page's start as the stop, so a page
+    // whose break fell naturally must keep its justified last line and its hyphen
+    var font = try Font.init(@embedFile("../testdata/fonts/Go-Regular.ttf"), 30, 1.2);
+    var english = try hyphen.Hyphenator.init(std.testing.allocator, .english);
+    defer english.deinit();
+    const paras = [_]Paragraph{
+        .{ .text = test_text ++ " " ++ test_text },
+        .{ .text = test_text },
+    };
+    const plain = Layout{
+        .margin_x = 40,
+        .margin_top = 30,
+        .margin_bottom = 30,
+        .indent = 40,
+        .hyphenator = &english,
+    };
+    const free = try std.testing.allocator.create(TestPage);
+    defer std.testing.allocator.destroy(free);
+    free.* = .{};
+    const stopped = try std.testing.allocator.create(TestPage);
+    defer std.testing.allocator.destroy(stopped);
+    stopped.* = .{};
+    var start = book_model.Pos{};
+    var broken_words: u32 = 0; // Pages that end inside a word, hyphenated
+    var mid_paragraph: u32 = 0;
+    for (0..64) |_| {
+        if (start.para >= paras.len) break;
+        try free.draw(&font, &paras, start, plain);
+        var with_stop = plain;
+        with_stop.stop = free.next;
+        try stopped.draw(&font, &paras, start, with_stop);
+        try TestPage.expect_same(free, stopped);
+        const next = free.next;
+        if (next.para < paras.len and next.byte > 0) {
+            mid_paragraph += 1;
+            if (paras[next.para].text[next.byte - 1] != ' ') broken_words += 1;
+        }
+        start = next;
+    } else return error.TestUnexpectedResult;
+    try std.testing.expect(mid_paragraph > 0);
+    try std.testing.expect(broken_words > 0);
+}
+
+test "a stop inside a page ends it exactly there, the lines above as they were" {
+    // The pages before a reader's place are laid out to end at it, which is rarely
+    // where a page would break; drawn with that stop, the page shows nothing past it
+    var font = try Font.init(@embedFile("../testdata/fonts/Go-Regular.ttf"), 30, 1.2);
+    var english = try hyphen.Hyphenator.init(std.testing.allocator, .english);
+    defer english.deinit();
+    const paras = [_]Paragraph{.{ .text = test_text }};
+    const plain = Layout{
+        .margin_x = 40,
+        .margin_top = 30,
+        .margin_bottom = 30,
+        .indent = 40,
+        .hyphenator = &english,
+    };
+    const free = try std.testing.allocator.create(TestPage);
+    defer std.testing.allocator.destroy(free);
+    free.* = .{};
+    const stopped = try std.testing.allocator.create(TestPage);
+    defer std.testing.allocator.destroy(stopped);
+    stopped.* = .{};
+    try free.draw(&font, &paras, .{}, plain);
+    const count = free.hits.word_count;
+    try std.testing.expect(count > 8);
+    const middle = free.hits.words[count / 2];
+    // At a word's start, and inside a word
+    for ([_]u32{ middle.start, middle.start + 3 }) |byte| {
+        var with_stop = plain;
+        with_stop.stop = .{ .para = 0, .byte = byte };
+        try stopped.draw(&font, &paras, .{}, with_stop);
+        try std.testing.expectEqual(book_model.Pos{ .para = 0, .byte = byte }, stopped.next);
+        const words = stopped.hits.words[0..stopped.hits.word_count];
+        try std.testing.expect(words.len > 0);
+        for (words) |w| try std.testing.expect(w.end <= byte);
+        // Every line above the stop's is drawn as on the page without it
+        for (words, free.hits.words[0..words.len]) |w, f| {
+            if (w.y < middle.y) try std.testing.expectEqual(f, w);
+        }
+    }
 }

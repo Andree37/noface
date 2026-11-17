@@ -509,9 +509,9 @@ const Line = struct {
     fn words_end(line: *const Line, text: []const u8) u32 {
         assert(line.n > 0);
         const last = line.words[line.n - 1];
-        const end = @intFromPtr(last.ptr) + last.len - @intFromPtr(text.ptr);
+        const end = offset_in(text, last) + @as(u32, @intCast(last.len));
         assert(end <= text.len);
-        return @intCast(end);
+        return end;
     }
 
     fn width(line: *const Line) f32 {
@@ -654,12 +654,15 @@ fn draw_line(
         const word = line.words[k];
         const w = line.widths[k];
         const wf = line.fonts[k];
-        const word_start: u32 = @intCast(@intFromPtr(word.ptr) - @intFromPtr(para.text.ptr));
+        const word_start = offset_in(para.text, word);
         const word_end: u32 = @intCast(word_start + word.len);
         const line_top = place.baseline - pf.ascent;
         if (is_marked(l.marks, para_index, word_start, word_end)) {
-            // Reaches into the gap, so a marked phrase reads as one band
-            const band_width: u32 = @intFromFloat(w + place.gap);
+            // Reaches into the gap only when the next word is marked too, so a marked
+            // phrase reads as one band and nothing past its last word is shaded
+            const joined = k + 1 < line.n and
+                word_marked(l.marks, para.text, para_index, line.words[k + 1]);
+            const band_width: u32 = @intFromFloat(if (joined) w + place.gap else w);
             const band_height: u32 = @intCast(pf.line_height - 8);
             const band_top: u32 = @intCast(line_top + 4);
             p.fill_rect(@intFromFloat(x), band_top, band_width, band_height, mark_shade);
@@ -685,6 +688,25 @@ fn draw_line(
         }
         x += w + place.gap - shrink;
     }
+}
+
+/// Where `word`, a slice of `text`, starts in it.
+fn offset_in(text: []const u8, word: []const u8) u32 {
+    assert(@intFromPtr(word.ptr) >= @intFromPtr(text.ptr));
+    const start = @intFromPtr(word.ptr) - @intFromPtr(text.ptr);
+    assert(start + word.len <= text.len);
+    return @intCast(start);
+}
+
+/// Whether a highlight covers any of `word`, a slice of paragraph `para_index`'s `text`.
+fn word_marked(
+    marks: []const book_model.Mark,
+    text: []const u8,
+    para_index: u32,
+    word: []const u8,
+) bool {
+    const start = offset_in(text, word);
+    return is_marked(marks, para_index, start, start + @as(u32, @intCast(word.len)));
 }
 
 /// A word holding a note's reference: the mark raised and small, like a printed one,
@@ -911,5 +933,32 @@ test "a stop inside a page ends it exactly there, the lines above as they were" 
         for (words, free.hits.words[0..words.len]) |w, f| {
             if (w.y < middle.y) try std.testing.expectEqual(f, w);
         }
+    }
+}
+
+test "a highlight's shading spans the gap between its words, and none after its last" {
+    var font = try Font.init(@embedFile("../testdata/fonts/Go-Regular.ttf"), 30, 1.2);
+    const paras = [_]Paragraph{.{ .text = test_text }};
+    const out = try std.testing.allocator.create(TestPage);
+    defer std.testing.allocator.destroy(out);
+    out.* = .{};
+    // "Notwithstanding the": its first word alone, then both
+    for ([_]u32{ 15, 19 }, [_]u8{ 0xff, mark_shade }) |mark_end, in_gap| {
+        const marks = [_]book_model.Mark{.{ .para = 0, .start = 0, .end = mark_end }};
+        const l = Layout{
+            .margin_x = 40,
+            .margin_top = 30,
+            .margin_bottom = 30,
+            .indent = 0,
+            .marks = &marks,
+        };
+        try out.draw(&font, &paras, .{}, l);
+        const first = out.hits.words[0];
+        const second = out.hits.words[1];
+        try std.testing.expectEqual(@as(u32, 15), first.end);
+        try std.testing.expect(second.x > first.x + first.w + 4); // A gap to look into
+        const y: u32 = @intCast(first.y + @divTrunc(first.h, 2));
+        const x: u32 = @intCast(first.x + first.w + 2);
+        try std.testing.expectEqual(in_gap, out.pixels[y * TestPage.test_width + x]);
     }
 }

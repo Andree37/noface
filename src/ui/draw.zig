@@ -83,7 +83,8 @@ pub fn wrapped(
 pub fn box(page: Page, x: u32, y: u32, w: u32, h: u32) void {
     assert(w > 2 * style.border);
     assert(h > 2 * style.border);
-    const corner: f32 = @floatFromInt(@min(style.button_corner, h / 2));
+    // Corners that fit a box narrower than it is tall too
+    const corner: f32 = @floatFromInt(@min(style.button_corner, @min(w, h) / 2));
     box_with(page, x, y, w, h, style.border, corner);
 }
 

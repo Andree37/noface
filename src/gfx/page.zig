@@ -132,9 +132,12 @@ pub const Page = struct {
         return std.math.clamp(radius + 0.5 - @sqrt(dx * dx + dy * dy), 0, 1);
     }
 
-    /// Fills a rectangle with rounded corners, in any gray, with smooth edges.
+    /// Fills a rectangle with rounded corners, in any gray, with smooth edges. Its
+    /// corners fit it: the radius is at most half its shorter side.
     pub fn round_rect(p: Page, x: u32, y: u32, w: u32, h: u32, radius: f32, value: u8) void {
         assert(p.holds_rows());
+        assert(w > 0);
+        assert(h > 0);
         // The far edges are worked out in whole numbers, which must not overflow
         assert(w <= std.math.maxInt(u32) - x);
         assert(h <= std.math.maxInt(u32) - y);
@@ -143,10 +146,14 @@ pub const Page = struct {
         const fy: f32 = @floatFromInt(y);
         const fw: f32 = @floatFromInt(w);
         const fh: f32 = @floatFromInt(h);
+        assert(radius >= 0);
+        assert(radius <= @min(fw, fh) / 2);
         // Columns whose centres are within the straight top and bottom edges: on a row
-        // inside the straight sides as well, they're fully covered, so one fill.
+        // inside the straight sides as well, they're fully covered, so one fill. With
+        // corners that fit, the last such column is at least the middle one, never
+        // before the first column.
         const flat_lo: u32 = @intFromFloat(@max(@ceil(fx + radius - 0.5), 0));
-        const flat_hi: u32 = @intFromFloat(@max(@floor(fx + fw - radius - 0.5), -1));
+        const flat_hi: u32 = @intFromFloat(@floor(fx + fw - radius - 0.5));
         var row = y;
         while (row < @min(y + h, p.height)) : (row += 1) {
             const py = @as(f32, @floatFromInt(row)) + 0.5;
@@ -354,6 +361,21 @@ pub const Page = struct {
         }
     }
 };
+
+test "rounded rectangles at the page's left edge with corners of half their width draw" {
+    var buf: [12 * 12]u8 = undefined;
+    const p = Page{ .buf = &buf, .width = 12, .height = 12, .stride = 12 };
+    // Their straight middle is a column or none: before, a -1 there stopped the app
+    for (1..12) |w| for (1..12) |h| {
+        @memset(&buf, 0xff);
+        const width: u32 = @intCast(w);
+        const height: u32 = @intCast(h);
+        const radius = @as(f32, @floatFromInt(@min(width, height))) / 2;
+        p.round_rect(0, 0, width, height, radius, 0x00);
+        // The middle pixel of the shape is covered, at least in part
+        try std.testing.expect(buf[(height / 2) * 12 + width / 2] < 0xff);
+    };
+}
 
 test "rounded rectangles fill square in the middle and leave the corners" {
     var buf: [20 * 20]u8 = @splat(0xff);

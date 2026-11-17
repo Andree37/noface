@@ -129,6 +129,10 @@ pub const App = struct {
     downloads_until: u64 = 0, // A download may still be running until then (now_us)
     dictionary_base: []const u8 = dict_download.default_base, // Where dictionaries download from
     wifi_hands_off: bool = false, // The reader took charge of airplane mode in this book
+    /// When to turn Wi-Fi off while a book is read (kindle/wifi_saver.zig), null once
+    /// that's settled: set as a book opens, and again by a dictionary's download that
+    /// turned noface's pause back off.
+    wifi_off_at: ?u64 = null,
     journal: journal_model.Journal = .{}, // What was read each day, for the stats screen
     speed: stats.Speed = .{}, // How fast this reader reads, across every book
     pictures: Pictures = .{}, // Pictures of the open book, ready to copy onto pages

@@ -312,12 +312,10 @@ pub const Library = struct {
         r.seconds_read = e.seconds_read;
         if (e.finished) r.flags |= index.Record.finished else r.flags &= ~index.Record.finished;
         ix.write_record(id, &r) catch |err| {
-            // Read again from its state file at the next load, which builds anew: with
-            // no header (read only as the index opens, never mapped) there's no index
-            log("library: place not saved ({s}), index built again\n", .{@errorName(err)});
-            var header_buffer: [files.path_bytes_max]u8 = undefined;
-            const header = files.path_in(&header_buffer, s.dir(), "header") catch return;
-            files.remove(header);
+            // What reading changed is in its state file too, saved as the book closed:
+            // every load merges those into the index (`builder.merge_states`), so the
+            // next one puts it right, the index and every EPUB it has read kept as is
+            log("library: place not saved ({s}), merged at the next load\n", .{@errorName(err)});
             return;
         };
         s.sorted = false;
@@ -514,18 +512,27 @@ fn log(comptime format: []const u8, args: anytype) void {
     if (!builtin.is_test) std.debug.print(format, args);
 }
 
-/// An EPUB titled `title` with a cover of `cover_bytes`, its files stored as they are.
-fn test_epub(alloc: std.mem.Allocator, title: []const u8, cover_bytes: u32) ![]u8 {
+/// An EPUB titled `title` with a cover of `cover_bytes`, in Calibre's `series` if one
+/// is given, its files stored as they are.
+fn test_epub(
+    alloc: std.mem.Allocator,
+    title: []const u8,
+    cover_bytes: u32,
+    series: ?[]const u8,
+) ![]u8 {
     assert(title.len > 0);
     assert(cover_bytes > 0);
+    var meta_buffer: [128]u8 = undefined;
+    const meta_format = "<meta name=\"calibre:series\" content=\"{s}\"/>";
+    const meta = if (series) |s| try std.fmt.bufPrint(&meta_buffer, meta_format, .{s}) else "";
     const opf = try std.fmt.allocPrint(alloc,
         \\<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0">
         \\<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>{s}</dc:title>
-        \\<dc:creator>Test Author</dc:creator></metadata><manifest>
+        \\<dc:creator>Test Author</dc:creator>{s}</metadata><manifest>
         \\<item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>
         \\<item id="cover" href="cover.jpg" media-type="image/jpeg" properties="cover-image"/>
         \\</manifest><spine><itemref idref="c1"/></spine></package>
-    , .{title});
+    , .{ title, meta });
     defer alloc.free(opf);
     const cover = try alloc.alloc(u8, cover_bytes);
     defer alloc.free(cover);
@@ -617,7 +624,7 @@ fn test_folder(buffer: []u8, kindle_rows: u32, epubs: u32, cover_bytes: u32) ![:
     for (0..epubs) |i| {
         var title: [32]u8 = undefined;
         const name = try std.fmt.bufPrint(&title, "Book {d}", .{i});
-        const data = try test_epub(alloc, name, cover_bytes);
+        const data = try test_epub(alloc, name, cover_bytes, null);
         defer alloc.free(data);
         const format = "{s}/documents/{s}.epub";
         const at = try std.fmt.bufPrintSentinel(&path, format, .{ root, name }, 0);
@@ -713,7 +720,7 @@ test "hundreds of EPUBs list in memory that doesn't grow with them, read once" {
         const path = try std.fmt.bufPrintSentinel(&path_buffer, "{s}/{s}", .{ root, name }, 0);
         _ = std.c.chmod(path, 0); // Ignored: a book still readable is read again, and listed
     }
-    const extra = try test_epub(std.testing.allocator, "Extra", 1 << 10);
+    const extra = try test_epub(std.testing.allocator, "Extra", 1 << 10, null);
     defer std.testing.allocator.free(extra);
     const extra_path = try std.fmt.bufPrintSentinel(&path_buffer, "{s}/documents/Extra.epub", .{
         root,
@@ -800,6 +807,29 @@ test "a book with a long path is listed, where one past 320 bytes was silently d
     const listed = library.hero() orelse library.book(0);
     try std.testing.expectEqualStrings("Long", listed.title);
     try std.testing.expectEqual(@as(usize, 618 + 4), listed.path.len);
+}
+
+test "an EPUB's own series is listed when its package is stored, not deflated" {
+    var buffer: [64]u8 = undefined;
+    const root = try test_folder(&buffer, 0, 0, 1 << 10);
+    defer test_folder_remove(root);
+    var t: TestLibrary = undefined;
+    try t.init(root);
+    defer t.deinit();
+    // Its package read in the book's file itself, which is let go of before it's listed
+    const data = try test_epub(std.testing.allocator, "Dune", 1 << 10, "The Dune Saga");
+    defer std.testing.allocator.free(data);
+    var path_buffer: [320]u8 = undefined;
+    try test_write(try std.fmt.bufPrintSentinel(&path_buffer, "{s}/documents/Dune.epub", .{
+        root,
+    }, 0), data);
+    var library = try load(t.sources);
+    defer library.deinit();
+    library.arrange(.title, .all, "");
+    _ = library.page(0);
+    const listed = library.hero() orelse library.book(0);
+    try std.testing.expectEqualStrings("Dune", listed.title);
+    try std.testing.expectEqualStrings("The Dune Saga", listed.series.?.name);
 }
 
 test "a download is watched by its own file, not by reading the whole catalog again" {

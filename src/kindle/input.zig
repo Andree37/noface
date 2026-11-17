@@ -161,14 +161,14 @@ pub const Script = struct {
     }
 };
 
-/// An area of the screen, in screen pixels.
-/// A place on the screen, in its pixels.
 /// A finger watched from where it touched: its slot, where and when it touched, and
 /// whether it has moved off that place since.
 pub const Press = struct { slot: u32, x: i32, y: i32, us: u64, moved: bool = false };
 
+/// A place on the screen, in its pixels.
 pub const Point = struct { x: i32, y: i32 };
 
+/// An area of the screen, in screen pixels.
 pub const Zone = struct { x: i32, y: i32, w: i32, h: i32 };
 
 /// Turns raw touch events into taps.

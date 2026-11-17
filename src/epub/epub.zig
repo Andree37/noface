@@ -251,15 +251,13 @@ pub fn info(alloc: std.mem.Allocator, data: []const u8, with_cover: bool) !Info 
     const p = try read_package(alloc, files);
     assert(p.spine.len > 0);
     const cover = if (with_cover) try info_cover(alloc, files, &p) else null;
-    return .{
-        .title = p.title,
-        .author = p.author,
-        .cover = cover,
-        .series = if (p.series_name.len > 0)
-            .{ .name = p.series_name, .index = p.series_index }
-        else
-            null,
-    };
+    // Copied into `alloc`, as the title and author are: a package stored as it is is
+    // read in `data` itself, which the library lets go of before it keeps the series
+    const series: ?catalog.Series = if (p.series_name.len > 0)
+        .{ .name = try alloc.dupe(u8, p.series_name), .index = p.series_index }
+    else
+        null;
+    return .{ .title = p.title, .author = p.author, .cover = cover, .series = series };
 }
 
 /// The cover's bytes: the item EPUB 3 marks as the cover image, or the one EPUB 2's
@@ -788,7 +786,8 @@ pub fn parse(alloc: std.mem.Allocator, scratch: *memory.Region, data: []const u8
 }
 
 /// Character positions, numbered the way Kindle books are, so highlights and
-/// bookmarks work the same way in both. Never 0: that means "not numbered".
+/// bookmarks work the same way in both. From 1, as noface always has, so the IDs and
+/// places saved with books before stay where they were.
 fn parse_positions(paragraphs: []book.Paragraph) void {
     assert(paragraphs.len > 0);
     var position: u32 = 1;

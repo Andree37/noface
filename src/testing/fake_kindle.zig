@@ -10,7 +10,7 @@ const lipc = @import("../kindle/lipc.zig");
 
 const Prop = struct { key: []const u8, value: []const u8 };
 
-/// What `date` prints when no clock is set, so tests see the same screen every run.
+/// What `date` prints, always the same, so tests see the same screen every run.
 const date_fixed = "12:00 - 01 Jan 2026";
 
 pub const FakeKindle = struct {

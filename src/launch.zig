@@ -9,8 +9,8 @@
 //!   noface-launch autostart From the system's startup file, at boot (src/kindle/boot.zig).
 //!   noface-launch export    Writes the book list (src/kindle/catalog_export.zig).
 //!   noface-launch e2e <dir> noface on the test books in <dir>/documents, keeping what
-//!                           it writes in <dir>/data, for the end-to-end tests
-//!                           (tools/e2e.zig): the reader's own are never touched.
+//!                           it writes in <dir>/data, for end-to-end tests on the
+//!                           Kindle: the reader's own are never touched.
 //!
 //! KPM's launch.sh passes no argument, which means "kpm".
 //! What it prints goes to noface-data/launch.log; noface's own output to noface.log.

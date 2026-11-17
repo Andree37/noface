@@ -184,7 +184,8 @@ fn apply_clock(quick: *quick_model.Quick, text: []const u8) void {
     quick.clock_len = length;
 }
 
-/// Everything `read` asks, in the order it's applied (Wi-Fi's state before its signal).
+/// Everything `read` asks, each applied on its own: Wi-Fi's signal is kept whether or
+/// not it's connected, and drawn only while it is (`Quick.wifi_shown`).
 pub const readings = [_]Reading{
     .{
         .argv = &.{ lipc_get, "-s", "com.lab126.wifid", "cmState" },
@@ -242,9 +243,6 @@ pub const readings = [_]Reading{
 comptime {
     // All at once, as `read` asks them
     assert(readings.len <= commands_at_once_max);
-    // Wi-Fi's signal is read as nothing while it's off, so its state comes first
-    assert(readings[0].apply == &apply_wifi_state);
-    assert(readings[1].apply == &apply_wifi_signal);
 }
 
 /// Tells powerd the reader is active, so it doesn't lock while they read. noface holds

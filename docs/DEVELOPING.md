@@ -46,6 +46,10 @@ development tools for the Kindle too: copy one over and run it there (for instan
 `fbcap` to capture the screen, `touchsim` to tap it). Keep their output out of `/tmp`
 when it's large: it's a small RAM disk the Kindle needs for itself.
 
+To try it end to end without touching the reader's own books, places or settings,
+`noface-launch e2e <folder>` (a full path) runs noface on the EPUBs in
+`<folder>/documents`, keeping everything it writes, its log too, in `<folder>/data`.
+
 ## Packaging and releases
 
 `zig build package -Dversion=1.2.3` builds everything and packs

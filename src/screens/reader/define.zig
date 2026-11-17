@@ -86,9 +86,9 @@ pub fn find(
             if (lang) |l| .{ .lang = l, .name = dict_get.language_of(l).name } else null;
         return .{ .word = text, .looked_up = .{ .no_dictionary = gettable } };
     };
+    // The entry as the dictionary file has it: a damaged one may have no word at all
     const entry = d.lookup(text) orelse return .{ .word = text, .looked_up = .not_found };
     const base = if (entry.base_form()) |b| d.lookup(b) else null;
-    assert(entry.word.len > 0);
     return .{ .word = text, .looked_up = .{ .found = .{ .entry = entry, .base = base } } };
 }
 

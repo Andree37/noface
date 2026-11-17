@@ -131,7 +131,8 @@ pub fn restart_watcher_if_dead(in: *Input) ?Action {
     start_watcher(in);
     std.debug.print("power watcher restarted: {}\n", .{in.power_watcher != null});
     if (!in.locked) return null;
-    // No answer: still locked as far as anyone knows, and asked at the next restart
+    // No answer: still locked as far as anyone knows, till powerd's next event reaches
+    // the new watcher (there's no restart after this one to ask again)
     const saver = lipc.in_screen_saver() orelse return null;
     return if (saver) null else unlocked(in);
 }

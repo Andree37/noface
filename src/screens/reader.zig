@@ -307,7 +307,8 @@ fn read_book_pages(
     } else {
         pages = try paginate.book(a, alloc, paragraphs);
     }
-    if (pages.len == 0) return error.EmptyBook;
+    // Saved pages are never none, and a book with paragraphs lays out a page at least
+    assert(pages.len > 0);
     if (source == .@"laid out") page_store.save(alloc, pages_path, pages_key, pages);
     // A first open is laid out only from the reader's own place, never stock's
     const from: StartFrom = if (source == .@"first pages")
@@ -441,7 +442,6 @@ pub const Reader = struct {
     view: View = .page,
     since_save: u32 = 0,
     last_place: u32 = 0,
-    wifi_try_at: ?u64 = null, // When to turn Wi-Fi off; null once that's settled
     battery_minute: u64 = 0, // The battery is noted once a minute at most
     /// What's open over the book, if anything, with how it ended once it has; those
     /// that keep their state across openings (a picture, words being selected, Aa's
@@ -485,7 +485,7 @@ pub const Reader = struct {
         assert(r.s.current == r.start);
         r.reading_started = true;
         r.a.wifi_hands_off = false;
-        r.wifi_try_at = now_us() + wifi_saver.after_us;
+        r.a.wifi_off_at = now_us() + wifi_saver.after_us;
     }
 
     pub fn on_open(r: *Reader) !screen.Step(Outcome) {
@@ -551,7 +551,8 @@ pub const Reader = struct {
             },
             .define => |c| try r.defined(c.ended()),
             .panel => |c| {
-                if (try panel.ended(r.a, c.screen.background, c.ended())) return .{ .done = .quit };
+                // Leaving noface from it: the book closes as every other way out does
+                if (try panel.ended(r.a, c.screen.background, c.ended())) return r.finish(.quit);
                 try r.a.update_clock();
             },
             .selecting => try r.held_ended(),
@@ -830,21 +831,23 @@ pub const Reader = struct {
         if (unix_time() / 60 != a.clock_minute) try a.update_clock();
     }
 
-    /// A couple of minutes into the book, Wi-Fi goes off (wifi_saver.zig).
+    /// A couple of minutes into the book, and again after a dictionary's download,
+    /// Wi-Fi goes off (wifi_saver.zig).
     fn pause_wifi(r: *Reader) void {
         // Wi-Fi goes off only while the page alone is up
         assert(r.reading());
-        const at = r.wifi_try_at orelse return;
+        const a = r.a;
+        const at = a.wifi_off_at orelse return;
         if (now_us() < at) return;
-        if (r.a.wifi_hands_off) {
-            r.wifi_try_at = null;
+        if (a.wifi_hands_off) {
+            a.wifi_off_at = null;
             return;
         }
-        r.wifi_try_at = switch (wifi_saver.pause(now_us() < r.a.downloads_until)) {
+        a.wifi_off_at = switch (wifi_saver.pause(now_us() < a.downloads_until)) {
             .paused, .never => null,
             .later => now_us() + wifi_retry_us,
         };
-        if (r.wifi_try_at) |next| assert(next > at);
+        if (a.wifi_off_at) |next| assert(next > at);
     }
 
     // The page alone
@@ -1056,10 +1059,7 @@ pub const Reader = struct {
     fn show_highlight_page(r: *Reader) !void {
         r.invariants();
         switch (r.view) {
-            .highlight => |*h| {
-                const top = try hl.show_page(r.a, r.s, h.id);
-                h.delete_top = if (top) |bubble_top| @as(u32, @intCast(bubble_top)) else null;
-            },
+            .highlight => |*h| h.delete_top = try hl.show_page(r.a, r.s, h.id),
             else => _ = try hl.show_page(r.a, r.s, null),
         }
     }

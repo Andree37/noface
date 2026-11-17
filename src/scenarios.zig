@@ -28,6 +28,7 @@ const reader = @import("screens/reader.zig");
 const library_screen = @import("screens/library.zig");
 const library_ui = @import("ui/library.zig");
 const card = @import("ui/card.zig");
+const menu_ui = @import("ui/menu.zig");
 const style = @import("ui/style.zig");
 const toolbar = @import("ui/toolbar.zig");
 const aa = @import("ui/aa.zig");
@@ -89,6 +90,9 @@ fn wait(ms: u64) Step {
 }
 const lock_it: Step = .{ .act = .lock };
 const wake: Step = .{ .act = .unlock };
+/// The quick panel pulled down from the top, and its Kindle button, which leaves noface.
+const pull_down: Step = .{ .act = .pull };
+const panel_kindle = tap(795, 430);
 const forward = tap(1000, 900);
 const back = tap(150, 900);
 const top = tap(636, 60);
@@ -113,6 +117,8 @@ comptime {
     assert(a_word.act.hold.y < toolbar.bottom_top);
     // A tap above a card of up to two rows closes it
     assert(above_sheet.act.tap.y < card.top(2));
+    // The panel's Kindle button is where the scenarios tap it
+    assert(menu_ui.hit(panel_kindle.act.tap.x, panel_kindle.act.tap.y) == .kindle);
 }
 
 /// What a run left behind, for the checks.
@@ -347,7 +353,9 @@ fn play_on(kindle: Kindle, steps: []const Step) !Outcome {
     });
     try play_on_start(&a, kindle, dir, &book_paths);
     const ms = try play_on_sealed(&a, kindle, book_paths[0]);
-    assert(devices.script.ended); // Every step was played
+    // Every step was played: the steps ran out and noface was told to stop, or the
+    // last one left noface itself
+    assert(devices.script.at == steps.len);
     return play_on_outcome(&a, kindle, &book_paths, .{
         .alloc = harness,
         .fake = &fake,
@@ -787,6 +795,13 @@ const scenarios = [_]Scenario{
             const locked = try play(&.{ forward, lock_it, wait(3_000), wake, forward });
             try expect(same_place(plain.saved, locked.saved), "the place moved");
             try expect(locked.updates > plain.updates, "the lock screen wasn't drawn");
+        }
+    }.run },
+    .{ .name = "leaving noface from the quick panel mid-book keeps the place", .run = struct {
+        fn run() !void {
+            const plain = try play(&.{ forward, forward });
+            const left = try play(&.{ forward, forward, pull_down, panel_kindle });
+            try expect(same_place(plain.saved, left.saved), "the place was lost");
         }
     }.run },
     .{

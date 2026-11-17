@@ -36,18 +36,26 @@ pub const Quick = struct {
         return text;
     }
 
+    /// The Wi-Fi bars drawn: the signal while connected, none otherwise.
+    pub fn wifi_shown(q: *const Quick) ?u32 {
+        assert(q.wifi_bars <= 3);
+        return if (q.wifi_on) q.wifi_bars else null;
+    }
+
     /// Whether two readings would draw the same, so a screen drawn from the first
     /// needs no redraw for the second.
-    /// Every field counts, so a new one can't be left out.
+    /// Every field counts, so a new one can't be left out: the clock and the signal
+    /// as they're drawn.
     pub fn same(a: *const Quick, b: *const Quick) bool {
         assert(a.clock_len <= a.clock.len);
         assert(b.clock_len <= b.clock.len);
         inline for (@typeInfo(Quick).@"struct".field_names) |name| {
-            const is_clock = comptime std.mem.eql(u8, name, "clock") or
-                std.mem.eql(u8, name, "clock_len");
-            if (is_clock) continue;
+            const as_drawn = comptime std.mem.eql(u8, name, "clock") or
+                std.mem.eql(u8, name, "clock_len") or std.mem.eql(u8, name, "wifi_bars");
+            if (as_drawn) continue;
             if (@field(a, name) != @field(b, name)) return false;
         }
+        if (a.wifi_shown() != b.wifi_shown()) return false;
         return std.mem.eql(u8, a.clock_text(), b.clock_text());
     }
 };
@@ -62,6 +70,13 @@ test "readings compare by what they show" {
     try std.testing.expect(!a.same(&b));
     b = a;
     @memcpy(b.clock[0..5], "21:16");
+    try std.testing.expect(!a.same(&b));
+    // The signal shows only while connected: off, it changes nothing drawn
+    b = a;
+    b.wifi_bars = 3;
+    try std.testing.expect(a.same(&b));
+    a.wifi_on = true;
+    b.wifi_on = true;
     try std.testing.expect(!a.same(&b));
 }
 

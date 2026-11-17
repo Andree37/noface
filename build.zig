@@ -294,6 +294,9 @@ fn build_scenarios(b: *std.Build, target: std.Build.ResolvedTarget) void {
         assert(x86.result.ptrBitWidth() == target.result.ptrBitWidth());
         const host_scenarios = scenario_exe(b, x86, "noface-scenarios-host");
         scenarios_step.dependOn(&b.addRunArtifact(host_scenarios).step);
+        // Built too, not run, for this computer's own 64 bits, as a Mac builds it: code
+        // that compiles only where a usize is 32 bits fails here as well
+        scenarios_step.dependOn(&scenario_exe(b, b.graph.host, "noface-scenarios-64").step);
     } else if (host_os.os.tag == .macos) {
         // On a Mac, natively: noface's system calls go through the C library there
         const host_scenarios = scenario_exe(b, b.graph.host, "noface-scenarios-host");

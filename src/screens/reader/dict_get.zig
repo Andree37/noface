@@ -122,7 +122,8 @@ pub const Getting = struct {
     told_ending: ?screen.Ending(u32) = null,
 
     /// What getting a dictionary changed, to undo: Wi-Fi turned back on from noface's
-    /// own pause (off again after), and what kept the Kindle awake before.
+    /// own pause (off again after, by the book's own Wi-Fi timer), and what kept the
+    /// Kindle awake before.
     const PutBack = struct { wifi_paused: bool, downloads_until: u64 };
 
     /// Never shown itself: its cards are.
@@ -141,18 +142,18 @@ pub const Getting = struct {
         const a = g.a;
         assert(g.phase == .starting);
         assert(g.background.len == a.screen.pixels.len);
-        // The reader's own airplane mode is theirs to turn off; noface's pause it undoes.
-        // Unknown: tried, and the connection's wait says if Wi-Fi came
-        const airplane = wifi_saver.airplane();
-        const paused = airplane == .noface;
-        switch (airplane) {
+        // The reader's own airplane mode is theirs to turn off. Unknown: tried, and the
+        // connection's wait says if Wi-Fi came
+        switch (wifi_saver.airplane()) {
             .reader => return g.tell(
                 "Airplane mode is on",
                 "Turn it off in the light panel, then try again.",
             ),
-            .noface => wifi_saver.restore(),
-            .off, .unknown => {},
+            .noface, .off, .unknown => {},
         }
+        // The pause noface made, known by its note whatever the Kindle answered, is undone
+        const paused = wifi_saver.marked();
+        if (paused) wifi_saver.restore();
         // Kept on until it's done, then back to whatever else was keeping it on
         g.put_back = .{ .wifi_paused = paused, .downloads_until = a.downloads_until };
         a.downloads_until = os.now_us() + awake_us_max;
@@ -240,7 +241,8 @@ pub const Getting = struct {
         assert(g.background.len == g.a.screen.pixels.len);
         if (g.put_back) |back| {
             g.a.downloads_until = back.downloads_until;
-            if (back.wifi_paused) _ = wifi_saver.pause(false); // Off again for reading
+            // Off again for reading, by the book's timer, which tries again until it can
+            if (back.wifi_paused) g.a.wifi_off_at = os.now_us();
         }
         return .{ .done = ready };
     }

@@ -169,7 +169,7 @@ fn draw_glyph(page: Page, quick: *const Quick, glyph: Glyph, x: f32, y: f32) voi
     assert(y > 0);
     switch (glyph) {
         .airplane => icons.airplane(page, x, y),
-        .wifi => icons.wifi(page, x, y - 4, 0.8, if (quick.wifi_on) quick.wifi_bars else 0),
+        .wifi => icons.wifi(page, x, y - 4, 0.8, quick.wifi_shown() orelse 0),
         .bluetooth => icons.bluetooth(page, x, y),
         .sync => icons.sync(page, x, y),
         .smile => icons.smile(page, x, y),

@@ -772,6 +772,8 @@ pub fn parse(alloc: std.mem.Allocator, data: []const u8) !book.Book {
     try p.read_looks();
     try p.read_images();
     const sections = try parse_sections(&p);
+    // Nothing to read (its sections missing, say): refused, as an EPUB without any is
+    if (p.paragraphs.items.len == 0) return error.EmptyBook;
     try p.resolve_links();
     try p.resolve_positions();
     notes.mark_notes(p.paragraphs.items);

@@ -298,7 +298,7 @@ pub fn status_cluster(
         bolt(page, left, cy, size);
         left -= size * 0.5;
     }
-    if (quick.wifi_on) wifi(page, left - gap - 22, cy, 0.42, quick.wifi_bars);
+    if (quick.wifi_shown()) |bars| wifi(page, left - gap - 22, cy, 0.42, bars);
 }
 
 /// A lightning bolt `size` tall, centred on (`cx`, `cy`): plugged in.

@@ -92,11 +92,11 @@ pub const Font = struct {
         // Sizes and spacings are noface's own, from its tables, never a book's
         assert(px > 0);
         assert(line_spacing >= 1);
+        // A font without a height to scale by (its descent at or above its ascent) is
+        // turned down there too
         const info = truetype.init(ttf) orelse return error.BadFont;
         const scale = truetype.scale_for_pixel_height(&info, px);
-        // A font whose ascent equals its descent has no height to scale by: the
-        // division gives infinity, which can't be turned into whole pixels below.
-        if (!std.math.isFinite(scale)) return error.BadFont;
+        assert(scale > 0);
         const ascent = truetype.vertical_metrics(&info).ascent;
         return .{
             .info = info,
@@ -124,7 +124,7 @@ pub const Font = struct {
 
     fn kern(f: *const Font, a: u32, b: u32) f32 {
         assert(std.math.isFinite(f.scale));
-        assert(f.scale != 0);
+        assert(f.scale > 0);
         const units = truetype.kern_advance(&f.info, a, b);
         return @as(f32, @floatFromInt(units)) * f.scale;
     }
@@ -322,19 +322,48 @@ test "files that aren't fonts are turned down before they're read" {
     try std.testing.expect(!Font.tables_inside(go[0 .. go.len / 2]));
 }
 
-test "a font with no height is turned down, not scaled by infinity" {
+test "a font with no height is turned down, not scaled by infinity or flipped" {
     const go = @embedFile("../testdata/fonts/Go-Regular.ttf");
-    var flat: [go.len]u8 = go.*;
-    // Finds the hhea table and gives the font a descent equal to its ascent
-    const tables = std.mem.readInt(u16, flat[4..6], .big);
-    for (0..tables) |i| {
-        const record = flat[12 + i * 16 ..][0..16];
-        if (!std.mem.eql(u8, record[0..4], "hhea")) continue;
-        const offset = std.mem.readInt(u32, record[8..12], .big);
-        const ascent = flat[offset + 4 ..][0..2].*;
-        flat[offset + 6 ..][0..2].* = ascent;
+    // Its descent made equal to its ascent, then one unit above it
+    for ([_]i16{ 0, 1 }) |above| {
+        var flat: [go.len]u8 = go.*;
+        // Finds the hhea table and moves the font's descent
+        const tables = std.mem.readInt(u16, flat[4..6], .big);
+        for (0..tables) |i| {
+            const record = flat[12 + i * 16 ..][0..16];
+            if (!std.mem.eql(u8, record[0..4], "hhea")) continue;
+            const offset = std.mem.readInt(u32, record[8..12], .big);
+            const ascent = std.mem.readInt(i16, flat[offset + 4 ..][0..2], .big);
+            std.mem.writeInt(i16, flat[offset + 6 ..][0..2], ascent + above, .big);
+        }
+        try std.testing.expectError(error.BadFont, Font.init(&flat, 30, 1.2));
+        try std.testing.expect(!Font.usable(&flat));
     }
-    try std.testing.expectError(error.BadFont, Font.init(&flat, 30, 1.2));
+}
+
+test "a glyph whose box lies past any page draws nothing, at the pen, never overflowing" {
+    const go = @embedFile("../testdata/fonts/Go-Regular.ttf");
+    const info = truetype.init(go).?;
+    // At this scale every glyph's box reaches billions of pixels from the pen, which
+    // before were held to the ends of 32 bits and then overflowed when placed
+    var font: Font = .{
+        .info = info,
+        .scale = 1e7,
+        .ascent = 0,
+        .line_height = 1,
+        .id = glyph_cache.new_font_id(),
+    };
+    var pixels: [16 * 16]u8 = @splat(255);
+    const page = Page{ .buf = &pixels, .width = 16, .height = 16, .stride = 16 };
+    for ([_][]const u8{ "W", "g", "j" }) |letter| {
+        try font.draw(page, -1, -1, letter);
+        const glyph = truetype.glyph_index(&info, letter[0]);
+        const box = truetype.glyph_bitmap_box(&info, font.scale, glyph);
+        try std.testing.expectEqual(@as(i32, 0), box.width);
+        try std.testing.expectEqual(@as(i32, 0), box.x_offset);
+        try std.testing.expectEqual(@as(i32, 0), box.y_offset);
+    }
+    for (pixels) |pixel| try std.testing.expectEqual(@as(u8, 255), pixel);
 }
 
 test "words fit by whole characters, at least one" {
@@ -445,7 +474,6 @@ fn test_draw_everything(info: *const truetype.Info) !void {
         _ = truetype.horizontal_metrics(info, glyph);
         _ = truetype.kern_advance(info, glyph, truetype.glyph_index(info, 'V'));
         const scale = truetype.scale_for_pixel_height(info, 40);
-        if (!std.math.isFinite(scale) or scale <= 0) return;
         const bitmap = try truetype.glyph_bitmap(info, allocator, scale, glyph);
         if (bitmap.pixels) |pixels| allocator.free(pixels);
     }

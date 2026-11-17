@@ -130,6 +130,10 @@ pub fn init(data: []const u8) ?Info {
     };
     const cmap = find_table(data, start, "cmap");
     if (cmap == 0 or info.head == 0 or info.hhea == 0 or info.hmtx == 0) return null;
+    // A font sized by its ascent less its descent needs that to be a height: one whose
+    // descent is at or above its ascent can't be scaled to any size
+    const metrics = vertical_metrics(&info);
+    if (metrics.ascent - metrics.descent <= 0) return null;
     if (info.glyf != 0) {
         if (info.loca == 0) return null;
     } else {
@@ -269,7 +273,9 @@ pub fn scale_for_pixel_height(info: *const Info, height: f32) f32 {
     assert(height > 0);
     const metrics = vertical_metrics(info);
     const font_height = metrics.ascent - metrics.descent;
-    assert(font_height <= std.math.maxInt(u16) * 2);
+    // `init` turned down every font without a height, so the scale is above zero
+    assert(font_height > 0);
+    assert(font_height <= std.math.maxInt(u16));
     return height / @as(f32, @floatFromInt(font_height));
 }
 
@@ -932,11 +938,12 @@ pub fn glyph_bitmap(
     scale: f32,
     glyph: u32,
 ) Error!Bitmap {
-    assert(scale != 0);
+    assert(scale > 0);
     var bitmap = glyph_bitmap_box(info, scale, glyph);
-    // A box with no pixels, or one too large for a glyph, is drawn as nothing
+    // A box with no pixels draws nothing
     if (bitmap.width <= 0 or bitmap.height <= 0) return bitmap;
-    if (bitmap.width > bitmap_side_max or bitmap.height > bitmap_side_max) return bitmap;
+    assert(bitmap.width <= bitmap_side_max);
+    assert(bitmap.height <= bitmap_side_max);
     const vertices = try glyph_shape(info, alloc, glyph);
     defer alloc.free(vertices);
     const width: u32 = @intCast(bitmap.width);
@@ -957,41 +964,41 @@ pub fn glyph_bitmap(
 }
 
 /// Where a glyph's bitmap lies, and its size, without drawing it: the pixels its
-/// box touches, as stb_truetype rounded them. A scale below zero, from a font whose
-/// descent is above its ascent, flips the box inside out: no pixels.
+/// box touches, as stb_truetype rounded them. A box reaching further than
+/// `bitmap_side_max` pixels from the pen, or wider or taller than that, is a damaged
+/// glyph's (a CFF outline can wander far past the 16-bit points it's drawn with): it
+/// has no pixels and sits at the pen, so placing it can't overflow a page's numbers.
 pub fn glyph_bitmap_box(info: *const Info, scale: f32, glyph: u32) Bitmap {
-    assert(scale != 0);
+    assert(scale > 0);
     assert(std.math.isFinite(scale));
-    const box = glyph_box(info, glyph);
-    const x0 = floor_int(@as(f32, @floatFromInt(box.x0)) * scale);
-    const y0 = floor_int(@as(f32, @floatFromInt(-box.y1)) * scale);
-    const x1 = ceil_int(@as(f32, @floatFromInt(box.x1)) * scale);
-    const y1 = ceil_int(@as(f32, @floatFromInt(-box.y0)) * scale);
-    return .{
+    const empty: Bitmap = .{
         .pixels = null,
-        .width = x1 -% x0,
-        .height = y1 -% y0,
-        .x_offset = x0,
-        .y_offset = y0,
+        .width = 0,
+        .height = 0,
+        .x_offset = 0,
+        .y_offset = 0,
     };
+    const box = glyph_box(info, glyph);
+    // Negated as floats: a CFF box's side may be the smallest i32, which has no negative
+    const x0 = pixel_side(@floor(@as(f32, @floatFromInt(box.x0)) * scale)) orelse return empty;
+    const y0 = pixel_side(@floor(-@as(f32, @floatFromInt(box.y1)) * scale)) orelse return empty;
+    const x1 = pixel_side(@ceil(@as(f32, @floatFromInt(box.x1)) * scale)) orelse return empty;
+    const y1 = pixel_side(@ceil(-@as(f32, @floatFromInt(box.y0)) * scale)) orelse return empty;
+    // Each side within reach of the pen, so neither difference can overflow
+    const width = x1 - x0;
+    const height = y1 - y0;
+    if (width > bitmap_side_max or height > bitmap_side_max) return empty;
+    return .{ .pixels = null, .width = width, .height = height, .x_offset = x0, .y_offset = y0 };
 }
 
-fn floor_int(value: f32) i32 {
-    const whole = @floor(value);
-    assert(!(whole > value));
-    assert(!(whole < value - 1));
-    return to_int(whole);
+/// A side of a glyph's box, in whole pixels from the pen; null when it lies further
+/// than `bitmap_side_max` (or isn't a number), where no glyph of a working font reaches.
+fn pixel_side(whole: f32) ?i32 {
+    if (!(@abs(whole) <= bitmap_side_max)) return null;
+    return @intFromFloat(whole);
 }
 
-fn ceil_int(value: f32) i32 {
-    const whole = @ceil(value);
-    assert(!(whole < value));
-    assert(!(whole > value + 1));
-
-    return to_int(whole);
-}
-
-/// A whole number to 32 bits, held to its range (a damaged font's huge box).
+/// A whole number to 32 bits, held to its range (a damaged font's huge transform).
 fn to_int(whole: f32) i32 {
     if (!(whole > -2147483648.0)) return if (whole < 0) std.math.minInt(i32) else 0;
     if (!(whole < 2147483648.0)) return std.math.maxInt(i32);
@@ -1104,5 +1111,46 @@ test "composites that nest or repeat past the font's size draw nothing, never cr
         try std.testing.expectEqual(@as(usize, 0), shape.len);
         const bitmap = try glyph_bitmap(&info, alloc, 0.1, glyph);
         if (bitmap.pixels) |pixels| for (pixels) |p| try std.testing.expectEqual(0, p);
+    }
+}
+
+test "a glyph box wider than any glyph or far from the pen is empty, at the pen" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    // A triangle's points, after a header of one contour and the box given
+    const points = [_]u8{ 0, 2, 0, 0, 1, 1, 1, 0, 0, 0, 100, 0xff, 0xce, 0, 0, 0, 0, 0, 100 };
+    const boxes = [_][4]i16{
+        .{ 0, 0, 100, 100 }, // The triangle's own
+        .{ 20000, 0, 20001, 1 }, // One pixel, far past the pen
+        .{ -10000, 0, 10000, 100 }, // Each side within reach, but wider than any glyph
+    };
+    var glyphs: [boxes.len + 1][]const u8 = undefined;
+    glyphs[0] = "";
+    for (boxes, glyphs[1..]) |box, *glyph| {
+        var bytes: std.ArrayList(u8) = .empty;
+        try bytes.appendSlice(alloc, &.{ 0, 1 });
+        for (box) |side| {
+            const big: [2]u8 = @bitCast(std.mem.nativeToBig(i16, side));
+            try bytes.appendSlice(alloc, &big);
+        }
+        try bytes.appendSlice(alloc, &points);
+        glyph.* = bytes.items;
+    }
+    const info = init(try test_font(alloc, &glyphs)) orelse return error.TestUnexpectedResult;
+    // The test font's ascent less descent is 1000 units: one unit a pixel
+    const scale = scale_for_pixel_height(&info, 1000);
+    try std.testing.expectEqual(@as(f32, 1), scale);
+    const drawn = try glyph_bitmap(&info, alloc, scale, 1);
+    try std.testing.expectEqual(@as(i32, 100), drawn.width);
+    try std.testing.expectEqual(@as(i32, 100), drawn.height);
+    try std.testing.expect(drawn.pixels != null);
+    for ([_]u32{ 2, 3 }) |glyph| {
+        const bitmap = try glyph_bitmap(&info, alloc, scale, glyph);
+        try std.testing.expect(bitmap.pixels == null);
+        try std.testing.expectEqual(@as(i32, 0), bitmap.width);
+        try std.testing.expectEqual(@as(i32, 0), bitmap.height);
+        try std.testing.expectEqual(@as(i32, 0), bitmap.x_offset);
+        try std.testing.expectEqual(@as(i32, 0), bitmap.y_offset);
     }
 }

@@ -55,7 +55,7 @@ pub fn rasterize(
     box: Box,
     pixels: []u8,
 ) Error!void {
-    assert(scale != 0);
+    assert(scale > 0);
     assert(pixels.len == @as(u64, box.width) * box.height);
     const flatness = flatness_px / scale;
     const flat = try flatten(alloc, vertices, flatness * flatness);

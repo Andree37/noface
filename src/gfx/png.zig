@@ -40,16 +40,26 @@ fn chunk_type(comptime name: *const [4]u8) u32 {
     return std.mem.readInt(u32, name, .big);
 }
 
+/// What the IHDR chunk says the picture is.
+const Ihdr = struct {
+    width: u32,
+    height: u32,
+    depth: u8,
+    color: u8,
+    interlaced: bool,
+    /// Samples a pixel has in the file: a palette's pixels have one, the index.
+    channels: u8,
+
+    fn paletted(ihdr: *const Ihdr) bool {
+        return ihdr.color == 3;
+    }
+};
+
 /// What the chunks before the picture data say.
 const Header = struct {
-    width: u32 = 0,
-    height: u32 = 0,
-    depth: u8 = 0,
-    color: u8 = 0,
-    interlaced: bool = false,
-    /// Samples a pixel has in the file: a palette's pixels have one, the index.
-    channels: u8 = 0,
-    paletted: bool = false,
+    /// Null until the IHDR chunk is read, which must come before every chunk but CgBI.
+    ihdr: ?Ihdr = null,
+    /// Entries in the PLTE chunk: none (0) is no palette, as stb_image counted it.
     palette_count: u32 = 0,
     /// Each palette entry's gray, looked up per pixel. Entries past the palette are black.
     palette_gray: [palette_entries_max]u8 = @splat(0),
@@ -58,15 +68,14 @@ const Header = struct {
     /// Bytes of compressed picture data, over all its IDAT chunks.
     idat_size: u32 = 0,
     idat_count: u32 = 0,
-    seen_header: bool = false,
 };
 
 pub fn is_png(data: []const u8) bool {
     return data.len >= signature.len and std.mem.eql(u8, data[0..signature.len], signature);
 }
 
-/// Reads every chunk up to IEND, checking them as stb_image did.
-fn read_chunks(data: []const u8, header: *Header) Error!void {
+/// Reads every chunk up to IEND, checking them as stb_image did. Returns what IHDR said.
+fn read_chunks(data: []const u8, header: *Header) Error!Ihdr {
     assert(is_png(data));
     var at: u32 = signature.len;
     // Every chunk takes at least its header, so the loop ends.
@@ -75,9 +84,9 @@ fn read_chunks(data: []const u8, header: *Header) Error!void {
         const kind = std.mem.readInt(u32, data[at + 4 ..][0..4], .big);
         const start = at + chunk_header_size;
         if (kind == chunk_type("IEND")) {
-            if (!header.seen_header) return error.BadPng;
+            const ihdr = header.ihdr orelse return error.BadPng;
             if (header.idat_count == 0) return error.BadPng;
-            return;
+            return ihdr;
         }
         if (length > data.len - start) return error.BadPng;
         if (data.len - start - length < chunk_checksum_size) return error.BadPng;
@@ -96,11 +105,11 @@ fn read_chunk(header: *Header, kind: u32, body: []const u8) Error!void {
         return;
     }
     if (kind == chunk_type("IHDR")) return read_header(header, body);
-    if (!header.seen_header) return error.BadPng;
+    const ihdr = header.ihdr orelse return error.BadPng;
     if (kind == chunk_type("PLTE")) return read_palette(header, body);
-    if (kind == chunk_type("tRNS")) return check_transparency(header, body);
+    if (kind == chunk_type("tRNS")) return check_transparency(header, &ihdr, body);
     if (kind == chunk_type("IDAT")) {
-        if (header.paletted and header.palette_count == 0) return error.BadPng;
+        if (ihdr.paletted() and header.palette_count == 0) return error.BadPng;
         if (body.len > idat_size_max) return error.BadPng;
         if (header.idat_size + body.len > idat_size_max) return error.BadPng;
         header.idat_size += @intCast(body.len);
@@ -109,44 +118,45 @@ fn read_chunk(header: *Header, kind: u32, body: []const u8) Error!void {
     }
     // Bit 5 of a type's first letter clear: a chunk the picture can't be read without
     if (kind & (1 << 29) == 0) return error.BadPng;
-    assert(header.seen_header);
 }
 
 fn read_header(header: *Header, body: []const u8) Error!void {
-    if (header.seen_header) return error.BadPng;
+    if (header.ihdr != null) return error.BadPng;
     if (body.len != header_chunk_size) return error.BadPng;
-    header.seen_header = true;
-    header.width = std.mem.readInt(u32, body[0..4], .big);
-    header.height = std.mem.readInt(u32, body[4..8], .big);
-    header.depth = body[8];
-    header.color = body[9];
-    if (header.width > decoded.side_max or header.height > decoded.side_max) {
+    const color = body[9];
+    const color_channels: u8 = if (color & 2 != 0) 3 else 1;
+    const alpha_channels: u8 = if (color & 4 != 0) 1 else 0;
+    const ihdr: Ihdr = .{
+        .width = std.mem.readInt(u32, body[0..4], .big),
+        .height = std.mem.readInt(u32, body[4..8], .big),
+        .depth = body[8],
+        .color = color,
+        .interlaced = body[12] == 1,
+        .channels = if (color == 3) 1 else color_channels + alpha_channels,
+    };
+    if (ihdr.width > decoded.side_max or ihdr.height > decoded.side_max) {
         return error.BadPng;
     }
-    switch (header.depth) {
+    switch (ihdr.depth) {
         1, 2, 4, 8, 16 => {},
         else => return error.BadPng,
     }
-    if (header.color > 6) return error.BadPng;
-    if (header.color == 3 and header.depth == 16) return error.BadPng;
-    header.paletted = header.color == 3;
-    if (!header.paletted and header.color & 1 != 0) return error.BadPng;
+    if (ihdr.color > 6) return error.BadPng;
+    if (ihdr.paletted() and ihdr.depth == 16) return error.BadPng;
+    if (!ihdr.paletted() and ihdr.color & 1 != 0) return error.BadPng;
     // Compression and filter method 0 are the only ones; interlacing is none or Adam7
     if (body[10] != 0 or body[11] != 0 or body[12] > 1) return error.BadPng;
-    header.interlaced = body[12] == 1;
-    if (header.width == 0 or header.height == 0) return error.BadPng;
-    const color_channels: u8 = if (header.color & 2 != 0) 3 else 1;
-    const alpha_channels: u8 = if (header.color & 4 != 0) 1 else 0;
-    header.channels = if (header.paletted) 1 else color_channels + alpha_channels;
+    if (ihdr.width == 0 or ihdr.height == 0) return error.BadPng;
     // A palette's pixels become four bytes each in stb_image, which it counted
-    const counted: u32 = if (header.paletted) 4 else header.channels;
-    if (pixel_bytes_max / header.width / counted < header.height) return error.BadPng;
-    assert(header.channels >= 1);
-    assert(header.channels <= 4);
+    const counted: u32 = if (ihdr.paletted()) 4 else ihdr.channels;
+    if (pixel_bytes_max / ihdr.width / counted < ihdr.height) return error.BadPng;
+    assert(ihdr.channels >= 1);
+    assert(ihdr.channels <= 4);
+    header.ihdr = ihdr;
 }
 
 fn read_palette(header: *Header, body: []const u8) Error!void {
-    assert(header.seen_header);
+    assert(header.ihdr != null);
     if (body.len > palette_entries_max * 3) return error.BadPng;
     if (body.len % 3 != 0) return error.BadPng;
     const count: u32 = @intCast(body.len / 3);
@@ -160,18 +170,18 @@ fn read_palette(header: *Header, body: []const u8) Error!void {
 
 /// Transparency means nothing to a gray picture, but a tRNS chunk stb_image found
 /// wrong made it turn the picture down, so it does here.
-fn check_transparency(header: *const Header, body: []const u8) Error!void {
-    assert(header.seen_header);
-    assert(header.channels >= 1);
+fn check_transparency(header: *const Header, ihdr: *const Ihdr, body: []const u8) Error!void {
+    assert(ihdr.channels >= 1);
+    assert(ihdr.channels <= 4);
     if (header.idat_count > 0) return error.BadPng;
-    if (header.paletted) {
+    if (ihdr.paletted()) {
         if (header.palette_count == 0) return error.BadPng;
         if (body.len > header.palette_count) return error.BadPng;
         return;
     }
     // Only gray and colour without an alpha channel may have one
-    if (header.channels & 1 == 0) return error.BadPng;
-    if (body.len != @as(u32, header.channels) * 2) return error.BadPng;
+    if (ihdr.channels & 1 == 0) return error.BadPng;
+    if (body.len != @as(u32, ihdr.channels) * 2) return error.BadPng;
 }
 
 /// Decodes a PNG row by row into `sink`, which `begin`s once the size is known. The
@@ -183,32 +193,32 @@ pub fn decode_rows(work: std.mem.Allocator, data: []const u8, sink: *scaler.Sink
     // Chunks are found by 32-bit offsets, so a larger file isn't one this reads
     if (data.len > std.math.maxInt(u32)) return error.BadPng;
     var header: Header = .{};
-    try read_chunks(data, &header);
-    assert(header.seen_header);
+    const ihdr = try read_chunks(data, &header);
     assert(header.idat_count > 0);
     // Turned down as before, when the inflated data couldn't be held in 32 bits
-    _ = try raw_size_of(&header);
-    const order: scaler.Order = if (header.interlaced) .passes else .rows;
-    try sink.begin(work, .{ .width = header.width, .height = header.height }, order);
+    _ = try raw_size_of(&ihdr);
+    const order: scaler.Order = if (ihdr.interlaced) .passes else .rows;
+    try sink.begin(work, .{ .width = ihdr.width, .height = ihdr.height }, order);
     var input_buffer: [input_buffer_size]u8 = undefined;
     var idat = Idat.init(data, &input_buffer);
     if (!header.apple) try read_zlib_header(&idat.reader);
     const window = try work.alloc(u8, flate.max_window_len);
     var inflater: flate.Decompress = .init(&idat.reader, .raw, window);
-    const widest = row_size(&header, header.width);
+    const widest = row_size(&ihdr, ihdr.width);
     const work_rows: Work = .{
         .line = try work.alloc(u8, widest + 1),
         .rows = try work.alloc(u8, widest * 2),
-        .samples = try work.alloc(u8, @as(u32, header.width) * header.channels),
-        .gray_row = try work.alloc(u8, header.width),
+        .samples = try work.alloc(u8, @as(u32, ihdr.width) * ihdr.channels),
+        .gray_row = try work.alloc(u8, ihdr.width),
     };
     for (0..pass_count) |pass_index| {
         const pass: u8 = @intCast(pass_index);
-        const size = pass_size(&header, pass);
+        const size = pass_size(&ihdr, pass);
         if (size.width > 0 and size.height > 0) {
-            try unfilter_pass(&header, pass, &inflater.reader, sink, &work_rows);
+            const palette_gray = &header.palette_gray;
+            try unfilter_pass(&ihdr, palette_gray, pass, &inflater.reader, sink, &work_rows);
         }
-        if (!header.interlaced) break;
+        if (!ihdr.interlaced) break;
     }
     // Begun, and not yet finished
     assert(sink.mode != .waiting);
@@ -290,43 +300,43 @@ fn read_zlib_header(input: *std.Io.Reader) Error!void {
 }
 
 /// Bytes a row of `width` pixels takes in the file, without its filter byte.
-fn row_size(header: *const Header, width: u32) u32 {
-    assert(width <= header.width);
-    assert(header.depth <= 16);
-    const bits = @as(u64, header.channels) * width * header.depth;
+fn row_size(ihdr: *const Ihdr, width: u32) u32 {
+    assert(width <= ihdr.width);
+    assert(ihdr.depth <= 16);
+    const bits = @as(u64, ihdr.channels) * width * ihdr.depth;
     return @intCast((bits + 7) >> 3);
 }
 
 /// The size of the picture data once inflated: each pass's rows, with their filter bytes.
-fn raw_size_of(header: *const Header) Error!u32 {
-    assert(header.width > 0);
-    assert(header.height > 0);
+fn raw_size_of(ihdr: *const Ihdr) Error!u32 {
+    assert(ihdr.width > 0);
+    assert(ihdr.height > 0);
     var total: u64 = 0;
     for (0..pass_count) |pass| {
-        const size = pass_size(header, @intCast(pass));
+        const size = pass_size(ihdr, @intCast(pass));
         // A pass with no pixels has no rows at all, not even filter bytes
-        if (size.width > 0) total += @as(u64, row_size(header, size.width) + 1) * size.height;
-        if (!header.interlaced) break;
+        if (size.width > 0) total += @as(u64, row_size(ihdr, size.width) + 1) * size.height;
+        if (!ihdr.interlaced) break;
     }
     if (total > std.math.maxInt(u32)) return error.BadPng;
     return @intCast(total);
 }
 
 /// The size of one pass of an interlaced picture, or of the whole picture if it isn't.
-fn pass_size(header: *const Header, pass: u8) scaler.Size {
+fn pass_size(ihdr: *const Ihdr, pass: u8) scaler.Size {
     assert(pass < pass_count);
-    if (!header.interlaced) return .{ .width = header.width, .height = header.height };
+    if (!ihdr.interlaced) return .{ .width = ihdr.width, .height = ihdr.height };
     const x_start = pass_x_start[pass];
     const y_start = pass_y_start[pass];
-    const width = if (header.width > x_start)
-        (header.width - x_start + pass_x_step[pass] - 1) / pass_x_step[pass]
+    const width = if (ihdr.width > x_start)
+        (ihdr.width - x_start + pass_x_step[pass] - 1) / pass_x_step[pass]
     else
         0;
-    const height = if (header.height > y_start)
-        (header.height - y_start + pass_y_step[pass] - 1) / pass_y_step[pass]
+    const height = if (ihdr.height > y_start)
+        (ihdr.height - y_start + pass_y_step[pass] - 1) / pass_y_step[pass]
     else
         0;
-    assert(width <= header.width);
+    assert(width <= ihdr.width);
     return .{ .width = width, .height = height };
 }
 
@@ -337,19 +347,20 @@ const Work = struct { line: []u8, rows: []u8, samples: []u8, gray_row: []u8 };
 /// Inflates a pass's rows one at a time, undoes their filters and hands their grays
 /// to `sink`.
 fn unfilter_pass(
-    header: *const Header,
+    ihdr: *const Ihdr,
+    palette_gray: *const [palette_entries_max]u8,
     pass: u8,
     inflated: *std.Io.Reader,
     sink: *scaler.Sink,
     work: *const Work,
 ) Error!void {
-    const size = pass_size(header, pass);
-    const size_in_row = row_size(header, size.width);
+    const size = pass_size(ihdr, pass);
+    const size_in_row = row_size(ihdr, size.width);
     assert(work.rows.len >= size_in_row * 2);
     assert(work.line.len >= size_in_row + 1);
     // Low bit depths filter byte by byte, others pixel by pixel
-    const bytes_per_sample: u32 = if (header.depth == 16) 2 else 1;
-    const filter_bytes = if (header.depth < 8) 1 else header.channels * bytes_per_sample;
+    const bytes_per_sample: u32 = if (ihdr.depth == 16) 2 else 1;
+    const filter_bytes = if (ihdr.depth < 8) 1 else ihdr.channels * bytes_per_sample;
     for (0..size.height) |row| {
         const half = (row & 1) * size_in_row;
         const current = work.rows[half..][0..size_in_row];
@@ -362,8 +373,8 @@ fn unfilter_pass(
         if (row == 0) filter = first_row_filter[filter];
         unfilter_row(filter, line[1..], current, prior, filter_bytes);
         const gray = work.gray_row[0..size.width];
-        row_to_gray(header, current, work.samples, gray);
-        if (header.interlaced) {
+        row_to_gray(ihdr, palette_gray, current, work.samples, gray);
+        if (ihdr.interlaced) {
             const y = @as(u32, @intCast(row)) * pass_y_step[pass] + pass_y_start[pass];
             sink.put_pass_row(y, pass_x_start[pass], pass_x_step[pass], gray);
         } else {
@@ -440,25 +451,31 @@ fn paeth(left: u8, above: u8, above_left: u8) u8 {
 }
 
 /// Turns one unfiltered row into gray pixels.
-fn row_to_gray(header: *const Header, row: []const u8, samples: []u8, gray: []u8) void {
-    assert(gray.len <= header.width);
-    assert(samples.len >= gray.len * header.channels);
+fn row_to_gray(
+    ihdr: *const Ihdr,
+    palette_gray: *const [palette_entries_max]u8,
+    row: []const u8,
+    samples: []u8,
+    gray: []u8,
+) void {
+    assert(gray.len <= ihdr.width);
+    assert(samples.len >= gray.len * ihdr.channels);
     const count: u32 = @intCast(gray.len);
-    const channels = header.channels;
-    if (header.depth == 16) {
+    const channels = ihdr.channels;
+    if (ihdr.depth == 16) {
         gray_from_16(row, channels, gray);
         return;
     }
     var bytes = row;
-    if (header.depth < 8) {
+    if (ihdr.depth < 8) {
         // Gray is scaled up to the full range; palette indexes and colour aren't
-        const scale: u8 = if (header.color == 0) depth_scale[header.depth] else 1;
+        const scale: u8 = if (ihdr.color == 0) depth_scale[ihdr.depth] else 1;
         const used = samples[0 .. count * channels];
-        unpack(row, header.depth, scale, used);
+        unpack(row, ihdr.depth, scale, used);
         bytes = used;
     }
-    if (header.paletted) {
-        gray_from_palette(bytes[0..count], &header.palette_gray, gray);
+    if (ihdr.paletted()) {
+        gray_from_palette(bytes[0..count], palette_gray, gray);
     } else if (channels <= 2) {
         gray_from_first(bytes, channels, gray);
     } else {

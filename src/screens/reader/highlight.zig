@@ -22,6 +22,8 @@ const bubble_gap = 12;
 const bubble_border = 4;
 /// Where "Delete" sits, down from the bubble's top.
 const bubble_label_baseline = 62;
+/// How far a glyph may reach past its word's box, at either side.
+const glyph_overhang = 4;
 /// Kept clear at the bottom of the screen: a bubble that would reach into it goes
 /// above the selection instead.
 const bubble_bottom_clear = 130;
@@ -77,7 +79,7 @@ pub fn show_page(a: *app.App, s: *sess.Session, active: ?[]const u8) !?u32 {
             const chosen = words[range.lo .. range.hi + 1];
             selection.draw(screen_page, chosen);
             const band = selection.band(chosen);
-            delete_top = try draw_delete_bubble(a, band);
+            delete_top = try draw_delete_bubble(a, band, words);
         }
     }
     try a.screen.wait_complete(try a.screen.show(.page));
@@ -94,13 +96,16 @@ pub fn highlight_not_saved(a: *app.App, s: *sess.Session) !void {
 }
 
 /// Draws the Delete bubble under the selection, or above it when there's no room
-/// below. Returns its top, for in_delete_bubble.
-pub fn draw_delete_bubble(a: *app.App, band: selection.Band) !u32 {
+/// below, over `words`, the page's. Returns its top, for in_delete_bubble.
+pub fn draw_delete_bubble(
+    a: *app.App,
+    band: selection.Band,
+    words: []const book_model.Word,
+) !u32 {
     assert(a.screen.width >= bubble_width + 2 * bubble_border);
+    assert(band.height > 0);
     const screen_page = a.page(a.screen.pixels);
-    const below = band.top + band.height + bubble_gap;
-    const room_below = below + bubble_height < a.screen.height - bubble_bottom_clear;
-    const top: u32 = if (room_below) below else band.top -| (bubble_height + bubble_gap);
+    const top = bubble_top(band, words, a.screen.height);
     assert(top + bubble_height <= a.screen.height);
     const left = (a.screen.width - bubble_width) / 2;
     const border_width = bubble_width + 2 * bubble_border;
@@ -108,13 +113,80 @@ pub fn draw_delete_bubble(a: *app.App, band: selection.Band) !u32 {
     // Saturating: a highlight from the page's first line to near its last puts the
     // bubble at the very top, where `top - 4` would overflow and stop noface
     const border_top = top -| bubble_border;
-    screen_page.fill_rect(left - bubble_border, border_top, border_width, border_height, 0xff);
+    const clear = Box{
+        .left = left - bubble_border,
+        .top = border_top,
+        .width = border_width,
+        .height = border_height,
+    };
+    // Words it would cut across go whole, so no line shows through half its height
+    for (words) |w| {
+        const word_box = Box.of_word(w);
+        if (!word_box.overlaps(clear)) continue;
+        // A glyph may reach a pixel or two past its word's box: cleared too, inside the
+        // space between words
+        const left_wide = word_box.left -| glyph_overhang;
+        const width_wide = word_box.width + (word_box.left - left_wide) + glyph_overhang;
+        screen_page.fill_rect(left_wide, word_box.top, width_wide, word_box.height, 0xff);
+    }
+    screen_page.fill_rect(clear.left, clear.top, clear.width, clear.height, 0xff);
     draw.box(screen_page, left, top, bubble_width, bubble_height);
     const center_x: f32 = @floatFromInt(a.screen.width / 2);
     const label_y: i32 = @intCast(top + bubble_label_baseline);
     try draw.centered(a.ui.small, screen_page, center_x, label_y, "Delete");
     return top;
 }
+
+/// Where the Delete bubble's top goes: on the line grid, so its edges fall between
+/// lines rather than through one. Below the selection and its handles, at the first
+/// line clear of them; else above, ending with the last line clear of them.
+fn bubble_top(band: selection.Band, words: []const book_model.Word, screen_height: u32) u32 {
+    assert(band.height > 0);
+    assert(screen_height > bubble_height + bubble_gap + bubble_bottom_clear);
+    const band_bottom = band.top + band.height;
+    var line_below: ?u32 = null; // The top of the first line under the band
+    var line_above: ?u32 = null; // The bottom of the last line over it
+    for (words) |w| {
+        const box = Box.of_word(w);
+        const bottom = box.top + box.height;
+        if (box.top >= band_bottom) line_below = @min(line_below orelse box.top, box.top);
+        if (bottom <= band.top) line_above = @max(line_above orelse bottom, bottom);
+    }
+    // No line there (a picture, the page's edge): a gap's distance from the band
+    const below = (line_below orelse band_bottom + bubble_gap) + bubble_border;
+    if (below + bubble_height + bubble_border < screen_height - bubble_bottom_clear) return below;
+    const above = (line_above orelse band.top -| bubble_gap) -| (bubble_height + bubble_border);
+    assert(above + bubble_height <= screen_height);
+    return above;
+}
+
+/// A rectangle on the screen, for what the Delete bubble clears.
+const Box = struct {
+    left: u32,
+    top: u32,
+    width: u32,
+    height: u32,
+
+    fn of_word(w: book_model.Word) Box {
+        assert(w.w >= 0);
+        assert(w.h >= 0);
+        return .{
+            .left = @intCast(@max(w.x, 0)),
+            .top = @intCast(@max(w.y, 0)),
+            .width = @intCast(w.w),
+            .height = @intCast(w.h),
+        };
+    }
+
+    fn overlaps(b: Box, other: Box) bool {
+        // The bubble's: never empty, so a word touching it is found
+        assert(other.width > 0);
+        assert(other.height > 0);
+        const across = b.left < other.left + other.width and other.left < b.left + b.width;
+        const down = b.top < other.top + other.height and other.top < b.top + b.height;
+        return across and down;
+    }
+};
 
 pub fn in_delete_bubble(a: *app.App, top: u32, x: i32, y: i32) bool {
     // Where draw_delete_bubble put it: across the middle, inside the screen

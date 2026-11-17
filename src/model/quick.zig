@@ -6,13 +6,16 @@ pub const max_brightness = 24;
 
 pub const max_warmth = 24;
 
-pub const brightness_step = 2;
+/// How far a light's - and + buttons move its level.
+pub const level_step = 2;
 
 comptime {
-    assert(brightness_step > 0);
-    assert(brightness_step <= max_brightness);
-    // Stepping up from zero lands on the brightest level exactly.
-    assert(max_brightness % brightness_step == 0);
+    assert(level_step > 0);
+    assert(level_step <= max_brightness);
+    assert(level_step <= max_warmth);
+    // Stepping up from zero lands on the brightest and the warmest level exactly.
+    assert(max_brightness % level_step == 0);
+    assert(max_warmth % level_step == 0);
 }
 
 pub const Quick = struct {
@@ -31,9 +34,7 @@ pub const Quick = struct {
 
     pub fn clock_text(q: *const Quick) []const u8 {
         assert(q.clock_len <= q.clock.len);
-        const text = q.clock[0..q.clock_len];
-        assert(text.len == q.clock_len);
-        return text;
+        return q.clock[0..q.clock_len];
     }
 
     /// The Wi-Fi bars drawn: the signal while connected, none otherwise.
@@ -80,21 +81,26 @@ test "readings compare by what they show" {
     try std.testing.expect(!a.same(&b));
 }
 
-/// Steps brightness, stopping at both ends.
-pub fn step_brightness(level: u32, up: bool) u32 {
+/// Steps a light's level, brightness or warmth, stopping at 0 and at that light's
+/// `max`, so each row's buttons stop where its own slider ends.
+pub fn step_level(level: u32, up: bool, max: u32) u32 {
+    assert(max >= level_step);
     if (up) {
-        const brighter = @min(level + brightness_step, max_brightness);
-        assert(brighter <= max_brightness);
-        assert(brighter >= @min(level, max_brightness));
-        return brighter;
+        const higher = @min(level + level_step, max);
+        assert(higher <= max);
+        assert(higher >= @min(level, max));
+        return higher;
     }
-    const dimmer = level -| brightness_step;
-    assert(dimmer <= level);
-    return dimmer;
+    const lower = level -| level_step;
+    assert(lower <= level);
+    return lower;
 }
 
-test "brightness stops at both ends" {
-    try std.testing.expectEqual(@as(u32, 24), step_brightness(23, true));
-    try std.testing.expectEqual(@as(u32, 0), step_brightness(1, false));
-    try std.testing.expectEqual(@as(u32, 12), step_brightness(10, true));
+test "a light's level stops at both ends, each light at its own" {
+    try std.testing.expectEqual(@as(u32, 24), step_level(23, true, max_brightness));
+    try std.testing.expectEqual(@as(u32, 0), step_level(1, false, max_brightness));
+    try std.testing.expectEqual(@as(u32, 12), step_level(10, true, max_brightness));
+    // A light with a shorter range stops at its own top, not brightness's
+    try std.testing.expectEqual(@as(u32, 10), step_level(9, true, 10));
+    try std.testing.expectEqual(@as(u32, 10), step_level(10, true, 10));
 }

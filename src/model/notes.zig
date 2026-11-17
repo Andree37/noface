@@ -68,9 +68,8 @@ fn opens_with(text: []const u8, mark: []const u8) bool {
 pub fn mark_notes(paragraphs: []book.Paragraph) void {
     for (paragraphs, 0..) |p, i| {
         for (p.links) |l| {
+            // Forward only, to a paragraph of the book
             if (l.target <= i or l.target >= paragraphs.len) continue;
-            assert(l.target > i); // Forward only
-            assert(l.target < paragraphs.len);
             // A page marker partway into a paragraph, a heading or a picture: body, not a
             // note. (A list of illustrations links its page numbers to such places.)
             // Notes themselves are often set smaller than the text, so only larger counts.
@@ -78,7 +77,6 @@ pub fn mark_notes(paragraphs: []book.Paragraph) void {
             if (l.inside or t.image != null or t.look.size > book.normal_size) continue;
             // A link comes from the book: one not over this paragraph's text is no mark
             if (l.start >= l.end or l.end > p.text.len) continue;
-            assert(l.end <= p.text.len);
             const span = l.end - l.start;
             if (span > max_reference_bytes or span * 2 > p.text.len) continue;
             const mark = p.text[l.start..l.end];

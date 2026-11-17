@@ -490,10 +490,14 @@ const Builder = struct {
             .open => |tag| try b.open_tag(&tag),
             .close => |name| try b.close_tag(name),
         };
-        try b.flush();
+        // Bold or italic left open closes with the chapter: its last stretch keeps the
+        // style, and nothing of it, not even where its run began, reaches the next
+        try b.end_run();
         b.bold = 0;
         b.italic = 0;
+        try b.flush();
         assert(b.text.items.len == 0);
+        assert(b.run_start == null);
     }
 
     /// Copies into the book what a chapter's markup leaves waiting for the next: a
@@ -898,6 +902,20 @@ test "a series place that isn't a number in range counts as none" {
         read_package_meta(&p, &meta);
         try std.testing.expectEqual(place[1], p.series_index);
     }
+}
+
+test "bold left open at a chapter's end styles its last words and nothing after" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var b = Builder{ .alloc = arena.allocator(), .files = &.{} };
+    try b.chapter("a.xhtml", "<html><body><p><b>x</p>Bold to the end</body></html>");
+    try b.chapter("b.xhtml", "<html><body>Hello</body></html>");
+    const paragraphs = b.paragraphs.items;
+    try std.testing.expectEqual(@as(usize, 3), paragraphs.len);
+    try std.testing.expect(paragraphs[1].runs[0].bold);
+    try std.testing.expectEqual(@as(u32, 15), paragraphs[1].runs[0].end);
+    try std.testing.expectEqualStrings("Hello", paragraphs[2].text);
+    try std.testing.expectEqual(@as(usize, 0), paragraphs[2].runs.len);
 }
 
 test "an empty link goes nowhere, and doesn't stop the reader" {

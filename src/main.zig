@@ -65,7 +65,7 @@ fn sets_text(data: []const u8) bool {
     _ = font.measure(sample) catch return false;
     // Drawn too, so its outlines are read and rasterized here, where a crash ends only
     // this trial, not the reader's first page set in it. Each glyph is made whole
-    // before it's clipped to the page, so a small one does
+    // before it's clipped to the page, so a small page is enough
     var pixels: [64 * 48]u8 = @splat(0xff);
     const page: Page = .{ .buf = &pixels, .width = 64, .height = 48, .stride = 64 };
     font.draw(page, 0, 40, sample) catch return false;

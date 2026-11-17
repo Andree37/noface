@@ -539,7 +539,7 @@ const Merge = struct {
     ix: *const index.Index,
     sorted: []const Item,
     state_dir: []const u8,
-    heartbeat: ?[*:0]const u8, // As `Places.heartbeat`: a state file read each, thousands
+    heartbeat: ?[*:0]const u8, // As `Places.heartbeat`: thousands of state files are slow
     beat_us: u64, // When it last beat, or started
     failed: bool = false,
 

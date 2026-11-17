@@ -8,7 +8,8 @@ const std = @import("std");
 const assert = std.debug.assert;
 const calls = @import("../sys/calls.zig");
 const file = @import("../sys/file.zig");
-const failed = @import("../sys/os.zig").failed;
+const os = @import("../sys/os.zig");
+const failed = os.failed;
 
 /// The longest path the library names: the one limit sys/ writes and maps paths by.
 pub const path_bytes_max = file.path_bytes_max;
@@ -116,11 +117,13 @@ pub const Reader = struct {
     start: u64 = 0, // Where in the file `buffer` begins
     len: u32 = 0, // How much of `buffer` holds the file
 
-    pub fn open(path: [*:0]const u8, buffer: []u8) !Reader {
+    /// The file at `path`: `NotFound` when nothing is there, which is all that may be
+    /// taken for "nothing saved yet"; `CantRead` when it's there but can't be read.
+    pub fn open(path: [*:0]const u8, buffer: []u8) error{ NotFound, CantRead }!Reader {
         assert(path[0] != 0);
         assert(buffer.len > 0);
         const rc = calls.open(path, .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0);
-        if (failed(rc)) return error.CantRead;
+        if (failed(rc)) return if (os.not_found(rc)) error.NotFound else error.CantRead;
         const fd: i32 = @intCast(rc);
         const facts = calls.facts(fd) orelse {
             _ = calls.close(fd); // Ignored: only read
@@ -267,4 +270,18 @@ test "a file written through a small buffer reads back through another" {
     try std.testing.expect(write_at(path, 0, &.{ 9, 0, 0, 0 }));
     r.len = 0; // What's buffered is from before the write
     try std.testing.expectEqual(@as(u8, 9), (try r.read_at(0, 1))[0]);
+}
+
+test "only a file that isn't there opens as not found" {
+    var path_buffer: [64]u8 = undefined;
+    const path = try std.fmt.bufPrintSentinel(&path_buffer, "/tmp/noface-files-open-{d}", .{
+        calls.getpid(),
+    }, 0);
+    remove(path);
+    var read_buffer: [8]u8 = undefined;
+    try std.testing.expectError(error.NotFound, Reader.open(path, &read_buffer));
+    // A link to itself is there but can't be opened, as on a drive that fails a read
+    try std.testing.expect(!failed(calls.symlink(path, path)));
+    defer remove(path);
+    try std.testing.expectError(error.CantRead, Reader.open(path, &read_buffer));
 }

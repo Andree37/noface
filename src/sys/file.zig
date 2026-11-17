@@ -4,18 +4,24 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const linux = @import("calls.zig");
-const failed = @import("os.zig").failed;
+const os = @import("os.zig");
+const failed = os.failed;
 
 /// The longest path noface names, as Linux's PATH_MAX.
 pub const path_bytes_max: u32 = 4096;
 
-pub fn map(path: [*:0]const u8) ![]const u8 {
+/// Why a file couldn't be mapped. Only `NotFound` and `EmptyFile` say there's nothing in
+/// it; the others mean it may hold something that couldn't be read this time, which a
+/// caller about to write over it must not take for nothing.
+pub const MapError = error{ NotFound, OpenFailed, SeekFailed, EmptyFile, MmapFailed };
+
+pub fn map(path: [*:0]const u8) MapError![]const u8 {
     assert(path[0] != 0);
     const fd = linux.open(path, .{ .ACCMODE = .RDONLY }, 0);
-    if (failed(fd)) return error.OpenFailed;
+    if (failed(fd)) return if (os.not_found(fd)) error.NotFound else error.OpenFailed;
     defer _ = linux.close(@intCast(fd)); // The mapping outlives it
     var end: linux.off_t = 0;
-    _ = linux.llseek(@intCast(fd), 0, &end, linux.SEEK.END); // Failed: `end` stays 0, empty
+    if (failed(linux.llseek(@intCast(fd), 0, &end, linux.SEEK.END))) return error.SeekFailed;
     // A file larger than the address space (4 GB on the Kindle) can't be mapped whole
     // usize: mmap's length is the address space's size
     const size = std.math.cast(usize, end) orelse return error.MmapFailed;
@@ -207,6 +213,23 @@ fn test_path(buffer: []u8, between: []const u8, name: []const u8) ![:0]u8 {
     const path = try std.fmt.bufPrintSentinel(buffer, format, fields, 0);
     _ = linux.unlink(path); // Ignored: only there after a run that stopped
     return path;
+}
+
+test "only a file that isn't there, or is empty, maps as nothing in it" {
+    var buffer: [64]u8 = undefined;
+    const path = try test_path(&buffer, "", "map");
+    try std.testing.expectError(error.NotFound, map(path));
+    write_small(path, "");
+    try std.testing.expectError(error.NotFound, map(path)); // Never an empty file in place
+    const rc = linux.open(path, .{ .ACCMODE = .WRONLY, .CREAT = true }, 0o644);
+    try std.testing.expect(!failed(rc));
+    try std.testing.expect(!failed(linux.close(@intCast(rc))));
+    try std.testing.expectError(error.EmptyFile, map(path));
+    try std.testing.expect(!failed(linux.unlink(path)));
+    // A link to itself is there but can't be opened, as on a drive that fails a read
+    try std.testing.expect(!failed(linux.symlink(path, path)));
+    defer _ = linux.unlink(path);
+    try std.testing.expectError(error.OpenFailed, map(path));
 }
 
 test "a save that can't be written leaves the old file as it was" {

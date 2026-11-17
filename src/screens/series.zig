@@ -14,8 +14,12 @@ const icons = @import("../ui/icons.zig");
 const style = @import("../ui/style.zig");
 const files = @import("../library/files.zig");
 const app = @import("../app.zig");
+const calls = @import("../sys/calls.zig");
+const os = @import("../sys/os.zig");
 const screen = @import("screen.zig");
 const typing = @import("typing.zig");
+/// Lines for noface's log, which the tests keep quiet (main.zig's `std_options`).
+const log = std.log.scoped(.series);
 
 const numbers = 30; // Places offered in a series: 1 to 30
 /// The rows above the library's series in the first list: a new one, and none.
@@ -213,9 +217,8 @@ pub const Series = struct {
         assert(s.phase == .choosing);
         const picked = s.row_picked() orelse return s.finish();
         if (picked == 1) {
-            try save(s.a, s.e.path, null);
-            s.changed = true;
-            return s.finish();
+            if (try s.saved(s.e.path, null)) return s.finish();
+            return s.pick("Series", s.e.title, s.rows.items); // Not saved: still to choose
         }
         if (picked == 0) {
             s.phase = .naming;
@@ -263,9 +266,8 @@ pub const Series = struct {
         assert(tapped_index < s.order.items.len);
         const i = s.order.items[tapped_index];
         if (tapped_index >= s.listed.in_series) {
-            m.places[i] = .{ .name = m.name, .index = s.listed.next };
-            try save(s.a, s.entries[i].path, m.places[i]);
-            s.changed = true;
+            const place: Place = .{ .name = m.name, .index = s.listed.next };
+            if (try s.saved(s.entries[i].path, place)) m.places[i] = place;
             return s.list(m);
         }
         s.phase = .{ .numbering = .{ .managing = m, .book = i } };
@@ -279,10 +281,22 @@ pub const Series = struct {
         const i = s.phase.numbering.book;
         const n = s.row_picked() orelse return s.list(m);
         assert(n <= numbers);
-        m.places[i] = if (n == 0) null else .{ .name = m.name, .index = @floatFromInt(n) };
-        try save(s.a, s.entries[i].path, m.places[i]);
-        s.changed = true;
+        const place: Place = if (n == 0) null else .{ .name = m.name, .index = @floatFromInt(n) };
+        if (try s.saved(s.entries[i].path, place)) m.places[i] = place;
         return s.list(m);
+    }
+
+    /// Saves `book`'s place, and whether it was: when it couldn't be (the drive full, or
+    /// on a computer), says so, and nothing has changed.
+    fn saved(s: *Series, book: []const u8, place: Place) !bool {
+        assert(book.len > 0);
+        var path_buffer: [files.path_bytes_max]u8 = undefined;
+        if (save(try path(&path_buffer, s.a.state_dir), book, place)) {
+            s.changed = true;
+            return true;
+        }
+        try app.show_notice(s.a, "This series couldn't be saved.");
+        return false;
     }
 
     /// Opens a page of `rows` under a heading.
@@ -414,13 +428,20 @@ fn manage_list_less(places: []const Place, x: u32, y: u32) bool {
     return places[x].?.index < places[y].?.index; // Only books in the series are sorted
 }
 
-/// Saves one book's series and number in the overrides file: every other book's line
-/// is copied through as it is, however many there are, and the file replaced whole.
-fn save(a: *app.App, book: []const u8, place: Place) !void {
+/// Saves one book's series and number in the overrides file at `target`: every other
+/// book's line is copied through as it is, however many there are, and the file
+/// replaced whole. False when it couldn't be, and the file is as it was.
+fn save(target: [:0]const u8, book: []const u8, place: Place) bool {
+    save_file(target, book, place) catch |err| {
+        log.info("series not saved: {s}", .{@errorName(err)});
+        return false;
+    };
+    return true;
+}
+
+fn save_file(target: [:0]const u8, book: []const u8, place: Place) !void {
     assert(book.len > 0);
     if (place) |p| assert(p.index >= 0);
-    var path_buffer: [files.path_bytes_max]u8 = undefined;
-    const target = try path(&path_buffer, a.state_dir);
     var new_buffer: [files.path_bytes_max + 4]u8 = undefined;
     const fresh = try std.fmt.bufPrintSentinel(&new_buffer, "{s}.new", .{target}, 0);
     var write_buffer: [4096]u8 = undefined;
@@ -433,20 +454,24 @@ fn save(a: *app.App, book: []const u8, place: Place) !void {
     _ = try out.finish();
     try files.replace(fresh, target);
     if (place) |p| {
-        std.debug.print("series set: {s} #{d}\n", .{ p.name, p.index });
+        log.info("series set: {s} #{d}", .{ p.name, p.index });
     } else {
-        std.debug.print("series set: (none)\n", .{});
+        log.info("series set: (none)", .{});
     }
 }
 
 /// The longest line the overrides file has: a path, a series name and a number.
 const line_bytes_max = files.path_bytes_max + 512;
 
-/// Copies every line of the overrides file at `target` but `book`'s into `out`.
+/// Copies every line of the overrides file at `target` but `book`'s into `out`. An error
+/// when the file is there but can't be read: written over, every other book's would go.
 fn save_others(out: *files.Writer, target: [*:0]const u8, book: []const u8) !void {
     assert(book.len > 0);
     var read_buffer: [line_bytes_max]u8 = undefined;
-    const reader = files.Reader.open(target, &read_buffer) catch return; // None set yet
+    const reader = files.Reader.open(target, &read_buffer) catch |err| switch (err) {
+        error.NotFound => return, // None set yet
+        error.CantRead => return err,
+    };
     var lines: files.Lines = .{ .reader = reader };
     defer lines.close();
     // Each line moves on through the file, so there are fewer than it has bytes
@@ -458,4 +483,37 @@ fn save_others(out: *files.Writer, target: [*:0]const u8, book: []const u8) !voi
         out.write(text);
         out.write("\n");
     }
+}
+
+/// "/tmp/noface-series-<pid>-<name>" in `buffer`, gone from before.
+fn test_path(buffer: []u8, name: []const u8) ![:0]u8 {
+    const format = "/tmp/noface-series-{d}-{s}";
+    const target = try std.fmt.bufPrintSentinel(buffer, format, .{ calls.getpid(), name }, 0);
+    files.remove(target);
+    return target;
+}
+
+test "a series saved keeps every other book's, and one unreadable is never written over" {
+    var buffer: [64]u8 = undefined;
+    const target = try test_path(&buffer, "overrides");
+    defer files.remove(target);
+    const dune: Place = .{ .name = "Dune", .index = 1 };
+    try std.testing.expect(save(target, "/mnt/us/documents/a.epub", dune));
+    try std.testing.expect(save(target, "/mnt/us/documents/b.epub", dune));
+    try std.testing.expect(save(target, "/mnt/us/documents/a.epub", null));
+    var read_buffer: [line_bytes_max]u8 = undefined;
+    var lines: files.Lines = .{ .reader = try files.Reader.open(target, &read_buffer) };
+    var count: u32 = 0;
+    while (try lines.next()) |_| count += 1;
+    lines.close();
+    try std.testing.expectEqual(2, count); // b's, and a's out of any series
+    // A link to itself is there but can't be opened, as on a drive that fails a read
+    files.remove(target);
+    try std.testing.expect(!os.failed(calls.symlink(target, target)));
+    try std.testing.expect(!save(target, "/mnt/us/documents/c.epub", dune));
+    // Still the link: nothing was renamed over it, and nothing left beside it
+    try std.testing.expectError(error.CantRead, files.Reader.open(target, &read_buffer));
+    var fresh_buffer: [80]u8 = undefined;
+    const fresh = try std.fmt.bufPrintSentinel(&fresh_buffer, "{s}.new", .{target}, 0);
+    try std.testing.expectError(error.NotFound, files.Reader.open(fresh, &read_buffer));
 }

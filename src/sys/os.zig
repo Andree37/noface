@@ -8,6 +8,18 @@ pub fn failed(rc: usize) bool { // usize: Linux's syscall ABI
     return rc > std.math.maxInt(usize) - 4096; // usize: Linux's syscall ABI
 }
 
+/// Whether a failed call says there's nothing at the path (ENOENT), which is "nothing
+/// saved yet", unlike a file that's there but can't be read: one that would be lost if
+/// taken for none and written over.
+pub fn not_found(rc: usize) bool { // usize: Linux's syscall ABI
+    return rc == not_found_rc;
+}
+
+/// ENOENT as a call reports it, negated: the system's own number, which calls_portable
+/// reports the same way, so it holds on Linux and on a Mac running the tests alike.
+// usize: Linux's syscall ABI
+const not_found_rc: usize = @bitCast(-@as(isize, @backingInt(std.posix.E.NOENT)));
+
 /// Set, the clock tests run on: scenario tests move it forward themselves, so a wait
 /// of minutes (the Wi-Fi pause, a hold, a double tap) takes no time at all.
 pub var fake_us: ?u64 = null;
@@ -21,6 +33,7 @@ comptime {
     // (EPERM, the first error) does
     assert(!failed(0));
     assert(failed(@bitCast(@as(isize, -1))));
+    assert(failed(not_found_rc)); // Not there is a failure, of its own kind
 }
 
 /// Microseconds on the monotonic clock, which stops while the Kindle sleeps.
@@ -65,6 +78,10 @@ pub fn sleep_ms(duration_ms: u64) void {
 test "error codes are told from results" {
     try std.testing.expect(failed(@bitCast(@as(isize, -2))));
     try std.testing.expect(!failed(3));
+    const loop: usize = @bitCast(-@as(isize, @backingInt(std.posix.E.LOOP)));
+    try std.testing.expect(failed(loop));
+    try std.testing.expect(!not_found(loop)); // There, but can't be read
+    try std.testing.expect(!not_found(3));
 }
 
 test "the test clock starts at midnight on 15 Nov 2026" {

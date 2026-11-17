@@ -139,14 +139,20 @@ fn remove_amazon(entry: *const catalog.Entry, kind: annotations.Kind, id: []cons
 /// A note as the file keeps it.
 const Line = struct { kind: annotations.Kind, start: u32, end: u32 };
 
-/// The file's notes of `kind`.
+/// The file's notes of `kind`. An error when the file is there but can't be read: taken
+/// for none, the book would open without them, and the next note saved could take one's
+/// id and write over it.
 fn read_file(
     alloc: std.mem.Allocator,
     path: [*:0]const u8,
     kind: annotations.Kind,
 ) ![]const Note {
     assert(path[0] == '/');
-    const data = file.map(path) catch return &.{}; // None written yet
+    const data = file.map(path) catch |err| switch (err) {
+        // None written yet, or every one removed (which leaves the file empty)
+        error.NotFound, error.EmptyFile => return &.{},
+        error.OpenFailed, error.SeekFailed, error.MmapFailed => return err,
+    };
     defer file.unmap(data);
     var out: std.ArrayList(Note) = .empty;
     var lines = std.mem.tokenizeScalar(u8, data, '\n');
@@ -164,7 +170,8 @@ fn read_file(
 }
 
 /// Writes every note but `id`'s, then `line` if any, into "<path>.new" and renames it
-/// over the old file, so a crash leaves the old notes whole.
+/// over the old file, so a crash leaves the old notes whole. False, and nothing written,
+/// when the old file is there but can't be read: written over, its notes would be lost.
 fn rewrite(path: [:0]const u8, id: []const u8, line: ?Line) bool {
     // Ids are made here or read back from this file a word at a time: each is one word
     assert(std.mem.indexOfAny(u8, id, " \n") == null);
@@ -172,12 +179,15 @@ fn rewrite(path: [:0]const u8, id: []const u8, line: ?Line) bool {
     const fresh = std.fmt.bufPrintSentinel(&fresh_buffer, "{s}.new", .{path}, 0) catch
         return false;
     assert(std.mem.endsWith(u8, fresh, ".new")); // Beside the real file, never over it
+    const old: ?[]const u8 = file.map(path) catch |err| switch (err) {
+        // None written yet, or every one removed (which leaves the file empty)
+        error.NotFound, error.EmptyFile => null,
+        error.OpenFailed, error.SeekFailed, error.MmapFailed => return false,
+    };
+    defer if (old) |o| file.unmap(o);
     var write_buffer: [4096]u8 = undefined;
     var out = files.Writer.create(fresh, &write_buffer) catch return false;
-    if (file.map(path)) |old| {
-        defer file.unmap(old);
-        copy_others(&out, old, id);
-    } else |_| {} // Ignored: no notes written yet
+    if (old) |o| copy_others(&out, o, id);
     if (line) |l| {
         var text: [64 + safe.id_size_max]u8 = undefined;
         const kind_name = @tagName(l.kind);
@@ -267,6 +277,46 @@ test "many notes are kept, however many there are" {
     var stored: [16]u8 = undefined;
     const notes = try store.read(arena.allocator(), .highlight, &stored);
     try std.testing.expectEqual(@as(usize, 2000), notes.len);
+}
+
+test "notes that are there but can't be read are never written over" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var buffer: [128]u8 = undefined;
+    const store = try test_store(&buffer, "unreadable");
+    defer files.remove(store.own_file);
+    try std.testing.expect(store.put(.highlight, "h1", point(10), point(20)));
+    try std.testing.expect(store.put(.highlight, "h2", point(30), point(40)));
+    // A link to itself is there but can't be opened, as on a drive that fails a read
+    files.remove(store.own_file);
+    const linked = calls.symlink(store.own_file, store.own_file);
+    try std.testing.expect(!os.failed(linked));
+    try std.testing.expect(!store.put(.highlight, "h3", point(50), point(60)));
+    try std.testing.expect(!store.remove(.highlight, "h1"));
+    var stored: [16]u8 = undefined;
+    const read = store.read(arena.allocator(), .highlight, &stored);
+    try std.testing.expectError(error.OpenFailed, read);
+    // Still the link: nothing was renamed over it
+    try std.testing.expectError(error.OpenFailed, file.map(store.own_file));
+    var fresh_buffer: [160]u8 = undefined;
+    const fresh = try std.fmt.bufPrintSentinel(&fresh_buffer, "{s}.new", .{store.own_file}, 0);
+    try std.testing.expect(!file.exists(fresh));
+}
+
+test "the last note removed leaves an empty file, which takes the next" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var buffer: [128]u8 = undefined;
+    const store = try test_store(&buffer, "emptied");
+    defer files.remove(store.own_file);
+    try std.testing.expect(store.put(.bookmark, "b1", point(5), point(5)));
+    try std.testing.expect(store.remove(.bookmark, "b1"));
+    try std.testing.expectError(error.EmptyFile, file.map(store.own_file));
+    var stored: [16]u8 = undefined;
+    try std.testing.expectEqual(0, (try store.read(arena.allocator(), .bookmark, &stored)).len);
+    try std.testing.expect(store.put(.bookmark, "b2", point(7), point(7)));
+    const marks = try store.read(arena.allocator(), .bookmark, &stored);
+    try std.testing.expectEqual(1, marks.len);
 }
 
 test "a store that's off keeps nothing and reads nothing" {

@@ -35,6 +35,8 @@ const battery_log = @import("kindle/battery_log.zig");
 const dict_download = @import("kindle/dict_download.zig");
 const Input = input_mod.Input;
 const unix_time = os.unix_time;
+/// Lines for noface's log, which the tests keep quiet (main.zig's `std_options`).
+const log = std.log.scoped(.app);
 
 pub const clock_top_px = 16;
 
@@ -479,14 +481,21 @@ pub fn load_journal(path: [*:0]const u8) journal_model.Journal {
 }
 
 /// Saves the journal: the days already in the file and older than memory holds, as
-/// they are, then the days memory holds.
+/// they are, then the days memory holds. Not saved when the file is there but can't be
+/// read: written over, the days only it holds would be lost.
 pub fn save_journal(a: *const App) void {
     var buf: [journal_model.max_format_bytes]u8 = undefined;
     assert(a.journal.len <= a.journal.days.len);
     const content = journal_model.format(&buf, &a.journal);
     assert(content.len >= journal_model.tag_line_bytes); // Sized for the longest journal
-    // No file yet, or none to read: nothing older to keep
-    const old: ?[]const u8 = file.map(a.journal_path) catch null;
+    const old: ?[]const u8 = file.map(a.journal_path) catch |err| switch (err) {
+        // No file yet, or nothing in it: nothing older to keep
+        error.NotFound, error.EmptyFile => null,
+        error.OpenFailed, error.SeekFailed, error.MmapFailed => {
+            log.info("journal not saved: {s}", .{@errorName(err)});
+            return;
+        },
+    };
     defer if (old) |o| file.unmap(o);
     const first_day: ?i32 = if (a.journal.len > 0) a.journal.days[0].day else null;
     const parts = [_][]const u8{
@@ -595,6 +604,33 @@ test "pictures are kept until replaced or cleared" {
         p.put(alloc, @ptrFromInt(0x1000 + i), 1, 1, try alloc.dupe(u8, "z"));
     }
     try std.testing.expect(p.get(key.ptr, 2, 1) == null); // Pushed out
+}
+
+/// An App with only what saving the journal reads, its journal saved at "/tmp/<name>-<pid>".
+fn journal_app(path_buffer: []u8, name: []const u8) !App {
+    var a: App = undefined;
+    a.journal = .{};
+    const format = "/tmp/noface-{s}-{d}";
+    const fields = .{ name, calls.getpid() };
+    a.journal_path = try std.fmt.bufPrintSentinel(path_buffer, format, fields, 0);
+    _ = calls.unlink(a.journal_path); // Ignored: only there after a run that stopped
+    return a;
+}
+
+test "a journal that's there but can't be read is never written over" {
+    var path_buffer: [64]u8 = undefined;
+    var a = try journal_app(&path_buffer, "journal-unreadable");
+    defer _ = calls.unlink(a.journal_path); // Ignored: only /tmp is left fuller
+    a.journal.add(20_000, 600, 3);
+    save_journal(&a);
+    try std.testing.expectEqual(1, load_journal(a.journal_path).len);
+    // A link to itself is there but can't be opened, as on a drive that fails a read
+    _ = calls.unlink(a.journal_path); // Ignored: checked by the link made in its place
+    try std.testing.expect(!os.failed(calls.symlink(a.journal_path, a.journal_path)));
+    a.journal.add(20_001, 600, 3);
+    save_journal(&a);
+    // Still the link: nothing was renamed over it
+    try std.testing.expectError(error.OpenFailed, file.map(a.journal_path));
 }
 
 test "the longest typeface name a setting holds saves and comes back" {

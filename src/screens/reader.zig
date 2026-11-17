@@ -410,6 +410,10 @@ fn read_book_notes(
     const highlight_notes = try session.notes.read(alloc, .highlight, stored);
     const highlights_read = try highlights.parse(alloc, paragraphs, highlight_notes);
     try session.highlights.appendSlice(alloc, highlights_read);
+    // Copied, as `stored` is read into again for the bookmarks
+    const ids = try alloc.alloc([]const u8, highlight_notes.len);
+    for (ids, highlight_notes) |*id, note| id.* = try alloc.dupe(u8, note.id);
+    session.stored_highlight_ids = ids;
     const bookmark_notes = try session.notes.read(alloc, .bookmark, stored);
     const bookmarks_read = try bookmarks.parse(alloc, paragraphs, bookmark_notes);
     try session.bookmarks.appendSlice(alloc, bookmarks_read);

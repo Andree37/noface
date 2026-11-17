@@ -346,7 +346,8 @@ pub fn new_highlight(
         try highlight_not_saved(a, s);
         return null;
     };
-    const id = highlights.free_id(alloc, s.highlights.items, start.short) catch |err| {
+    const taken = s.stored_highlight_ids;
+    const id = highlights.free_id(alloc, s.highlights.items, taken, start.short) catch |err| {
         if (err != error.PositionTooLarge) return err;
         try highlight_not_saved(a, s);
         return null;

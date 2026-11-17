@@ -65,6 +65,9 @@ pub const Session = struct {
     note_top: u32 = 0,
     note_next: ?book_model.Pos = null,
     highlights: std.ArrayList(highlights.Highlight) = .empty,
+    /// The ID of every highlight stored for the book as it opened, those its text
+    /// couldn't place too: a new highlight never takes one (`highlights.free_id`).
+    stored_highlight_ids: []const []const u8 = &.{},
     bookmarks: std.ArrayList(bookmarks.Bookmark) = .empty,
     /// What layout shades, rebuilt from highlights.
     marks: std.ArrayList(book_model.Mark) = .empty,

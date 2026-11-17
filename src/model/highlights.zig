@@ -168,19 +168,30 @@ fn overlaps(m: book_model.Mark, w: book_model.Word) bool {
     return w.para == m.para and w.start < m.end and w.end > m.start;
 }
 
-/// An ID for a highlight starting at `short`. Moving a highlight's start keeps
-/// its ID, so that spot can already be taken by a highlight elsewhere. A damaged book's
-/// positions can reach the largest number, past which there's no ID to give:
-/// `error.PositionTooLarge`, and the highlight can't be saved.
-pub fn free_id(alloc: std.mem.Allocator, list: []const Highlight, short: u32) ![]const u8 {
+/// An ID for a highlight starting at `short`, taken by none in `list` nor in `stored`:
+/// the IDs of every highlight the book's notes held as it opened, those `parse` could
+/// not place on its text too, as saving under one would write over it. Moving a
+/// highlight's start keeps its ID, so that spot can already be taken by a highlight
+/// elsewhere. A damaged book's positions can reach the largest number, past which
+/// there's no ID to give: `error.PositionTooLarge`, and the highlight can't be saved.
+pub fn free_id(
+    alloc: std.mem.Allocator,
+    list: []const Highlight,
+    stored: []const []const u8,
+    short: u32,
+) ![]const u8 {
     assert(list.len < std.math.maxInt(u32));
-    // Of `list.len + 1` IDs in a row, the list can't hold them all: one is free.
-    next: for (0..list.len + 1) |offset| {
+    assert(stored.len < std.math.maxInt(u32) - list.len);
+    // Of `list.len + stored.len + 1` IDs in a row, the two can't hold them all: one is free
+    next: for (0..list.len + stored.len + 1) |offset| {
         const candidate = std.math.add(u32, short, @intCast(offset)) catch
             return error.PositionTooLarge;
         const id = try std.fmt.allocPrint(alloc, "kindle.highlight-{d}", .{candidate});
         for (list) |h| {
             if (std.mem.eql(u8, h.id, id)) continue :next;
+        }
+        for (stored) |taken| {
+            if (std.mem.eql(u8, taken, id)) continue :next;
         }
         return id;
     }
@@ -434,10 +445,33 @@ test "a new highlight never takes an ID in use" {
         .{ .mark = mark, .id = "kindle.highlight-100" },
         .{ .mark = mark, .id = "kindle.highlight-101" },
     };
-    const before = try free_id(arena.allocator(), &list, 99);
+    const before = try free_id(arena.allocator(), &list, &.{}, 99);
     try std.testing.expectEqualStrings("kindle.highlight-99", before);
-    const after = try free_id(arena.allocator(), &list, 100);
+    const after = try free_id(arena.allocator(), &list, &.{}, 100);
     try std.testing.expectEqualStrings("kindle.highlight-102", after);
+}
+
+test "a new highlight never takes the ID of a stored one that wasn't placed" {
+    // A Kindle note ending where it starts covers no letter, so `parse` skipped it;
+    // it's still stored under its ID
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const paragraphs = [_]book_model.Paragraph{.{ .text = "Some text.", .position = 10 }};
+    const notes = [_]Note{
+        .{ .id = "kindle.highlight-12", .start = 12, .end = 12 },
+        .{ .id = "kindle.highlight-14", .start = 14, .end = 17 },
+    };
+    const placed = try parse(arena.allocator(), &paragraphs, &notes);
+    try std.testing.expect(placed.len == 1);
+    try std.testing.expectEqualStrings("kindle.highlight-12", try free_id(
+        arena.allocator(),
+        placed,
+        &.{},
+        12,
+    ));
+    const stored = [_][]const u8{ notes[0].id, notes[1].id };
+    const id = try free_id(arena.allocator(), placed, &stored, 12);
+    try std.testing.expectEqualStrings("kindle.highlight-13", id);
 }
 
 test "a highlight at the largest position has no ID to take, and never overflows" {
@@ -446,9 +480,10 @@ test "a highlight at the largest position has no ID to take, and never overflows
     const max = std.math.maxInt(u32);
     const mark = book_model.Mark{ .para = 0, .start = 0, .end = 1 };
     const list = [_]Highlight{.{ .mark = mark, .id = "kindle.highlight-4294967295" }};
-    const free = try free_id(arena.allocator(), &.{}, max);
+    const free = try free_id(arena.allocator(), &.{}, &.{}, max);
     try std.testing.expectEqualStrings("kindle.highlight-4294967295", free);
-    try std.testing.expectError(error.PositionTooLarge, free_id(arena.allocator(), &list, max));
+    const none = free_id(arena.allocator(), &list, &.{}, max);
+    try std.testing.expectError(error.PositionTooLarge, none);
 }
 
 test "excerpts end at a word and never split a character" {

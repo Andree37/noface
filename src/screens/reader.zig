@@ -451,7 +451,7 @@ pub const Reader = struct {
     over: Over = .none,
     opening: ?screen.Frame = null,
     held: hl.Held = undefined, // The words held, looked up while the definition is open
-    pending: controls.Pending = .{}, // The scrubber, an Aa slider, or a card from Aa
+    pending: controls.Pending = .none, // The scrubber, an Aa slider, or a card from Aa
     selecting: hl.Selecting = .{}, // Words being selected, or a highlight's end dragged
     picture: picture_view.Viewer = undefined, // A picture held, shown whole
 

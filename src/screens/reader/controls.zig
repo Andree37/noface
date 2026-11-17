@@ -77,23 +77,39 @@ fn show_bars(a: *app.App, sheet_open: bool) !void {
 
 /// What the toolbar's controls opened over the book, kept while it's open: the page
 /// scrubber or an Aa slider following a finger, or a card asking before a switch turns
-/// on. `resumed` finishes what was begun once it has ended.
-pub const Pending = struct {
-    kind: enum { scrub, setting, autostart, lock_picture } = .scrub,
+/// on. `resumed` finishes what was begun once it has ended. Each is made in place, as
+/// what it opens points into it, and stays until it has ended.
+pub const Pending = union(enum) {
+    none,
+    scrub: Scrub,
+    setting: Setting,
+    autostart: Ask, // Before starting with the Kindle: the startup file goes in
+    lock_picture: Ask, // Before the lock screen shows the reader's picture: there is one
+
     /// The scrubber: the page under the finger.
-    target: u32 = 0,
-    page_count: u32 = 0,
+    const Scrub = struct {
+        target: u32,
+        page_count: u32,
+        drag: drag.Drag(ScrubFollow) = undefined,
+        ending: ?screen.Ending(void) = null,
+    };
+
     /// An Aa slider: its row, its step under the finger, and the step it began at.
-    row: aa.Row = undefined,
-    value: u32 = 0,
-    started: u32 = 0,
-    toggle: u32 = 0, // The switch a card asks about
-    background: []const u8 = &.{}, // The page under a card
-    scrub: drag.Drag(ScrubFollow) = undefined,
-    setting: drag.Drag(SettingFollow) = undefined,
-    drag_ending: ?screen.Ending(void) = null,
-    card: card_screen.Card = undefined,
-    card_ending: ?screen.Ending(u32) = null,
+    const Setting = struct {
+        row: aa.Row,
+        value: u32,
+        started: u32,
+        drag: drag.Drag(SettingFollow) = undefined,
+        ending: ?screen.Ending(void) = null,
+    };
+
+    /// A card asking about turning switch `toggle` on, over the page.
+    const Ask = struct {
+        toggle: u32,
+        background: []const u8, // The page under the card
+        card: card_screen.Card = undefined,
+        ending: ?screen.Ending(u32) = null,
+    };
 };
 
 const ScrubFollow = struct {
@@ -124,16 +140,20 @@ fn show_scrub(a: *app.App) !u32 {
 /// over the book.
 pub fn drag_scrub(p: *Pending, a: *app.App, s: *sess.Session, first_x: i32) !screen.Frame {
     assert(s.pages.len > 0);
-    p.kind = .scrub;
-    p.page_count = s.page_count();
-    p.target = toolbar.page_at(first_x, p.page_count);
-    assert(p.target < p.page_count);
-    const at: toolbar.Position = .{ .index = p.target, .total = p.page_count };
+    assert(p.* == .none);
+    const page_count = s.page_count();
+    p.* = .{ .scrub = .{
+        .target = toolbar.page_at(first_x, page_count),
+        .page_count = page_count,
+    } };
+    const scrub = &p.scrub;
+    assert(scrub.target < page_count);
+    const at: toolbar.Position = .{ .index = scrub.target, .total = page_count };
     try toolbar.draw_scrub(a.ui, a.page(a.screen.pixels), at, true);
     const first = try show_scrub(a);
-    const follow = ScrubFollow{ .a = a, .page_count = p.page_count, .target = &p.target };
-    p.scrub = .{ .a = a, .follow = follow, .marker = first };
-    return screen.open(&p.scrub, &p.drag_ending);
+    const follow = ScrubFollow{ .a = a, .page_count = page_count, .target = &scrub.target };
+    scrub.drag = .{ .a = a, .follow = follow, .marker = first };
+    return screen.open(&scrub.drag, &scrub.ending);
 }
 
 /// The setting an Aa slider row changes.
@@ -180,15 +200,19 @@ const SettingFollow = struct {
 /// Follows a finger along an Aa slider, and applies it when lifted: the screen to open
 /// over the book.
 fn drag_setting(p: *Pending, a: *app.App, row: aa.Row, first_x: i32) !screen.Frame {
-    p.kind = .setting;
-    p.row = row;
-    p.value = aa.step_at(row, first_x);
-    assert(p.value < row.steps);
-    p.started = row_value(a, row);
-    try aa.draw_row(a.ui, a.page(a.screen.pixels), row, p.value, true);
+    assert(p.* == .none);
+    p.* = .{ .setting = .{
+        .row = row,
+        .value = aa.step_at(row, first_x),
+        .started = row_value(a, row),
+    } };
+    const setting = &p.setting;
+    assert(setting.value < row.steps);
+    try aa.draw_row(a.ui, a.page(a.screen.pixels), row, setting.value, true);
     const first = try a.screen.show_region(0, row.top, a.screen.width, aa.row_height, .quick);
-    p.setting = .{ .a = a, .follow = .{ .a = a, .row = row, .value = &p.value }, .marker = first };
-    return screen.open(&p.setting, &p.drag_ending);
+    const follow = SettingFollow{ .a = a, .row = row, .value = &setting.value };
+    setting.drag = .{ .a = a, .follow = follow, .marker = first };
+    return screen.open(&setting.drag, &setting.ending);
 }
 
 /// Handles a tap inside the Aa sheet: a slider or a card to open over the book, or
@@ -283,30 +307,33 @@ fn ask_first(
 ) !?screen.Frame {
     assert(s.current < s.pages.len);
     assert(index < aa.switches.len);
-    p.toggle = index;
-    switch (guard) {
+    assert(p.* == .none);
+    const ask: *Pending.Ask = switch (guard) {
         .none => return null,
-        .autostart => {
+        .autostart => ask: {
             // Turning it on needs the startup file in the system folder: ask first
             if (autostart.installed()) return null;
-            p.kind = .autostart;
-            p.background = try s.ensure(s.current, s.current);
+            const background = try s.ensure(s.current, s.current);
+            p.* = .{ .autostart = .{ .toggle = index, .background = background } };
             const title = "Open noface when the Kindle starts";
             const subtitle = "This adds one small startup file to the Kindle's system.";
-            p.card = card_screen.over(a, p.background, title, subtitle, &turn_on_rows, null);
+            const rows = &turn_on_rows;
+            p.autostart.card = card_screen.over(a, background, title, subtitle, rows, null);
+            break :ask &p.autostart;
         },
-        .lock_picture => {
+        .lock_picture => ask: {
             // Turning it on needs a picture to show
             if (lock.has_picture(a)) return null;
-            p.kind = .lock_picture;
-            p.background = try s.ensure(s.current, s.current);
+            const background = try s.ensure(s.current, s.current);
+            p.* = .{ .lock_picture = .{ .toggle = index, .background = background } };
             const title = "Add your picture first";
             const subtitle = "Name it lockscreen.jpg or lockscreen.png, and put it in the " ++
                 "noface-data folder.";
-            p.card = card_screen.over(a, p.background, title, subtitle, &ok_rows, null);
+            p.lock_picture.card = card_screen.over(a, background, title, subtitle, &ok_rows, null);
+            break :ask &p.lock_picture;
         },
-    }
-    return screen.open(&p.card, &p.card_ending);
+    };
+    return screen.open(&ask.card, &ask.ending);
 }
 
 const turn_on_rows = [_]card.Row{.{ .label = "Turn on" }};
@@ -321,32 +348,41 @@ pub fn resumed(
     sheet_open: bool,
 ) !void {
     const sheet_only: Drawn = .{ .sheet_open = true, .whole_page = false };
-    switch (p.kind) {
-        .scrub => {
-            _ = try drag.ended(&p.scrub, p.drag_ending.?);
-            s.set_page(p.target, .jump);
-            assert(s.current == p.target);
+    // It has ended, whatever happens below
+    defer p.* = .none;
+    switch (p.*) {
+        .none => unreachable, // Only called for something the controls opened
+        .scrub => |*scrub| {
+            // A drag cut short (the Kindle locking, noface leaving) was never let go
+            // of: the page stays, and so does the place saved on the way out
+            const lifted = try drag.ended(&scrub.drag, scrub.ending.?);
+            if (lifted) s.set_page(scrub.target, .jump);
+            if (lifted) assert(s.current == scrub.target);
             try draw_toolbar(a, s, title, .{ .sheet_open = sheet_open, .whole_page = true });
-            try app.clean_band(a, toolbar.scrub_top, a.screen.height - toolbar.scrub_top);
+            // What locks or leaves covers the toolbar at once: a clean flash is for nothing
+            if (lifted) {
+                try app.clean_band(a, toolbar.scrub_top, a.screen.height - toolbar.scrub_top);
+            }
         },
-        .setting => {
-            _ = try drag.ended(&p.setting, p.drag_ending.?);
-            if (p.value != p.started) {
-                row_value_set(a, p.row, p.value);
+        .setting => |*setting| {
+            const lifted = try drag.ended(&setting.drag, setting.ending.?);
+            // Only a slider let go of changes the setting: one cut short is left as it was
+            if (lifted and setting.value != setting.started) {
+                row_value_set(a, setting.row, setting.value);
                 try sess.relayout(a, s);
             }
             try draw_toolbar(a, s, title, .{ .sheet_open = true, .whole_page = true });
-            try app.clean_band(a, p.row.top, aa.row_height);
+            if (lifted) try app.clean_band(a, setting.row.top, aa.row_height);
         },
-        .autostart => {
-            try card_screen.closed(a, p.background);
-            if (p.card_ending.? != .done) return draw_toolbar(a, s, title, sheet_only);
-            if (autostart.install()) return flip(a, s, title, p.toggle);
+        .autostart => |ask| {
+            try card_screen.closed(a, ask.background);
+            if (ask.ending.? != .done) return draw_toolbar(a, s, title, sheet_only);
+            if (autostart.install()) return flip(a, s, title, ask.toggle);
             try draw_toolbar(a, s, title, sheet_only);
             try app.show_notice(a, "Couldn't set up starting with the Kindle.");
         },
-        .lock_picture => {
-            try card_screen.closed(a, p.background);
+        .lock_picture => |ask| {
+            try card_screen.closed(a, ask.background);
             try draw_toolbar(a, s, title, sheet_only);
         },
     }

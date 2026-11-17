@@ -1,9 +1,13 @@
 //! Files: mapping one to read it, reading and writing small ones whole (a new one written
-//! beside and renamed over, so a crash can't lose the old), appending, and copying.
+//! beside, onto the drive, and renamed over, so neither a crash nor a power cut can lose
+//! the old), appending, and copying.
 const std = @import("std");
 const assert = std.debug.assert;
 const linux = @import("calls.zig");
 const failed = @import("os.zig").failed;
+
+/// The longest path noface names, as Linux's PATH_MAX.
+pub const path_bytes_max: u32 = 4096;
 
 pub fn map(path: [*:0]const u8) ![]const u8 {
     assert(path[0] != 0);
@@ -79,7 +83,8 @@ pub fn read_small(path: [*:0]const u8, buf: []u8) []const u8 {
     return buf[0..n];
 }
 
-/// Writes beside the real file and renames, so a crash can't lose the old contents.
+/// Writes beside the real file and renames, so a crash or a power cut can't lose the old
+/// contents.
 pub fn write_small(path: [*:0]const u8, data: []const u8) void {
     assert(path[0] != 0);
     assert(data.len <= std.math.maxInt(u32));
@@ -87,13 +92,16 @@ pub fn write_small(path: [*:0]const u8, data: []const u8) void {
 }
 
 /// Writes `parts`, one after another, beside the real file and renames, as
-/// `write_small`.
+/// `write_small`. The old file stays as it was unless the new one is whole on the drive.
 pub fn write_parts(path: [*:0]const u8, parts: []const []const u8) void {
     assert(path[0] != 0);
     assert(parts.len > 0);
-    var tmp: [320]u8 = undefined;
+    var tmp: [path_bytes_max + ".tmp".len]u8 = undefined;
     const name = std.mem.sliceTo(path, 0);
-    const tmp_path = std.fmt.bufPrintSentinel(&tmp, "{s}.tmp", .{name}, 0) catch return;
+    const tmp_path = std.fmt.bufPrintSentinel(&tmp, "{s}.tmp", .{name}, 0) catch {
+        std.debug.print("not saved, its path is too long: {s}\n", .{name});
+        return;
+    };
     assert(std.mem.endsWith(u8, tmp_path, ".tmp")); // Beside the real file, never it
     const rc = linux.open(
         tmp_path,
@@ -107,11 +115,18 @@ pub fn write_parts(path: [*:0]const u8, parts: []const []const u8) void {
         if (!write_all(fd, part)) break false;
         total += part.len;
     } else true;
+    // On the drive before the rename: renamed first, a power cut could leave the new
+    // name over contents never written, and the old contents gone
+    const synced = whole and !failed(linux.fsync(fd));
+    if (whole and !synced) std.debug.print("not saved, the drive didn't take it: {s}\n", .{name});
     // A failed close may mean a short file: the rename below needs it whole
     const closed = !failed(linux.close(fd));
     // Never an empty file in place of the old one
-    if (!whole or !closed or total == 0) return;
-    _ = linux.rename(tmp_path, path); // Failed: the old file stays, whole
+    if (synced and closed and total > 0) {
+        if (!failed(linux.rename(tmp_path, path))) return;
+    }
+    // Not renamed: the old file stays, whole, and the partial new one goes
+    _ = linux.unlink(tmp_path); // Ignored: one left over is only space, written over next time
 }
 
 pub fn write_all(fd: i32, data: []const u8) bool {
@@ -183,4 +198,48 @@ pub fn append_file(path: [*:0]const u8, text: []const u8) void {
     const fd: i32 = @intCast(rc);
     _ = write_all(fd, text); // Likewise
     _ = linux.close(fd); // Likewise
+}
+
+/// "/tmp<between>/noface-file-<pid>-<name>" in `buffer`, gone from before.
+fn test_path(buffer: []u8, between: []const u8, name: []const u8) ![:0]u8 {
+    const format = "/tmp{s}/noface-file-{d}-{s}";
+    const fields = .{ between, linux.getpid(), name };
+    const path = try std.fmt.bufPrintSentinel(buffer, format, fields, 0);
+    _ = linux.unlink(path); // Ignored: only there after a run that stopped
+    return path;
+}
+
+test "a save that can't be written leaves the old file as it was" {
+    var buffer: [64]u8 = undefined;
+    const path = try test_path(&buffer, "", "save");
+    defer _ = linux.unlink(path);
+    write_small(path, "old");
+    var tmp_buffer: [64]u8 = undefined;
+    const tmp_path = try std.fmt.bufPrintSentinel(&tmp_buffer, "{s}.tmp", .{path}, 0);
+    try std.testing.expect(!failed(linux.symlink(tmp_path, tmp_path))); // Can't be opened
+    defer _ = linux.unlink(tmp_path);
+    write_parts(path, &.{ "new", " and more" });
+    const data = try map(path);
+    defer unmap(data);
+    try std.testing.expectEqualStrings("old", data);
+}
+
+test "a save to a long path is written, and leaves nothing beside it" {
+    var buffer: [path_bytes_max]u8 = undefined;
+    // Over 400 bytes, while no name in it is over the 255 a folder allows
+    const between: [400]u8 = comptime blk: {
+        var steps: [400]u8 = undefined;
+        for (0..200) |i| steps[i * 2 ..][0..2].* = "/.".*;
+        break :blk steps;
+    };
+    const path = try test_path(&buffer, &between, "long");
+    try std.testing.expect(path.len > 400);
+    defer _ = linux.unlink(path);
+    write_parts(path, &.{ "a", "b" });
+    const data = try map(path);
+    defer unmap(data);
+    try std.testing.expectEqualStrings("ab", data);
+    var tmp_buffer: [path_bytes_max]u8 = undefined;
+    const tmp_path = try std.fmt.bufPrintSentinel(&tmp_buffer, "{s}.tmp", .{path}, 0);
+    try std.testing.expect(!exists(tmp_path));
 }

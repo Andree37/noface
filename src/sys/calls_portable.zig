@@ -256,6 +256,15 @@ pub fn rename(old: [*:0]const u8, new: [*:0]const u8) usize { // usize: Linux's 
     assert(new[0] != 0);
     return linux_result(c.rename(old, new));
 }
+pub fn fsync(fd: i32) usize { // usize: Linux's syscall ABI
+    return linux_result(c.fsync(fd));
+}
+// usize: Linux's syscall ABI
+pub fn symlink(existing: [*:0]const u8, new: [*:0]const u8) usize {
+    assert(existing[0] != 0);
+    assert(new[0] != 0);
+    return linux_result(c.symlink(existing, new));
+}
 pub fn mkdir(path: [*:0]const u8, mode: u32) usize { // usize: Linux's syscall ABI
     assert(path[0] != 0);
     assert(mode <= 0o7777);

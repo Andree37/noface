@@ -10,8 +10,8 @@ const calls = @import("../sys/calls.zig");
 const file = @import("../sys/file.zig");
 const failed = @import("../sys/os.zig").failed;
 
-/// The longest path the library names, as Linux's PATH_MAX.
-pub const path_bytes_max: u32 = 4096;
+/// The longest path the library names: the one limit sys/ writes and maps paths by.
+pub const path_bytes_max = file.path_bytes_max;
 
 /// Writes a file from start to end through `buffer`. A write that fails is remembered,
 /// and `finish` reports it, so the caller checks once, at the end.
@@ -78,12 +78,15 @@ pub const Writer = struct {
         w.used = 0;
     }
 
-    /// Writes what's left and closes the file: its size, or an error if any write
-    /// failed, in which case the file is partial and the caller removes it.
+    /// Writes what's left, onto the drive, and closes the file: its size, or an error if
+    /// any write failed, in which case the file is partial and the caller removes it.
     pub fn finish(w: *Writer) !u64 {
         const fd = w.fd.?; // Finished once
         assert(w.used <= w.buffer.len);
         w.flush();
+        // On the drive before the caller renames it over the old file: renamed first, a
+        // power cut could leave the name over contents never written, and the old gone
+        if (!w.broken and failed(calls.fsync(fd))) w.broken = true;
         // A file that can't be closed may be short
         if (failed(calls.close(fd))) w.broken = true;
         w.fd = null;

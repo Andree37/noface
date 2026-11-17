@@ -68,10 +68,9 @@ fn size_of_format(reader: *std.Io.Reader, length: u32) ?Size {
     assert(length <= data_size_max);
     assert(reader.seek == 0);
     if (length >= png_header_size) {
-        // Ignored: a picture shorter than a PNG's header may still be a JPEG.
         if (reader.peek(png_header_size)) |head| {
             if (std.mem.eql(u8, head[0..8], png_signature)) return png_size(head[0..24]);
-        } else |_| {}
+        } else |_| {} // Ignored: one too short for a PNG's header may still be a JPEG
     }
     if (length < 4) return null;
     const head = reader.peek(4) catch return null;

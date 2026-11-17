@@ -152,7 +152,7 @@ fn unescape(alloc: std.mem.Allocator, text: []const u8) ![]const u8 {
                 try out.append(alloc, byte);
                 index += 2;
                 continue;
-            } else |_| {}
+            } else |_| {} // Ignored: a '%' without two hex digits after it is kept as it is
         }
         try out.append(alloc, text[index]);
     }

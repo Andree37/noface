@@ -210,7 +210,7 @@ fn decoded_into(sink: *scaler.Sink, source: Encoded, parent: std.mem.Allocator) 
         else
             jpeg_decoder.decode_rows(&work, encoded, sink, shrink);
         decoding catch |err| {
-            if (sink.mode != .waiting) sink.abandon();
+            sink.abandon();
             // A picture that can't be decoded is shown as none: nothing worse
             if (err != error.OutOfMemory) return null;
             continue;

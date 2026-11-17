@@ -110,18 +110,25 @@ pub const Sink = struct {
     pixels_max: u64 = decoded.pixels_max,
     source: Size = .{ .width = 0, .height = 0 },
     size: Size = .{ .width = 0, .height = 0 },
-    pixels: []u8 = &.{},
+    pixels: []u8 = &.{}, // Made by `begin`: none while waiting
     mode: Mode = .waiting,
-    /// Each target column's source columns, while rows come in order.
-    columns: []Span = &.{},
-    /// Sums of source grays: per target column (rows in order) or pixel (passes), in
-    /// 32 bits when no box can overflow them.
-    sums_narrow: []u32 = &.{},
-    sums_wide: []u64 = &.{},
     rows_in: u32 = 0,
     rows_out: u32 = 0,
 
-    pub const Mode = enum { waiting, copy, box, scatter, cells, done };
+    /// How rows become the result: copied or scattered at the picture's own size, or
+    /// summed into boxes when it's scaled.
+    pub const Mode = union(enum) {
+        waiting, // For `begin`
+        copy, // Rows in order, as they are
+        scatter, // An interlaced picture's passes, as they are
+        /// Rows in order, scaled: a sum per target column, and its source columns.
+        box: struct { sums: Sums, columns: []Span },
+        cells: Sums, // Passes, scaled: a sum per target pixel
+        done,
+    };
+
+    /// Sums of source grays, in 32 bits when no box can overflow them.
+    pub const Sums = union(enum) { narrow: []u32, wide: []u64 };
 
     /// The size the picture leaves at, now its own is known.
     fn size_for(target: Target, source: Size) Size {
@@ -164,18 +171,21 @@ pub const Sink = struct {
         const box_pixels = divide_up(source.width, size.width) *
             divide_up(source.height, size.height);
         const narrow = box_pixels * 255 <= std.math.maxInt(u32);
-        const sums: u64 = if (order == .rows) size.width else count;
-        if (narrow) {
-            sink.sums_narrow = try work.alloc(u32, @intCast(sums));
-            @memset(sink.sums_narrow, 0);
-        } else {
-            sink.sums_wide = try work.alloc(u64, @intCast(sums));
-            @memset(sink.sums_wide, 0);
+        const sums_count: u64 = if (order == .rows) size.width else count;
+        const sums: Sums = if (narrow)
+            .{ .narrow = try work.alloc(u32, @intCast(sums_count)) }
+        else
+            .{ .wide = try work.alloc(u64, @intCast(sums_count)) };
+        switch (sums) {
+            inline else => |s| @memset(s, 0),
         }
-        sink.mode = if (order == .rows) .box else .cells;
-        if (order == .passes) return;
-        sink.columns = try work.alloc(Span, size.width);
-        for (sink.columns, 0..) |*column, x| column.* = span(@intCast(x), source.width, size.width);
+        if (order == .passes) {
+            sink.mode = .{ .cells = sums };
+            return;
+        }
+        const columns = try work.alloc(Span, size.width);
+        for (columns, 0..) |*column, x| column.* = span(@intCast(x), source.width, size.width);
+        sink.mode = .{ .box = .{ .sums = sums, .columns = columns } };
     }
 
     /// The next row, in order, of at least the picture's width.
@@ -187,28 +197,27 @@ pub const Sink = struct {
         const width = sink.size.width;
         switch (sink.mode) {
             .copy => @memcpy(sink.pixels[y * width ..][0..width], row[0..width]),
-            .box => if (sink.sums_narrow.len > 0) {
-                sink.put_row_box(u32, sink.sums_narrow, row);
-            } else {
-                sink.put_row_box(u64, sink.sums_wide, row);
+            .box => |box| switch (box.sums) {
+                inline else => |sums| sink.put_row_box(sums, box.columns, row),
             },
             .waiting, .scatter, .cells, .done => unreachable, // Rows come in order
         }
     }
 
     /// Adds a row to each target column's sum, and writes out every target row it ends.
-    fn put_row_box(sink: *Sink, comptime Sum: type, sums: []Sum, row: []const u8) void {
+    fn put_row_box(sink: *Sink, sums: anytype, columns: []const Span, row: []const u8) void {
+        const Sum = @typeInfo(@TypeOf(sums)).pointer.child;
         assert(sink.mode == .box);
         assert(sums.len == sink.size.width);
         const y = sink.rows_in - 1;
-        add_row(Sum, sums, sink.columns, row);
+        add_row(Sum, sums, columns, row);
         const height = sink.size.height;
         // Target rows end in order; growing, several end at the same source row
         while (sink.rows_out < height) {
             const rows = span(sink.rows_out, sink.source.height, height);
             if (rows.to != y + 1) break;
             const line = sink.pixels[sink.rows_out * sink.size.width ..][0..sink.size.width];
-            emit_row(Sum, line, sums, sink.columns, rows.to - rows.from);
+            emit_row(Sum, line, sums, columns, rows.to - rows.from);
             sink.rows_out += 1;
             const next_from = if (sink.rows_out < height)
                 span(sink.rows_out, sink.source.height, height).from
@@ -230,10 +239,8 @@ pub const Sink = struct {
                 const line = sink.pixels[y * sink.size.width ..][0..sink.size.width];
                 for (values, 0..) |value, index| line[x_start + index * x_step] = value;
             },
-            .cells => if (sink.sums_narrow.len > 0) {
-                sink.put_cells(u32, sink.sums_narrow, y, x_start, x_step, values);
-            } else {
-                sink.put_cells(u64, sink.sums_wide, y, x_start, x_step, values);
+            .cells => |sums| switch (sums) {
+                inline else => |s| sink.put_cells(s, y, x_start, x_step, values),
             },
             .waiting, .copy, .box, .done => unreachable, // Passes come as passes
         }
@@ -241,8 +248,7 @@ pub const Sink = struct {
 
     fn put_cells(
         sink: *Sink,
-        comptime Sum: type,
-        sums: []Sum,
+        sums: anytype,
         y: u32,
         x_start: u32,
         x_step: u32,
@@ -271,10 +277,8 @@ pub const Sink = struct {
                 assert(sink.rows_in == sink.source.height);
                 assert(sink.rows_out == sink.size.height);
             },
-            .cells => if (sink.sums_narrow.len > 0) {
-                sink.finish_cells(u32, sink.sums_narrow);
-            } else {
-                sink.finish_cells(u64, sink.sums_wide);
+            .cells => |sums| switch (sums) {
+                inline else => |s| sink.finish_cells(s),
             },
             .scatter => {},
             .waiting, .done => unreachable, // Begun, and finished once
@@ -286,7 +290,8 @@ pub const Sink = struct {
         return pixels;
     }
 
-    fn finish_cells(sink: *Sink, comptime Sum: type, sums: []const Sum) void {
+    fn finish_cells(sink: *Sink, sums: anytype) void {
+        const Sum = @typeInfo(@TypeOf(sums)).pointer.child;
         assert(sink.mode == .cells);
         assert(sums.len == sink.pixels.len);
         const width = sink.size.width;
@@ -300,10 +305,11 @@ pub const Sink = struct {
         }
     }
 
-    /// Frees the result of a picture that won't finish, ready to `begin` again.
+    /// Frees the result of a picture that won't finish, if `begin` made one, ready to
+    /// `begin` again. The sums are the work allocator's.
     pub fn abandon(sink: *Sink) void {
         assert(sink.mode != .done);
-        if (sink.pixels.len > 0) sink.out.free(sink.pixels);
+        sink.out.free(sink.pixels); // Empty while waiting: freeing none frees nothing
         sink.* = .{ .target = sink.target, .out = sink.out, .pixels_max = sink.pixels_max };
         assert(sink.mode == .waiting);
     }
@@ -415,7 +421,7 @@ test "a box too large for 32-bit sums is summed in 64" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     try sink.begin(arena.allocator(), .{ .width = 5000, .height = 4000 }, .rows);
-    try std.testing.expectEqual(@as(usize, 1), sink.sums_wide.len);
+    try std.testing.expectEqual(@as(usize, 1), sink.mode.box.sums.wide.len);
     const white: [5000]u8 = @splat(255);
     for (0..4000) |_| sink.put_row(&white);
     const got = sink.finish();
@@ -424,7 +430,7 @@ test "a box too large for 32-bit sums is summed in 64" {
     // A small box sums in 32 bits
     var small = Sink{ .target = .{ .size = one }, .out = std.testing.allocator };
     try small.begin(arena.allocator(), .{ .width = 100, .height = 100 }, .rows);
-    try std.testing.expectEqual(@as(usize, 1), small.sums_narrow.len);
+    try std.testing.expectEqual(@as(usize, 1), small.mode.box.sums.narrow.len);
     small.abandon();
     // A result past the most pixels allowed has no room
     var many = Sink{ .target = .{ .divided = 1 }, .out = std.testing.allocator, .pixels_max = 10 };

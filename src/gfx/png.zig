@@ -182,7 +182,7 @@ pub fn decode(alloc: std.mem.Allocator, data: []const u8) Error!Gray {
     defer work.reset();
     var sink = scaler.Sink{ .target = .{ .divided = 1 }, .out = alloc };
     decode_rows(work.allocator(), data, &sink) catch |err| {
-        if (sink.mode != .waiting) sink.abandon();
+        sink.abandon();
         return err;
     };
     const pixels = sink.finish();
@@ -224,8 +224,9 @@ pub fn decode_rows(work: std.mem.Allocator, data: []const u8, sink: *scaler.Sink
         }
         if (!header.interlaced) break;
     }
-    assert(sink.mode == .copy or sink.mode == .box or sink.mode == .scatter or
-        sink.mode == .cells);
+    // Begun, and not yet finished
+    assert(sink.mode != .waiting);
+    assert(sink.mode != .done);
 }
 
 /// The inflater reads its input this many bytes at a time, copied out of the chunks.

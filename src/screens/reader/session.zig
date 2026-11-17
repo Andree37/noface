@@ -270,6 +270,16 @@ pub const Session = struct {
         if (s.shown_us == null) s.shown_us = now_us();
     }
 
+    /// How far into the book the reader's page is, in percent, or null while a first
+    /// open is still laid out and the page count isn't known.
+    pub fn percent(s: *const Session) ?u32 {
+        assert(s.current < s.pages.len);
+        if (s.progress != null) return null;
+        const through: u32 = @intCast((@as(u64, s.current) + 1) * 100 / s.pages.len);
+        assert(through <= 100);
+        return through;
+    }
+
     /// Where a page ends: the next page's start, or null on the last page.
     pub fn page_end(s: *const Session, index: u32) ?book_model.Pos {
         assert(index < s.pages.len);
@@ -518,17 +528,22 @@ fn is_before(first: book_model.Pos, second: book_model.Pos) bool {
     return first.byte < second.byte;
 }
 
-pub fn save_progress(entry: *catalog.Entry, path: [*:0]const u8, s: *Session) void {
+/// Saves the reader's place, `s.anchor`, which stays what they're at even while the
+/// pages are being laid out again or failed to be. `percent` is how far in they are,
+/// or null to keep the one saved: the pages don't say (see `Session.percent`).
+pub fn save_progress(
+    entry: *catalog.Entry,
+    path: [*:0]const u8,
+    s: *Session,
+    percent_read: ?u32,
+) void {
     assert(s.current < s.pages.len);
+    assert(s.anchor.para < s.paragraphs.len);
     s.pause_clock(); // The reader's loop starts it again
     const seconds = s.seconds_read_total();
-    const pos = s.pages[s.current];
-    // While a first open is laid out, the page count isn't known: keep the last percent
-    var percent: u32 = entry.percent;
-    if (s.progress == null) {
-        percent = @intCast((s.current + 1) * 100 / s.pages.len);
-        assert(percent <= 100);
-    }
+    const pos = s.anchor;
+    if (percent_read) |p| assert(p <= 100);
+    const percent = percent_read orelse entry.percent;
     const now = unix_time();
     // Changed in place, so anything else kept with the place is kept too
     var saved = state.load(path);

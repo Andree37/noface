@@ -481,7 +481,7 @@ pub const Reader = struct {
     fn show_first(r: *Reader) !void {
         assert(r.start < r.s.pages.len);
         try r.s.show(r.start, .jump, null, true);
-        sess.save_progress(r.entry, r.state_path, r.s);
+        sess.save_progress(r.entry, r.state_path, r.s, r.s.percent());
         assert(r.s.current == r.start);
         r.reading_started = true;
         r.a.wifi_hands_off = false;
@@ -685,7 +685,13 @@ pub const Reader = struct {
     fn finish(r: *Reader, outcome: Outcome) screen.Step(Outcome) {
         assert(r.data.len > 0); // Its file mapped until `release` lets go of it
         if (r.reading_started) {
-            sess.save_progress(r.entry, r.state_path, r.s);
+            const percent: ?u32 = switch (outcome) {
+                .library, .quit => r.s.percent(),
+                // Its pages may be gone (a layout after a settings change failed partway),
+                // so how far in it is stays as last saved
+                .failed => null,
+            };
+            sess.save_progress(r.entry, r.state_path, r.s, percent);
             wifi_saver.restore(); // Leaving the book, Wi-Fi comes back
         }
         r.release();
@@ -744,7 +750,7 @@ pub const Reader = struct {
 
     fn save(r: *Reader) void {
         assert(r.s.current < r.s.pages.len);
-        sess.save_progress(r.entry, r.state_path, r.s);
+        sess.save_progress(r.entry, r.state_path, r.s, r.s.percent());
         r.since_save = 0;
         assert(r.s.shown_us == null); // Saving stops the reading clock; the loop starts it
     }

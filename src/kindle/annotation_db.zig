@@ -14,6 +14,12 @@ const Note = @import("../model/highlights.zig").Note;
 /// Where stock keeps the database: a folder per account, so the shell finds it.
 const database_glob = "/mnt/us/system/ksdk/.annotations/*/ksdk_annotation_v1.db";
 
+/// Starts a command with the one database it works on in `$db`: the one changed last,
+/// the current account's, where an earlier account's folder can be there too and the
+/// glob would name two. With none there the command stops here and prints nothing.
+const find_database = "db=\"$(ls -t " ++ database_glob ++ " 2>/dev/null | head -n 1)\" && " ++
+    "[ -n \"$db\" ] && ";
+
 /// A record's ID and where it starts and ends.
 const record_fields = "annotation_id, " ++
     "json_extract(serialized_payload, '$.start_position.shortPosition'), " ++
@@ -21,12 +27,22 @@ const record_fields = "annotation_id, " ++
 
 /// A book's records: those Amazon sent that aren't being changed here, and those
 /// queued here that aren't deletes.
-const read_format = "sqlite3 -separator '|' \"file:$(ls " ++ database_glob ++ ")?mode=ro\" " ++
+const read_format = find_database ++ "sqlite3 -separator '|' \"file:$db?mode=ro\" " ++
     "\"select {s} from server_view where dataset={d} and {s} and annotation_id not in " ++
     "(select annotation_id from local_edit where {s}) " ++
     "union select {s} from local_edit where dataset={d} and action != 3 and {s}\"";
+/// Room for `read_format` filled in: two record fields, four book matches (each fits
+/// `read_lines`'s buffer for it), and two dataset numbers.
+const read_command_bytes_max = 1536;
+const book_match_bytes_max = 128;
+
+/// Runs the SQL in `paths.annotation_sql` on the database, saying "ok" if it all took.
+const write_command = find_database ++ "sqlite3 -bail -cmd '.timeout 3000' \"$db\" < " ++
+    paths.annotation_sql ++ " && echo ok";
 
 comptime {
+    assert(read_format.len + 2 * record_fields.len + 4 * book_match_bytes_max + 2 * 10 <
+        read_command_bytes_max);
     // The SQL file's path goes into a shell command unquoted.
     assert(std.mem.indexOfAny(u8, paths.annotation_sql, " '\"$;|&") == null);
     assert(paths.annotation_sql[0] == '/');
@@ -78,9 +94,9 @@ pub fn parse_notes(alloc: std.mem.Allocator, lines: []const u8) ![]const Note {
 pub fn read_lines(key: []const u8, kind: annotations.Kind, out: []u8) []const u8 {
     assert(out.len > 0);
     if (!safe.safe_id(key)) return "";
-    var match_buf: [128]u8 = undefined;
+    var match_buf: [book_match_bytes_max]u8 = undefined;
     const book = annotations.book_match(&match_buf, key) catch return "";
-    var buf: [1000]u8 = undefined;
+    var buf: [read_command_bytes_max]u8 = undefined;
     const dataset = kind.dataset();
     const command = std.fmt.bufPrintSentinel(&buf, read_format, .{
         record_fields, dataset, book, book, record_fields, dataset, book,
@@ -116,13 +132,24 @@ pub fn run_annotation_sql(sql: []const u8) bool {
     // The statement is written or not, which `written` says; the close adds nothing.
     _ = linux.close(fd);
     if (failed(written) or written != sql.len) return false;
-    const command = "sqlite3 -bail -cmd '.timeout 3000' " ++ database_glob ++ " < " ++ path ++
-        " && echo ok";
-    const argv = [_:null]?[*:0]const u8{ "/bin/sh", "-c", command };
+    const argv = [_:null]?[*:0]const u8{ "/bin/sh", "-c", write_command };
     var out: [8]u8 = undefined;
     const output_size = process.run(&argv, &out) orelse return false;
     assert(output_size <= out.len);
     return std.mem.startsWith(u8, out[0..output_size], "ok");
+}
+
+test "reads and writes each work on one database, the newest, and none when there's none" {
+    for ([_][]const u8{ read_format, write_command }) |command| {
+        try std.testing.expect(std.mem.startsWith(u8, command, find_database));
+        // The glob is expanded once, by `ls`, never handed to sqlite3 as many files
+        try std.testing.expectEqual(1, std.mem.count(u8, command, database_glob));
+        try std.testing.expectEqual(1, std.mem.count(u8, command, "$(ls -t "));
+        try std.testing.expect(std.mem.indexOf(u8, command, "| head -n 1)") != null);
+        try std.testing.expect(std.mem.indexOf(u8, command, "[ -n \"$db\" ] && sqlite3") != null);
+    }
+    try std.testing.expect(std.mem.indexOf(u8, read_format, "\"file:$db?mode=ro\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, write_command, "'.timeout 3000' \"$db\" <") != null);
 }
 
 test "a cut-off highlight list loses only its partial line" {

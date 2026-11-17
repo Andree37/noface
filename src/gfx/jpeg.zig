@@ -29,8 +29,6 @@ const fast_none = 255;
 const block_length = 64;
 const components_max = 4;
 const tables_max = 4;
-/// What `marker` holds when no marker is waiting.
-const marker_none = 0xff;
 /// The most samples a picture may have: stb_image refused more than fit a C int.
 const samples_max = std.math.maxInt(i32);
 
@@ -132,7 +130,8 @@ const Decoder = struct {
     component: [components_max]Component = @splat(.{}),
     code_buffer: u32 = 0,
     code_bits: i32 = 0,
-    marker: u8 = marker_none,
+    /// A marker the bit reader stopped at, waiting to be read: never 0xff, a fill byte.
+    marker: ?u8 = null,
     nomore: bool = false,
     progressive: bool = false,
     spec_start: u8 = 0,
@@ -141,8 +140,8 @@ const Decoder = struct {
     succ_low: u8 = 0,
     eob_run: i32 = 0,
     jfif: bool = false,
-    /// The Adobe APP14 colour transform: -1 when there's none.
-    app14: i32 = -1,
+    /// The Adobe APP14 colour transform, when the file has one.
+    app14: ?u8 = null,
     /// How many components are named R, G and B.
     rgb_names: u8 = 0,
     scan_count: u8 = 0,
@@ -329,17 +328,16 @@ fn predict_kept(d: *Decoder) void {
 
 // Reading the file's markers.
 
-/// The next marker: one the bit reader found, or the next in the file.
-fn get_marker(d: *Decoder) u8 {
+/// The next marker: one the bit reader found, or the next in the file. Null where
+/// the file has none.
+fn get_marker(d: *Decoder) ?u8 {
     assert(d.at <= d.source.len);
-    if (d.marker != marker_none) {
-        const waiting = d.marker;
-        d.marker = marker_none;
+    if (d.marker) |waiting| {
+        d.marker = null;
         return waiting;
     }
-    assert(d.marker == marker_none);
     var byte = d.get8();
-    if (byte != 0xff) return marker_none;
+    if (byte != 0xff) return null;
     // Fill bytes before a marker: bounded by the file, past whose end `get8` gives 0
     while (byte == 0xff) byte = d.get8();
     return byte;
@@ -358,21 +356,22 @@ comptime {
     assert(marker_start > marker_restart_last);
 }
 
-fn is_restart(marker: u8) bool {
-    return marker >= marker_restart_first and marker <= marker_restart_last;
+fn is_restart(marker: ?u8) bool {
+    const known = marker orelse return false;
+    return known >= marker_restart_first and known <= marker_restart_last;
 }
 
 /// Baseline, extended and progressive frames: the Huffman-coded 8-bit ones.
-fn is_frame(marker: u8) bool {
+fn is_frame(marker: ?u8) bool {
     return marker == 0xc0 or marker == 0xc1 or marker == marker_frame_progressive;
 }
 
-/// Reads a marker's segment. False for one stb_image couldn't read.
-fn process_marker(d: *Decoder, marker: u8) bool {
+/// Reads a marker's segment. False for one stb_image couldn't read, or none at all.
+fn process_marker(d: *Decoder, marker: ?u8) bool {
     assert(d.at <= d.source.len);
     assert(d.channels <= components_max);
-    switch (marker) {
-        marker_none => return false,
+    const known = marker orelse return false;
+    switch (known) {
         0xdd => {
             if (d.get16() != 4) return false;
             // 0 is the format's "no restarts"
@@ -384,7 +383,7 @@ fn process_marker(d: *Decoder, marker: u8) bool {
         0xc4 => return read_huffman(d),
         else => {},
     }
-    if ((marker >= 0xe0 and marker <= 0xef) or marker == 0xfe) return read_application(d, marker);
+    if ((known >= 0xe0 and known <= 0xef) or known == 0xfe) return read_application(d, known);
     return false;
 }
 
@@ -665,7 +664,7 @@ fn read_header(d: *Decoder) Error!void {
         if (!process_marker(d, marker)) return error.BadJpeg;
         marker = get_marker(d);
         // Some files pad between segments
-        while (marker == marker_none) {
+        while (marker == null) {
             if (d.at_end()) return error.BadJpeg;
             marker = get_marker(d);
         }
@@ -676,19 +675,19 @@ fn read_header(d: *Decoder) Error!void {
     assert(d.channels >= 1);
 }
 
-/// Skips junk after a scan, up to what looks like a marker.
-fn skip_junk_at_end(d: *Decoder) u8 {
+/// Skips junk after a scan, up to what looks like a marker: null when none comes.
+fn skip_junk_at_end(d: *Decoder) ?u8 {
     assert(d.at <= d.source.len);
     while (!d.at_end()) {
         var byte = d.get8();
         while (byte == 0xff) {
-            if (d.at_end()) return marker_none;
+            if (d.at_end()) return null;
             byte = d.get8();
             if (byte != 0x00 and byte != 0xff) return byte;
         }
     }
     assert(d.at_end());
-    return marker_none;
+    return null;
 }
 
 /// Reads the whole file: its header, then scan after scan, into samples.
@@ -712,7 +711,7 @@ fn decode_image(d: *Decoder) RetryError!void {
             }
             try decode_scan(d);
             d.scans_decoded += 1;
-            if (d.marker == marker_none) d.marker = skip_junk_at_end(d);
+            if (d.marker == null) d.marker = skip_junk_at_end(d);
             marker = get_marker(d);
             if (is_restart(marker)) marker = get_marker(d);
         } else if (marker == marker_lines) {
@@ -744,7 +743,7 @@ fn reset(d: *Decoder) void {
     d.code_buffer = 0;
     d.nomore = false;
     for (&d.component) |*component| component.dc_prediction = 0;
-    d.marker = marker_none;
+    d.marker = null;
     d.todo = d.restart_interval;
     d.eob_run = 0;
 }
@@ -947,7 +946,7 @@ fn next_restart(d: *Decoder, last: bool) Error!void {
         return error.BadJpeg;
     }
     reset(d);
-    assert(d.marker == marker_none);
+    assert(d.marker == null);
 }
 
 /// One component on its own, block by block in raster order.

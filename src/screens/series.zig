@@ -13,6 +13,7 @@ const draw_ui = @import("../ui/draw.zig");
 const icons = @import("../ui/icons.zig");
 const style = @import("../ui/style.zig");
 const files = @import("../library/files.zig");
+const input_mod = @import("../kindle/input.zig");
 const app = @import("../app.zig");
 const calls = @import("../sys/calls.zig");
 const os = @import("../sys/os.zig");
@@ -43,6 +44,9 @@ pub fn path(buffer: []u8, state_dir: []const u8) ![:0]u8 {
 
 const Choices = struct {
     pub const Result = u32;
+    /// A row takes its tap as it lands, however long it's held, as on any sheet: not
+    /// the library's way, which it would keep from what it opened over.
+    pub const touches = input_mod.Input.Modes.sheet;
     a: *app.App,
     heading: []const u8,
     about: []const u8, // The book it's for, under the heading
@@ -82,6 +86,8 @@ const Choices = struct {
 
 const NameEntry = struct {
     pub const Result = []const u8; // As typed, kept in `name`
+    /// A key takes its tap as it lands, however long it's held (see `Choices`).
+    pub const touches = input_mod.Input.Modes.sheet;
     a: *app.App,
     name: search.Query = .{},
 

@@ -142,6 +142,15 @@ pub const Screen = struct {
     next_marker: u32 = marker_first,
     updates: u32 = 0, // Updates sent: a scenario test checks what was redrawn
 
+    /// Lets go of the display opened by `open`: for a program that only flashes it.
+    pub fn close(s: *Screen) void {
+        const fd = s.fd.?; // Opened, not made in memory
+        assert(s.map.len > 0);
+        _ = linux.munmap(s.map.ptr, s.map.len); // Ignored: mapped whole by `open`
+        _ = linux.close(fd); // Ignored: nothing was written through it
+        s.fd = null;
+    }
+
     /// A screen in memory only, for scenario tests: updates are counted, not shown.
     pub fn fake(alloc: std.mem.Allocator, width: u32, height: u32) !Screen {
         assert(width > 0);

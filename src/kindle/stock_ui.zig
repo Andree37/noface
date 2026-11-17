@@ -11,8 +11,14 @@ const linux = std.os.linux;
 const process = @import("../sys/process.zig");
 const service = @import("../sys/service.zig");
 const wifi_saver = @import("wifi_saver.zig");
+const hwtcon = @import("hwtcon.zig");
+const os = @import("../sys/os.zig");
 
 const lipc_set: [*:0]const u8 = "/usr/bin/lipc-set-prop";
+const xrefresh: [*:0]const u8 = "/usr/bin/xrefresh";
+/// How long the stock screens take to draw themselves again once asked: about a second
+/// on a Paperwhite 12, with room to spare.
+const repaint_ms = 1500;
 
 /// The watchers noface starts, of powerd and the volume manager, by their command lines
 /// with the zero bytes between arguments read as spaces. lipc-wait-event splits its
@@ -39,8 +45,8 @@ pub fn pause() void {
     _ = service.signal_named("awesome", .STOP);
 }
 
-/// Puts the stock screens back, ends any watcher noface left behind, and turns the
-/// radio back on if noface turned it off. Runs once, however it's reached.
+/// Puts the stock screens back, drawn whole, ends any watcher noface left behind, and
+/// turns the radio back on if noface turned it off. Runs once, however it's reached.
 pub fn restore() void {
     if (restoring) return;
     restoring = true;
@@ -51,9 +57,34 @@ pub fn restore() void {
     const stopped = service.each_named("lipc-wait-event", @as(u8, 0), stop_watcher);
     if (stopped > 0) std.debug.print("restore: ended {d} watcher(s)\n", .{stopped});
     wifi_saver.restore(); // In case noface couldn't turn it back on itself
+    repaint();
     paused = false;
     assert(restoring);
     assert(!paused);
+}
+
+/// Has the stock screens draw themselves whole, then flashes the panel. Resumed, they
+/// draw only what they think changed, over noface's last picture (all of it, after a
+/// crash): the screen shows parts of both. `xrefresh` covers the screen and uncovers
+/// it, so every window draws again, and the flash leaves no trace of noface's.
+fn repaint() void {
+    assert(restoring);
+    const argv = [_:null]?[*:0]const u8{ xrefresh, "-display", ":0" };
+    var out: [64]u8 = undefined;
+    if (process.run(&argv, &out) == null) std.debug.print("restore: xrefresh no answer\n", .{});
+    os.sleep_ms(repaint_ms);
+    var screen = hwtcon.Screen.open() catch |err| {
+        std.debug.print("restore: no screen to flash ({s})\n", .{@errorName(err)});
+        return;
+    };
+    defer screen.close();
+    const marker = screen.show(.flash) catch |err| {
+        std.debug.print("restore: flash not sent ({s})\n", .{@errorName(err)});
+        return;
+    };
+    screen.wait_complete(marker) catch |err| {
+        std.debug.print("restore: flash not finished ({s})\n", .{@errorName(err)});
+    };
 }
 
 fn stop_watcher(_: u8, pid: i32, cmdline: []const u8) void {

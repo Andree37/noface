@@ -37,20 +37,26 @@ pub const page_books_max: u32 = plain_rows * columns;
 const hero_title_lines = 3;
 const hero_title_step = 66;
 const hero_dots_left = 1100; // The hero's dots take taps right of here, near its top
-const hero_dots_height = 90;
+const hero_dots_bottom = hero_top + 90; // From the status strip down to here
 const message_baseline = 1500; // A notice, between the grid and the pager
 const menu_right = 220; // The menu takes taps left of here, in the status strip
 const battery_reach = 300; // And the battery this far from the right edge
 
-const Tab = struct { filter: catalog.Filter, label: []const u8, left: i32, right: i32 };
-// Inside one rounded button that starts with a funnel; `left` and `right` bound the taps,
-// each at least a fingertip (about 100 px) wide.
-const tabs = [_]Tab{
-    .{ .filter = .all, .label = "All", .left = 156, .right = 260 },
-    .{ .filter = .unread, .label = "Unread", .left = 260, .right = 432 },
-    .{ .filter = .read, .label = "Read", .left = 432, .right = 564 },
+/// A filter's tab: `left` and `right` bound its taps, and its label starts at `label_left`.
+const Tab = struct {
+    filter: catalog.Filter,
+    label: []const u8,
+    left: i32,
+    label_left: i32,
+    right: i32,
 };
-const tab_pad = 16; // From a tab's left edge to its label
+// Inside one rounded button that starts with a funnel, each at least a fingertip (about
+// 100 px) wide. The first takes the funnel's taps too, as it's drawn as part of it.
+const tabs = [_]Tab{
+    .{ .filter = .all, .label = "All", .left = margin, .label_left = 172, .right = 260 },
+    .{ .filter = .unread, .label = "Unread", .left = 260, .label_left = 276, .right = 432 },
+    .{ .filter = .read, .label = "Read", .left = 432, .label_left = 448, .right = 564 },
+};
 
 // Filter, search and sort buttons fill the tabs row: a fingertip tall
 const button_top = 0;
@@ -59,6 +65,17 @@ const icon_inset = 46; // From a button's rounded end to its icon's centre
 
 const footer = draw.bottom_pager;
 const sort_left = 860;
+
+// A cover set in type, for a book with no picture: its title from the top down, a short
+// rule under it, and the author along the bottom.
+const type_title_top = 72; // From the cover's top to the title's first baseline
+const type_title_step = 44;
+const type_rule_height = 3;
+const type_author_above = 34; // From the cover's bottom up to the author's baseline
+/// How high the author's letters reach above their baseline, at most: the size of the
+/// caption font it's set in (26 px, setup.zig), which none of its letters outgrows.
+const type_author_reach = 26;
+const type_rule_gap = 8; // At least this between the rule and the author's letters
 
 /// The moment a frame is drawn for, read once so every part of it agrees.
 pub const Moment = struct { unix: u64, utc_offset: i64 };
@@ -109,10 +126,37 @@ comptime {
     assert(tabs[tabs.len - 1].right < search_cx - search_reach);
     assert(search_cx + search_reach < stats_cx - search_reach);
     assert(stats_cx + search_reach < sort_left);
-    // The hero's dots are drawn where they take taps
+    // The hero's dots are drawn where they take taps, a fingertip tall
     assert(style.screen_width - margin - 8 >= hero_dots_left);
-    assert(hero_top + 24 < hero_top + hero_dots_height);
+    assert(hero_top + 24 < hero_dots_bottom);
+    assert(hero_dots_bottom - status_height >= 100);
     assert(margin < menu_right);
+    // The tabs row takes taps a fingertip tall and more, across the gaps around it
+    assert(hero_grid_top - hero_bottom >= 100);
+    assert(plain_grid_top - status_height >= 100);
+    // The filter's taps cover its whole button, funnel and all, each label inside its tab
+    assert(tabs[0].left == margin);
+    assert(margin + icon_inset < tabs[0].label_left);
+    for (tabs) |t| assert(t.left < t.label_left);
+    for (tabs) |t| assert(t.label_left < t.right);
+    // On a cover set in type, the title's last line, its rule and the author never
+    // meet, on the grid's covers and the hero's
+    for ([_]u32{ cover.height, cover.hero_height }) |h| {
+        const lines = type_title_lines(h);
+        assert(lines >= 3);
+        const rule_bottom = type_title_top + lines * type_title_step + type_rule_height;
+        assert(rule_bottom + type_rule_gap <= h - type_author_above - type_author_reach);
+    }
+}
+
+/// The most lines a cover `h` tall set in type has room for its title in, above its
+/// rule and the author.
+fn type_title_lines(h: u32) u32 {
+    const below = type_rule_height + type_rule_gap + type_author_reach + type_author_above;
+    assert(h > type_title_top + below);
+    const lines = (h - type_title_top - below) / type_title_step;
+    assert(lines > 0);
+    return lines;
 }
 
 fn grid_size(hero: bool) u32 {
@@ -149,6 +193,16 @@ pub fn page_count(books: u32) u32 {
     return result;
 }
 
+/// Where the tabs row takes taps: from what's over it (the hero's place, or the status
+/// strip) down to the grid, more than the pills drawn, so a tap just off one still counts.
+fn tabs_band(hero: bool) struct { top: i32, bottom: i32 } {
+    const top: i32 = if (hero) hero_bottom else status_height;
+    const bottom = grid_top(hero);
+    assert(top <= tabs_top(hero));
+    assert(tabs_top(hero) + tabs_height <= bottom);
+    return .{ .top = top, .bottom = bottom };
+}
+
 fn tabs_top(hero: bool) i32 {
     const result: i32 = if (hero) hero_tabs_top else plain_tabs_top;
     assert(result + tabs_height <= grid_top(hero));
@@ -171,14 +225,15 @@ pub fn hit(x: i32, y: i32, page: u32, books: u32, searching: bool) Hit {
         if (x >= style.screen_width - battery_reach) return .battery;
         return .none;
     }
-    if (hero and y >= hero_top and y < hero_bottom) {
+    // The hero's place takes taps from the status strip down
+    if (hero and y < hero_bottom) {
         if (searching) return .clear_search;
-        if (x >= hero_dots_left and y < hero_top + hero_dots_height) return .hero_dots;
+        if (x >= hero_dots_left and y < hero_dots_bottom) return .hero_dots;
         return .hero;
     }
 
-    const tabs_y = tabs_top(hero);
-    if (y >= tabs_y and y < tabs_y + tabs_height) return hit_tabs(x);
+    const band = tabs_band(hero);
+    if (y >= band.top and y < band.bottom) return hit_tabs(x);
     if (footer.hit(x, y)) |h| return switch (h) {
         .prev => .prev,
         .next => .next,
@@ -316,10 +371,15 @@ fn type_cover(
     page.fill_rect(x + w - 2, y, 2, h, 0x00);
     const left: f32 = @floatFromInt(x + 28);
     const avail: f32 = @floatFromInt(w - 56);
-    const top: i32 = @intCast(y + 72);
-    const used = try draw.wrapped(fonts.cover, page, left, top, 44, e.title, avail, 5);
-    page.fill_rect(x + 28, y + 72 + used * 44, 48, 3, 0x00);
-    try draw.clipped(fonts.caption, page, left, @intCast(y + h - 34), e.author, avail);
+    const top: i32 = @intCast(y + type_title_top);
+    const step = type_title_step;
+    const lines = type_title_lines(h);
+    const used = try draw.wrapped(fonts.cover, page, left, top, step, e.title, avail, lines);
+    assert(used <= lines);
+    const rule_y = y + type_title_top + used * type_title_step;
+    page.fill_rect(x + 28, rule_y, 48, type_rule_height, 0x00);
+    const author_y: i32 = @intCast(y + h - type_author_above);
+    try draw.clipped(fonts.caption, page, left, author_y, e.author, avail);
 }
 
 fn draw_cover(
@@ -546,11 +606,11 @@ fn draw_tabs(
     button_outline(page, margin, @floatFromInt(tabs[tabs.len - 1].right), top);
     icons.funnel(page, margin + icon_inset, cy);
     for (tabs) |t| {
-        const left: u32 = @intCast(t.left + tab_pad);
+        const left: u32 = @intCast(t.label_left);
         const active = t.filter == filter;
         const x: f32 = @floatFromInt(left);
         try draw.choice(fonts, page, x, .left, y, t.label, active, @intCast(top + 62));
-        const width: u32 = @intCast(t.right - t.left - tab_pad - 4);
+        const width: u32 = @intCast(t.right - t.label_left - 4);
         if (!active) page.tint(left, @intCast(top + 22), width, 44, style.faded);
     }
     try draw_tabs_sort(fonts, page, top, order);
@@ -681,4 +741,30 @@ test "a book's title is part of the book, and the hero keeps its dots" {
     try std.testing.expectEqual(Hit{ .book = 0 }, hit(300, 975, 0, 79, false));
     try std.testing.expectEqual(Hit{ .book = 0 }, hit(120, 975, 0, 79, false));
     try std.testing.expectEqual(Hit.hero_dots, hit(1180, 130, 0, 79, false));
+    // A fingertip tall: from just under the status strip to well under the dots
+    try std.testing.expectEqual(Hit.hero_dots, hit(1180, status_height, 0, 79, false));
+    try std.testing.expectEqual(Hit.hero_dots, hit(1180, hero_dots_bottom - 1, 0, 79, false));
+    try std.testing.expectEqual(Hit.hero, hit(1180, hero_dots_bottom, 0, 79, false));
+}
+
+test "the tabs row takes taps just off its pills, and the filter's from its funnel" {
+    // Page one: 10 px above and below the pills drawn
+    const all: Hit = .{ .tab = .all };
+    try std.testing.expectEqual(all, hit(200, hero_tabs_top - 10, 0, 79, false));
+    try std.testing.expectEqual(all, hit(200, hero_tabs_top + tabs_height + 10, 0, 79, false));
+    try std.testing.expectEqual(Hit.sort, hit(1100, hero_grid_top - 1, 0, 79, false));
+    try std.testing.expectEqual(Hit{ .book = 0 }, hit(100, hero_grid_top, 0, 79, false));
+    // Later pages: from the status strip, just above the pills, to 10 px below them
+    try std.testing.expectEqual(all, hit(200, status_height, 1, 79, false));
+    try std.testing.expectEqual(all, hit(200, plain_tabs_top + tabs_height + 10, 1, 79, false));
+    try std.testing.expectEqual(Hit.menu, hit(200, status_height - 1, 1, 79, false));
+    // The funnel, at the button's rounded end, is part of the first tab
+    try std.testing.expectEqual(all, hit(margin + icon_inset, 558, 0, 79, false));
+    try std.testing.expectEqual(all, hit(margin, 558, 0, 79, false));
+    try std.testing.expectEqual(Hit.none, hit(margin - 1, 558, 0, 79, false));
+}
+
+test "a cover set in type has room for its title's lines above the author" {
+    try std.testing.expectEqual(@as(u32, 4), type_title_lines(cover.height));
+    try std.testing.expectEqual(@as(u32, 4), type_title_lines(cover.hero_height));
 }

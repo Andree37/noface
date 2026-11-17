@@ -143,15 +143,24 @@ pub fn parse(
                 const first = if (para == from.para) from.byte else 0;
                 const para_len: u32 = @intCast(paragraphs[para].text.len);
                 const last = if (para == to.para) to.byte else para_len;
-                const mark: book_model.Mark = .{ .para = para, .start = first, .end = last };
+                const mark = piece(para, first, last) orelse continue;
                 try out.append(alloc, .{ .mark = mark, .id = try alloc.dupe(u8, id) });
             }
             continue;
         }
-        const mark: book_model.Mark = .{ .para = from.para, .start = from.byte, .end = to.byte };
+        const mark = piece(from.para, from.byte, to.byte) orelse continue;
         try out.append(alloc, .{ .mark = mark, .id = try alloc.dupe(u8, id) });
     }
     return out.toOwnedSlice(alloc);
+}
+
+/// A highlight's mark in paragraph `para`, from byte `start` to `end`, or null where it
+/// covers no letter: the part in the last paragraph of one that ends where that
+/// paragraph starts, an empty paragraph it crosses, or a Kindle's note whose positions
+/// end where (or before) they start. Every mark covers a letter at least.
+fn piece(para: u32, start: u32, end: u32) ?book_model.Mark {
+    if (end <= start) return null;
+    return .{ .para = para, .start = start, .end = end };
 }
 
 fn overlaps(m: book_model.Mark, w: book_model.Word) bool {
@@ -198,11 +207,11 @@ pub fn add(
         const first = if (index == span.first_para) span.first_byte else 0;
         const para_len: u32 = @intCast(paragraphs[index].text.len);
         const last = if (index == span.last_para) span.last_byte else para_len;
-        const mark: book_model.Mark = .{ .para = index, .start = first, .end = last };
+        const mark = piece(index, first, last) orelse continue;
         try list.append(alloc, .{ .mark = mark, .id = id });
     }
-    // One mark for each paragraph the highlight covers.
-    assert(list.items.len - count_before == span.last_para - span.first_para + 1);
+    // A mark for each paragraph the highlight covers a letter of, at most one each
+    assert(list.items.len - count_before <= span.last_para - span.first_para + 1);
 }
 
 /// `span` with its ends swapped if it ends before it starts.
@@ -475,4 +484,21 @@ test "a highlight that ends before it starts is added in order, not refused" {
     try add(&list, arena.allocator(), &paras, "g", reversed);
     try std.testing.expectEqual(@as(u32, 2), list.items[2].mark.start);
     try std.testing.expectEqual(@as(u32, 5), list.items[2].mark.end);
+}
+
+test "a highlight's pieces that cover no letter are no marks" {
+    const paragraphs = [_]book_model.Paragraph{
+        .{ .text = "First paragraph." },
+        .{ .text = "" },
+        .{ .text = "Third." },
+    };
+    var list: std.ArrayList(Highlight) = .empty;
+    defer list.deinit(std.testing.allocator);
+    // From the first paragraph's middle to where the third begins: the empty second
+    // and the third's nothing make no marks
+    const span: Span = .{ .first_para = 0, .first_byte = 6, .last_para = 2, .last_byte = 0 };
+    try add(&list, std.testing.allocator, &paragraphs, "h", span);
+    try std.testing.expectEqual(@as(usize, 1), list.items.len);
+    try std.testing.expectEqual(@as(u32, 0), list.items[0].mark.para);
+    for (list.items) |h| try std.testing.expect(h.mark.start < h.mark.end);
 }

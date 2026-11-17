@@ -8,6 +8,7 @@ const assert = std.debug.assert;
 const style = @import("style.zig");
 const Page = @import("../gfx/page.zig").Page;
 const Font = @import("../gfx/font.zig").Font;
+const quick_model = @import("../model/quick.zig");
 
 const Pen = struct {
     page: Page,
@@ -274,7 +275,7 @@ pub fn status_cluster(
     right: f32,
     cy: f32,
     baseline: i32,
-    quick: anytype,
+    quick: *const quick_model.Quick,
     large: bool,
 ) !void {
     assert(inside(right, page.width));

@@ -246,15 +246,18 @@ fn draw_cover(a: *app.App, e: *const catalog.Entry, target: []u8) bool {
     const height = a.screen.height;
     const stride = a.screen.stride;
     if (e.is_local() and !e.is_epub()) {
-        if (file.map(e.path)) |data| {
-            defer file.unmap(data);
+        // A book that can't be read has no cover of its own to give: its thumbnail's
+        // is tried next
+        const book: ?[]const u8 = file.map(e.path) catch null;
+        defer if (book) |data| file.unmap(data);
+        if (book) |data| {
             if (kfx.cover_image(data)) |jpeg| {
                 if (thumbnail == null or same_shape(jpeg, thumbnail.?)) {
                     const drawn = cover.fill_screen(a.alloc, jpeg, target, width, height, stride);
                     if (drawn) return true;
                 }
             }
-        } else |_| {}
+        }
     }
     const t = thumbnail orelse return false;
     return cover.fill_screen(a.alloc, t, target, width, height, stride);

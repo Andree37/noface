@@ -65,7 +65,7 @@ pub const Lookup = union(enum) {
 /// A dictionary that can be downloaded: for the book's language, named like "English".
 pub const Gettable = struct { lang: hyphen.Lang, name: []const u8 };
 
-/// Bytes of `s` that fit in `avail`, ending at a space when it can.
+/// Writes a dictionary entry's lines down the sheet until it's full.
 const Writer = struct {
     fonts: Fonts,
     page: Page,

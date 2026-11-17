@@ -183,8 +183,6 @@ const Decoder = struct {
     fn get16(d: *Decoder) u32 {
         const high: u32 = d.get8();
         const low: u32 = d.get8();
-        assert(high <= 255);
-        assert(low <= 255);
         return high << 8 | low;
     }
 
@@ -399,7 +397,6 @@ fn read_quantization(d: *Decoder) bool {
         const table = q & 15;
         if (precision != 0 and precision != 1) return false;
         if (table >= tables_max) return false;
-        assert(precision <= 1);
         const target = &d.tables.dequant[table];
         for (0..block_length) |index| {
             const value: u32 = if (precision == 1) d.get16() else d.get8();
@@ -426,7 +423,6 @@ fn read_huffman(d: *Decoder) bool {
             total += count.*;
         }
         if (total > 256) return false;
-        assert(table < tables_max);
         left -= 17;
         const huffman = if (class == 0) &d.tables.dc[table] else &d.tables.ac[table];
         if (!build_huffman(huffman, &counts)) return false;
@@ -1450,10 +1446,7 @@ inline fn idct_1d(s: [8]i32) Idct {
 }
 
 fn clamp(x: i32) u8 {
-    const clamped = std.math.clamp(x, 0, 255);
-    assert(clamped >= 0);
-    assert(clamped <= 255);
-    return @intCast(clamped);
+    return @intCast(std.math.clamp(x, 0, 255));
 }
 
 /// Transforms a block of coefficients into 8 x 8 samples, rows `stride` apart.
@@ -1511,7 +1504,6 @@ fn idct_column(block: *const [block_length]i16, values: *[block_length]i32, colu
     values[40 + column] = (r.x2 -% r.t1) >> 10;
     values[24 + column] = (r.x3 +% r.t0) >> 10;
     values[32 + column] = (r.x3 -% r.t0) >> 10;
-    assert(values[column] == values[column]);
 }
 
 // Upsampling and the gray.

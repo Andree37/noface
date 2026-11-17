@@ -96,15 +96,14 @@ fn first_font_offset(data: []const u8) ?u32 {
 }
 
 /// The offset of table `tag`, or 0 if the font has none.
+// Assertions: it reads a font's directory, outside data: a table it lacks gives 0.
 fn find_table(data: []const u8, start: u32, tag: *const [4]u8) u32 {
-    assert(tag.len == 4);
     const tables = ushort(data, @as(i64, start) + 4);
     const directory = @as(i64, start) + 12;
     for (0..tables) |i| {
         const record = directory + 16 * @as(i64, @intCast(i));
         if (tag_at(data, record, tag)) return ulong(data, record + 8);
     }
-    assert(tables <= std.math.maxInt(u16));
     return 0;
 }
 
@@ -163,7 +162,6 @@ fn find_index_map(data: []const u8, cmap: u32) u32 {
         // Platform 0 is Unicode, whatever the encoding
         if (microsoft_unicode or platform == 0) index_map = cmap +% ulong(data, record + 4);
     }
-    assert(tables <= std.math.maxInt(u16));
     return index_map;
 }
 
@@ -264,7 +262,6 @@ pub fn vertical_metrics(info: *const Info) VerticalMetrics {
         .descent = short(info.data, hhea + 6),
         .line_gap = short(info.data, hhea + 8),
     };
-    assert(metrics.ascent >= std.math.minInt(i16));
     return metrics;
 }
 
@@ -432,7 +429,6 @@ fn gpos_advance(info: *const Info, first: u32, second: u32) i32 {
             }
         }
     }
-    assert(lookup_count <= std.math.maxInt(u16));
     return 0;
 }
 
@@ -677,7 +673,6 @@ fn read_component_scale(data: []const u8, flags: u16, start: i64, matrix: *[6]f3
 fn f2dot14(data: []const u8, at: i64) f32 {
     assert(at >= 0);
     const value: f32 = @floatFromInt(short(data, at));
-    assert(@abs(value) <= 32768);
     return value / 16384.0;
 }
 
@@ -701,7 +696,6 @@ fn transform(vertices: []Vertex, frame: *const Frame) void {
 /// A coordinate to 16 bits, toward zero as C converts, wrapping as C's short did.
 fn to_short(value: f32) i16 {
     const whole = to_int(@trunc(value));
-    assert(whole >= std.math.minInt(i32));
     assert(@abs(@as(f64, @floatFromInt(whole))) <= @abs(@as(f64, value)) or std.math.isNan(value));
     return @truncate(whole);
 }
@@ -1002,8 +996,6 @@ fn pixel_side(whole: f32) ?i32 {
 fn to_int(whole: f32) i32 {
     if (!(whole > -2147483648.0)) return if (whole < 0) std.math.minInt(i32) else 0;
     if (!(whole < 2147483648.0)) return std.math.maxInt(i32);
-    assert(whole > -2147483648.0);
-    assert(whole < 2147483648.0);
     return @intFromFloat(whole);
 }
 

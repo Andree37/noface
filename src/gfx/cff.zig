@@ -87,10 +87,9 @@ fn get_index(b: *Buffer) Buffer {
 
 /// An integer operand of a dictionary or charstring, as the C code read it: a
 /// 32-bit pattern, which may stand for a negative number.
+// Assertions: it reads a font, outside data: every byte reads as some number.
 fn read_int(b: *Buffer) u32 {
     const b0: i32 = b.get8();
-    assert(b0 >= 0);
-    assert(b0 <= 255);
     if (b0 >= 32 and b0 <= 246) return @bitCast(b0 - 139);
     if (b0 >= 247 and b0 <= 250) return @bitCast((b0 - 247) * 256 + @as(i32, b.get8()) + 108);
     if (b0 >= 251 and b0 <= 254) return @bitCast(-(b0 - 251) * 256 - @as(i32, b.get8()) - 108);
@@ -239,10 +238,10 @@ pub fn init(data: []const u8, table: u32) ?Font {
 }
 
 /// A subroutine by its biased number.
+// Assertions: the number comes from the font, outside data: one out of range is none.
 fn get_subr(index: Buffer, n: i32) Buffer {
     var b = index;
     const count = index_count(&b);
-    assert(count <= std.math.maxInt(u16));
     const bias: i32 = if (count >= 33900) 32768 else if (count >= 1240) 1131 else 107;
     assert(bias > 0);
     const unbiased = @as(i64, n) + bias;

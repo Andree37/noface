@@ -485,7 +485,6 @@ fn unpack(packed_row: []const u8, depth: u8, scale: u8, samples: []u8) void {
 
 fn gray_from_palette(indexes: []const u8, palette_gray: *const [256]u8, gray: []u8) void {
     assert(indexes.len == gray.len);
-    assert(palette_gray.len == palette_entries_max);
     for (gray, indexes) |*pixel, index| pixel.* = palette_gray[index];
 }
 

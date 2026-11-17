@@ -243,7 +243,11 @@ fn split_cubic(points: ?[]Point, count: *u32, p: *const [4]Point, flatness_squar
 /// The length of the control polygon squared, less that of the chord squared: made
 /// up by stb_truetype, and kept, so curves are cut where they were.
 fn cubic_flatness_squared(q: *const [4]Point) f32 {
-    assert(q.len == 4);
+    // Points come from 16-bit outlines and halves between them, so the sum is a number
+    for (q) |point| {
+        assert(std.math.isFinite(point.x));
+        assert(std.math.isFinite(point.y));
+    }
     const dx0 = q[1].x - q[0].x;
     const dy0 = q[1].y - q[0].y;
     const dx1 = q[2].x - q[1].x;

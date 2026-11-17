@@ -132,7 +132,8 @@ fn switches_top(tab: Tab) u32 {
     const result: u32 = switch (tab) {
         .themes => content_top, // It has none
         .font => content_top + 186, // Under the typefaces
-        .layout => content_top + 292, // Under the two sliders
+        // Under the two sliders, its taps starting where theirs end
+        .layout => margin_row.top + row_height + toggle_reach,
         .more => content_top + 8,
     };
     assert(result >= content_top);
@@ -159,7 +160,8 @@ pub const Row = struct { slider: Slider, label: []const u8, top: u32, steps: u32
 pub const size_row = Row{
     .slider = .text_size,
     .label = "Text size",
-    .top = content_top + 356,
+    // Under the Font tab's switches, where the last one's taps end
+    .top = switch_top(switch_for("bold_starts")) + toggle_height + toggle_reach,
     .steps = settings_model.sizes.len,
 };
 pub const spacing_row = Row{
@@ -175,6 +177,14 @@ pub const margin_row = Row{
     .steps = settings_model.margins.len,
 };
 pub const row_height = 146;
+
+/// The tab a slider row is on.
+fn slider_tab(s: Slider) Tab {
+    return switch (s) {
+        .text_size => .font,
+        .spacing, .margins => .layout,
+    };
+}
 const row_baseline = 48; // From a slider row's top to its label's baseline
 const row_bar = 92; // From a slider row's top to its bar
 
@@ -272,6 +282,14 @@ comptime {
     assert(theme_note_baseline < height_for(.themes));
     for (switches, 0..) |sw, i| {
         assert(switch_top(i) + toggle_height + toggle_reach <= height_for(sw.tab));
+        // A slider row and a switch never take the same taps: `hit` asks sliders first
+        const taps_top = switch_top(i) - toggle_reach;
+        const taps_end = switch_top(i) + toggle_height + toggle_reach;
+        for ([_]Row{ size_row, spacing_row, margin_row }) |row| {
+            if (sw.tab == slider_tab(row.slider)) {
+                assert(taps_end <= row.top or row.top + row_height <= taps_top);
+            }
+        }
     }
     for (std.enums.values(Tab)) |tab| assert(height_for(tab) <= max_height);
     // The themes side by side between the margins, each a choice the sliders can make
@@ -645,7 +663,19 @@ test "switches sit where they always have" {
     try std.testing.expectEqual(@as(u32, content_top + 186), switch_top(switch_for("bold")));
     try std.testing.expectEqual(@as(u32, content_top + 286), switch_top(bold_starts));
     const left_align = switch_for("left_align");
-    try std.testing.expectEqual(@as(u32, content_top + 292), switch_top(left_align));
+    try std.testing.expectEqual(@as(u32, content_top + 304), switch_top(left_align));
     const lock_picture = switch_for("lock_picture");
     try std.testing.expectEqual(@as(u32, content_top + 408), switch_top(lock_picture));
+}
+
+test "a switch keeps a fingertip's taps where a slider row is next to it" {
+    // Sliders are asked first, so a row running into a switch's reach took its taps
+    const bold_starts = switch_for("bold_starts");
+    const bold_starts_end: i32 = @intCast(switch_top(bold_starts) + toggle_height + toggle_reach);
+    try std.testing.expectEqual(Hit{ .toggle = bold_starts }, hit(.font, 600, bold_starts_end - 1));
+    try std.testing.expectEqual(Hit.text_size, hit(.font, 600, bold_starts_end));
+    const left_align = switch_for("left_align");
+    const left_align_top: i32 = @intCast(switch_top(left_align) - toggle_reach);
+    try std.testing.expectEqual(Hit{ .toggle = left_align }, hit(.layout, 600, left_align_top));
+    try std.testing.expectEqual(Hit.margins, hit(.layout, 600, left_align_top - 1));
 }

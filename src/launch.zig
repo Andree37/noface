@@ -10,8 +10,9 @@
 //!   noface-launch export    Writes the book list (src/kindle/catalog_export.zig).
 //!   noface-launch e2e <dir> noface on the test books in <dir>/documents, keeping what
 //!                           it writes in <dir>/data, for end-to-end tests on the
-//!                           Kindle (tools/e2e.zig plays them): the reader's own are
-//!                           never touched.
+//!                           Kindle (tools/e2e.zig plays them): the reader's books,
+//!                           places and settings are never touched. It starts as any
+//!                           start does, so it still writes the Kindle's book list.
 //!
 //! KPM's launch.sh passes no argument, which means "kpm".
 //! What it prints goes to noface-data/launch.log; noface's own output to noface.log.

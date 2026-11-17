@@ -60,17 +60,28 @@ pub const Info = struct {
     data: []const u8,
     start: u32,
     glyph_count: u32,
-    loca: u32,
     head: u32,
-    glyf: u32,
     hhea: u32,
     hmtx: u32,
-    kern: u32,
-    gpos: u32,
+    /// The kerning tables the font has: GPOS is read when it has both.
+    kern: ?u32,
+    gpos: ?u32,
     index_map: u32,
-    index_to_loc_format: u16,
-    /// A CFF font's outlines; null for TrueType outlines.
-    cff: ?cff.Font,
+    outlines: Outlines,
+};
+
+/// Where the glyphs' outlines are: TrueType's glyf table, found through loca, or CFF's.
+const Outlines = union(enum) {
+    truetype: Glyf,
+    cff: cff.Font,
+};
+
+const Glyf = struct {
+    glyf: u32,
+    loca: u32,
+    /// From head: 0 for loca's offsets as halved 16-bit ones, 1 for 32-bit ones. Any
+    /// other is a damaged font, whose glyphs are all empty, as stb_truetype drew them.
+    loc_format: u16,
 };
 
 /// Whether a font's version says it's one: TrueType, OpenType, or Apple's.
@@ -95,16 +106,20 @@ fn first_font_offset(data: []const u8) ?u32 {
     return ulong(data, 12);
 }
 
-/// The offset of table `tag`, or 0 if the font has none.
-// Assertions: it reads a font's directory, outside data: a table it lacks gives 0.
-fn find_table(data: []const u8, start: u32, tag: *const [4]u8) u32 {
+/// The offset of table `tag`, or null if the font has none. Offset 0, where the font
+/// itself starts, is no table: stb_truetype took it as none, and so does this.
+// Assertions: it reads a font's directory, outside data: a table it lacks is null.
+fn find_table(data: []const u8, start: u32, tag: *const [4]u8) ?u32 {
     const tables = ushort(data, @as(i64, start) + 4);
     const directory = @as(i64, start) + 12;
     for (0..tables) |i| {
         const record = directory + 16 * @as(i64, @intCast(i));
-        if (tag_at(data, record, tag)) return ulong(data, record + 8);
+        if (tag_at(data, record, tag)) {
+            const offset = ulong(data, record + 8);
+            return if (offset == 0) null else offset;
+        }
     }
-    return 0;
+    return null;
 }
 
 /// Reads a font (the first, in a collection). Null for one stb_truetype turned down.
@@ -112,41 +127,42 @@ fn find_table(data: []const u8, start: u32, tag: *const [4]u8) u32 {
 pub fn init(data: []const u8) ?Info {
     if (data.len > std.math.maxInt(u32)) return null;
     const start = first_font_offset(data) orelse return null;
-    var info: Info = .{
+    const cmap = find_table(data, start, "cmap") orelse return null;
+    const head = find_table(data, start, "head") orelse return null;
+    const maxp = find_table(data, start, "maxp");
+    const info: Info = .{
         .data = data,
         .start = start,
-        .glyph_count = 0,
-        .loca = find_table(data, start, "loca"),
-        .head = find_table(data, start, "head"),
-        .glyf = find_table(data, start, "glyf"),
-        .hhea = find_table(data, start, "hhea"),
-        .hmtx = find_table(data, start, "hmtx"),
+        .glyph_count = if (maxp) |table| ushort(data, @as(i64, table) + 4) else 0xffff,
+        .head = head,
+        .hhea = find_table(data, start, "hhea") orelse return null,
+        .hmtx = find_table(data, start, "hmtx") orelse return null,
         .kern = find_table(data, start, "kern"),
         .gpos = find_table(data, start, "GPOS"),
-        .index_map = 0,
-        .index_to_loc_format = 0,
-        .cff = null,
+        .index_map = find_index_map(data, cmap),
+        .outlines = find_outlines(data, start, head) orelse return null,
     };
-    const cmap = find_table(data, start, "cmap");
-    if (cmap == 0 or info.head == 0 or info.hhea == 0 or info.hmtx == 0) return null;
+    if (info.index_map == 0) return null;
     // A font sized by its ascent less its descent needs that to be a height: one whose
     // descent is at or above its ascent can't be scaled to any size
     const metrics = vertical_metrics(&info);
     if (metrics.ascent - metrics.descent <= 0) return null;
-    if (info.glyf != 0) {
-        if (info.loca == 0) return null;
-    } else {
-        // No TrueType outlines: CFF ones
-        const table = find_table(data, start, "CFF ");
-        if (table == 0) return null;
-        info.cff = cff.init(data, table) orelse return null;
-    }
-    const maxp = find_table(data, start, "maxp");
-    info.glyph_count = if (maxp != 0) ushort(data, @as(i64, maxp) + 4) else 0xffff;
-    info.index_map = find_index_map(data, cmap);
-    if (info.index_map == 0) return null;
-    info.index_to_loc_format = ushort(data, @as(i64, info.head) + 50);
     return info;
+}
+
+/// The font's outlines: TrueType's when it has a glyf table, else CFF's. Null for a
+/// font with neither, or with glyf but no loca to find its glyphs by.
+// Assertions: it reads a font, outside data: what it can't use gives null.
+fn find_outlines(data: []const u8, start: u32, head: u32) ?Outlines {
+    if (find_table(data, start, "glyf")) |glyf| {
+        return .{ .truetype = .{
+            .glyf = glyf,
+            .loca = find_table(data, start, "loca") orelse return null,
+            .loc_format = ushort(data, @as(i64, head) + 50),
+        } };
+    }
+    const table = find_table(data, start, "CFF ") orelse return null;
+    return .{ .cff = cff.init(data, table) orelse return null };
 }
 
 /// The character map to use: the last Unicode one, as stb_truetype chose.
@@ -301,16 +317,16 @@ pub fn horizontal_metrics(info: *const Info, glyph: u32) HorizontalMetrics {
 /// say: from the GPOS table if the font has one, else from its kern table.
 pub fn kern_advance(info: *const Info, first: u32, second: u32) i32 {
     assert(info.data.len > 0);
-    if (info.gpos != 0) return gpos_advance(info, first, second);
-    if (info.kern != 0) return kern_table_advance(info, first, second);
+    if (info.gpos) |gpos| return gpos_advance(info.data, gpos, first, second);
+    if (info.kern) |kern| return kern_table_advance(info.data, kern, first, second);
     return 0;
 }
 
-/// The kern table: its first subtable, if horizontal format 0, by binary search.
-fn kern_table_advance(info: *const Info, first: u32, second: u32) i32 {
-    assert(info.kern != 0);
-    const data = info.data;
-    const kern: i64 = info.kern;
+/// The kern table at `offset`: its first subtable, if horizontal format 0, by binary
+/// search.
+fn kern_table_advance(data: []const u8, offset: u32, first: u32, second: u32) i32 {
+    assert(offset != 0);
+    const kern: i64 = offset;
     if (ushort(data, kern + 2) < 1) return 0;
     if (ushort(data, kern + 8) != 1) return 0;
     var left: i64 = 0;
@@ -409,10 +425,9 @@ fn glyph_class(data: []const u8, table: i64, glyph: u32) ?u32 {
 
 /// Pair adjustments from the GPOS table: its type 2 lookups, in formats 1 (pairs) and
 /// 2 (classes), when they adjust only the first glyph's advance.
-fn gpos_advance(info: *const Info, first: u32, second: u32) i32 {
-    assert(info.gpos != 0);
-    const data = info.data;
-    const gpos: i64 = info.gpos;
+fn gpos_advance(data: []const u8, offset: u32, first: u32, second: u32) i32 {
+    assert(offset != 0);
+    const gpos: i64 = offset;
     if (ushort(data, gpos) != 1 or ushort(data, gpos + 2) != 0) return 0;
     const lookup_list = gpos + ushort(data, gpos + 8);
     const lookup_count = ushort(data, lookup_list);
@@ -493,16 +508,17 @@ fn pair_by_class(data: []const u8, table: i64, first: u32, second: u32) PairResu
 // Outlines.
 
 /// Where a TrueType glyph's outline is, or null for an empty or missing one.
-fn glyf_offset(info: *const Info, glyph: u32) ?i64 {
-    assert(info.cff == null);
+fn glyf_offset(info: *const Info, tables: *const Glyf, glyph: u32) ?i64 {
+    assert(tables.glyf != 0);
+    assert(tables.loca != 0);
     if (glyph >= info.glyph_count) return null;
-    if (info.index_to_loc_format >= 2) return null;
-    const loca: i64 = info.loca;
-    const glyf: i64 = info.glyf;
+    if (tables.loc_format >= 2) return null;
+    const loca: i64 = tables.loca;
+    const glyf: i64 = tables.glyf;
     const g: i64 = glyph;
     var g1: i64 = undefined;
     var g2: i64 = undefined;
-    if (info.index_to_loc_format == 0) {
+    if (tables.loc_format == 0) {
         g1 = glyf + @as(i64, ushort(info.data, loca + g * 2)) * 2;
         g2 = glyf + @as(i64, ushort(info.data, loca + g * 2 + 2)) * 2;
     } else {
@@ -517,44 +533,52 @@ const GlyphBox = struct { x0: i32 = 0, y0: i32 = 0, x1: i32 = 0, y1: i32 = 0 };
 
 /// A glyph's bounds in font units: TrueType's from its header, CFF's by drawing it.
 fn glyph_box(info: *const Info, glyph: u32) GlyphBox {
-    if (info.cff) |*font| {
-        var c: cff.Context = .{ .out = .{ .bounds = null } };
-        if (!cff.run(font, glyph, &c)) return .{};
-        const box = c.out.bounds orelse return .{}; // A glyph with no outline: a space
-        return .{ .x0 = box.min_x, .y0 = box.min_y, .x1 = box.max_x, .y1 = box.max_y };
+    switch (info.outlines) {
+        .cff => |*font| {
+            var c: cff.Context = .{ .out = .{ .bounds = null } };
+            if (!cff.run(font, glyph, &c)) return .{};
+            const box = c.out.bounds orelse return .{}; // A glyph with no outline: a space
+            return .{ .x0 = box.min_x, .y0 = box.min_y, .x1 = box.max_x, .y1 = box.max_y };
+        },
+        .truetype => |*tables| {
+            const g = glyf_offset(info, tables, glyph) orelse return .{};
+            assert(g >= 0);
+            return .{
+                .x0 = short(info.data, g + 2),
+                .y0 = short(info.data, g + 4),
+                .x1 = short(info.data, g + 6),
+                .y1 = short(info.data, g + 8),
+            };
+        },
     }
-    const g = glyf_offset(info, glyph) orelse return .{};
-    assert(g >= 0);
-    return .{
-        .x0 = short(info.data, g + 2),
-        .y0 = short(info.data, g + 4),
-        .x1 = short(info.data, g + 6),
-        .y1 = short(info.data, g + 8),
-    };
 }
 
 /// A glyph's outline, allocated from `alloc` (the caller frees it). Empty for a glyph
 /// with none, or a damaged one.
 fn glyph_shape(info: *const Info, alloc: std.mem.Allocator, glyph: u32) Error![]Vertex {
-    if (info.cff) |*font| {
-        var counting: cff.Context = .{ .out = .{ .bounds = null } };
-        if (!cff.run(font, glyph, &counting)) return &.{};
-        const vertices = try alloc.alloc(Vertex, counting.vertex_count);
-        errdefer alloc.free(vertices);
-        var drawing: cff.Context = .{ .out = .{ .vertices = vertices } };
-        if (!cff.run(font, glyph, &drawing)) {
-            alloc.free(vertices);
-            return &.{};
-        }
-        // Both runs read the same charstring
-        assert(drawing.vertex_count == counting.vertex_count);
-        return vertices;
+    switch (info.outlines) {
+        .cff => |*font| {
+            var counting: cff.Context = .{ .out = .{ .bounds = null } };
+            if (!cff.run(font, glyph, &counting)) return &.{};
+            const vertices = try alloc.alloc(Vertex, counting.vertex_count);
+            errdefer alloc.free(vertices);
+            var drawing: cff.Context = .{ .out = .{ .vertices = vertices } };
+            if (!cff.run(font, glyph, &drawing)) {
+                alloc.free(vertices);
+                return &.{};
+            }
+            // Both runs read the same charstring
+            assert(drawing.vertex_count == counting.vertex_count);
+            return vertices;
+        },
+        .truetype => |*tables| {
+            var list: std.ArrayList(Vertex) = .empty;
+            errdefer list.deinit(alloc);
+            try glyph_shape_truetype(info, tables, alloc, glyph, &list);
+            assert(list.items.len <= std.math.maxInt(u32));
+            return list.toOwnedSlice(alloc);
+        },
     }
-    var list: std.ArrayList(Vertex) = .empty;
-    errdefer list.deinit(alloc);
-    try glyph_shape_truetype(info, alloc, glyph, &list);
-    assert(list.items.len <= std.math.maxInt(u32));
-    return list.toOwnedSlice(alloc);
 }
 
 /// A composite glyph being read: where its next component is, and the transform of
@@ -572,13 +596,13 @@ const Frame = struct {
 /// innermost first, as stb_truetype's recursion did.
 fn glyph_shape_truetype(
     info: *const Info,
+    tables: *const Glyf,
     alloc: std.mem.Allocator,
     glyph: u32,
     list: *std.ArrayList(Vertex),
 ) Error!void {
     assert(list.items.len == 0);
-    assert(info.cff == null);
-    const g = glyf_offset(info, glyph) orelse return;
+    const g = glyf_offset(info, tables, glyph) orelse return;
     const contours = short(info.data, g);
     if (contours > 0) return simple_glyph(info.data, alloc, g, list);
     if (contours == 0) return;
@@ -595,7 +619,7 @@ fn glyph_shape_truetype(
             continue;
         }
         const component = read_component(info.data, frame);
-        const child = glyf_offset(info, component) orelse continue;
+        const child = glyf_offset(info, tables, component) orelse continue;
         const child_contours = short(info.data, child);
         if (child_contours < 0 and depth < composite_depth_max) {
             frames[depth] = .{ .at = child + 10, .more = true };

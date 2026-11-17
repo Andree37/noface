@@ -168,6 +168,10 @@ pub fn snippet(s: []const u8, byte: u32, max: u32) []const u8 {
             if (space < byte) start = @intCast(space + 1);
         }
     }
+    // With no space before the match (Chinese, Japanese, a long address), the lead
+    // may land inside a character, and a line that starts there draws as nothing.
+    // The match starts on a character, so this stops there at the latest.
+    while (start < byte and s[start] & 0xc0 == 0x80) start += 1;
     var end = @min(s.len, start + max);
     // Inside a character
     while (end < s.len and end > start and s[end] & 0xc0 == 0x80) end -= 1;
@@ -216,4 +220,15 @@ test "snippets start at a word before the match" {
     const line = snippet(s, @intCast(at), 60);
     try std.testing.expect(std.mem.indexOf(u8, line, "wanted") != null);
     try std.testing.expect(line[0] != ' ');
+}
+
+test "snippets of text without spaces start on a whole character" {
+    // Three-byte characters, then one ASCII digit, so 48 bytes back lands mid-character
+    const sentence = "日本語の文章です。";
+    const s = sentence ++ sentence ++ sentence ++ sentence ++ "1探す言葉";
+    const at = std.mem.indexOf(u8, s, "探す").?;
+    try std.testing.expect(s[at - 48] & 0xc0 == 0x80);
+    const line = snippet(s, @intCast(at), 120);
+    try std.testing.expect(std.unicode.utf8ValidateSlice(line));
+    try std.testing.expect(std.mem.indexOf(u8, line, "探す") != null);
 }

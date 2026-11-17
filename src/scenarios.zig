@@ -81,7 +81,7 @@ fn swipe(direction: i32) Step {
     assert(direction != 0); // Forward or back, never neither
     assert(direction >= -1);
     assert(direction <= 1);
-    return .{ .act = .{ .swipe = direction } };
+    return .{ .act = .{ .swipe = .{ .direction = direction, .us = 0 } } };
 }
 fn wait(ms: u64) Step {
     assert(ms > 0);

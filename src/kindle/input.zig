@@ -49,12 +49,16 @@ pub fn install_signals() void {
 /// A tap: where, and when the finger touched (microseconds on the monotonic clock).
 pub const Tap = struct { x: i32, y: i32, us: u64 };
 
+/// A sideways stroke that lifted: `direction` 1 is on (leftwards), -1 back. `us` is
+/// when the finger landed, as a tap's, so a turn by swipe is timed as one by tap.
+pub const Swipe = struct { direction: i32, us: u64 };
+
 pub const Action = union(enum) {
     tap: Tap,
     hold: struct { x: i32, y: i32 },
     pull,
     drag: Point, // Where a finger being followed is
-    swipe: i32, // A sideways stroke that lifted: 1 is on (leftwards), -1 back
+    swipe: Swipe,
     drag_end,
     tick,
     charger, // A charger came or went: the status bar's bolt follows

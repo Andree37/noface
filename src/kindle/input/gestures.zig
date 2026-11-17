@@ -122,7 +122,7 @@ pub fn lifted(in: *Input, down: Press) ?Action {
         const swipe = touch_zones.swipe_direction(down.x, down.y, point.x, point.y);
         if (swipe) |direction| {
             assert(direction == 1 or direction == -1);
-            return .{ .swipe = direction };
+            return .{ .swipe = .{ .direction = direction, .us = down.us } };
         }
         if (touch_zones.is_stroke(down.x, down.y, point.x, point.y)) return null;
     }
@@ -270,7 +270,7 @@ test "on waiting pages a sideways stroke swipes instead of tapping" {
     in.deferred = true;
     try std.testing.expect(press(&in, 0, 900, 800, true) == null);
     _ = press(&in, 0, 600, 810, false);
-    try std.testing.expectEqual(@as(i32, 1), lift(&in, 0).?.swipe);
+    try std.testing.expectEqual(@as(i32, 1), lift(&in, 0).?.swipe.direction);
     try std.testing.expect(press(&in, 0, 900, 800, true) == null);
     _ = press(&in, 0, 920, 805, false); // A wobble
     try std.testing.expectEqual(@as(i32, 900), lift(&in, 0).?.tap.x);
@@ -278,7 +278,7 @@ test "on waiting pages a sideways stroke swipes instead of tapping" {
     try std.testing.expect(press(&in, 0, 900, 700, true) == null);
     _ = press(&in, 0, 780, 760, false);
     _ = press(&in, 0, 650, 860, false);
-    try std.testing.expectEqual(@as(i32, 1), lift(&in, 0).?.swipe);
+    try std.testing.expectEqual(@as(i32, 1), lift(&in, 0).?.swipe.direction);
     // Moved, but mostly up or down: nothing, not a tap where it began
     try std.testing.expect(press(&in, 0, 600, 600, true) == null);
     _ = press(&in, 0, 620, 900, false);

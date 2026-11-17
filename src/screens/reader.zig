@@ -126,7 +126,7 @@ fn needs_all_pages(
             },
             else => true,
         },
-        .swipe => |direction| direction < 0 and s.current == 0,
+        .swipe => |swipe| swipe.direction < 0 and s.current == 0,
         // Locking, waking and leaving don't count pages, and must not wait for them;
         // nor does holding a word, which looks it up on the page on screen
         .lock, .unlock, .power, .computer, .stop, .hold => false,
@@ -858,7 +858,7 @@ pub const Reader = struct {
         switch (action) {
             .tap => |t| try r.tap_page(t.x, t.y, t.us),
             .hold => |h| try r.hold_page(h.x, h.y),
-            .swipe => |direction| try r.turn_by(direction + r.a.input.take_turns(), null),
+            .swipe => |swipe| try r.turn_by(swipe.direction + r.a.input.take_turns(), swipe.us),
             .pull => {
                 const page = try r.s.ensure(r.s.current, r.s.current);
                 r.open_child(.{ .panel = .{ .screen = panel.open(r.a, page) } });

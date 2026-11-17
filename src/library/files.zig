@@ -16,7 +16,7 @@ pub const path_bytes_max: u32 = 4096;
 /// Writes a file from start to end through `buffer`. A write that fails is remembered,
 /// and `finish` reports it, so the caller checks once, at the end.
 pub const Writer = struct {
-    fd: i32,
+    fd: ?i32, // Null once closed, by `finish` or `abandon`
     buffer: []u8,
     used: u32 = 0,
     size: u64 = 0, // Bytes written so far, those still in the buffer included
@@ -54,7 +54,7 @@ pub const Writer = struct {
         if (bytes.len > w.buffer.len - w.used) w.flush();
         if (bytes.len > w.buffer.len) {
             // Larger than the buffer: straight through, after what was buffered
-            if (!file.write_all(w.fd, bytes)) w.broken = true;
+            if (!file.write_all(w.fd.?, bytes)) w.broken = true;
         } else {
             @memcpy(w.buffer[w.used..][0..bytes.len], bytes);
             w.used += @intCast(bytes.len);
@@ -74,18 +74,19 @@ pub const Writer = struct {
 
     fn flush(w: *Writer) void {
         assert(w.used <= w.buffer.len);
-        if (w.used > 0 and !file.write_all(w.fd, w.buffer[0..w.used])) w.broken = true;
+        if (w.used > 0 and !file.write_all(w.fd.?, w.buffer[0..w.used])) w.broken = true;
         w.used = 0;
     }
 
     /// Writes what's left and closes the file: its size, or an error if any write
     /// failed, in which case the file is partial and the caller removes it.
     pub fn finish(w: *Writer) !u64 {
-        assert(w.fd >= 0); // Finished once
+        const fd = w.fd.?; // Finished once
+        assert(w.used <= w.buffer.len);
         w.flush();
         // A file that can't be closed may be short
-        if (failed(calls.close(w.fd))) w.broken = true;
-        w.fd = -1;
+        if (failed(calls.close(fd))) w.broken = true;
+        w.fd = null;
         if (w.broken) return error.CantWrite;
         assert(w.used == 0);
         return w.size;
@@ -95,9 +96,10 @@ pub const Writer = struct {
     /// whether or not it fails), so it can be deferred over the whole of a write: the
     /// caller removes the file.
     pub fn abandon(w: *Writer) void {
-        if (w.fd < 0) return; // Closed by `finish`
-        _ = calls.close(w.fd); // Ignored: the file is removed, whole or not
-        w.fd = -1;
+        const fd = w.fd orelse return; // Closed by `finish`
+        assert(w.used <= w.buffer.len);
+        _ = calls.close(fd); // Ignored: the file is removed, whole or not
+        w.fd = null;
     }
 };
 

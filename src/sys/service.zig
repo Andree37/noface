@@ -101,25 +101,28 @@ pub fn spawn_to_file(
 
 /// Wake-ups: a signal handler writes a byte to a pipe, which the waiting side polls,
 /// so a signal arriving just before a wait still ends it.
-var wake_pipe: [2]i32 = .{ -1, -1 };
+/// Null when it couldn't be made: the waiting side looks every second instead.
+var wake_pipe: ?[2]i32 = null;
 /// Set by INT, TERM or HUP; read and cleared by `take_stop_request`.
 var stop_requested = std.atomic.Value(bool).init(false);
 
 fn on_signal(signal: linux.SIG) callconv(.c) void {
     if (signal != .CHLD) stop_requested.store(true, .release);
-    if (wake_pipe[1] < 0) return; // No pipe: the waiting side looks every second instead
+    const pipe = wake_pipe orelse return;
     const byte = [1]u8{0};
     // Full pipe: a wake-up is already waiting, which is all a byte says
-    _ = linux.write(wake_pipe[1], &byte, 1);
+    _ = linux.write(pipe[1], &byte, 1);
 }
 
 /// Catches INT, TERM and HUP (a request to stop) and CHLD (a child ended), so
 /// `wait_for_wake` returns for them. False when the wake-up pipe can't be made: the
 /// requests are still caught, and `take_stop_request` still sees them.
 pub fn listen_for_signals() bool {
-    assert(wake_pipe[0] == -1); // Once
-    const piped = !failed(linux.pipe2(&wake_pipe, .{ .CLOEXEC = true, .NONBLOCK = true }));
-    if (!piped) wake_pipe = .{ -1, -1 };
+    assert(wake_pipe == null); // Once
+    var pipe: [2]i32 = undefined;
+    const piped = !failed(linux.pipe2(&pipe, .{ .CLOEXEC = true, .NONBLOCK = true }));
+    // Made before any handler is, so a handler sees it whole or not at all
+    if (piped) wake_pipe = pipe;
     var action = std.mem.zeroes(linux.Sigaction);
     action.handler = .{ .handler = on_signal };
     action.flags = linux.SA.NOCLDSTOP | linux.SA.RESTART;
@@ -128,30 +131,26 @@ pub fn listen_for_signals() bool {
         // Only KILL and STOP can't be caught, and a handler of ours is a valid address
         assert(!failed(rc));
     }
-    if (piped) assert(wake_pipe[0] >= 0);
     return piped;
 }
 
 /// Waits up to `timeout_ms` for a signal, then empties the wake-up pipe.
 pub fn wait_for_wake(timeout_ms: u32) void {
-    assert(wake_pipe[0] >= 0);
+    const pipe = wake_pipe.?; // Waited on only once `listen_for_signals` made it
     assert(timeout_ms <= std.math.maxInt(i32));
-    var fds = [_]linux.pollfd{.{ .fd = wake_pipe[0], .events = linux.POLL.IN, .revents = 0 }};
+    var fds = [_]linux.pollfd{.{ .fd = pipe[0], .events = linux.POLL.IN, .revents = 0 }};
     _ = linux.poll(&fds, 1, @intCast(timeout_ms)); // Interrupted or timed out: look anyway
     var drain: [64]u8 = undefined;
     // The pipe is non-blocking and holds at most a few pages of wake-ups
     for (0..1024) |_| {
-        const got = linux.read(wake_pipe[0], &drain, drain.len);
+        const got = linux.read(pipe[0], &drain, drain.len);
         if (failed(got) or got < drain.len) break;
     }
 }
 
 /// Whether a stop was asked for since the last look.
 pub fn take_stop_request() bool {
-    const asked = stop_requested.swap(false, .acq_rel);
-    // Both ends of the wake-up pipe are made, or neither
-    assert((wake_pipe[0] == -1) == (wake_pipe[1] == -1));
-    return asked;
+    return stop_requested.swap(false, .acq_rel);
 }
 
 /// Whether a process is the program `name`: its kernel name (`comm`, cut to 15

@@ -129,7 +129,7 @@ comptime {
 }
 
 pub const Screen = struct {
-    fd: i32,
+    fd: ?i32, // The display's device; null for a screen in memory only
     map: []align(4096) u8,
     pixels: []u8, // The visible page only
     width: u32,
@@ -147,7 +147,7 @@ pub const Screen = struct {
         const map = try alloc.alignedAlloc(u8, .fromByteUnits(4096), width * height);
         @memset(map, 0xff);
         const screen: Screen = .{
-            .fd = -1,
+            .fd = null,
             .map = map,
             .pixels = map,
             .width = width,
@@ -263,8 +263,8 @@ pub const Screen = struct {
             .marker = marker,
         };
         s.updates += 1;
-        if (s.fd < 0) return marker; // In memory: nothing to send
-        if (failed(linux.ioctl(s.fd, send_update, @intFromPtr(&data)))) return error.SendUpdate;
+        const fd = s.fd orelse return marker; // In memory: nothing to send
+        if (failed(linux.ioctl(fd, send_update, @intFromPtr(&data)))) return error.SendUpdate;
         return marker;
     }
 
@@ -272,9 +272,9 @@ pub const Screen = struct {
         // Only a marker of an update already sent can complete
         assert(marker >= marker_first);
         assert(marker < s.next_marker);
-        if (s.fd < 0) return;
+        const fd = s.fd orelse return; // In memory: nothing to wait for
         var data = MarkerData{ .marker = marker };
-        const rc = linux.ioctl(s.fd, ioctl_wait_complete, @intFromPtr(&data));
+        const rc = linux.ioctl(fd, ioctl_wait_complete, @intFromPtr(&data));
         if (failed(rc)) return error.WaitComplete;
     }
 };

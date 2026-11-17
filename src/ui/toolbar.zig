@@ -26,6 +26,9 @@ const chapter_prev_right = 220; // The chapter buttons take taps out to here fro
 const chapter_next_left = 1052;
 const skip_inset = 110; // From each edge to the middle of a chapter button's icon
 const scrub = slider.Slider{ .left = 110, .right = 1162, .y = 1610 };
+/// The scrubber takes taps this far above its bar, and all the way below it: a tap
+/// meant for a chapter button that lands a little low must not jump the book.
+const scrub_reach = 60;
 
 pub const Hit = enum {
     close,
@@ -75,6 +78,11 @@ comptime {
     assert(skip_inset < chapter_prev_right);
     assert(style.screen_width - skip_inset >= chapter_next_left);
     assert(chapter_prev_right < chapter_next_left);
+    // The chapter buttons take a fingertip of height above the scrubber's taps, and
+    // those start inside the band the scrubber is drawn in
+    assert(scrub.y - scrub_reach - bottom_top >= 100);
+    assert(scrub.y - scrub_reach >= scrub_top);
+    assert(2 * scrub_reach >= 100);
 }
 
 /// `sheet` is the Aa tab open, if the sheet is.
@@ -95,7 +103,7 @@ pub fn hit(x: i32, y: i32, sheet: ?aa.Tab) Hit {
         if (y < aa.height_for(tab)) return .sheet;
     }
     if (y < bottom_top) return .close;
-    if (y >= scrub_top) return .scrub;
+    if (y >= scrub.y - scrub_reach) return .scrub;
     if (x < chapter_prev_right) return .chapter_prev;
     if (x >= chapter_next_left) return .chapter_next;
     return .stay;
@@ -241,6 +249,16 @@ test "toolbar buttons map to actions" {
     try std.testing.expectEqual(Hit.chapter_next, hit(1162, 1450, null));
     try std.testing.expectEqual(Hit.scrub, hit(600, 1610, null));
     try std.testing.expectEqual(Hit.scrub, hit(100, 1650, null));
+}
+
+test "a chapter button takes a fingertip, and a low tap on it never jumps the book" {
+    // Where the scrubber's taps once began, under the chapter buttons
+    try std.testing.expectEqual(Hit.chapter_prev, hit(110, 1505, null));
+    try std.testing.expectEqual(Hit.chapter_next, hit(1162, 1505, null));
+    try std.testing.expectEqual(Hit.stay, hit(636, 1505, null));
+    try std.testing.expectEqual(Hit.chapter_prev, hit(110, bottom_top, null));
+    try std.testing.expectEqual(Hit.chapter_prev, hit(110, scrub.y - scrub_reach - 1, null));
+    try std.testing.expectEqual(Hit.scrub, hit(110, scrub.y - scrub_reach, null));
 }
 
 test "text sheet takes taps only while open" {

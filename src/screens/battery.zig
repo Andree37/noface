@@ -9,6 +9,7 @@ const draw_ui = @import("../ui/draw.zig");
 const screen = @import("screen.zig");
 const style = @import("../ui/style.zig");
 const app = @import("../app.zig");
+const input_mod = @import("../kindle/input.zig");
 
 const width = 640;
 const height = 176;
@@ -98,6 +99,9 @@ pub fn put_back(a: *app.App) !void {
 /// The estimate, in a bubble by the battery. Any tap closes it.
 pub const Bubble = struct {
     pub const Result = void;
+    /// A tap closes it as it lands: held a little long, it would be a hold, which it
+    /// would keep waiting through.
+    pub const touches = input_mod.Input.Modes.sheet;
     a: *app.App,
     said: Lines, // In `buffer`, so the bubble stays where `open` made it
     buffer: [160]u8,

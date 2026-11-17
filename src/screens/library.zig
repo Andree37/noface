@@ -78,6 +78,9 @@ const SearchEnd = union(enum) { cancel, search, open: *catalog.Entry };
 /// opening a book from the list.
 const LibrarySearch = struct {
     pub const Result = SearchEnd;
+    /// Keys and rows act as they land: in the library's own touches, a key pressed a
+    /// little long would become a hold, and be dropped.
+    pub const touches = input_mod.Input.Modes.sheet;
     a: *app.App,
     lib: *Library,
     q: *search.Query,
@@ -530,7 +533,18 @@ const Browser = struct {
                 return b.act_on(b.lib.book(i - library.page_range(b.index, b.count).first));
             },
             .hero, .hero_dots => b.act_on(b.lib.hero() orelse return .nothing),
-            else => .nothing,
+            // Only a book has actions to hold for
+            .none,
+            .prev,
+            .next,
+            .sort,
+            .menu,
+            .battery,
+            .search,
+            .stats,
+            .clear_search,
+            .tab,
+            => .nothing,
         };
     }
 

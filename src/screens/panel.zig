@@ -170,7 +170,7 @@ fn panel_control(
             const brightness = choice == .dimmer or choice == .brighter;
             const row = if (brightness) menu.brightness_row else menu.warmth_row;
             const up = choice == .brighter or choice == .warmer;
-            const level = quick_model.step_brightness(row_value(a, row), up);
+            const level = quick_model.step_level(row_value(a, row), up, row.max);
             try show_row(a, row, level);
             set_row_value(a, row, level);
         },
@@ -194,7 +194,19 @@ fn panel_control_shortcut(a: *app.App, choice: menu.Hit) !void {
     switch (choice) {
         .airplane => a.quick.airplane = !a.quick.airplane,
         .bluetooth => a.quick.bluetooth = !a.quick.bluetooth,
-        else => a.quick.syncing = true,
+        .sync => a.quick.syncing = true,
+        .none,
+        .close,
+        .dimmer,
+        .brighter,
+        .slider,
+        .cooler,
+        .warmer,
+        .warmth,
+        .schedule,
+        .settings,
+        .kindle,
+        => unreachable, // Not a shortcut: `panel_control` runs those
     }
     const box = menu.shortcut_box(choice).?;
     assert(box.y + box.h <= menu.height);
@@ -214,12 +226,24 @@ fn panel_control_shortcut(a: *app.App, choice: menu.Hit) !void {
             lipc.set_airplane(a.quick.airplane);
         },
         .bluetooth => lipc.set_bluetooth(a.quick.bluetooth),
-        else => {
+        .sync => {
             // Paused while reading: syncing needs it, for the rest of the book
             wifi_saver.restore();
             a.wifi_hands_off = true;
             lipc.sync_now();
         },
+        .none,
+        .close,
+        .dimmer,
+        .brighter,
+        .slider,
+        .cooler,
+        .warmer,
+        .warmth,
+        .schedule,
+        .settings,
+        .kindle,
+        => unreachable, // Not a shortcut, as above
     }
     try a.screen.wait_complete(marker);
     if (choice == .sync and a.quick.airplane and wifi_saver.airplane() == .off) {
@@ -298,8 +322,6 @@ pub const Panel = struct {
             .drag => |f| return .{ .push = f },
         }
         // Every control drew itself above: what's left closes the panel or leaves noface
-        assert(choice != .slider);
-        assert(choice != .sync);
         return switch (choice) {
             .settings => {
                 lipc.open_settings();
@@ -307,7 +329,19 @@ pub const Panel = struct {
             },
             .kindle => .{ .done = {} }, // The Kindle's home comes back by the launcher
             .close => .close,
-            else => .stay,
+            .none => .stay,
+            // Each ran above, as a control that draws itself
+            .dimmer,
+            .brighter,
+            .slider,
+            .cooler,
+            .warmer,
+            .warmth,
+            .schedule,
+            .airplane,
+            .bluetooth,
+            .sync,
+            => unreachable,
         };
     }
 

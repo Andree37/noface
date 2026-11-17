@@ -14,6 +14,7 @@ const books = @import("books.zig");
 const memory = @import("../base/memory.zig");
 const cover_image = @import("../gfx/image.zig");
 const screen = @import("screen.zig");
+const input_mod = @import("../kindle/input.zig");
 
 /// The rounds a book's sheet can take: its actions, then, for a removal, the question
 /// whether to remove it.
@@ -91,6 +92,9 @@ pub fn begin_sheet(
 
 pub const Sheet = struct {
     pub const Result = Change;
+    /// Taken by the series lists and keyboard it opens, so a row or key pressed a little
+    /// long acts as it lands, never as a hold the library's touches would make of it.
+    pub const touches = input_mod.Input.Modes.sheet;
     a: *app.App,
     e: *catalog.Entry,
     lib: *books.Library,

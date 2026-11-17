@@ -7,6 +7,7 @@ const stats_ui = @import("../ui/stats.zig");
 const books = @import("books.zig");
 const journal = @import("../model/journal.zig");
 const app = @import("../app.zig");
+const input_mod = @import("../kindle/input.zig");
 
 const stats_ui_top = style.status_height; // Under the status strip, which stays
 
@@ -60,6 +61,9 @@ pub fn make(a: *app.App, library: *books.Library) Stats {
 
 pub const Stats = struct {
     pub const Result = void;
+    /// A tap closes it as it lands: held a little long, it would be a hold, which it
+    /// would keep waiting through.
+    pub const touches = input_mod.Input.Modes.sheet;
     a: *app.App,
     summary: stats_ui.Summary,
 

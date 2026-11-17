@@ -53,7 +53,11 @@ pub fn Drag(comptime Follow: type) type {
                     return .stay;
                 },
                 .drag_end => return .{ .done = {} },
-                else => return .stay,
+                // A finger is followed until it lifts: nothing else it does counts
+                .hold, .pull, .swipe, .charger, .unlock => return .stay,
+                // Taps and ticks have hooks of their own, and a lock or a leaving ends
+                // the drag before it could come here (it takes neither)
+                .tap, .tick, .lock, .power, .computer, .stop => unreachable,
             }
         }
     };

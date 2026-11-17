@@ -50,6 +50,21 @@ To try it end to end without touching the reader's own books, places or settings
 `noface-launch e2e <folder>` (a full path) runs noface on the EPUBs in
 `<folder>/documents`, keeping everything it writes, its log too, in `<folder>/data`.
 
+`tools/e2e` plays a script of touches against it and checks what noface logs and how
+soon it draws: `tools/e2e/reader.e2e` takes every gesture the reader has (turning by
+tap and swipe, the toolbar, a bookmark, the quick panel, looking up and highlighting,
+locking, Home) with time budgets for each. Copy the tool and the script into the test
+folder (on `/mnt/us`: a file made executable in `/tmp` can't be run), start from a
+fresh `data`, and play it:
+
+```sh
+noface-launch e2e /mnt/us/noface-e2e   # its data folder removed first
+cd /mnt/us/noface-e2e && ./e2e reader.e2e data/noface.log out
+```
+
+Each step prints `ok` or `FAIL`; `drawn` steps print what they measured, and `shot`
+steps leave PGM screenshots in `out`.
+
 ## Packaging and releases
 
 `zig build package -Dversion=1.2.3` builds everything and packs

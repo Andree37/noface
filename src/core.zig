@@ -11,6 +11,7 @@ pub const lipc = @import("kindle/lipc.zig");
 pub const clock = @import("sys/clock.zig");
 pub const file = @import("sys/file.zig");
 pub const os = @import("sys/os.zig");
+pub const process = @import("sys/process.zig");
 
 // Ours.
 pub const book = @import("model/book.zig");

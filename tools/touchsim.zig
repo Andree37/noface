@@ -24,7 +24,7 @@ const touch_major_fingertip = 8;
 /// The first finger's id: far from the panel's own, so the app sees a new finger.
 const tracking_id_first = 9000;
 /// How long a tap's finger stays down.
-const tap_ms = 40;
+pub const tap_ms = 40;
 
 comptime {
     assert(@sizeOf(InputEvent) == 16);
@@ -33,11 +33,22 @@ comptime {
     assert(tracking_id_first > 0);
 }
 
-/// The panel's input device, open for writing, and the finger we press on it.
-const Panel = struct {
+/// The panel's input device, open for writing, and the finger we press on it. Also
+/// pressed by tools/e2e.zig.
+pub const Panel = struct {
     fd: i32,
     tracking_id_next: i32 = tracking_id_first,
     finger_down: bool = false,
+
+    /// The Kindle's touch panel, for pressing.
+    pub fn open() !Panel {
+        const rc = linux.open("/dev/input/event1", .{ .ACCMODE = .WRONLY }, 0);
+        if (core.os.failed(rc)) return error.NoTouchPanel;
+        const panel = Panel{ .fd = @intCast(rc) };
+        assert(panel.fd >= 0);
+        assert(!panel.finger_down);
+        return panel;
+    }
 
     fn send(panel: *const Panel, kind: u16, code: u16, value: i32) void {
         assert(panel.fd >= 0);
@@ -46,7 +57,7 @@ const Panel = struct {
         _ = linux.write(panel.fd, @ptrCast(&event), @sizeOf(InputEvent));
     }
 
-    fn down(panel: *Panel, x: i32, y: i32) void {
+    pub fn down(panel: *Panel, x: i32, y: i32) void {
         assert(!panel.finger_down);
         assert(panel.tracking_id_next >= tracking_id_first);
         panel.send(ev_abs, abs_mt_slot, 0);
@@ -61,14 +72,14 @@ const Panel = struct {
         assert(panel.tracking_id_next > tracking_id_first);
     }
 
-    fn move(panel: *const Panel, x: i32, y: i32) void {
+    pub fn move(panel: *const Panel, x: i32, y: i32) void {
         assert(panel.finger_down);
         panel.send(ev_abs, abs_mt_position_x, x);
         panel.send(ev_abs, abs_mt_position_y, y);
         panel.send(ev_syn, 0, 0);
     }
 
-    fn up(panel: *Panel) void {
+    pub fn up(panel: *Panel) void {
         assert(panel.finger_down);
         assert(panel.tracking_id_next > tracking_id_first);
         panel.send(ev_abs, abs_mt_tracking_id, -1);
@@ -86,9 +97,7 @@ fn parse_argument(argument: [*:0]const u8) i32 {
 pub fn main(init: std.process.Init.Minimal) !void {
     const argv = init.args.vector;
     if (argv.len < 4) return error.Usage;
-    const rc = linux.open("/dev/input/event1", .{ .ACCMODE = .WRONLY }, 0);
-    if (core.os.failed(rc)) return error.NoTouchPanel;
-    var panel = Panel{ .fd = @intCast(rc) };
+    var panel = try Panel.open();
     if (std.mem.eql(u8, std.mem.sliceTo(argv[1], 0), "tap")) {
         const down_us = core.os.now_us();
         panel.down(parse_argument(argv[2]), parse_argument(argv[3]));

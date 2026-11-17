@@ -5,6 +5,7 @@ const assert = std.debug.assert;
 const tool_names = [_][]const u8{
     "panelshot",
     "touchsim",
+    "e2e",
     "fbcap",
     "fbrec",
     "xtap",

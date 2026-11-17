@@ -1,0 +1,118 @@
+# Every gesture the reader takes, on the test book (tools/e2e.zig plays it). Start from a
+# fresh test folder: noface on its library, the book not opened before. After each
+# screen opens, `still` waits for it to show: noface drops a touch that lands before.
+# `drawn` budgets are about twice what a Paperwhite 12th gen takes, so a step that
+# grows much slower fails.
+
+# Opening the book from the library's hero
+tap 200 300
+log screen: Reader opened
+drawn 600
+still
+
+# Turning: a tap on either side, and a swipe either way
+tap 1100 900
+log turn to 2
+drawn 500
+still
+tap 150 900
+log turn to 1
+drawn 500
+still
+drag 1000 900 300 900 200
+log turn to 2
+drawn 500
+still
+drag 300 900 1000 900 200
+log turn to 1
+drawn 500
+still
+
+# The toolbar, from a tap at the top
+tap 636 100
+drawn 200
+shot toolbar
+
+# Its bookmark, on and off again
+tap 936 120
+log bookmark added
+drawn 200
+still
+tap 936 120
+log bookmark removed
+drawn 200
+still
+
+# A tap on the page closes it
+tap 636 900
+drawn 200
+still
+
+# The quick panel, pulled down from the top
+drag 636 40 636 700 300
+log screen: Panel opened
+drawn 200
+shot panel
+
+# A tap on the page below it closes it
+tap 636 1300
+log screen: Panel closed
+drawn 200
+still
+
+# Holding a word: "reader", on the first page's second line
+hold 160 318 700
+drawn 200
+shot held
+log screen: Card opened
+
+# No dictionary in the test folder: not now, which leaves the word's sheet
+tap 140 1604
+log screen: Card done
+drawn 200
+still
+
+# The sheet's Highlight: the word alone, left selected with its delete bubble
+tap 220 1594
+log words, saved true
+drawn 500
+shot highlighted
+
+# A tap away lets it go
+tap 1000 1300
+drawn 200
+still
+
+# Holding and dragging highlights: the second paragraph's first line, selected too
+drag 210 568 1150 568 400 700
+log screen: Drag opened
+log words, saved true
+drawn 500
+still
+
+# Its delete bubble removes it
+tap 636 714
+log highlight removed: true
+drawn 200
+still
+
+# Locking shows the book: the test book has no cover, so its title on white. Unlocking
+# shows the page again
+power
+log screen: Lock opened
+log locked, cover drawn: false
+shot locked
+power
+log screen: Lock done by unlock
+drawn 500
+still
+
+# Home, from the toolbar: the book closes, the library is back
+tap 636 100
+drawn 200
+still
+tap 150 120
+log screen: Reader done
+log library render
+drawn 300
+shot library

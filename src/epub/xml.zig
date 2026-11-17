@@ -185,13 +185,13 @@ pub fn decode(out: *std.ArrayList(u8), alloc: std.mem.Allocator, text: []const u
             return;
         };
         try out.appendSlice(alloc, text[at..ampersand]);
-        const semicolon = std.mem.indexOfScalarPos(u8, text, ampersand, ';') orelse {
-            try out.appendSlice(alloc, text[ampersand..]);
-            return;
-        };
-        const name = text[ampersand + 1 .. semicolon];
-        if (name.len > 0 and name.len < entity_name_length_limit) {
-            if (entity(name)) |code_point| {
+        // An entity's name is shorter than the limit, so its `;` is no further than
+        // this. Looking past it would scan to a far `;` once for every `&`, so a
+        // chapter of `&`s with one `;` at its end would take time growing as its square.
+        const window_end = @min(text.len, ampersand + entity_name_length_limit + 1);
+        const window = text[0..window_end];
+        if (std.mem.indexOfScalarPos(u8, window, ampersand + 1, ';')) |semicolon| {
+            if (entity(text[ampersand + 1 .. semicolon])) |code_point| {
                 var encoded: [4]u8 = undefined;
                 const length = std.unicode.utf8Encode(code_point, &encoded) catch 0;
                 // `entity` gives only characters, which always encode
@@ -208,10 +208,11 @@ pub fn decode(out: *std.ArrayList(u8), alloc: std.mem.Allocator, text: []const u
     }
 }
 
-/// The character an entity's name stands for, or null when it isn't one.
+/// The character an entity's name stands for, or null when it isn't one ("&;" isn't).
 fn entity(name: []const u8) ?u21 {
-    assert(name.len > 0);
+    // The caller looks for the `;` no further than the longest name
     assert(name.len < entity_name_length_limit);
+    if (name.len == 0) return null;
     if (name[0] == '#') return entity_numeric(name);
     for (named_entities) |named| {
         if (std.mem.eql(u8, named[0], name)) return named[1];
@@ -259,6 +260,67 @@ test "entities decode, unknown ones stay" {
     defer out.deinit(alloc);
     try decode(&out, alloc, "caf&#233; &#x2014; &lt;b&gt; &bogus; &");
     try std.testing.expectEqualStrings("caf\u{e9} \u{2014} <b> &bogus; &", out.items);
+}
+
+/// `decode` as it was, looking for each `&`'s `;` anywhere after it: the oracle that
+/// the bounded search gives the same text.
+fn test_decode_unbounded(
+    out: *std.ArrayList(u8),
+    alloc: std.mem.Allocator,
+    text: []const u8,
+) !void {
+    assert(text.len <= data_size_max);
+    var at: u32 = 0;
+    while (at < text.len) {
+        const ampersand = std.mem.indexOfScalarPos(u8, text, at, '&') orelse {
+            return out.appendSlice(alloc, text[at..]);
+        };
+        try out.appendSlice(alloc, text[at..ampersand]);
+        const semicolon = std.mem.indexOfScalarPos(u8, text, ampersand, ';') orelse {
+            return out.appendSlice(alloc, text[ampersand..]);
+        };
+        const name = text[ampersand + 1 .. semicolon];
+        if (name.len < entity_name_length_limit) {
+            if (entity(name)) |code_point| {
+                var encoded: [4]u8 = undefined;
+                const length = try std.unicode.utf8Encode(code_point, &encoded);
+                try out.appendSlice(alloc, encoded[0..length]);
+                at = @intCast(semicolon + 1);
+                continue;
+            }
+        }
+        try out.append(alloc, '&');
+        at = @intCast(ampersand + 1);
+    }
+}
+
+test "entities decode as before, looking for each `;` only as far as the longest name" {
+    const alloc = std.testing.allocator;
+    var got: std.ArrayList(u8) = .empty;
+    defer got.deinit(alloc);
+    var want: std.ArrayList(u8) = .empty;
+    defer want.deinit(alloc);
+    var prng = std.Random.DefaultPrng.init(0x26_3b);
+    const random = prng.random();
+    const alphabet = "&;#x0123456789amplthellipquotnbsp ";
+    var buf: [64]u8 = undefined;
+    for (0..50_000) |_| {
+        const len = random.uintLessThan(usize, buf.len);
+        for (buf[0..len]) |*c| c.* = alphabet[random.uintLessThan(usize, alphabet.len)];
+        got.clearRetainingCapacity();
+        want.clearRetainingCapacity();
+        try decode(&got, alloc, buf[0..len]);
+        try test_decode_unbounded(&want, alloc, buf[0..len]);
+        try std.testing.expectEqualStrings(want.items, got.items);
+    }
+    // A chapter of `&`s with one `;` at its end, which took seconds, comes out whole
+    const ampersands = try alloc.alloc(u8, 400_000);
+    defer alloc.free(ampersands);
+    @memset(ampersands, '&');
+    ampersands[ampersands.len - 1] = ';';
+    got.clearRetainingCapacity();
+    try decode(&got, alloc, ampersands);
+    try std.testing.expectEqualStrings(ampersands, got.items);
 }
 
 test "CDATA comes out as text, markup and all" {

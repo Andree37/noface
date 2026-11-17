@@ -212,7 +212,16 @@ test "saved positions count text paragraphs only" {
 }
 
 /// A place in a book: a paragraph, and a byte within its text.
-pub const Pos = struct { para: u32 = 0, byte: u32 = 0 };
+pub const Pos = struct {
+    para: u32 = 0,
+    byte: u32 = 0,
+
+    /// Whether `first` comes strictly before `second` in the book.
+    pub fn is_before(first: Pos, second: Pos) bool {
+        if (first.para != second.para) return first.para < second.para;
+        return first.byte < second.byte;
+    }
+};
 
 /// A word as laid out on a page: where it is on screen and where it came from.
 pub const Word = struct { x: i32, y: i32, w: i32, h: i32, para: u32, start: u32, end: u32 };

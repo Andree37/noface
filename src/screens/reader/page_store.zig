@@ -114,18 +114,12 @@ pub fn save(
     assert(pages.len > 0);
     // The breaks move forward as they're saved, as `decode` insists when they're read back
     for (pages[1..], pages[0 .. pages.len - 1]) |page, previous| {
-        assert(is_before(previous, page));
+        assert(previous.is_before(page));
     }
     // Not saving only costs laying the book out again next time
     const bytes = encode(alloc, k, pages) catch return;
     defer alloc.free(bytes);
     file.write_small(path, bytes);
-}
-
-/// Whether `first` comes strictly before `second` in the book.
-fn is_before(first: book_model.Pos, second: book_model.Pos) bool {
-    if (first.para != second.para) return first.para < second.para;
-    return first.byte < second.byte;
 }
 
 pub fn encode(alloc: std.mem.Allocator, k: u64, pages: []const book_model.Pos) ![]u8 {
@@ -189,7 +183,7 @@ fn decode_fits(
     // At most the paragraph's end: an empty paragraph breaks at its byte 0
     if (p.byte > paragraphs[p.para].text.len) return false;
     const after = previous orelse return std.meta.eql(p, book_model.Pos{});
-    return is_before(after, p);
+    return after.is_before(p);
 }
 
 /// A book of ten paragraphs of 64 letters, for reading breaks back against.

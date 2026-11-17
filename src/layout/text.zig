@@ -141,7 +141,8 @@ pub const Layout = struct {
 /// Whether `para`, `byte` has reached the stop position.
 fn at_stop(l: *const Layout, para: u32, byte: u32) bool {
     const st = l.stop orelse return false;
-    return para > st.para or (para == st.para and byte >= st.byte);
+    const here = book_model.Pos{ .para = para, .byte = byte };
+    return !here.is_before(st);
 }
 
 const Link = book_model.Link;

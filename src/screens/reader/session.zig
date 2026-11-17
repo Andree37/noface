@@ -288,7 +288,7 @@ pub const Session = struct {
         assert(index < s.pages.len);
         if (index + 1 >= s.pages.len) return null;
         const end = s.pages[index + 1];
-        assert(is_before(s.pages[index], end));
+        assert(s.pages[index].is_before(end));
         return end;
     }
 
@@ -524,12 +524,6 @@ pub const Session = struct {
         assert(s.current == index);
     }
 };
-
-/// Whether `first` comes strictly before `second` in the book.
-fn is_before(first: book_model.Pos, second: book_model.Pos) bool {
-    if (first.para != second.para) return first.para < second.para;
-    return first.byte < second.byte;
-}
 
 /// Saves the reader's place, `s.anchor`, which stays what they're at even while the
 /// pages are being laid out again or failed to be. `percent` is how far in they are,

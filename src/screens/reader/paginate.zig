@@ -26,12 +26,6 @@ pub fn book(
     return pages.items;
 }
 
-/// Whether `first` comes strictly before `second` in the book.
-fn is_before(first: book_model.Pos, second: book_model.Pos) bool {
-    if (first.para != second.para) return first.para < second.para;
-    return first.byte < second.byte;
-}
-
 /// Lays out up to `pages_max` pages from `from`, adding where each starts to `out`. A
 /// page breaks at `stop` if it's reached. Returns where to carry on, or null once the
 /// book or the stop is reached.
@@ -63,7 +57,7 @@ fn run(
             null,
         );
         // A page that fits nothing would repeat forever; layout always places something.
-        check.thatf(is_before(position, next), "page at {d}:{d} moves forward", .{
+        check.thatf(position.is_before(next), "page at {d}:{d} moves forward", .{
             position.para,
             position.byte,
         });
@@ -81,7 +75,7 @@ fn run_continues(
 ) bool {
     if (position.para >= paragraphs.len) return false;
     const stop_position = stop orelse return true;
-    return is_before(position, stop_position);
+    return position.is_before(stop_position);
 }
 
 /// A first open, laid out a little at a time so the reader's page shows at once.

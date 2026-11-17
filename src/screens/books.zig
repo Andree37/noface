@@ -83,7 +83,6 @@ pub const Shelf = struct { generation: u64, local: u32, downloading: u32 };
 /// library's region.
 const State = struct {
     ix: ?index.Index = null, // Null for a library whose index won't read
-    rebuilt: bool = false, // Built again once since loaded, after none was found
     dir_buffer: [files.path_bytes_max]u8 = undefined,
     dir_len: u32 = 0,
     catalog_seen: CatalogFacts = .{},
@@ -168,7 +167,9 @@ pub const Library = struct {
     pub fn watch_download(l: *Library) Download {
         const s = l.state;
         assert(l.shared.in_use);
-        const ix = s.opened() orelse return .catalog_changed; // Nothing to watch by: read it again
+        // No index: it was tried as the library was read, and a timer doesn't build again
+        // what failed; the next reload (an action, a wake) tries once more
+        const ix = s.opened() orelse return .waiting;
         assert(ix.header.downloading <= ix.header.count);
         if (ix.header.downloading > 0) {
             for (0..ix.header.count) |id| {
@@ -208,9 +209,8 @@ pub const Library = struct {
         const s = l.state;
         s.count = 0;
         s.hero_slot.id = null;
-        // No index found as loaded: built now, once, and a drive that won't take it
-        // leaves the library empty till the next load
-        if (s.ix == null) l.rebuild();
+        // No index: loading or reloading tried to build one, and a drive that won't
+        // take it leaves the library empty till the next reload
         const ix = s.opened() orelse return;
         const all = l.shared.items[0..ix.header.count];
         const in_order = if (s.sorted) all else view.sort(ix, l.shared.items, s.order);
@@ -233,15 +233,6 @@ pub const Library = struct {
         if (!s.sorted) l.lay_out();
         assert(s.sorted);
         return l.shared.items[0..ix.header.count];
-    }
-
-    /// Builds the index, where none was found as the library was loaded: once.
-    fn rebuild(l: *Library) void {
-        const s = l.state;
-        assert(s.ix == null);
-        if (s.rebuilt or !l.sources.scratch.empty()) return;
-        s.rebuilt = true;
-        open_index(l.sources, s);
     }
 
     /// The book to continue, when there is one: always on this Kindle.
@@ -418,7 +409,6 @@ pub const Library = struct {
         assert(l.shared.in_use);
         if (s.opened()) |ix| ix.close();
         s.ix = null;
-        s.rebuilt = false;
         s.sorted = false;
         open_index(l.sources, s);
         l.lay_out();
@@ -959,11 +949,23 @@ test "a build whose files can't be put in place leaves the library empty, not cr
     var dir_buffer: [320]u8 = undefined;
     var records_buffer: [320]u8 = undefined;
     _ = calls.mkdir(try t.data_path(&dir_buffer, "library"), 0o755);
-    _ = calls.mkdir(try t.data_path(&records_buffer, "library/records"), 0o755);
+    const records_path = try t.data_path(&records_buffer, "library/records");
+    _ = calls.mkdir(records_path, 0o755);
     var library = try load(t.sources);
     defer library.deinit();
     try std.testing.expect(library.state.ix == null);
     try std.testing.expectEqual(0, library.count());
+    // Built once as it loaded: arranging it, or watching a download by a timer, doesn't
+    // build again what failed, though now it would take
+    try std.testing.expectEqual(0, std.c.rmdir(records_path));
+    library.arrange(.title, .all, "");
+    try std.testing.expect(library.state.ix == null);
+    try std.testing.expectEqual(Download.waiting, library.watch_download());
+    try std.testing.expect(library.state.ix == null);
+    // A reload, as an action or a wake makes, tries once more
+    library.reload();
+    try std.testing.expect(library.state.ix != null);
+    try std.testing.expectEqual(5, library.count() + @intFromBool(library.hero() != null));
 }
 
 test "every order lists the books as the catalog sorts the same books in a list" {

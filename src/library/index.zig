@@ -200,9 +200,9 @@ pub const Index = struct {
 
     pub fn close(ix: *Index) void {
         assert(ix.records_file.len >= file_head_bytes);
+        assert(ix.text_file.len == ix.header.text_size);
         file.unmap(ix.records_file);
         file.unmap(ix.text_file);
-        ix.records_file = &.{};
     }
 
     /// Whether book `id`'s record and texts read as whole: once, as it's opened.

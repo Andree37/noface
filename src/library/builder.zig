@@ -178,8 +178,10 @@ pub fn build(
         .text = undefined,
         .last = if (last) |ix| EpubsRead.sort(ix, items) else null,
     };
-    // Closed before the new files are put in place: a mapped file renamed over faults
-    defer if (last) |ix| if (ix.records_file.len > 0) ix.close();
+    // Closed before the new files are put in place (a mapped file renamed over faults),
+    // or on the way out if the build fails first: null once closed
+    var last_open = last;
+    defer if (last_open) |ix| ix.close();
     b.records = try create_data(places.dir, "records.new", generation, buffers.records);
     errdefer b.records.abandon();
     b.text = try create_data(places.dir, "text.new", generation, buffers.text);
@@ -189,7 +191,8 @@ pub fn build(
     if (b.left_out > 0) log("library: {d} books past the most kept\n", .{b.left_out});
     _ = try b.records.finish();
     _ = try b.text.finish();
-    if (last) |ix| ix.close();
+    if (last_open) |ix| ix.close();
+    last_open = null;
     for ([_][]const u8{ "records", "text" }) |name| {
         var from: [files.path_bytes_max]u8 = undefined;
         var to: [files.path_bytes_max]u8 = undefined;

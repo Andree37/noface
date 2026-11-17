@@ -119,6 +119,9 @@ pub fn run(envp: [*:null]const ?[*:0]const u8, folders: Folders) u32 {
     assert(!stock_ui.paused);
     run_paths.make(folders) catch return exit_not_started;
     const p = &run_paths;
+    // Everything noface writes goes in its data folder, its log too, so a new one (a
+    // test's, a first install's) is made here
+    _ = calls.mkdir(p.data, 0o755); // Ignored: there already, or the log's open below fails
     // The command line noface reads with: the library, four fonts and the data folder
     // (src/main.zig)
     const reader_argv = [_:null]?[*:0]const u8{

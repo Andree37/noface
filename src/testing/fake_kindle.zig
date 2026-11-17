@@ -7,6 +7,7 @@ const assert = std.debug.assert;
 const paths = @import("../kindle/paths.zig");
 const process = @import("../sys/process.zig");
 const lipc = @import("../kindle/lipc.zig");
+const annotations = @import("../kindle/annotations.zig");
 
 const Prop = struct { key: []const u8, value: []const u8 };
 
@@ -24,6 +25,10 @@ pub const FakeKindle = struct {
     /// takes the radio down: reads time out, though the set went through.
     busy_after_set: ?[]const u8 = null,
     busy: bool = false,
+    /// The annotation database's answers for the book opened, as "id|start|end" lines
+    /// (annotation_db.read_lines): none unless a test gives some.
+    highlights: []const u8 = "",
+    bookmarks: []const u8 = "",
 
     /// A Kindle awake, on Wi-Fi, Bluetooth off, not in airplane mode.
     pub fn init(alloc: std.mem.Allocator) !FakeKindle {
@@ -102,6 +107,7 @@ pub const FakeKindle = struct {
         process.fake = null;
     }
 
+    // Assertions: it answers whatever command noface runs, and each answer checks its own
     fn answer(ctx: *anyopaque, argv: []const []const u8, out: []u8) ?u32 {
         const k: *FakeKindle = @ptrCast(@alignCast(ctx));
         if (argv.len == 0) return null;
@@ -116,6 +122,9 @@ pub const FakeKindle = struct {
         }
         // A fixed time, so tests see the same screen every run
         if (std.mem.eql(u8, program, "date")) return answer_copy(date_fixed, out);
+        if (std.mem.eql(u8, program, "sh") and args.len == 2) {
+            if (k.answer_notes(args[1], out)) |n| return n;
+        }
         k.ran.append(k.alloc, k.alloc.dupe(u8, program) catch return null) catch return null;
         return 0;
     }
@@ -156,6 +165,27 @@ pub const FakeKindle = struct {
         return 0;
     }
 
+    /// A read of the annotation database: the notes of the dataset it asks for. Null
+    /// for any other command.
+    fn answer_notes(k: *const FakeKindle, command: []const u8, out: []u8) ?u32 {
+        if (std.mem.indexOf(u8, command, "sqlite3") == null) return null;
+        if (std.mem.indexOf(u8, command, "select ") == null) return null; // A write
+        inline for (.{ annotations.Kind.highlight, annotations.Kind.bookmark }) |kind| {
+            const needle = std.fmt.comptimePrint("dataset={d} ", .{comptime kind.dataset()});
+            if (std.mem.indexOf(u8, command, needle) != null) {
+                const lines = switch (kind) {
+                    .highlight => k.highlights,
+                    .bookmark => k.bookmarks,
+                };
+                if (lines.len == 0) return 0; // None: the database printed nothing
+                // Whole lines, as the database prints them and read_lines keeps them
+                assert(lines[lines.len - 1] == '\n');
+                return answer_copy(lines, out);
+            }
+        }
+        return null;
+    }
+
     /// Copies an answer into `out`, cut short when it doesn't fit, as a pipe would be.
     fn answer_copy(value: []const u8, out: []u8) u32 {
         assert(value.len > 0); // An empty answer is a failure, said with null
@@ -185,4 +215,20 @@ test "the fake Kindle answers and remembers lipc" {
     try std.testing.expectEqualStrings("0", k.get("com.lab126.cmd wirelessEnable"));
     _ = FakeKindle.answer(&k, &.{ paths.launcher, "export" }, &out);
     try std.testing.expect(k.did_run("noface-launch"));
+}
+
+test "the fake Kindle answers the annotation database's reads with the notes given" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var k = try FakeKindle.init(arena.allocator());
+    k.highlights = "kindle.highlight-101|101|104\n";
+    var out: [64]u8 = undefined;
+    const read = "sqlite3 db \"select a from server_view where dataset=1 and b\"";
+    const n = FakeKindle.answer(&k, &.{ "/bin/sh", "-c", read }, &out).?;
+    try std.testing.expectEqualStrings(k.highlights, out[0..n]);
+    const bookmarks = "sqlite3 db \"select a from server_view where dataset=2 and b\"";
+    try std.testing.expectEqual(0, FakeKindle.answer(&k, &.{ "/bin/sh", "-c", bookmarks }, &out));
+    const write = "sqlite3 -bail db < /tmp/noface-annotation.sql";
+    _ = FakeKindle.answer(&k, &.{ "/bin/sh", "-c", write }, &out);
+    try std.testing.expect(k.did_run("sh")); // A write is only noted
 }

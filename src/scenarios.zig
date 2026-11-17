@@ -20,6 +20,8 @@ const Font = @import("gfx/font.zig").Font;
 const decoder_memory = @import("gfx/decoder_memory.zig");
 const memory = @import("base/memory.zig");
 const catalog = @import("model/catalog.zig");
+const kindle_catalog = @import("kindle/catalog.zig");
+const annotation_db = @import("kindle/annotation_db.zig");
 const settings_model = @import("model/settings.zig");
 const state = @import("sys/state.zig");
 const page_store = @import("screens/reader/page_store.zig");
@@ -159,12 +161,22 @@ const Kindle = struct {
     /// A book read a while already, so the library shows it to continue.
     read_before: ?u32 = null,
     /// One of the reader's own books, opened where it is (never written to), with the
-    /// Kindle's own fonts: the self-test's timing of real books.
-    real_book: ?[:0]const u8 = null,
+    /// Kindle's own fonts and its own highlights: the self-test's real books.
+    real_book: ?RealBook = null,
     /// Wi-Fi's on/off goes unanswered right after it's set.
     radio_slow: bool = false,
     /// Compares the screen at the end with the reference image of this name.
     snapshot: ?Snapshot = null,
+};
+
+/// One of the reader's own books, as the self-test opens it.
+const RealBook = struct {
+    /// Its row in the book list, whose key finds its notes; an EPUB's made from its path
+    entry: catalog.Entry,
+    /// The annotation database's answers for it (annotation_db.read_lines), read before
+    /// the run: during it the pretend Kindle answers every program noface starts.
+    highlights: []const u8 = "",
+    bookmarks: []const u8 = "",
 };
 
 /// Built as noface-scenarios (GitHub's tests) rather than inside noface: only then are
@@ -423,6 +435,10 @@ fn play_on_fake(alloc: std.mem.Allocator, kindle: Kindle) !FakeKindle {
     if (kindle.airplane) try fake.put(wifi_key, "0");
     if (kindle.bluetooth) try fake.put("com.lab126.btfd BTstate", "1");
     if (kindle.radio_slow) fake.busy_after_set = wifi_key;
+    if (kindle.real_book) |real| {
+        fake.highlights = real.highlights;
+        fake.bookmarks = real.bookmarks;
+    }
     assert(fake.sets.items.len == 0); // Nothing asked of it yet
     assert(!fake.busy);
     return fake;
@@ -512,7 +528,7 @@ fn play_on_folder(
         book_paths[i] = try std.fmt.allocPrintSentinel(alloc, "{s}/{s}", .{ dir, name }, 0);
         if (kindle.real_book == null) try write_file(book_paths[i], book_bytes);
     }
-    if (kindle.real_book) |p| book_paths[0] = p;
+    if (kindle.real_book) |real| book_paths[0] = real.entry.path;
     var library_buf: [128]u8 = undefined;
     const library_path = try std.fmt.bufPrintSentinel(&library_buf, "{s}/library.tsv", .{dir}, 0);
     try write_file(library_path, "\n"); // No Kindle books: only the EPUBs in the folder
@@ -566,7 +582,7 @@ fn play_on_run(a: *app.App, kindle: Kindle, book_path: [:0]const u8) !u64 {
     assert(book_path.len > 0);
     assert(hidden_stderr == -1); // One scenario at a time
     const kind = if (std.mem.endsWith(u8, book_path, ".epub")) "EPUB" else "KFX";
-    var entry = catalog.Entry{
+    var entry = if (kindle.real_book) |real| real.entry else catalog.Entry{
         .path = book_path,
         .title = "Scenario Book",
         .author = "noface tests",
@@ -574,6 +590,7 @@ fn play_on_run(a: *app.App, kindle: Kindle, book_path: [:0]const u8) !u64 {
         .last = 0,
         .kind = kind,
     };
+    assert(std.mem.eql(u8, entry.path, book_path));
     // The app reports as it goes; a run shows only its results
     const saved_stderr: i32 = @intCast(linux.dup(2));
     hidden_stderr = saved_stderr;
@@ -1229,41 +1246,112 @@ fn selftest_files() bool {
     return ok and helper;
 }
 
-/// A few of the reader's books, each opened to its first page.
+/// The most of the reader's books the self-test opens of each kind, and looks at.
+const selftest_books_opened_max = 3;
+const selftest_books_tried_max = 12;
+/// The most a book's highlights or bookmarks take, as the database answers: the
+/// reader's own buffer for them is this size.
+const selftest_notes_bytes_max = 1024 * 1024;
+
+comptime {
+    assert(selftest_books_opened_max <= selftest_books_tried_max);
+}
+
+/// A few of the reader's books, each opened to its first page with its own highlights
+/// and bookmarks: they come from outside noface, and must never stop a book opening.
 fn selftest_books() bool {
-    const books_opened_max = 3;
-    const books_tried_max = 12;
-    comptime assert(books_opened_max <= books_tried_max);
-    var ok = true;
     var arena = std.heap.ArenaAllocator.init(std.heap.smp_allocator);
     defer arena.deinit();
-    for ([_][]const u8{ ".epub", ".kfx" }) |suffix| {
-        const found = folders.find_files(arena.allocator(), paths.documents, suffix) catch continue;
-        // Up to three that noface can open; protected ones (most bought from Amazon)
-        // open in the Kindle's own reader instead, so they're passed over, not failed
-        var opened: u32 = 0;
-        // Named by kind and number, not title: this report is pasted into public issues
-        const kind = suffix[1..];
-        for (found[0..@min(found.len, books_tried_max)], 1..) |path, number| {
-            assert(opened <= books_opened_max);
-            if (opened == books_opened_max) break;
-            assert(number <= books_tried_max);
-            assert(std.fs.path.isAbsolute(path));
-            if (play_on(.{ .real_book = path }, &.{})) |r| {
-                std.debug.print("ok    opened {s} book {d} ({d} ms)\n", .{ kind, number, r.ms });
-                opened += 1;
-            } else |err| switch (err) {
-                error.Encrypted, error.Compressed, error.NotKfx => {
-                    const why = @errorName(err);
-                    const line = "--    {s} book {d}: not one noface opens ({s})\n";
-                    std.debug.print(line, .{ kind, number, why });
-                },
-                else => {
-                    const line = "FAIL  opened {s} book {d}: {s}\n";
-                    std.debug.print(line, .{ kind, number, @errorName(err) });
-                    ok = false;
-                },
-            }
+    const alloc = arena.allocator();
+    const epubs = selftest_epubs(alloc) catch &.{};
+    const kindle_books = selftest_kindle_books(alloc) catch &.{};
+    const epubs_ok = selftest_open("epub", epubs);
+    const kindle_books_ok = selftest_open("kfx", kindle_books);
+    return epubs_ok and kindle_books_ok;
+}
+
+/// The first EPUBs in the documents folder. Their notes are in noface's own files,
+/// beside places a run never reads, so they open without any.
+fn selftest_epubs(alloc: std.mem.Allocator) ![]const RealBook {
+    const found = try folders.find_files(alloc, paths.documents, ".epub");
+    const books = try alloc.alloc(RealBook, @min(found.len, selftest_books_tried_max));
+    for (books, found[0..books.len]) |*book, path| {
+        assert(std.fs.path.isAbsolute(path));
+        const name = std.fs.path.stem(path);
+        book.* = .{ .entry = .{
+            .path = path,
+            .title = name,
+            .author = "",
+            .percent = 0,
+            .last = 0,
+            .kind = "EPUB",
+        } };
+    }
+    return books;
+}
+
+/// The Kindle books read last, from the book list, with their notes as the database
+/// has them: those with highlights first.
+fn selftest_kindle_books(alloc: std.mem.Allocator) ![]const RealBook {
+    const list_path = paths.data_dir ++ "/" ++ paths.data.library;
+    const mapped = file.map(list_path) catch return &.{}; // Not exported yet: none
+    const list = try alloc.dupe(u8, mapped); // The entries keep slices of it
+    file.unmap(mapped);
+    const entries = try kindle_catalog.parse(alloc, list);
+    std.sort.block(catalog.Entry, entries, {}, read_later);
+    var books: std.ArrayList(RealBook) = .empty;
+    const stored = try alloc.alloc(u8, selftest_notes_bytes_max);
+    for (entries) |entry| {
+        if (books.items.len == selftest_books_tried_max) break;
+        if (!entry.is_local() or entry.is_epub()) continue;
+        const highlights = annotation_db.read_lines(entry.key, .highlight, stored);
+        const highlights_kept = try alloc.dupe(u8, highlights);
+        const bookmarks = annotation_db.read_lines(entry.key, .bookmark, stored);
+        try books.append(alloc, .{
+            .entry = entry,
+            .highlights = highlights_kept,
+            .bookmarks = try alloc.dupe(u8, bookmarks),
+        });
+    }
+    std.sort.block(RealBook, books.items, {}, more_highlighted);
+    assert(books.items.len <= selftest_books_tried_max);
+    return books.items;
+}
+
+fn read_later(_: void, a: catalog.Entry, b: catalog.Entry) bool {
+    return a.last > b.last;
+}
+
+fn more_highlighted(_: void, a: RealBook, b: RealBook) bool {
+    return a.highlights.len > 0 and b.highlights.len == 0;
+}
+
+/// Opens up to `selftest_books_opened_max` of `books`. Protected ones (most bought from
+/// Amazon) open in the Kindle's own reader instead, so they're passed over, not failed.
+fn selftest_open(kind: []const u8, books: []const RealBook) bool {
+    assert(books.len <= selftest_books_tried_max);
+    var ok = true;
+    var opened: u32 = 0;
+    // Named by kind and number, not title: this report is pasted into public issues
+    for (books, 1..) |book, number| {
+        assert(opened <= selftest_books_opened_max);
+        if (opened == selftest_books_opened_max) break;
+        if (play_on(.{ .real_book = book }, &.{})) |r| {
+            const highlights = std.mem.count(u8, book.highlights, "\n");
+            const line = "ok    opened {s} book {d} ({d} ms, {d} highlights)\n";
+            std.debug.print(line, .{ kind, number, r.ms, highlights });
+            opened += 1;
+        } else |err| switch (err) {
+            error.Encrypted, error.Compressed, error.NotKfx => {
+                const why = @errorName(err);
+                const line = "--    {s} book {d}: not one noface opens ({s})\n";
+                std.debug.print(line, .{ kind, number, why });
+            },
+            else => {
+                const line = "FAIL  opened {s} book {d}: {s}\n";
+                std.debug.print(line, .{ kind, number, @errorName(err) });
+                ok = false;
+            },
         }
     }
     return ok;

@@ -73,8 +73,9 @@ pub fn parse_notes(alloc: std.mem.Allocator, lines: []const u8) ![]const Note {
     return notes.toOwnedSlice(alloc);
 }
 
-/// Fetches a book's highlights or bookmarks as "id|start|end" lines.
-fn read_lines(key: []const u8, kind: annotations.Kind, out: []u8) []const u8 {
+/// Fetches a book's highlights or bookmarks as "id|start|end" lines, as the database
+/// answers: the self-test hands them to its pretend Kindle, to open a book with its own.
+pub fn read_lines(key: []const u8, kind: annotations.Kind, out: []u8) []const u8 {
     assert(out.len > 0);
     if (!safe.safe_id(key)) return "";
     var match_buf: [128]u8 = undefined;

@@ -21,6 +21,7 @@ const dir = @import("../sys/dir.zig");
 const epub = @import("../epub/epub.zig");
 const catalog_db = @import("../kindle/catalog.zig");
 const kfx = @import("../kindle/kfx.zig");
+const watchers = @import("../kindle/input/watchers.zig");
 const files = @import("files.zig");
 const index = @import("index.zig");
 
@@ -60,6 +61,10 @@ pub const Places = struct {
     documents: []const u8, // Where EPUBs are found
     state_dir: []const u8, // Each book's place and cover, and the series set by hand
     dir: []const u8, // The index's folder
+    /// The launcher's watchdog's heartbeat, beaten as books are added and merged: a
+    /// build of thousands outlasts its two minutes before noface's loop first turns.
+    /// Null in the tests, which leave the watchdog's file alone.
+    heartbeat: ?[*:0]const u8,
 };
 
 /// What an index built now would be built from: the catalog's and the series file's
@@ -125,6 +130,7 @@ const Build = struct {
     records: files.Writer,
     text: files.Writer,
     last: ?EpubsRead, // What the last build read of each EPUB
+    beat_us: u64, // When it last beat, or started
     count: u32 = 0,
     local: u32 = 0,
     downloading: u32 = 0,
@@ -177,6 +183,7 @@ pub fn build(
         .records = undefined,
         .text = undefined,
         .last = if (last) |ix| EpubsRead.sort(ix, items) else null,
+        .beat_us = os.now_us(),
     };
     // Closed before the new files are put in place (a mapped file renamed over faults),
     // or on the way out if the build fails first: null once closed
@@ -233,6 +240,7 @@ fn add_kindle_books(b: *Build) void {
     defer lines.close();
     // Each line moves on through the file, so there are fewer than it has bytes
     for (0..lines_max(&lines)) |_| {
+        if (b.places.heartbeat) |path| watchers.beat_when_due(path, &b.beat_us);
         const line = (lines.next() catch break) orelse break;
         if (line.len == 0) continue;
         var row_memory = std.heap.FixedBufferAllocator.init(b.buffers.row);
@@ -279,6 +287,8 @@ fn add_epubs(b: *Build) void {
 fn add_epub(b: *Build, path: [:0]const u8) void {
     assert(b.count <= index.books_max);
     assert(path.len > 0);
+    // Each EPUB, read or not: thousands, or a few slow to read, outlast the watchdog
+    if (b.places.heartbeat) |heartbeat| watchers.beat_when_due(heartbeat, &b.beat_us);
     b.epubs +%= std.hash.Wyhash.hash(0x65, path); // As `EpubHash` adds it
     const facts = file.facts_of(path) orelse return;
     var state_buffer: [files.path_bytes_max]u8 = undefined;
@@ -510,11 +520,17 @@ fn set_series(
 /// Merges what noface keeps of each book it opened (place, time read, marked read) into
 /// the index's records, from one listing of the data folder: only the books with a
 /// state file are read.
-pub fn merge_states(ix: *const index.Index, items: []Item, state_dir: []const u8) !void {
-    assert(state_dir.len > 0);
-    var merge: Merge = .{ .ix = ix, .sorted = by_state_key(ix, items), .state_dir = state_dir };
+pub fn merge_states(ix: *const index.Index, items: []Item, places: Places) !void {
+    assert(places.state_dir.len > 0);
+    var merge: Merge = .{
+        .ix = ix,
+        .sorted = by_state_key(ix, items),
+        .state_dir = places.state_dir,
+        .heartbeat = places.heartbeat,
+        .beat_us = os.now_us(),
+    };
     var folder_buffer: [files.path_bytes_max]u8 = undefined;
-    const folder = try std.fmt.bufPrintSentinel(&folder_buffer, "{s}", .{state_dir}, 0);
+    const folder = try std.fmt.bufPrintSentinel(&folder_buffer, "{s}", .{places.state_dir}, 0);
     calls.each_entry(folder.ptr, &merge, Merge.entry);
     if (merge.failed) return error.CantMerge;
     assert(merge.sorted.len <= ix.header.local);
@@ -524,11 +540,14 @@ const Merge = struct {
     ix: *const index.Index,
     sorted: []const Item,
     state_dir: []const u8,
+    heartbeat: ?[*:0]const u8, // As `Places.heartbeat`: a state file read each, thousands
+    beat_us: u64, // When it last beat, or started
     failed: bool = false,
 
     fn entry(m: *Merge, name: []const u8, is_dir: bool) void {
         assert(name.len > 0);
         assert(m.sorted.len <= m.ix.header.local);
+        if (m.heartbeat) |path| watchers.beat_when_due(path, &m.beat_us);
         if (is_dir or m.failed) return;
         const key = state.key_of_name(name, "state") orelse return;
         m.merge_key(key, name) catch {

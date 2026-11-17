@@ -47,6 +47,7 @@ pub const Sources = struct {
     catalog_path: [*:0]const u8, // The Kindle's catalog, exported
     documents: []const u8, // Where EPUBs are found
     state_dir: []const u8, // Each book's place and cover, and the index's folder
+    heartbeat: ?[*:0]const u8, // As `builder.Places.heartbeat`: null in the tests
 };
 
 /// What tells that the Kindle's catalog changed without reading it: the size and change
@@ -439,6 +440,7 @@ pub fn load_library(a: *app.App) !Library {
         .catalog_path = a.library_path,
         .documents = a.documents,
         .state_dir = a.state_dir,
+        .heartbeat = paths.heartbeat,
     });
 }
 
@@ -478,6 +480,7 @@ fn open_index(sources: Sources, s: *State) void {
         .documents = sources.documents,
         .state_dir = sources.state_dir,
         .dir = s.dir(),
+        .heartbeat = sources.heartbeat,
     };
     const items = sources.shared.items;
     const wanted = builder.sources_now(&scratch, places);
@@ -498,7 +501,7 @@ fn open_index(sources: Sources, s: *State) void {
         log("library: index built, {d} books in {d} ms\n", .{ built.header.count, ms });
     }
     const ix = s.opened().?; // Opened as it was, or just built
-    builder.merge_states(ix, items, sources.state_dir) catch |err| {
+    builder.merge_states(ix, items, places) catch |err| {
         log("library: places not merged ({s})\n", .{@errorName(err)});
     };
     s.sorted = false; // The items were sorted by state key
@@ -666,6 +669,7 @@ const TestLibrary = struct {
             .catalog_path = try std.fmt.bufPrintSentinel(&t.paths[0], "{s}/catalog", .{root}, 0),
             .documents = try std.fmt.bufPrint(&t.paths[1], "{s}/documents", .{root}),
             .state_dir = try std.fmt.bufPrint(&t.paths[2], "{s}/state", .{root}),
+            .heartbeat = null,
         };
         assert(t.budget.live > 0); // The shared buffers, for good
     }
@@ -734,6 +738,25 @@ test "hundreds of EPUBs list in memory that doesn't grow with them, read once" {
     try std.testing.expectEqual(@as(u32, epubs + 1), library.count() + 1); // The hero too
     for (titles) |title| try std.testing.expect(std.mem.startsWith(u8, title, "Book ") or
         std.mem.eql(u8, title, "Extra"));
+}
+
+test "a build beats the watchdog only once a beat's interval has passed since it started" {
+    var buffer: [64]u8 = undefined;
+    const root = try test_folder(&buffer, 20, 3, 1 << 10);
+    defer test_folder_remove(root);
+    var t: TestLibrary = undefined;
+    try t.init(root);
+    defer t.deinit();
+    var beat_buffer: [320]u8 = undefined;
+    const beat_path = try t.data_path(&beat_buffer, "alive");
+    t.sources.heartbeat = beat_path;
+    // Its clock starts with the build, not at 0: a build quicker than a beat's interval
+    // (every one in the tests) never writes it, so the scenarios leave the Kindle's alone
+    var library = try load(t.sources);
+    defer library.deinit();
+    library.arrange(.title, .all, "");
+    try std.testing.expectEqual(23, library.count() + @intFromBool(library.hero() != null));
+    try std.testing.expect(!file.exists(beat_path));
 }
 
 test "a book's place is read from its state file, found by one listing of the folder" {

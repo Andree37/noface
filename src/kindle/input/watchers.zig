@@ -69,12 +69,28 @@ pub fn news_waiting(in: *Input) bool {
 /// Tells the launcher's watchdog (src/kindle/supervisor.zig) that noface is alive, now.
 pub fn beat(in: *Input) void {
     in.heartbeat_us = now_us();
+    beat_to(heartbeat_path);
+}
+
+/// Writes the heartbeat at `path` (the watchdog's, but for the tests): the time now,
+/// by the wall clock the watchdog reads it with. Needs no Input, so noface beats as it
+/// starts, and work that runs long before the loop first turns (a library build) beats.
+pub fn beat_to(path: [*:0]const u8) void {
     // Room for any u64 and its newline, so the stamp is never the fallback's zero
     var stamp: [24]u8 = undefined;
     comptime assert(stamp.len >= 20 + 1);
     const text = std.fmt.bufPrint(&stamp, "{d}\n", .{os.unix_time()}) catch "0\n";
     assert(text.len > 1);
-    file.write_small(heartbeat_path, text);
+    file.write_small(path, text);
+}
+
+/// Beats at `path` if the last beat, at `last_us` on the monotonic clock, was a beat's
+/// interval ago: the loop's cadence, and a long job's, which keeps its own `last_us`.
+pub fn beat_when_due(path: [*:0]const u8, last_us: *u64) void {
+    const now = now_us();
+    if (now <= last_us.* + heartbeat_every_us) return;
+    last_us.* = now;
+    beat_to(path);
 }
 
 /// Waking up: the monotonic clock stood still while the Kindle slept, so the last
@@ -103,7 +119,7 @@ pub fn start_watcher(in: *Input) void {
 pub fn keep_alive(in: *Input) void {
     // What powerd heard of is a touch already made, on the same clock
     assert(in.told_powerd_us <= in.last_input);
-    if (now_us() > in.heartbeat_us + heartbeat_every_us) beat(in);
+    beat_when_due(heartbeat_path, &in.heartbeat_us);
     if (should_tell_powerd(in.locked, now_us(), in.last_input, in.told_powerd_us)) {
         assert(!in.locked);
         in.told_powerd_us = in.last_input;
@@ -223,6 +239,32 @@ test "only a power key press counts" {
     try std.testing.expect(!power_pressed(&.{ev(ev_key, key_power, 0)})); // Release
     try std.testing.expect(!power_pressed(&.{ev(ev_key, 30, 1)}));
     try std.testing.expect(!power_pressed(&.{}));
+}
+
+test "a long job beats once a beat's interval has passed, and not while the clock stands" {
+    var path_buffer: [64]u8 = undefined;
+    const path = try std.fmt.bufPrintSentinel(&path_buffer, "/tmp/noface-beat-{d}", .{
+        linux.getpid(),
+    }, 0);
+    _ = linux.unlink(path); // Ignored: none there is as good
+    defer _ = linux.unlink(path); // Ignored: only /tmp is left fuller
+    const clock_was = os.fake_us;
+    defer os.fake_us = clock_was;
+    os.fake_us = 1000;
+    var last_us: u64 = 1000; // The job's clock, started as it starts
+    beat_when_due(path, &last_us);
+    try std.testing.expect(!file.exists(path)); // Not a beat's interval yet
+    os.fake_us.? += heartbeat_every_us + 1;
+    beat_when_due(path, &last_us);
+    try std.testing.expect(file.exists(path));
+    try std.testing.expectEqual(os.fake_us.?, last_us);
+    var stamp_buffer: [24]u8 = undefined;
+    const stamp = file.read_small(path, &stamp_buffer);
+    const beat_s = try std.fmt.parseInt(u64, stamp[0 .. stamp.len - 1], 10);
+    try std.testing.expectEqual(os.unix_time(), beat_s);
+    _ = linux.unlink(path); // Ignored: checked just below
+    beat_when_due(path, &last_us);
+    try std.testing.expect(!file.exists(path)); // Beat just now
 }
 
 test "powerd hears about touches only while they're fresh" {

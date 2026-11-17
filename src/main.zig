@@ -83,6 +83,9 @@ pub fn main(init: std.process.Init.Minimal) !void {
 fn main_reader(init: std.process.Init.Minimal) !void {
     const argv = init.args.vector;
     assert(argv.len == reader_arguments_count);
+    // The watchdog's two minutes start now, not from a beat left by an earlier run: what
+    // runs long before the loop first turns (a library built) beats on its own
+    input_mod.beat_to(paths.heartbeat);
     // Reserved now; a book's, the library's and one action's by setup.assemble
     var app_region = try memory.Region.reserve("app", .heap, setup.region_bytes.app);
     var app_budget = memory.Budget{

@@ -159,10 +159,10 @@ pub fn drag_scrub(p: *Pending, a: *app.App, s: *sess.Session, first_x: i32) !scr
 /// The setting an Aa slider row changes.
 fn row_value(a: *const app.App, row: aa.Row) u32 {
     assert(row.steps > 0);
-    const value = switch (row.hit) {
+    const value = switch (row.slider) {
         .text_size => a.settings.size,
         .spacing => a.settings.spacing,
-        else => a.settings.margin,
+        .margins => a.settings.margin,
     };
     // Settings are brought inside their steps as they're read
     assert(value < row.steps);
@@ -172,10 +172,10 @@ fn row_value(a: *const app.App, row: aa.Row) u32 {
 fn row_value_set(a: *app.App, row: aa.Row, value: u32) void {
     assert(row.steps > 0);
     assert(value < row.steps);
-    switch (row.hit) {
+    switch (row.slider) {
         .text_size => a.settings.size = value,
         .spacing => a.settings.spacing = value,
-        else => a.settings.margin = value,
+        .margins => a.settings.margin = value,
     }
     assert(row_value(a, row) == value);
 }

@@ -223,7 +223,8 @@ fn draw_tool(fonts: Fonts, page: Page, t: Tool, bookmarked: bool) !void {
         },
         .search => icons.search(page, x, tool_icon_y),
         .more => icons.dots(page, x, tool_icon_y),
-        else => unreachable, // Only these are tools; the rest are bands of the toolbar
+        // Only the five above are in `tools`; these are the toolbar's other parts
+        .close, .stay, .home, .chapter_prev, .chapter_next, .scrub, .sheet => unreachable,
     }
 }
 

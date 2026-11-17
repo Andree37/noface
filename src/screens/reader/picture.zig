@@ -335,7 +335,9 @@ pub const Viewer = struct {
                     return .stay;
                 },
                 .drag_end => return viewer.lifted(),
-                else => return .stay,
+                // Only the finger followed moves the picture
+                .tap, .hold, .pull, .swipe, .tick, .charger => return .stay,
+                .lock, .unlock, .power, .computer, .stop => return .stay,
             },
             .second => |*second| switch (action) {
                 .drag => |at| {
@@ -352,7 +354,9 @@ pub const Viewer = struct {
                     viewer.v.whole();
                     return viewer.zoomed();
                 },
-                else => return .stay,
+                // Only the second touch's finger decides
+                .tap, .hold, .pull, .swipe, .tick, .charger => return .stay,
+                .lock, .unlock, .power, .computer, .stop => return .stay,
             },
         }
     }

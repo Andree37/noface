@@ -77,7 +77,7 @@ pub const View = union(enum) {
     fn sheet(v: View, kept: aa.Tab) ?aa.Tab {
         return switch (v) {
             .toolbar => |t| if (t.sheet_open) kept else null,
-            else => null,
+            .page, .note, .highlight => null,
         };
     }
 };
@@ -870,7 +870,9 @@ pub const Reader = struct {
                 const page = try r.s.ensure(r.s.current, r.s.current);
                 r.open_child(.{ .panel = .{ .screen = panel.open(r.a, page) } });
             },
-            else => {},
+            .drag, .drag_end, .tick, .charger, .lock, .unlock, .power, .computer, .stop => {
+                unreachable; // `on_touch` brings touches alone
+            },
         }
         return null;
     }
@@ -995,7 +997,10 @@ pub const Reader = struct {
         assert(r.view == .toolbar);
         const t = switch (action) {
             .tap => |t| t,
-            else => return null,
+            .hold, .swipe, .pull => return null,
+            .drag, .drag_end, .tick, .charger, .lock, .unlock, .power, .computer, .stop => {
+                unreachable; // `on_touch` brings touches alone
+            },
         };
         const a = r.a;
         const s = r.s;
@@ -1067,7 +1072,7 @@ pub const Reader = struct {
         r.invariants();
         switch (r.view) {
             .highlight => |*h| h.delete_top = try hl.show_page(r.a, r.s, h.id),
-            else => _ = try hl.show_page(r.a, r.s, null),
+            .page, .toolbar, .note => _ = try hl.show_page(r.a, r.s, null),
         }
     }
 
@@ -1076,7 +1081,10 @@ pub const Reader = struct {
         assert(r.view == .highlight);
         const t = switch (action) {
             .tap => |t| t,
-            else => return null,
+            .hold, .swipe, .pull => return null,
+            .drag, .drag_end, .tick, .charger, .lock, .unlock, .power, .computer, .stop => {
+                unreachable; // `on_touch` brings touches alone
+            },
         };
         const a = r.a;
         const id = r.view.highlight.id;
@@ -1114,7 +1122,10 @@ pub const Reader = struct {
         assert(r.view == .note);
         const t = switch (action) {
             .tap => |t| t,
-            else => return null,
+            .hold, .swipe, .pull => return null,
+            .drag, .drag_end, .tick, .charger, .lock, .unlock, .power, .computer, .stop => {
+                unreachable; // `on_touch` brings touches alone
+            },
         };
         const s = r.s;
         if (t.y >= s.note_top) {

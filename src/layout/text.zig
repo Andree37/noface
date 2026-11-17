@@ -431,7 +431,7 @@ fn line_left(
     return @as(f32, @floatFromInt(l.margin_x)) + indent + switch (alignment) {
         .center => @max(avail - used, 0) / 2,
         .right => @max(avail - used, 0),
-        else => 0,
+        .auto, .left, .justify => 0,
     };
 }
 
@@ -452,7 +452,7 @@ const ParagraphStyle = struct {
             .justify = switch (alignment) {
                 .auto => l.justify and body_size,
                 .justify => true,
-                else => false,
+                .left, .center, .right => false,
             },
         };
         if (style.plain) assert(body_size);

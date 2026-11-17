@@ -152,21 +152,24 @@ pub fn switch_top(i: u32) u32 {
     return result;
 }
 
-pub const Row = struct { hit: Hit, label: []const u8, top: u32, steps: u32 };
+/// The setting an Aa slider row changes.
+pub const Slider = enum { text_size, spacing, margins };
+
+pub const Row = struct { slider: Slider, label: []const u8, top: u32, steps: u32 };
 pub const size_row = Row{
-    .hit = .text_size,
+    .slider = .text_size,
     .label = "Text size",
     .top = content_top + 356,
     .steps = settings_model.sizes.len,
 };
 pub const spacing_row = Row{
-    .hit = .spacing,
+    .slider = .spacing,
     .label = "Line spacing",
     .top = content_top,
     .steps = settings_model.spacings.len,
 };
 pub const margin_row = Row{
-    .hit = .margins,
+    .slider = .margins,
     .label = "Margins",
     .top = content_top + 146,
     .steps = settings_model.margins.len,
@@ -391,10 +394,10 @@ fn draw_toggle(fonts: Fonts, page: Page, y: u32, label: []const u8, on: bool) !v
 pub fn value_label(buf: []u8, r: Row, value: u32) []const u8 {
     assert(r.steps >= 2);
     assert(buf.len >= "99 of 99".len);
-    return switch (r.hit) {
+    return switch (r.slider) {
+        .text_size => std.fmt.bufPrint(buf, "{d} of {d}", .{ value + 1, r.steps }) catch "",
         .spacing => std.fmt.bufPrint(buf, "{d:.2}", .{settings_model.spacings[value]}) catch "",
         .margins => margin_names[@min(value, margin_names.len - 1)],
-        else => std.fmt.bufPrint(buf, "{d} of {d}", .{ value + 1, r.steps }) catch "",
     };
 }
 

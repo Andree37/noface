@@ -9,7 +9,7 @@ const icons = @import("icons.zig");
 const slider = @import("slider.zig");
 const quick_model = @import("../model/quick.zig");
 
-pub const height = 960;
+pub const height = 1010;
 
 const slider_left = 160;
 const slider_right = 1110;
@@ -20,11 +20,16 @@ pub const brightness_row = Row{
     .y = 680,
     .max = quick_model.max_brightness,
 };
-pub const warmth_row = Row{ .label = "Warmth", .y = 850, .max = quick_model.max_warmth };
-const schedule_top = 754;
-const schedule_bottom = 794;
-const schedule_left = 800; // The schedule takes taps right of here
+pub const warmth_row = Row{ .label = "Warmth", .y = 900, .max = quick_model.max_warmth };
 const row_reach = 60; // A slider row takes taps this far above and below its bar
+/// The warmth's name and the schedule's switch, on one line between the two sliders.
+/// The schedule takes taps right of `schedule_left`, in all the room between the
+/// sliders' taps: a fingertip tall and more.
+const warmth_label_baseline = 805;
+const schedule_top = brightness_row.y + row_reach;
+const schedule_bottom = warmth_row.y - row_reach;
+const schedule_left = 800;
+const chevron_y = height - 26; // The chevron at the bottom, which closes the panel
 
 pub const Hit = enum {
     none,
@@ -133,8 +138,15 @@ comptime {
     assert(slider_right <= style.screen_width);
     assert(brightness_row.y + band_below <= warmth_row.y - band_above);
     assert(brightness_row.y + row_reach <= schedule_top);
-    assert(schedule_top < schedule_bottom);
-    assert(warmth_row.y + row_reach < height);
+    assert(schedule_bottom <= warmth_row.y - row_reach);
+    // The schedule's switch a fingertip tall, its words inside its taps and above the
+    // warmth's band, which is redrawn alone as its knob moves
+    assert(schedule_bottom - schedule_top >= 100);
+    assert(warmth_label_baseline - 30 >= schedule_top);
+    assert(warmth_label_baseline + 10 <= schedule_bottom);
+    assert(warmth_label_baseline + 10 <= warmth_row.y - band_above);
+    assert(warmth_row.y + row_reach < chevron_y);
+    assert(chevron_y < height);
     assert(height < style.screen_height);
 }
 
@@ -367,14 +379,16 @@ pub fn render(fonts: Fonts, page: Page, quick: *const quick_model.Quick) !void {
     page.fill_rect(40, 560, page.width - 80, 2, style.panel_rule);
     try fonts.small.draw(page, 60, 606, brightness_row.label);
     try draw_slider(fonts, page, brightness_row, quick.brightness, false);
-    try fonts.small.draw(page, 60, 776, warmth_row.label);
+    try fonts.small.draw(page, 60, warmth_label_baseline, warmth_row.label);
     const schedule = if (quick.schedule) "Schedule: On" else "Schedule: Off";
     const schedule_w = try fonts.small.measure(schedule);
-    try fonts.small.draw(page, w - 96 - schedule_w, 776, schedule);
-    page.stroke(w - 80, 752, w - 66, 766, 4);
-    page.stroke(w - 66, 766, w - 80, 780, 4);
+    try fonts.small.draw(page, w - 96 - schedule_w, warmth_label_baseline, schedule);
+    // A small arrow after it, centred on its letters
+    const arrow_y: f32 = warmth_label_baseline - 10;
+    page.stroke(w - 80, arrow_y - 14, w - 66, arrow_y, 4);
+    page.stroke(w - 66, arrow_y, w - 80, arrow_y + 14, 4);
     try draw_slider(fonts, page, warmth_row, quick.warmth, false);
-    icons.chevron(page, w / 2, 934);
+    icons.chevron(page, w / 2, chevron_y);
 }
 
 test "panel maps taps like the stock layout" {
@@ -387,12 +401,25 @@ test "panel maps taps like the stock layout" {
     try std.testing.expectEqual(Hit.dimmer, hit(90, 680));
     try std.testing.expectEqual(Hit.brighter, hit(1180, 680));
     try std.testing.expectEqual(Hit.slider, hit(600, 680));
-    try std.testing.expectEqual(Hit.cooler, hit(90, 850));
-    try std.testing.expectEqual(Hit.warmer, hit(1180, 850));
-    try std.testing.expectEqual(Hit.warmth, hit(600, 850));
-    try std.testing.expectEqual(Hit.schedule, hit(1000, 775));
-    try std.testing.expectEqual(Hit.close, hit(636, 930));
+    try std.testing.expectEqual(Hit.cooler, hit(90, 900));
+    try std.testing.expectEqual(Hit.warmer, hit(1180, 900));
+    try std.testing.expectEqual(Hit.warmth, hit(600, 900));
+    try std.testing.expectEqual(Hit.schedule, hit(1000, 790));
+    try std.testing.expectEqual(Hit.close, hit(636, 984));
     try std.testing.expectEqual(Hit.close, hit(600, 1100));
+}
+
+test "the schedule takes a fingertip's taps, and the sliders none of them" {
+    const middle = @divExact(schedule_top + schedule_bottom, 2);
+    try std.testing.expectEqual(Hit.schedule, hit(1000, middle));
+    try std.testing.expectEqual(Hit.schedule, hit(1000, schedule_top));
+    try std.testing.expectEqual(Hit.schedule, hit(1000, schedule_bottom - 1));
+    // Just under its words, where a tap once changed the warmth
+    try std.testing.expectEqual(Hit.schedule, hit(1000, warmth_label_baseline + 10));
+    try std.testing.expectEqual(Hit.brighter, hit(1180, schedule_top - 1));
+    try std.testing.expectEqual(Hit.warmer, hit(1180, schedule_bottom));
+    // Left of it, under the warmth's name, a tap does nothing
+    try std.testing.expectEqual(Hit.none, hit(400, middle));
 }
 
 test "knob follows the finger but stays on the bar" {

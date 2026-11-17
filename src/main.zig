@@ -15,6 +15,7 @@ const fonts_db = @import("kindle/fonts.zig");
 const memory = @import("base/memory.zig");
 const decoder_memory = @import("gfx/decoder_memory.zig");
 const Font = @import("gfx/font.zig").Font;
+const Page = @import("gfx/page.zig").Page;
 const file = @import("sys/file.zig");
 const hwtcon = @import("kindle/hwtcon.zig");
 const clock = @import("sys/clock.zig");
@@ -60,7 +61,14 @@ fn sets_text(data: []const u8) bool {
     assert(Font.tables_inside(data)); // Checked by usable, before opening it
     var font = Font.init(data, 30, 1.2) catch return false;
     assert(font.line_height > 0); // Set from the size asked for
-    _ = font.measure("Aa Bb Gg Qq yj 0123 .,;!?") catch return false;
+    const sample = "Aa Bb Gg Qq yj 0123 .,;!?";
+    _ = font.measure(sample) catch return false;
+    // Drawn too, so its outlines are read and rasterized here, where a crash ends only
+    // this trial, not the reader's first page set in it. Each glyph is made whole
+    // before it's clipped to the page, so a small one does
+    var pixels: [64 * 48]u8 = @splat(0xff);
+    const page: Page = .{ .buf = &pixels, .width = 64, .height = 48, .stride = 64 };
+    font.draw(page, 0, 40, sample) catch return false;
     return true;
 }
 
@@ -122,7 +130,7 @@ fn main_reader(init: std.process.Init.Minimal) !void {
         @memcpy(screen.pixels, saved_screen);
         if (screen.show(.flash)) |m| {
             screen.wait_complete(m) catch {}; // Ignored: the Kindle draws its own screen next.
-        } else |_| {}
+        } else |_| {} // Ignored: not shown, the Kindle draws its own screen next.
     }
 
     var files: setup.DataFiles = .{};

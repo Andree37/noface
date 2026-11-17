@@ -94,12 +94,12 @@ pub fn load(
     alloc: std.mem.Allocator,
     path: [*:0]const u8,
     want: u64,
-    paragraph_count: u32,
+    paragraphs: []const book_model.Paragraph,
 ) ?[]const book_model.Pos {
     assert(std.mem.len(path) > 0);
     const data = file.map(path) catch return null;
     defer file.unmap(data);
-    const pages = decode(alloc, data, want, paragraph_count) orelse return null;
+    const pages = decode(alloc, data, want, paragraphs) orelse return null;
     assert(pages.len > 0);
     return pages;
 }
@@ -144,13 +144,14 @@ pub fn encode(alloc: std.mem.Allocator, k: u64, pages: []const book_model.Pos) !
     return out;
 }
 
-/// Reads saved breaks. The file comes from disk, so anything off means "not saved",
-/// including a break past the book's last paragraph.
+/// Reads saved breaks. The file comes from disk, so anything off means "not saved":
+/// a break past the book's last paragraph or past its paragraph's text, or a first
+/// page that isn't the book's start.
 pub fn decode(
     alloc: std.mem.Allocator,
     data: []const u8,
     want: u64,
-    paragraph_count: u32,
+    paragraphs: []const book_model.Paragraph,
 ) ?[]const book_model.Pos {
     if (data.len < header_len) return null;
     if (!std.mem.eql(u8, data[0..magic.len], magic)) return null;
@@ -165,45 +166,76 @@ pub fn decode(
             .para = std.mem.readInt(u32, data[at..][0..4], .little),
             .byte = std.mem.readInt(u32, data[at + 4 ..][0..4], .little),
         };
-        if (p.para >= paragraph_count) {
+        const previous = if (i > 0) pages[i - 1] else null;
+        if (!decode_fits(paragraphs, previous, p.*)) {
             alloc.free(pages);
             return null;
-        }
-        // Breaks only move forward; anything else is a damaged file.
-        if (i > 0) {
-            if (!is_before(pages[i - 1], p.*)) {
-                alloc.free(pages);
-                return null;
-            }
         }
     }
     // What the checks above let through: a page on every break, all inside the book
     assert(pages.len == count);
-    assert(pages[pages.len - 1].para < paragraph_count);
+    assert(pages[pages.len - 1].para < paragraphs.len);
     return pages;
 }
+
+/// Whether a break read back can follow `previous` (null for the first page): inside
+/// the book's text, and moving forward from the book's start.
+fn decode_fits(
+    paragraphs: []const book_model.Paragraph,
+    previous: ?book_model.Pos,
+    p: book_model.Pos,
+) bool {
+    if (p.para >= paragraphs.len) return false;
+    // At most the paragraph's end: an empty paragraph breaks at its byte 0
+    if (p.byte > paragraphs[p.para].text.len) return false;
+    const after = previous orelse return std.meta.eql(p, book_model.Pos{});
+    return is_before(after, p);
+}
+
+/// A book of ten paragraphs of 64 letters, for reading breaks back against.
+const test_letters: [64]u8 = @splat('a');
+const test_book: [10]book_model.Paragraph = @splat(.{ .text = &test_letters });
 
 test "saved breaks come back only for the same key" {
     const alloc = std.testing.allocator;
     const pages = [_]book_model.Pos{ .{}, .{ .para = 3, .byte = 40 }, .{ .para = 9, .byte = 0 } };
     const bytes = try encode(alloc, 42, &pages);
     defer alloc.free(bytes);
-    const back = decode(alloc, bytes, 42, 10).?;
+    const back = decode(alloc, bytes, 42, &test_book).?;
     defer alloc.free(back);
     try std.testing.expectEqualSlices(book_model.Pos, &pages, back);
-    try std.testing.expect(decode(alloc, bytes, 43, 10) == null);
+    try std.testing.expect(decode(alloc, bytes, 43, &test_book) == null);
     // The book has fewer paragraphs now
-    try std.testing.expect(decode(alloc, bytes, 42, 9) == null);
-    try std.testing.expect(decode(alloc, bytes[0 .. bytes.len - 1], 42, 10) == null);
+    try std.testing.expect(decode(alloc, bytes, 42, test_book[0..9]) == null);
+    try std.testing.expect(decode(alloc, bytes[0 .. bytes.len - 1], 42, &test_book) == null);
 }
 
 test "damaged files read as not saved" {
     const alloc = std.testing.allocator;
-    const backwards = [_]book_model.Pos{ .{ .para = 5 }, .{ .para = 2 } };
+    const backwards = [_]book_model.Pos{ .{}, .{ .para = 5 }, .{ .para = 2 } };
     const bytes = try encode(alloc, 7, &backwards);
     defer alloc.free(bytes);
-    try std.testing.expect(decode(alloc, bytes, 7, 10) == null);
-    try std.testing.expect(decode(alloc, "NFPGjunk", 7, 10) == null);
+    try std.testing.expect(decode(alloc, bytes, 7, &test_book) == null);
+    try std.testing.expect(decode(alloc, "NFPGjunk", 7, &test_book) == null);
+}
+
+test "a break past its paragraph's text, or a first page not at the start, reads as not saved" {
+    // Bookmarks and notes assert on these breaks' bytes, so a damaged file stops here
+    const alloc = std.testing.allocator;
+    const at_end = [_]book_model.Pos{ .{}, .{ .para = 3, .byte = 64 } };
+    const fits = try encode(alloc, 7, &at_end);
+    defer alloc.free(fits);
+    const back = decode(alloc, fits, 7, &test_book).?;
+    defer alloc.free(back);
+    try std.testing.expectEqualSlices(book_model.Pos, &at_end, back);
+    const past_end = [_]book_model.Pos{ .{}, .{ .para = 3, .byte = 65 } };
+    const past = try encode(alloc, 7, &past_end);
+    defer alloc.free(past);
+    try std.testing.expect(decode(alloc, past, 7, &test_book) == null);
+    const late_start = [_]book_model.Pos{ .{ .para = 1 }, .{ .para = 3 } };
+    const late = try encode(alloc, 7, &late_start);
+    defer alloc.free(late);
+    try std.testing.expect(decode(alloc, late, 7, &test_book) == null);
 }
 
 test "pages files sit beside state files" {

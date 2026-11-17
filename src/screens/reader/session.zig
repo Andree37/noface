@@ -613,13 +613,12 @@ pub fn relayout(a: *app.App, s: *Session) !void {
     a.forget_pages();
     const t0 = now_us();
     const pages_key = page_store.key(a, s.book_bytes);
-    const paragraph_count: u32 = @intCast(s.paragraphs.len);
     s.progress = null; // A layout still running was for the old settings
     s.pages = &pages_fallback;
     s.current = 0;
     a.pages_budget.reset(.keep);
     const alloc = a.pages_budget.allocator();
-    const stored = page_store.load(alloc, s.pages_path, pages_key, paragraph_count);
+    const stored = page_store.load(alloc, s.pages_path, pages_key, s.paragraphs);
     if (stored) |pages| {
         s.pages = pages;
         s.current = page_containing(s.pages, s.anchor.para, s.anchor.byte);

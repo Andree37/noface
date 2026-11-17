@@ -286,8 +286,7 @@ fn read_book_pages(
     const pages_name = try page_store.path_for(&pages_buffer, options.state_path);
     const pages_path = try alloc.dupeSentinel(u8, pages_name, 0);
     const pages_key = page_store.key(a, options.book_bytes);
-    const paragraph_count: u32 = @intCast(paragraphs.len);
-    const stored_pages = page_store.load(alloc, pages_path, pages_key, paragraph_count);
+    const stored_pages = page_store.load(alloc, pages_path, pages_key, paragraphs);
     const saved = state.load(options.state_path);
     const from_kindle = state.prefer_kindle(saved, entry.kindle_last);
     // Without saved breaks, lay out a little from the reader's place and show it at

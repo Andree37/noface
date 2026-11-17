@@ -26,6 +26,7 @@ pub fn toggle(
                 continue;
             }
             if (!s.notes.remove(.bookmark, b.id)) {
+                s.notes.sync(); // Those already removed from the page go to Amazon all the same
                 return app.show_notice(a, "This bookmark couldn't be removed.");
             }
             _ = s.bookmarks.orderedRemove(index);

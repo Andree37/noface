@@ -710,6 +710,7 @@ pub const Reader = struct {
         if (r.data.len > 0) file.unmap(r.data);
         r.data = &.{};
         a.pictures.clear(a.alloc); // Its keys point into this book's memory
+        a.layout.marks = &.{}; // So do the highlights layout shades
         // Emptied for the next book, the pages touched handed back
         r.scratch_budget.reset(.give_back);
         r.book_budget.reset(.give_back);

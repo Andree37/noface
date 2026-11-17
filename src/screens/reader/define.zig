@@ -107,7 +107,7 @@ pub fn begin(
     const found = find(a, s, word, lang);
     std.debug.print("lookup: {s}\n", .{@tagName(found.looked_up)});
     // The page as it was: what the sheet and any card about getting a dictionary sit
-    // over, and what's put back when they close
+    // over, while they're open
     const page_copy = try a.alloc.dupe(u8, a.screen.pixels);
     d.* = .{ .a = a, .s = s, .word = word, .lang = lang, .page_copy = page_copy, .found = found };
     assert(d.phase == .asking);
@@ -177,12 +177,9 @@ pub const Define = struct {
                     .done => |choice| choice,
                     .closed, .interrupted => .close,
                 };
-                const a = d.a;
-                assert(d.page_copy.len == a.screen.pixels.len);
-                // The cards drew into the overlay; this is the page
-                @memcpy(a.screen.pixels, d.page_copy);
-                a.alloc.free(d.page_copy);
-                try a.show_band(0, a.screen.height);
+                // The reader puts its page back, the hold's underline taken off, in one
+                // update: putting this copy back first showed the underline again
+                d.a.alloc.free(d.page_copy);
                 return .{ .done = choice };
             },
         }

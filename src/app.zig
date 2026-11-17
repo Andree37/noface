@@ -498,9 +498,12 @@ pub fn save_journal(a: *const App) void {
     };
     defer if (old) |o| file.unmap(o);
     const first_day: ?i32 = if (a.journal.len > 0) a.journal.days[0].day else null;
+    // No file, or nothing in it, has no day to keep
+    const older = journal_model.older_lines(old orelse "", first_day);
     const parts = [_][]const u8{
         content[0..journal_model.tag_line_bytes],
-        if (old) |o| journal_model.older_lines(o, first_day) else "",
+        older[0],
+        older[1], // A line break, when the file's last line had none
         content[journal_model.tag_line_bytes..],
     };
     file.write_parts(a.journal_path, &parts);

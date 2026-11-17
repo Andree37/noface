@@ -140,13 +140,17 @@ fn run_after(run_before_day: u32, day: Day, next_day: i32) u32 {
     return if (next_day == day.day + 1) run else 0;
 }
 
-/// The local calendar day of a Unix time, `utc_offset` seconds east of UTC.
+/// The local calendar day of a Unix time, `utc_offset` seconds east of UTC. A clock
+/// reset to 1970 and set west of UTC reads before it, which is no day the journal
+/// counts: such a time is day 0.
 pub fn day_of(unix: u64, utc_offset: i64) i32 {
-    return @intCast(@divFloor(@as(i64, @intCast(unix)) + utc_offset, 86400));
+    const day = @max(0, @divFloor(@as(i64, @intCast(unix)) + utc_offset, 86400));
+    return @intCast(day);
 }
 
 /// The first day of the year `day` falls in.
 pub fn year_start(day: i32) i32 {
+    assert(day >= 0); // Days are from 1970: `day_of` and the file's days never go before
     const es = std.time.epoch.EpochDay{ .day = @intCast(day) };
     const year = es.calculateYearDay().year;
     var start: i32 = 0;
@@ -176,27 +180,25 @@ comptime {
     assert(format_tag.len + 1 <= 16);
 }
 
-/// The saved journal: its last `kept` days, and the reading run before them. A file
-/// that doesn't read cleanly gives an empty journal: it sits on the USB drive and must
-/// never stop noface.
+/// The saved journal: its last `kept` days, and the reading run before them. The file
+/// sits on the USB drive and must never stop noface, nor lose more than it must: a line
+/// that doesn't read (a torn write, a power cut) is passed over, and the rest kept.
 pub fn parse(content: []const u8) Journal {
-    const days = count_days(content) orelse return .{};
+    const days = count_days(content);
     var j = Journal{};
-    var lines = std.mem.tokenizeScalar(u8, content, '\n');
-    _ = lines.next(); // The tag, which `count_days` read
+    var lines: Days = .init(content);
     // The days older than memory holds: only the run of reading days they end with
     var previous: ?Day = null;
     for (0..days -| kept) |_| {
-        const d = parse_day(lines.next().?).?; // Read once by `count_days`
+        const d = lines.next().?.day; // Counted by `count_days`, which reads them alike
         if (previous) |p| j.run_before = run_after(j.run_before, p, d.day);
         previous = d;
     }
     while (lines.next()) |line| {
-        const d = parse_day(line).?;
         if (previous) |p| {
-            if (j.len == 0) j.run_before = run_after(j.run_before, p, d.day);
+            if (j.len == 0) j.run_before = run_after(j.run_before, p, line.day.day);
         }
-        j.days[j.len] = d;
+        j.days[j.len] = line.day;
         j.len += 1;
     }
     assert(j.len == @min(days, kept));
@@ -204,29 +206,51 @@ pub fn parse(content: []const u8) Journal {
     return j;
 }
 
-/// How many days the journal file holds, or null when it isn't one, whole: its tag,
-/// then days in order, each with its four numbers.
-fn count_days(content: []const u8) ?u32 {
-    var lines = std.mem.tokenizeScalar(u8, content, '\n');
-    if (!std.mem.eql(u8, lines.next() orelse return null, format_tag)) return null;
+/// How many days the journal file holds, as `Days` reads them.
+fn count_days(content: []const u8) u32 {
+    var lines: Days = .init(content);
     var count: u32 = 0;
-    var last: ?i32 = null;
-    while (lines.next()) |line| {
-        const d = parse_day(line) orelse return null;
-        if (last) |l| {
-            if (d.day <= l) return null; // Out of order: not ours
-        }
-        last = d.day;
-        count += 1;
-    }
-    assert(count <= content.len);
+    while (lines.next()) |_| count += 1;
+    assert(count <= content.len); // A day takes a line, and a line some bytes
     return count;
 }
+
+/// The days of a journal file, a line at a time, in order. A line that isn't a day
+/// (the tag, a blank line, one torn or damaged) or that comes out of order is passed
+/// over: damage costs that line and nothing else.
+const Days = struct {
+    lines: std.mem.TokenIterator(u8, .scalar),
+    last: ?i32 = null, // The day read last, which the next must come after
+
+    /// A day, and where its line starts in the file.
+    const Line = struct { day: Day, start: u32 };
+
+    fn init(content: []const u8) Days {
+        assert(content.len <= std.math.maxInt(u32)); // Mapped on a 32-bit Kindle
+        return .{ .lines = std.mem.tokenizeScalar(u8, content, '\n') };
+    }
+
+    fn next(d: *Days) ?Line {
+        while (d.lines.next()) |text| {
+            const day = parse_day(text) orelse continue;
+            if (d.last) |last| {
+                if (day.day <= last) continue;
+            }
+            d.last = day.day;
+            // The tokenizer stops at the line's end
+            const start = d.lines.index - text.len;
+            assert(std.mem.eql(u8, d.lines.buffer[start..][0..text.len], text));
+            return .{ .day = day, .start = @intCast(start) };
+        }
+        return null;
+    }
+};
 
 // Assertions: it reads a line of the journal file, which sits on the USB drive: outside data.
 fn parse_day(line: []const u8) ?Day {
     var f = std.mem.tokenizeScalar(u8, line, ' ');
-    const day = std.fmt.parseInt(i32, f.next() orelse return null, 10) catch return null;
+    // Unsigned: days are from 1970, and one before it is no line of the journal's
+    const day = std.fmt.parseInt(u31, f.next() orelse return null, 10) catch return null;
     const seconds = std.fmt.parseInt(u32, f.next() orelse return null, 10) catch return null;
     const pages = std.fmt.parseInt(u32, f.next() orelse return null, 10) catch return null;
     const finished = std.fmt.parseInt(u16, f.next() orelse return null, 10) catch return null;
@@ -235,23 +259,25 @@ fn parse_day(line: []const u8) ?Day {
 
 /// The lines of the journal file `content` for days before `first_day`, which memory
 /// no longer holds, to be written again ahead of those it does: all of them when
-/// memory holds no day (null). Empty for a file that isn't a journal.
-pub fn older_lines(content: []const u8, first_day: ?i32) []const u8 {
-    if (count_days(content) == null) return "";
-    const start = format_tag.len + 1; // Past the tag's line
-    if (content.len <= start) return "";
-    var end: u32 = start;
-    var lines = std.mem.splitScalar(u8, content[start..], '\n');
-    while (lines.next()) |line| {
-        const d = parse_day(line) orelse break; // The end: an empty last part
-        if (first_day) |first| {
-            if (d.day >= first) break;
+/// memory holds no day (null). As they are in the file, from its first day on, lines
+/// that don't read among them (`parse` passes over them); then a line break when the
+/// file's last line had none, so the next line written starts a line of its own.
+pub fn older_lines(content: []const u8, first_day: ?i32) [2][]const u8 {
+    var lines: Days = .init(content);
+    const first = lines.next() orelse return .{ "", "" }; // No day in it: none to keep
+    var end: u32 = @intCast(content.len);
+    var at: ?Days.Line = first;
+    while (at) |line| : (at = lines.next()) {
+        const memory_first = first_day orelse break; // Memory holds none: all of them
+        if (line.day.day >= memory_first) {
+            end = line.start;
+            break;
         }
-        end += @intCast(line.len + 1);
     }
-    assert(end <= content.len);
-    assert(end >= start);
-    return content[start..end];
+    assert(first.start <= end);
+    const older = content[first.start..end];
+    const ended = older.len == 0 or older[older.len - 1] == '\n';
+    return .{ older, if (ended) "" else "\n" };
 }
 
 /// The journal's tag line, which `format` starts with, so older lines can follow it.
@@ -328,16 +354,57 @@ test "every day stays in the file, and a streak over years is counted whole" {
     try std.testing.expectEqual(@as(u32, days - 11), j.streak(1000 + days - 1));
     // Saving writes back the days memory no longer holds, then those it does
     const older = older_lines(text.items, j.days[0].day);
-    try std.testing.expectEqual(@as(usize, days - kept), std.mem.count(u8, older, "\n"));
+    try std.testing.expectEqual(@as(usize, days - kept), std.mem.count(u8, older[0], "\n"));
+    try std.testing.expectEqualStrings("", older[1]);
     var buf: [max_format_bytes]u8 = undefined;
     const window = format(&buf, &j);
     var saved: std.ArrayList(u8) = .empty;
     defer saved.deinit(std.testing.allocator);
     try saved.appendSlice(std.testing.allocator, window[0..tag_line_bytes]);
-    try saved.appendSlice(std.testing.allocator, older);
+    try saved.appendSlice(std.testing.allocator, older[0]);
     try saved.appendSlice(std.testing.allocator, window[tag_line_bytes..]);
     try std.testing.expectEqualStrings(text.items, saved.items);
-    try std.testing.expectEqualStrings("", older_lines("not a journal\n1 2 3 4\n", 5));
+}
+
+/// What saving writes over `content` with `j` in memory, as app.zig's `save_journal`.
+fn test_save(buf: []u8, content: []const u8, j: *const Journal) ![]const u8 {
+    var window_buf: [max_format_bytes]u8 = undefined;
+    const window = format(&window_buf, j);
+    const first_day: ?i32 = if (j.len > 0) j.days[0].day else null;
+    const older = older_lines(content, first_day);
+    const parts = .{ window[0..tag_line_bytes], older[0], older[1], window[tag_line_bytes..] };
+    return std.fmt.bufPrint(buf, "{s}{s}{s}{s}", parts);
+}
+
+test "a damaged line costs only itself, now and after the next save" {
+    // A torn tag, blank lines, a damaged and an out-of-order day, and no final break
+    const content = "jour\n\n100 600 1 0\n10x 60 1 0\n\n101 600 2 0\n99 1 1 0\n102 60 1 1";
+    const j = parse(content);
+    try std.testing.expectEqual(3, j.len);
+    try std.testing.expectEqual(@as(u32, 600), j.get(101).seconds);
+    try std.testing.expectEqual(@as(u16, 1), j.get(102).finished);
+    // Memory holds every day: none of them are written twice
+    var buf: [1024]u8 = undefined;
+    const saved = try test_save(&buf, content, &j);
+    try std.testing.expectEqualStrings("journal 1\n100 600 1 0\n101 600 2 0\n102 60 1 1\n", saved);
+}
+
+test "the days memory no longer holds are kept as they are, damage and all" {
+    var j = Journal{};
+    j.add(20_001, 60, 1); // Today, after the last line in the file, which has no break
+    const content = "journal 1\n19999 5 1 0\nbroken\n20000 10 2 0";
+    const older = older_lines(content, 20_001);
+    try std.testing.expectEqualStrings("19999 5 1 0\nbroken\n20000 10 2 0", older[0]);
+    try std.testing.expectEqualStrings("\n", older[1]);
+    var buf: [1024]u8 = undefined;
+    const saved = try test_save(&buf, content, &j);
+    const back = parse(saved);
+    try std.testing.expectEqual(3, back.len);
+    try std.testing.expectEqual(@as(u32, 10), back.get(20_000).seconds);
+    try std.testing.expectEqual(@as(u32, 60), back.get(20_001).seconds);
+    // A file with no day in it keeps nothing, and memory's days are all that's written
+    try std.testing.expectEqualStrings("", older_lines("not a journal\n", 5)[0]);
+    try std.testing.expectEqualStrings("1 2 3 4\n", older_lines("not a journal\n1 2 3 4\n", 5)[0]);
 }
 
 test "a year so far counts finished books and time" {
@@ -366,7 +433,7 @@ test "a book marked finished, unread and finished again counts once" {
     try std.testing.expectEqual(@as(u32, 0), j.since(19_000, 19_900).finished);
 }
 
-test "journal survives saving, and a damaged file starts over" {
+test "journal survives saving, and a line that isn't a day in order is passed over" {
     var j = Journal{};
     j.add(20_000, 600, 3);
     j.finish(20_001);
@@ -376,12 +443,17 @@ test "journal survives saving, and a damaged file starts over" {
     try std.testing.expectEqual(@as(u32, 600), back.get(20_000).seconds);
     try std.testing.expectEqual(@as(u16, 1), back.get(20_001).finished);
     try std.testing.expectEqual(@as(usize, 0), parse("journal 1\n5 x 1 0\n").len);
-    try std.testing.expectEqual(@as(usize, 0), parse("journal 1\n5 1 1 0\n4 1 1 0\n").len);
+    try std.testing.expectEqual(@as(usize, 1), parse("journal 1\n5 1 1 0\n4 1 1 0\n").len);
     try std.testing.expectEqual(@as(usize, 0), parse("something else\n").len);
+    try std.testing.expectEqual(@as(usize, 0), parse("journal 1\n-5 1 1 0\n").len);
 }
 
 test "calendar helpers" {
     try std.testing.expectEqual(@as(i32, 0), day_of(3600, 0));
+    // A clock reset to 1970, west of UTC: day 0, not before it
+    try std.testing.expectEqual(@as(i32, 0), day_of(0, -3600));
+    try std.testing.expectEqual(@as(i32, 0), year_start(day_of(0, -3600)));
+    try std.testing.expectEqual(null, parse_day("-5 1 1 0"));
     // Past midnight an hour east
     try std.testing.expectEqual(@as(i32, 1), day_of(86400 - 1800, 3600));
     try std.testing.expectEqual(@as(u32, 3), weekday(0)); // Thursday

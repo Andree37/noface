@@ -23,6 +23,7 @@ const failed = os.failed;
 const app = @import("../../app.zig");
 const draw = @import("../../ui/draw.zig");
 const Zone = @import("../../kindle/input.zig").Zone;
+const hwtcon = @import("../../kindle/hwtcon.zig");
 
 pub const Query = @import("../../model/search.zig").Query;
 
@@ -284,6 +285,12 @@ pub const Session = struct {
         return bookmarks.any_on_page(s.bookmarks.items, s.pages[index], s.page_end(index));
     }
 
+    /// Whether page `index` shows a highlight, whose gray needs a refresh that turns
+    /// grays (hwtcon.Refresh.shaded_page).
+    pub fn shaded(s: *const Session, index: u32) bool {
+        return shaded_in(s.pages, s.highlights.items, index);
+    }
+
     /// Every move to another page comes through here, so reading time stays right.
     pub fn set_page(s: *Session, index: u32, move: Move) void {
         check.thatf(index < s.pages.len, "page {d} of {d}", .{ index, s.pages.len });
@@ -475,6 +482,8 @@ pub const Session = struct {
 
     pub fn show(s: *Session, index: u32, move: Move, touched_us: ?u64, force_clean: bool) !void {
         const a = s.app;
+        // A highlight's gray going or coming: on this page, or on the one it replaces
+        const gray = s.shaded(s.current) or s.shaded(index);
         s.set_page(index, move);
         assert(s.current == index);
         const buf = try s.ensure(index, index);
@@ -482,7 +491,8 @@ pub const Session = struct {
         a.stamp_clock();
         s.turns += 1;
         const clean = force_clean or (a.settings.refresh and s.turns % 20 == 0);
-        const marker = try a.screen.show(if (clean) .flash else .page);
+        const refresh: hwtcon.Refresh = if (clean) .flash else if (gray) .shaded_page else .page;
+        const marker = try a.screen.show(refresh);
         const queued = now_us();
         try a.screen.wait_complete(marker);
         const done = now_us();
@@ -533,6 +543,24 @@ pub fn save_progress(entry: *catalog.Entry, path: [*:0]const u8, s: *Session) vo
     entry.percent = percent;
     entry.last = now;
     entry.seconds_read = seconds;
+}
+
+/// Whether page `index` shows a highlight, from where each highlight and the page are.
+fn shaded_in(
+    pages: []const book_model.Pos,
+    marks: []const highlights.Highlight,
+    index: u32,
+) bool {
+    assert(index < pages.len);
+    assert(pages.len > 0);
+    for (marks) |h| {
+        const m = h.mark;
+        assert(m.start < m.end); // A mark covers a word at least
+        const first = page_containing(pages, m.para, m.start);
+        const last = page_containing(pages, m.para, m.end - 1);
+        if (first <= index and index <= last) return true;
+    }
+    return false;
 }
 
 pub fn page_containing(pages: []const book_model.Pos, para: u32, byte: u32) u32 {
@@ -598,4 +626,21 @@ pub fn relayout(a: *app.App, s: *Session) !void {
         s.anchor.para,
         s.anchor.byte,
     });
+}
+
+test "a page is shaded when a highlight is on it, however many pages it spans" {
+    // Three pages: paragraph 0, paragraph 1 from its start, and from byte 100
+    const pages = [_]book_model.Pos{ .{}, .{ .para = 1 }, .{ .para = 1, .byte = 100 } };
+    const across = [_]highlights.Highlight{
+        .{ .mark = .{ .para = 1, .start = 90, .end = 110 }, .id = "a" },
+    };
+    try std.testing.expect(!shaded_in(&pages, &across, 0));
+    try std.testing.expect(shaded_in(&pages, &across, 1));
+    try std.testing.expect(shaded_in(&pages, &across, 2));
+    // Ending right where a page begins leaves that page plain
+    const before = [_]highlights.Highlight{
+        .{ .mark = .{ .para = 1, .start = 10, .end = 100 }, .id = "b" },
+    };
+    try std.testing.expect(shaded_in(&pages, &before, 1));
+    try std.testing.expect(!shaded_in(&pages, &before, 2));
 }

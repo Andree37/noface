@@ -9,6 +9,7 @@ test {
     _ = @import("ui/covers.zig");
     _ = @import("screens/reader/page_store.zig");
     _ = @import("screens/reader/records.zig");
+    _ = @import("screens/reader/session.zig");
     _ = @import("base/check.zig");
     _ = @import("base/memory.zig");
     _ = @import("gfx/decoder_memory.zig");

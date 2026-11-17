@@ -82,7 +82,8 @@ pub fn show_page(a: *app.App, s: *sess.Session, active: ?[]const u8) !?u32 {
             delete_top = try draw_delete_bubble(a, band, words);
         }
     }
-    try a.screen.wait_complete(try a.screen.show(.page));
+    // A highlight is being made, chosen or taken away: its gray comes or goes
+    try a.screen.wait_complete(try a.screen.show(.shaded_page));
     if (delete_top) |top| assert(top < a.screen.height);
     return delete_top;
 }

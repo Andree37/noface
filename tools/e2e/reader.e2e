@@ -96,6 +96,17 @@ log highlight removed: true
 drawn 200
 still
 
+# Turning away from the page with "reader" still highlighted, and back to it: both
+# turns take the gray-safe refresh, without a flash
+tap 1100 900
+log turn to 2
+drawn 500
+still
+tap 150 900
+log turn to 1
+drawn 500
+still
+
 # Locking shows the book: the test book has no cover, so its title on white. Unlocking
 # shows the page again
 power

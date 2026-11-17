@@ -95,7 +95,8 @@ fn takes_it(t: Takes, action: Action) bool {
     return switch (action) {
         .lock => t.lock,
         .power, .computer, .stop => t.leave,
-        else => false,
+        // Touches, ticks and waking go to the screen in front, whichever it is
+        .tap, .hold, .pull, .drag, .swipe, .drag_end, .tick, .charger, .unlock => false,
     };
 }
 
@@ -201,11 +202,7 @@ fn Kinds(comptime S: type) type {
                     try s.draw(part);
                     return .stay;
                 },
-                .act => |action| switch (action) {
-                    .tap => |t| try s.on_tap(t),
-                    .tick => if (@hasDecl(S, "on_tick")) try s.on_tick() else .stay,
-                    else => if (@hasDecl(S, "on_action")) try s.on_action(action) else .stay,
-                },
+                .act => |action| try call_act(S, s, action),
                 .@"resume" => if (@hasDecl(S, "on_resume")) try s.on_resume() else unreachable,
                 .open => if (@hasDecl(S, "on_open")) try s.on_open() else unreachable,
                 .interrupt => |action| {
@@ -241,6 +238,27 @@ fn Kinds(comptime S: type) type {
     };
 }
 
+/// Hands `action` to screen `s`'s hook for it, for `Kinds.call`: taps and ticks to
+/// their own, the rest to `on_action`, or to nothing when it has no such hook.
+fn call_act(comptime S: type, s: *S, action: Action) !Step(S.Result) {
+    return switch (action) {
+        .tap => |t| s.on_tap(t),
+        .tick => if (@hasDecl(S, "on_tick")) s.on_tick() else .stay,
+        .hold,
+        .pull,
+        .drag,
+        .swipe,
+        .drag_end,
+        .charger,
+        .lock,
+        .unlock,
+        .power,
+        .computer,
+        .stop,
+        => if (@hasDecl(S, "on_action")) s.on_action(action) else .stay,
+    };
+}
+
 /// Logs how screen `name` ended, and by what: a tap's place, so a log tells which
 /// screen each tap went to.
 fn log_ending(name: []const u8, how: []const u8, c: Frame.Call) void {
@@ -255,7 +273,19 @@ fn log_ending(name: []const u8, how: []const u8, c: Frame.Call) void {
     };
     switch (action) {
         .tap => |t| log.info("screen: {s} {s} by tap {d},{d}", .{ name, how, t.x, t.y }),
-        else => log.info("screen: {s} {s} by {s}", .{ name, how, @tagName(action) }),
+        .hold,
+        .pull,
+        .drag,
+        .swipe,
+        .drag_end,
+        .tick,
+        .charger,
+        .lock,
+        .unlock,
+        .power,
+        .computer,
+        .stop,
+        => log.info("screen: {s} {s} by {s}", .{ name, how, @tagName(action) }),
     }
 }
 
@@ -417,7 +447,20 @@ const Stack = struct {
                 });
                 return;
             },
-            else => {},
+            // Only a tap can have been meant for a screen that has since ended
+            .hold,
+            .pull,
+            .drag,
+            .swipe,
+            .drag_end,
+            .tick,
+            .charger,
+            .lock,
+            .unlock,
+            .power,
+            .computer,
+            .stop,
+            => {},
         }
         // Exactly one screen gets it: the one in front, and only once
         try stack.settle(a, try f.kind.call(f.screen, f.ending, .{ .act = action }));
@@ -495,6 +538,24 @@ const Stack = struct {
         }
         unreachable; // See `unwind_turns_max`
     }
+
+    /// After an error out of the loop, ends every screen still open as noface leaving
+    /// does, so each lets go of what it holds however the loop ends: a book its
+    /// memory, which the next book, or the next scenario, expects to find empty. An
+    /// error on the way is only logged, and the stop handed to the screens left: the
+    /// first error is the one the loop's caller hears.
+    fn end_all(stack: *Stack, a: *app.App) void {
+        assert(stack.depth <= depth_max);
+        // Each stop ends at least the first screen that takes it, so as many stops as
+        // screens end them all
+        for (0..depth_max) |_| {
+            if (stack.depth == 0) return;
+            stack.route(a, .stop) catch |err| {
+                log.err("screen: a stop after an error failed too: {s}", .{@errorName(err)});
+            };
+        }
+        if (stack.depth > 0) log.err("screen: {d} screens left open", .{stack.depth});
+    }
 };
 
 /// Runs `root` (the library) and everything it opens, one screen in front at a time,
@@ -509,6 +570,7 @@ pub fn run_root(a: *app.App, root: anytype) !Ending(@TypeOf(root.*).Result) {
     }
     var ending: ?Ending(R) = null;
     var stack = Stack{ .input = a.input };
+    errdefer stack.end_all(a);
     try stack.settle(a, .{ .push = open(root, &ending) });
     stack.shown_us = os.now_us();
     // Unbounded: noface's event loop, the only one, which runs for as long as the
@@ -624,4 +686,77 @@ test "a screen draws whole, takes taps until done, and gives back its result" {
     root = .{};
     const stopped = (try run_root(&a, &root)).done.?;
     try std.testing.expect(stopped.interrupted == .stop);
+}
+
+/// A screen whose drawing fails, as one does when its memory runs out.
+const Failing = struct {
+    pub const Result = void;
+    pub const touches = input_mod.Input.Modes.sheet;
+
+    pub fn draw(_: *Failing, _: Part) !void {
+        return error.OutOfMemory;
+    }
+
+    pub fn on_tap(_: *Failing, _: Tap) !Step(void) {
+        unreachable; // Never drawn, so never tapped
+    }
+};
+
+/// A root that opens a Failing screen over itself at once, and lets go of what it
+/// holds (as a book does its memory) when noface leaves.
+const FailingRoot = struct {
+    pub const Result = void;
+    pub const takes = Takes{ .lock = true, .leave = true };
+    child: Failing = .{},
+    child_ending: ?Ending(void) = null,
+    released: bool = false,
+
+    pub fn draw(r: *FailingRoot, part: Part) !void {
+        assert(part == .all);
+        assert(!r.released);
+    }
+
+    pub fn on_open(r: *FailingRoot) !Step(void) {
+        assert(!r.released);
+        return .{ .push = open(&r.child, &r.child_ending) };
+    }
+
+    pub fn on_resume(r: *FailingRoot) !Step(void) {
+        assert(!r.released);
+        assert(r.child_ending.? == .interrupted);
+        return .stay;
+    }
+
+    pub fn on_tap(r: *FailingRoot, _: Tap) !Step(void) {
+        assert(!r.released);
+        unreachable; // The failing screen is in front until the loop ends
+    }
+
+    pub fn on_action(r: *FailingRoot, action: Action) !Step(void) {
+        assert(action == .stop); // Only noface leaving comes here
+        assert(!r.released);
+        r.released = true;
+        return .{ .done = {} };
+    }
+};
+
+test "an error out of the loop still ends every screen, as leaving does" {
+    var none = [_]input_mod.Step{};
+    var script = input_mod.Script{ .steps = &none };
+    var input = input_mod.Input{
+        .touch = -1,
+        .power = -1,
+        .width = 1272,
+        .height = 1696,
+        .x_max = 1272,
+        .y_max = 1696,
+        .script = &script,
+    };
+    var a: app.App = undefined;
+    a.input = &input;
+    var root = FailingRoot{};
+    try std.testing.expectError(error.OutOfMemory, run_root(&a, &root));
+    // The screen that failed ended first, then the root took the stop and let go
+    try std.testing.expect(root.child_ending.? == .interrupted);
+    try std.testing.expect(root.released);
 }

@@ -63,12 +63,11 @@ pub fn rasterize(
     if (flat.contour_lengths.len == 0) return;
     var edge_count: u32 = 0;
     for (flat.contour_lengths) |length| edge_count += length;
-    // One more, past the end, to stop the scan
-    const edges = try alloc.alloc(Edge, edge_count + 1);
+    const edges = try alloc.alloc(Edge, edge_count);
     defer alloc.free(edges);
     const used = make_edges(&flat, scale, edges);
     sort_edges(edges[0..used]);
-    try rasterize_sorted(alloc, edges[0 .. used + 1], used, box, pixels);
+    try rasterize_sorted(alloc, edges[0..used], box, pixels);
     assert(used <= edge_count);
 }
 
@@ -267,7 +266,7 @@ fn cubic_flatness_squared(q: *const [4]Point) f32 {
 /// The polygons' edges, scaled to pixels, y flipped, each pointing down. Horizontal
 /// ones cover nothing and are left out. Returns how many there are.
 fn make_edges(flat: *const Flat, scale: f32, edges: []Edge) u32 {
-    assert(scale != 0);
+    assert(scale > 0);
     var count: u32 = 0;
     var start: u32 = 0;
     for (flat.contour_lengths) |length| {
@@ -293,7 +292,7 @@ fn make_edges(flat: *const Flat, scale: f32, edges: []Edge) u32 {
             count += 1;
         }
     }
-    assert(count < edges.len);
+    assert(count <= edges.len);
     return count;
 }
 
@@ -383,17 +382,16 @@ fn insertion_sort(edges: []Edge) void {
     }
 }
 
-/// Sweeps the sorted edges down the bitmap a scanline at a time. `edges` holds one
-/// more past the `count` real ones, set here to stop the sweep.
+/// Sweeps the sorted edges down the bitmap a scanline at a time.
 fn rasterize_sorted(
     alloc: std.mem.Allocator,
-    edges: []Edge,
-    count: u32,
+    edges: []const Edge,
     box: Box,
     pixels: []u8,
 ) Error!void {
-    assert(edges.len == count + 1);
     assert(box.width > 0);
+    assert(pixels.len == @as(u64, box.width) * box.height);
+    const count: u32 = @intCast(edges.len);
     const active = try alloc.alloc(ActiveEdge, count);
     defer alloc.free(active);
     var stack_buffer: [scanline_stack_width_max * 2 + 1]f32 = undefined;
@@ -402,7 +400,6 @@ fn rasterize_sorted(
     defer if (wide) alloc.free(buffer);
     const scanline = buffer[0..box.width];
     const scanline2 = buffer[box.width..][0 .. box.width + 1];
-    edges[count].y0 = @as(f32, @floatFromInt(box.y + @as(i32, @intCast(box.height)))) + 1;
     var active_count: u32 = 0;
     var next: u32 = 0;
     for (0..box.height) |row| {
@@ -412,8 +409,8 @@ fn rasterize_sorted(
         @memset(scanline, 0);
         @memset(scanline2, 0);
         active_count = drop_finished(active[0..active_count], top);
-        // The edge past the end starts below the box, and stops this
-        while (edges[next].y0 <= bottom) : (next += 1) {
+        // The edges starting above this row's bottom, in the order they start
+        while (next < count and edges[next].y0 <= bottom) : (next += 1) {
             const e = &edges[next];
             if (e.y0 == e.y1) continue;
             var z = new_active(e, box.x, top);

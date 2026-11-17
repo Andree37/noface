@@ -229,7 +229,7 @@ fn blit(p: Page, g: *const Glyph, x: i32, y: i32) void {
     const glyph_width: u32 = @intCast(g.width);
     const target_first: u32 = @intCast((top + row_start) * p.stride + left + column_start);
     const source_first: u32 = @intCast(row_start * glyph_width + column_start);
-    blit_rows(.{
+    blit_rows(&.{
         .target = p.buf[target_first..],
         .target_stride = p.stride,
         .source = source[source_first..],
@@ -253,7 +253,7 @@ const BlitRows = struct {
 
 /// The hot loop of `blit`: each row darkened whole, its bounds checked once a row,
 /// not once a pixel.
-fn blit_rows(b: BlitRows) void {
+fn blit_rows(b: *const BlitRows) void {
     assert(b.rows > 0);
     assert(b.columns > 0);
     assert(b.columns <= b.target_stride);

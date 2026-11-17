@@ -549,17 +549,17 @@ pub fn save_settings(path: [*:0]const u8, s: settings_model.Settings) void {
 /// again doesn't decode them again. Keyed by where the picture's bytes sit in the
 /// open book, so it must be cleared when the book closes.
 pub const Pictures = struct {
-    entries: [slots]Entry = @splat(.{}),
+    entries: [slots]?Entry = @splat(null), // Null until a picture is put there
     next: u32 = 0, // Which entry to replace next
 
     const slots = 8;
-    const Entry = struct { key: u64 = 0, w: u32 = 0, h: u32 = 0, pixels: []u8 = &.{} };
+    const Entry = struct { key: [*]const u8, w: u32, h: u32, pixels: []u8 };
 
     pub fn get(p: *const Pictures, data: [*]const u8, w: u32, h: u32) ?[]const u8 {
-        const key: u64 = @intFromPtr(data);
-        assert(key != 0); // 0 marks an empty entry
-        for (p.entries) |e| {
-            if (e.key == key and e.w == w and e.h == h) {
+        assert(p.next < slots);
+        for (p.entries) |entry| {
+            const e = entry orelse continue;
+            if (e.key == data and e.w == w and e.h == h) {
                 assert(e.pixels.len == @as(u64, w) * h); // As put
                 return e.pixels;
             }
@@ -575,21 +575,19 @@ pub const Pictures = struct {
         h: u32,
         pixels: []u8,
     ) void {
-        const key: u64 = @intFromPtr(data);
-        assert(key != 0); // 0 marks an empty entry
         assert(pixels.len == @as(u64, w) * h); // A whole picture at its size
         assert(p.next < slots);
-        const e = &p.entries[p.next];
-        if (e.key != 0) alloc.free(e.pixels);
-        e.* = .{ .key = key, .w = w, .h = h, .pixels = pixels };
+        const slot = &p.entries[p.next];
+        if (slot.*) |e| alloc.free(e.pixels);
+        slot.* = .{ .key = data, .w = w, .h = h, .pixels = pixels };
         p.next = (p.next + 1) % slots;
     }
 
     pub fn clear(p: *Pictures, alloc: std.mem.Allocator) void {
         assert(p.next < slots);
-        for (&p.entries) |*e| {
-            if (e.key != 0) alloc.free(e.pixels);
-            e.* = .{};
+        for (&p.entries) |*slot| {
+            if (slot.*) |e| alloc.free(e.pixels);
+            slot.* = null;
         }
         p.next = 0;
     }

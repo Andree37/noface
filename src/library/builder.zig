@@ -482,6 +482,12 @@ fn set_series(
         if (!std.mem.eql(u8, e.path, o.path)) continue;
         e.series = o.series;
         const len = index.write_blob(buffers.blob, &e);
+        // The text file keeps to its most here as in `Build.add`: past it the book keeps
+        // the series it has, where growing past it would fail the whole build
+        if (ix.header.text_size + len > index.text_file_bytes_max) {
+            log("library: series of {s} not set, the index is full\n", .{o.path});
+            return;
+        }
         var path_buffer: [files.path_bytes_max]u8 = undefined;
         var text = try files.Writer.append(
             try files.path_in(&path_buffer, ix.dir, "text"),

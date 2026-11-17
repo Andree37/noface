@@ -16,6 +16,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const catalog = @import("../model/catalog.zig");
+const calls = @import("../sys/calls.zig");
 const file = @import("../sys/file.zig");
 const files = @import("files.zig");
 
@@ -218,7 +219,6 @@ pub const Index = struct {
         if (r.text_offset + r.text_len > ix.text_file.len) return error.Damaged;
         var texts: [8][:0]const u8 = undefined;
         if (!split_blob(ix.blob(&r), &texts)) return error.Damaged;
-        assert(texts[@backingInt(Field.path)].len <= files.path_bytes_max);
     }
 
     fn record_unchecked(ix: *const Index, id: u32) Record {
@@ -294,10 +294,13 @@ pub const Index = struct {
     pub fn grow_text(ix: *Index, size: u64) !void {
         assert(size >= ix.text_file.len);
         const text_file = try map_data(ix.dir, "text", ix.header.generation);
-        file.unmap(ix.text_file);
-        ix.text_file = text_file;
+        // Checked before the old mapping is let go of: on an error the index is left as
+        // it was, its mapping and size alike, so it still closes as whole
+        errdefer file.unmap(text_file);
         if (text_file.len != size) return error.Damaged;
         if (size > text_file_bytes_max) return error.TooLarge;
+        file.unmap(ix.text_file);
+        ix.text_file = text_file;
         ix.header.text_size = size;
         assert(ix.text_file.len == ix.header.text_size);
     }
@@ -387,13 +390,15 @@ fn entry_of(r: *const Record, texts: *const [8][:0]const u8) catalog.Entry {
 }
 
 /// The eight texts of a blob (their lengths, u16 each, then each followed by a 0) into
-/// `out`: false when it doesn't read as whole.
+/// `out`: false when it doesn't read as whole, or as `write_blob` would have written it.
 fn split_blob(bytes: []const u8, out: *[8][:0]const u8) bool {
     assert(bytes.len <= blob_bytes_max);
     if (bytes.len < 16) return false;
     var at: u32 = 16;
     for (out, 0..) |*text, i| {
         const len = std.mem.readInt(u16, bytes[i * 2 ..][0..2], .little);
+        // The text file is outside data: a text longer than `write_blob` keeps is damage
+        if (len > field_bytes_max(@fromBackingInt(@intCast(i)))) return false;
         if (at + len + 1 > bytes.len or bytes[at + len] != 0) return false;
         text.* = bytes[at .. at + len :0];
         at += len + 1;
@@ -402,11 +407,20 @@ fn split_blob(bytes: []const u8, out: *[8][:0]const u8) bool {
     return at == bytes.len;
 }
 
+/// The longest text a blob keeps in `field`: a path as Linux opens one, any other text
+/// cut to `text_bytes_max` (`clip`).
+fn field_bytes_max(field: Field) u32 {
+    return switch (field) {
+        .path, .thumbnail => files.path_bytes_max,
+        .title, .author, .series, .key, .kind, .guid => text_bytes_max,
+    };
+}
+
 /// Writes `e`'s texts as a blob into `out`, each cut to what's kept: its length.
 pub fn write_blob(out: *[blob_bytes_max]u8, e: *const catalog.Entry) u32 {
     var texts: [8][]const u8 = undefined;
-    texts[@backingInt(Field.path)] = cut(e.path, files.path_bytes_max);
-    texts[@backingInt(Field.thumbnail)] = cut(e.thumbnail orelse "", files.path_bytes_max);
+    texts[@backingInt(Field.path)] = cut(e.path, field_bytes_max(.path));
+    texts[@backingInt(Field.thumbnail)] = cut(e.thumbnail orelse "", field_bytes_max(.thumbnail));
     texts[@backingInt(Field.title)] = clip(e.title);
     texts[@backingInt(Field.author)] = clip(e.author);
     texts[@backingInt(Field.series)] = if (e.series) |s| clip(s.name) else "";
@@ -532,4 +546,95 @@ test "a header that changed after it was sealed doesn't read as whole" {
     try std.testing.expect(!h.valid());
     h.seal();
     try std.testing.expect(h.valid());
+}
+
+/// Whether book 0 of an index whose one blob has a path `path_len` bytes long, and
+/// every other text empty, reads as whole: the index made in memory, as if mapped.
+fn test_check_path(path_len: u16) !void {
+    var text: [file_head_bytes + blob_bytes_max]u8 = @splat(0);
+    const blob = text[file_head_bytes..];
+    std.mem.writeInt(u16, blob[0..2], path_len, .little);
+    @memset(blob[16..][0..path_len], 'x');
+    const blob_len: u32 = 16 + @as(u32, path_len) + 8;
+    var r: Record = .{
+        .last = 0,
+        .added = 0,
+        .kindle_last = 0,
+        .seconds_read = 0,
+        .text_offset = file_head_bytes,
+        .file_size = 0,
+        .file_modified = 0,
+        .text_len = blob_len,
+        .series_index = 0,
+        .percent = 0,
+        .kindle_percent = 0,
+        .availability = 0,
+        .flags = 0,
+    };
+    r.seal();
+    var records: [file_head_bytes + @sizeOf(Record)]u8 = undefined;
+    @memcpy(records[file_head_bytes..], std.mem.asBytes(&r));
+    const ix: Index = .{
+        .dir = "/tmp",
+        .header = .{
+            .generation = 1,
+            .count = 1,
+            .local = 0,
+            .downloading = 0,
+            .sources = .{},
+            .text_size = file_head_bytes + blob_len,
+        },
+        .records_file = &records,
+        .text_file = text[0 .. file_head_bytes + blob_len],
+    };
+    try ix.check(0);
+}
+
+test "a text whose path is longer than any kept reads as damage, built again, not a crash" {
+    // A record is checksummed, but the texts it points to are not: lengths that add up,
+    // the path's past what Linux opens, are damage in a file on the user drive
+    try test_check_path(@intCast(files.path_bytes_max));
+    try std.testing.expectError(error.Damaged, test_check_path(files.path_bytes_max + 1));
+    try std.testing.expectError(error.Damaged, test_check_path(4200));
+}
+
+test "a text file that didn't grow as written leaves the index as it was, and it closes" {
+    var dir_buffer: [64]u8 = undefined;
+    const dir = try std.fmt.bufPrintSentinel(&dir_buffer, "/tmp/noface-index-{d}", .{
+        calls.getpid(),
+    }, 0);
+    _ = calls.mkdir(dir, 0o755); // Ignored: the files written below say if it's missing
+    defer _ = std.c.rmdir(dir); // Ignored: only /tmp is left fuller
+    const generation = 7;
+    var buffers: [2][80]u8 = undefined;
+    var paths: [2][:0]const u8 = undefined;
+    for ([_][]const u8{ "records", "text" }, &buffers, &paths) |name, *buffer, *path| {
+        path.* = try files.path_in(buffer, dir, name);
+        var head_buffer: [file_head_bytes]u8 = undefined;
+        var w = try files.Writer.create(path.*, &head_buffer);
+        w.write(std.mem.asBytes(&FileHead{ .generation = generation }));
+        _ = try w.finish();
+    }
+    defer for (paths) |path| files.remove(path);
+    const text_path = paths[1];
+    var ix = try Index.open_as(dir, .{
+        .generation = generation,
+        .count = 0,
+        .local = 0,
+        .downloading = 0,
+        .sources = .{},
+        .text_size = file_head_bytes,
+    });
+    defer ix.close();
+    // Told it grew by 5 bytes that were never written: the file mapped again is shorter
+    try std.testing.expectError(error.Damaged, ix.grow_text(file_head_bytes + 5));
+    try std.testing.expectEqual(@as(u64, file_head_bytes), ix.header.text_size);
+    try std.testing.expectEqual(@as(usize, file_head_bytes), ix.text_file.len);
+    // Grown as written, it's mapped at its new size
+    var append_buffer: [8]u8 = undefined;
+    var w = try files.Writer.append(text_path, &append_buffer);
+    w.write("12345");
+    const size = try w.finish();
+    try ix.grow_text(size);
+    try std.testing.expectEqual(@as(u64, file_head_bytes + 5), ix.header.text_size);
 }

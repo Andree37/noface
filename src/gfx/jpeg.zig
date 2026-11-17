@@ -17,7 +17,6 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const decoded = @import("decoded.zig");
-const Gray = decoded.Gray;
 const scaler = @import("rows.zig");
 const Workspace = @import("workspace.zig").Workspace;
 
@@ -196,13 +195,9 @@ const Decoder = struct {
         return d.at == d.source.len;
     }
 
-    fn skip(d: *Decoder, count: i32) void {
+    fn skip(d: *Decoder, count: u32) void {
         assert(d.at <= d.source.len);
-        if (count < 0) {
-            d.at = @intCast(d.source.len);
-            return;
-        }
-        const target = @as(u64, d.at) + @as(u32, @intCast(count));
+        const target = @as(u64, d.at) + count;
         d.at = @intCast(@min(target, d.source.len));
         assert(d.at <= d.source.len);
     }
@@ -215,17 +210,6 @@ pub fn is_jpeg(data: []const u8) bool {
         if (byte != 0xff) return byte == marker_start;
     }
     return false;
-}
-
-/// Decodes a JPEG into gray pixels allocated from `alloc`, which the caller frees.
-pub fn decode(alloc: std.mem.Allocator, data: []const u8) Error!Gray {
-    var work = Workspace.init(alloc, std.math.maxInt(u32));
-    defer work.reset();
-    var sink = scaler.Sink{ .target = .{ .divided = 1 }, .out = alloc };
-    try decode_rows(&work, data, &sink, 1);
-    const pixels = sink.finish();
-    assert(pixels.len == @as(u64, sink.size.width) * sink.size.height);
-    return .{ .pixels = pixels, .width = sink.size.width, .height = sink.size.height };
 }
 
 /// Shrinks a picture can be decoded at: a block gives 8, 4, 2 or 1 samples a side.
@@ -481,8 +465,9 @@ fn read_application(d: *Decoder, marker: u8) bool {
             left -= 6;
         }
     }
+    // Each part read was taken off only once it was known to be there
     assert(left >= 0);
-    d.skip(left);
+    d.skip(@intCast(left));
     return true;
 }
 

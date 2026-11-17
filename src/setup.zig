@@ -19,8 +19,8 @@ const covers = @import("ui/covers.zig");
 const book_model = @import("model/book.zig");
 const glyph_cache = @import("gfx/glyph_cache.zig");
 const workspace = @import("gfx/workspace.zig");
-const jpeg = @import("gfx/jpeg.zig");
-const png = @import("gfx/png.zig");
+const image = @import("gfx/image.zig");
+const decoder_memory = @import("gfx/decoder_memory.zig");
 
 /// What each memory region reserves, taken once at startup (`memory.Region`). Pages
 /// come in as they're first touched, so a region costs what's used, not its size.
@@ -460,6 +460,10 @@ test "the decoders' region decodes the largest pictures stb decoded in its 128 M
         .region = &region,
         .limit = region_bytes.decoders,
     };
+    // Through the app's own way in: its workspace limit, and the smaller decode it
+    // falls back to, which a picture's full width below shows wasn't needed
+    decoder_memory.use(&budget);
+    defer decoder_memory.stop_using(&budget);
     const alloc = std.testing.allocator;
     const Kind = enum { baseline, progressive, png };
     const Case = struct { width: u16, height: u16, kind: Kind };
@@ -480,10 +484,8 @@ test "the decoders' region decodes the largest pictures stb decoded in its 128 M
         };
         defer alloc.free(data);
         budget.peak = 0;
-        const picture = switch (case.kind) {
-            .baseline, .progressive => try jpeg.decode(budget.allocator(), data),
-            .png => try png.decode(budget.allocator(), data),
-        };
+        const picture = image.decode_gray(budget.allocator(), data) orelse
+            return error.TestUnexpectedResult;
         try std.testing.expectEqual(@as(u32, case.width), picture.width);
         try std.testing.expectEqual(@as(u32, case.height), picture.height);
         budget.allocator().free(picture.pixels);

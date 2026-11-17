@@ -9,9 +9,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const flate = std.compress.flate;
 const decoded = @import("decoded.zig");
-const Gray = decoded.Gray;
 const scaler = @import("rows.zig");
-const Workspace = @import("workspace.zig").Workspace;
 
 pub const Error = error{ BadPng, OutOfMemory };
 
@@ -176,26 +174,14 @@ fn check_transparency(header: *const Header, body: []const u8) Error!void {
     if (body.len != @as(u32, header.channels) * 2) return error.BadPng;
 }
 
-/// Decodes a PNG into gray pixels allocated from `alloc`, which the caller frees.
-pub fn decode(alloc: std.mem.Allocator, data: []const u8) Error!Gray {
-    var work = Workspace.init(alloc, std.math.maxInt(u32));
-    defer work.reset();
-    var sink = scaler.Sink{ .target = .{ .divided = 1 }, .out = alloc };
-    decode_rows(work.allocator(), data, &sink) catch |err| {
-        sink.abandon();
-        return err;
-    };
-    const pixels = sink.finish();
-    assert(pixels.len == @as(u64, sink.size.width) * sink.size.height);
-    return .{ .pixels = pixels, .width = sink.size.width, .height = sink.size.height };
-}
-
 /// Decodes a PNG row by row into `sink`, which `begin`s once the size is known. The
 /// picture data is inflated as the rows need it, straight from its chunks, so the
 /// memory taken from `work` is a few rows' and the inflater's window, whatever the
 /// picture's size.
 pub fn decode_rows(work: std.mem.Allocator, data: []const u8, sink: *scaler.Sink) Error!void {
     if (!is_png(data)) return error.BadPng;
+    // Chunks are found by 32-bit offsets, so a larger file isn't one this reads
+    if (data.len > std.math.maxInt(u32)) return error.BadPng;
     var header: Header = .{};
     try read_chunks(data, &header);
     assert(header.seen_header);
@@ -327,7 +313,7 @@ fn raw_size_of(header: *const Header) Error!u32 {
 }
 
 /// The size of one pass of an interlaced picture, or of the whole picture if it isn't.
-fn pass_size(header: *const Header, pass: u8) decoded_size {
+fn pass_size(header: *const Header, pass: u8) scaler.Size {
     assert(pass < pass_count);
     if (!header.interlaced) return .{ .width = header.width, .height = header.height };
     const x_start = pass_x_start[pass];
@@ -343,8 +329,6 @@ fn pass_size(header: *const Header, pass: u8) decoded_size {
     assert(width <= header.width);
     return .{ .width = width, .height = height };
 }
-
-const decoded_size = struct { width: u32, height: u32 };
 
 /// Buffers `unfilter_pass` reuses for every row: one as the file has it, two to filter
 /// in turn, a row's samples unpacked to bytes, and its grays.

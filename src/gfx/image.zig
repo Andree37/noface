@@ -363,9 +363,6 @@ pub fn zoomed(
 fn averaged(src: Gray, cx: f32, cy: f32, zoom: f32, page: Page, dw: u32, dh: u32) void {
     assert(zoom > 0);
     assert(zoom < 1);
-    // Decoded sides come from C ints, so they fit in 32 bits
-    const picture_width: u32 = @intCast(src.width);
-    const picture_height: u32 = @intCast(src.height);
     const Span = struct { from: u32, to: u32 }; // Equal ends: past the edge
     var cols: [view_width_max]Span = undefined;
     const n = @min(dw, cols.len);
@@ -385,10 +382,10 @@ fn averaged(src: Gray, cx: f32, cy: f32, zoom: f32, page: Page, dw: u32, dh: u32
             return result;
         }
     }.of;
-    for (cols[0..n], 0..) |*c, x| c.* = span(@intCast(x), cx, half_w, zoom, picture_width);
+    for (cols[0..n], 0..) |*c, x| c.* = span(@intCast(x), cx, half_w, zoom, src.width);
     for (0..dh) |y| {
         const row = page.buf[y * page.stride ..][0..n];
-        const rows = span(@intCast(y), cy, half_h, zoom, picture_height);
+        const rows = span(@intCast(y), cy, half_h, zoom, src.height);
         if (rows.to == rows.from) {
             @memset(row, 0xff);
             continue;
@@ -427,7 +424,7 @@ fn blended(src: Gray, cx: f32, cy: f32, zoom: f32, page: Page, dw: u32, dh: u32)
         const x0: u32 = @intFromFloat(@floor(xc));
         c.* = .{
             .x0 = x0,
-            .x1 = @min(x0 + 1, @as(u32, @intCast(src.width - 1))),
+            .x1 = @min(x0 + 1, src.width - 1),
             .fx = @intFromFloat((xc - @floor(xc)) * 256),
             .inside = sx >= -0.5 and sx <= max_x + 0.5,
         };

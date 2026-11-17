@@ -45,6 +45,8 @@ pub fn decode_jpeg_xr(
         0o600,
     );
     if (failed(result)) return null;
+    // /tmp is RAM, shared with Amazon's services: a page-sized picture isn't left there
+    defer _ = linux.unlink(jxr_input); // Gone already: nothing is left to free
     const written = linux.write(@intCast(result), data.ptr, data.len);
     // Ignored: the bytes are written; a close that fails loses nothing of them.
     _ = linux.close(@intCast(result));
@@ -92,6 +94,17 @@ pub fn parse_pgm(data: []u8) ?Gray {
     const gray = Gray{ .pixels = data[at..][0..size], .width = width, .height = height };
     assert(gray.pixels.len == size);
     return gray;
+}
+
+test "the picture handed to the helper isn't left in /tmp, decoded or not" {
+    var memory: [256]u8 = undefined;
+    var fixed = std.heap.FixedBufferAllocator.init(&memory);
+    // A size past any picture: given up on after the picture was written for the helper
+    const side = std.math.maxInt(u32);
+    try std.testing.expect(decode_jpeg_xr(fixed.allocator(), "II\xbc\x01 a", side, side) == null);
+    const opened = linux.open(jxr_input, .{ .ACCMODE = .RDONLY }, 0);
+    if (!failed(opened)) _ = linux.close(@intCast(opened)); // Only looked for
+    try std.testing.expect(failed(opened));
 }
 
 test "helper output is read as a grayscale image" {

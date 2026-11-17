@@ -509,8 +509,11 @@ pub fn open(width: u32, height: u32) !Input {
     const touch_path = open_path(&touch_buffer, found.touch, evdev.touch_device);
     const power_path = open_path(&power_buffer, found.power, evdev.power_device);
     std.debug.print("input: touch {s}, power {s}\n", .{ touch_path, power_path });
+    // Let go of on the way out of a failed open: closing ends a grab too
     const touch = try evdev.open_input(touch_path);
+    errdefer _ = linux.close(touch); // Only read, never written: nothing is lost
     const power = try evdev.open_input(power_path);
+    errdefer _ = linux.close(power); // Only read, never written: nothing is lost
     assert(touch != power);
     if (failed(linux.ioctl(touch, eviocgrab, 1))) return error.GrabFailed;
     // The kernel only reports coordinates that change, so start from the current ones.

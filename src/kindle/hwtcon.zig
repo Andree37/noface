@@ -6,6 +6,7 @@ const assert = std.debug.assert;
 const file = @import("../sys/file.zig");
 const check = @import("../base/check.zig");
 const linux = @import("../sys/calls.zig");
+const failed = @import("../sys/os.zig").failed;
 
 pub const Waveform = enum(u32) {
     du = 1,
@@ -181,6 +182,8 @@ pub const Screen = struct {
         if (failed(rc)) return error.OpenFailed;
         const fd: i32 = @intCast(rc);
         assert(fd >= 0);
+        // A screen it can't drive is let go of: the launcher opens one at every restore
+        errdefer _ = linux.close(fd); // Nothing was drawn through it, so nothing is lost
 
         var variable: [160]u8 align(4) = undefined;
         var fixed: [68]u8 align(4) = undefined;
@@ -291,5 +294,3 @@ pub const Screen = struct {
         if (failed(rc)) return error.WaitComplete;
     }
 };
-
-const failed = @import("../sys/os.zig").failed;

@@ -196,13 +196,14 @@ pub fn power_watcher_died(in: *Input) void {
 
 /// A watcher that died: its pipe closed, which frees the number (it's dead already),
 /// and it reaped. Only the watcher: any other child (a download, a lipc command) is
-/// waited for by whoever started it, which would otherwise find it gone.
+/// waited for by whoever started it, which would otherwise find it gone. Its pipe
+/// closes as it dies, before it can be waited for: a wait that doesn't block can come
+/// too soon and leave it a zombie, so it's stopped and waited for, which is at once.
 fn reap(watcher: *?process.Child) void {
     const w = watcher.* orelse return;
     assert(w.pid > 0);
     _ = linux.close(w.out); // Dead already: closing only frees the number
-    var status: i32 = 0;
-    _ = linux.waitpid(w.pid, &status, linux.W.NOHANG); // Ignored: gone is gone
+    process.stop(w.pid);
     watcher.* = null;
 }
 

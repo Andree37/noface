@@ -5,6 +5,7 @@
 //! The app sits in `app_dir`, which an update replaces whole. What the reader keeps
 //! (settings, places, stats, notes, dictionaries) sits in `data_dir`, which no update
 //! touches. Scratch files go in /tmp, which is in RAM and empty after a reboot.
+const std = @import("std");
 
 /// The app: the program, its launcher and helpers. Replaced whole by an update.
 pub const app_dir = "/mnt/us/noface";
@@ -59,8 +60,6 @@ pub const dry_run = "/tmp/noface-dry-run";
 /// Scratch: the SQL handed to sqlite3, and a picture handed to jxr2pgm.
 pub const annotation_sql = "/tmp/noface-annotation.sql";
 pub const jxr_input = "/tmp/noface-picture.jxr";
-
-const std = @import("std");
 
 test "KPM's launch.sh and the startup file start the launcher named here" {
     const starters = [_][]const u8{ @embedFile("launch_sh"), @embedFile("autostart_conf") };

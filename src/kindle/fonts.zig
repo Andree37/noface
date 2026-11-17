@@ -9,7 +9,7 @@ const file = @import("../sys/file.zig");
 const process = @import("../sys/process.zig");
 const linux = @import("../sys/calls.zig");
 
-const font_dir = "/usr/java/lib/fonts/";
+const font_dir = paths.kindle_fonts ++ "/";
 pub const own_dir = paths.own_fonts;
 
 /// Which of a family's four files: regular, bold, italic and bold italic, in that order,

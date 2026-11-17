@@ -27,24 +27,18 @@ fn read_now_action(comptime prop: []const u8, comptime fields: []const u8, args:
 /// Queues a cloud book for download.
 pub fn download_book(key: []const u8, kind: []const u8) void {
     if (!safe.safe_id(key) or !safe.safe_id(kind)) return;
-    assert(key.len <= safe.id_size_max);
-    assert(kind.len <= safe.id_size_max);
     read_now_action("kppDownloadAction", "kppItems = \"{s},{s}\"", .{ key, kind });
 }
 
 /// Removes the local copy. Never sets kppFrom: "cloud" there revokes samples.
 pub fn remove_download(key: []const u8, kind: []const u8) void {
     if (!safe.safe_id(key) or !safe.safe_id(kind)) return;
-    assert(key.len <= safe.id_size_max);
-    assert(kind.len <= safe.id_size_max);
     const fields = "kppCdeKey = \"{s}\", kppCdeType = \"{s}\"";
     read_now_action("kppDeleteItemAction", fields, .{ key, kind });
 }
 
 pub fn mark_read(key: []const u8, kind: []const u8, read_it: bool) void {
     if (!safe.safe_id(key) or !safe.safe_id(kind)) return;
-    assert(key.len <= safe.id_size_max);
-    assert(kind.len <= safe.id_size_max);
     const value = if (read_it) "actionRead" else "actionUnread";
     const fields = "kppCdeKey = \"{s}\", kppCdeType = \"{s}\", kppMAR = \"{s}\"";
     read_now_action("kppMarkAsReadAction", fields, .{ key, kind, value });

@@ -251,13 +251,37 @@ pub fn still_active() void {
     set("com.lab126.powerd", "touchScreenSaverTimeout", 1);
 }
 
-/// Whether the Kindle is showing its lock screen. Null when powerd can't be asked.
-pub fn in_screen_saver() ?bool {
+/// What powerd's `state` says of the Kindle.
+pub const PowerState = enum {
+    awake,
+    /// Locked: its lock screen up, or the Kindle going to sleep, or asleep, under it.
+    asleep,
+};
+
+/// The state powerd names in `text`. Null for one not listed (a state at boot, or one
+/// passing), and for no answer: unknown, which no caller takes as locked.
+pub fn power_state_of(text: []const u8) ?PowerState {
+    if (std.mem.eql(u8, text, "active")) return .awake;
+    const asleep = [_][]const u8{ "screenSaver", "readyToSuspend", "suspended" };
+    for (asleep) |name| {
+        if (std.mem.eql(u8, text, name)) return .asleep;
+    }
+    return null;
+}
+
+/// Whether the Kindle is awake or locked, as powerd says now. Null when it can't be
+/// asked, or says something else.
+pub fn power_state() ?PowerState {
     var buffer: [32]u8 = undefined;
     const state = get_text("com.lab126.powerd", "state", &buffer, lipc_deadline());
     assert(state.len <= buffer.len); // Read into `buffer`
-    if (state.len == 0) return null;
-    return std.mem.eql(u8, state, "screenSaver");
+    return power_state_of(state);
+}
+
+/// Whether the Kindle is locked. Null when powerd can't be asked.
+pub fn in_screen_saver() ?bool {
+    const state = power_state() orelse return null;
+    return state == .asleep;
 }
 
 /// Starts a child that prints the named events of one lipc publisher, one per line.
@@ -371,6 +395,15 @@ pub fn set_bluetooth(on: bool) void {
 test "tool output parses" {
     try std.testing.expectEqual(@as(u32, 21), parse_int("21\n").?);
     try std.testing.expect(parse_int("failed\n") == null);
+}
+
+test "powerd's states read as awake, locked, or unknown, which is never locked" {
+    try std.testing.expectEqual(PowerState.awake, power_state_of("active").?);
+    try std.testing.expectEqual(PowerState.asleep, power_state_of("screenSaver").?);
+    try std.testing.expectEqual(PowerState.asleep, power_state_of("readyToSuspend").?);
+    try std.testing.expectEqual(PowerState.asleep, power_state_of("suspended").?);
+    try std.testing.expectEqual(null, power_state_of(""));
+    try std.testing.expectEqual(null, power_state_of("activeX"));
 }
 
 test "signal maps to icon arcs" {

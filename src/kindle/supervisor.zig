@@ -12,6 +12,8 @@ const std = @import("std");
 const assert = std.debug.assert;
 const paths = @import("paths.zig");
 const stock_ui = @import("stock_ui.zig");
+const lipc = @import("lipc.zig");
+const wifi_saver = @import("wifi_saver.zig");
 const process = @import("../sys/process.zig");
 const service = @import("../sys/service.zig");
 const calls = @import("../sys/calls.zig");
@@ -82,6 +84,10 @@ const good_start_ms = 60_000;
 const watch_every_ms = 30_000;
 /// A heartbeat older than this, with the Kindle awake, means noface is stuck.
 const heartbeat_stale_s = 120;
+/// Looks in a row, the Kindle awake, that find the heartbeat stale before noface is
+/// ended: one can land as the Kindle wakes, before noface's loop has heard of it and
+/// beaten, after a lock longer than the heartbeat's two minutes.
+const stale_looks_max = 2;
 /// The longest the watchdog waits for powerd to say whether the Kindle is awake, as
 /// src/kindle/lipc.zig waits for any answer.
 const power_check_ms = 3_000;
@@ -110,6 +116,9 @@ comptime {
     // A question to powerd is answered, or given up on, well before the next look
     assert(power_check_ms * 4 <= watch_every_ms);
     assert(power_poll_ms < power_check_ms);
+    // A noface really stuck is still ended within a few minutes
+    assert(stale_looks_max > 1);
+    assert(heartbeat_stale_s * 1000 + stale_looks_max * watch_every_ms <= 4 * 60 * 1000);
 }
 
 /// Runs noface until it ends, with `envp` as its environment and `folders` for its
@@ -118,6 +127,9 @@ comptime {
 pub fn run(envp: [*:null]const ?[*:0]const u8, folders: Folders) u32 {
     assert(!stock_ui.paused);
     run_paths.make(folders) catch return exit_not_started;
+    // Where noface keeps its Wi-Fi note (src/main.zig): a test's folder too, so the
+    // stock screens put back below turn on a radio a test's noface left off
+    wifi_saver.use_data_dir(folders.data);
     const p = &run_paths;
     // Everything noface writes goes in its data folder, its log too, so a new one (a
     // test's, a first install's) is made here
@@ -142,7 +154,7 @@ pub fn run(envp: [*:null]const ?[*:0]const u8, folders: Folders) u32 {
     stock_ui.pause();
     rotate_log();
     const code = if (service.spawn_to_file(&reader_argv, reader_envp, p.log, .append, true)) |pid|
-        watch(pid, listening, timing_kindle, &power_argv)
+        watch(pid, listening, timing_kindle, &power_argv, paths.heartbeat)
     else
         exit_not_started;
     var line: [32]u8 = undefined;
@@ -183,20 +195,23 @@ fn rotate_log() void {
     assert(size > log_bytes_max);
 }
 
-/// Waits for noface to end, passing on a request to stop and running the watchdog.
-/// Returns its exit code. The watchdog's question to powerd runs beside this loop, so
-/// a slow or stuck lipc never holds up a stop request or noface's exit.
+/// Waits for noface to end, passing on a request to stop and running the watchdog on
+/// the heartbeat at `heartbeat`. Returns its exit code. The watchdog's question to
+/// powerd runs beside this loop, so a slow or stuck lipc never holds up a stop request
+/// or noface's exit.
 fn watch(
     pid: i32,
     listening: bool,
     timing: Timing,
     power: [*:null]const ?[*:0]const u8,
+    heartbeat: [*:0]const u8,
 ) u32 {
     assert(pid > 0);
     assert(timing.power_check_ms < timing.watch_every_ms);
     var next_look_us = os.now_us() + @as(u64, timing.good_start_ms) * std.time.us_per_ms;
     var good_start_noted = false;
     var check: ?PowerCheck = null;
+    var stale_looks: u32 = 0; // In a row, the Kindle awake
     // Unbounded: noface runs as long as the reader reads; every turn waits for a
     // signal, the watchdog's next look or powerd's answer
     while (true) {
@@ -214,8 +229,13 @@ fn watch(
         const now_us = os.now_us();
         if (check) |c| {
             const answer = c.answer(now_us);
-            if (answer != .waiting) check = null;
-            if (answer == .awake) look(pid);
+            if (answer != .waiting) {
+                check = null;
+                // Asleep or not known: no look, and the count starts over
+                const stale = answer == .awake and heartbeat_stale(heartbeat);
+                stale_looks = if (stale) stale_looks + 1 else 0;
+                if (stale_looks >= stale_looks_max) stop_stuck(pid);
+            }
         }
         if (now_us >= next_look_us) {
             if (!good_start_noted) _ = calls.unlink(run_paths.attempts); // Gone: nothing to reset
@@ -269,7 +289,8 @@ const PowerCheck = struct {
         _ = linux.close(out); // Our end of the pipe: nothing to do if it fails
         if (failed(got) or got == 0) return .unknown;
         const text = std.mem.trimEnd(u8, said[0..got], "\n");
-        return if (std.mem.eql(u8, text, "active")) .awake else .unknown;
+        // As noface reads powerd (src/kindle/lipc.zig): only awake is looked at
+        return if (lipc.power_state_of(text) == .awake) .awake else .unknown;
     }
 
     /// Ends the question unanswered: its program stopped and reaped, its pipe closed.
@@ -281,14 +302,19 @@ const PowerCheck = struct {
     }
 };
 
-/// One look by the watchdog, the Kindle being awake: with no heartbeat for 2 minutes,
-/// noface is stuck, and ended.
-fn look(pid: i32) void {
-    assert(pid > 0);
+/// One look by the watchdog, the Kindle being awake: whether the heartbeat at `path`
+/// is over 2 minutes old.
+fn heartbeat_stale(path: [*:0]const u8) bool {
+    assert(path[0] == '/');
     var beat_buffer: [32]u8 = undefined;
-    const beat = file.read_small(paths.heartbeat, &beat_buffer);
+    const beat = file.read_small(path, &beat_buffer);
     assert(beat.len <= beat_buffer.len);
-    if (!stuck(os.unix_time(), beat)) return;
+    return stuck(os.unix_time(), beat);
+}
+
+/// Ends noface, found stuck by the watchdog.
+fn stop_stuck(pid: i32) void {
+    assert(pid > 0);
     file.append_file(run_paths.log, "watchdog: no heartbeat for 2 minutes, stopping noface\n");
     _ = linux.kill(pid, linux.SIG.KILL); // Ended already: then the next turn reaps it
 }
@@ -320,10 +346,27 @@ test "the watchdog's question to powerd never holds up noface's exit" {
     // A good start resets the boot count: here, one in a folder of the test's own
     try run_paths.make(.{ .data = "/tmp/noface-supervisor-test", .library = "/tmp/none" });
     const started = os.now_us();
-    const code = watch(noface.pid, false, timing, &hung_lipc);
+    const code = watch(noface.pid, false, timing, &hung_lipc, "/tmp/noface-supervisor-none");
     try std.testing.expectEqual(@as(u32, 0), code);
     try std.testing.expect(os.now_us() - started < 1_800_000);
     // Nothing was left running: every question was ended and reaped
     var status: i32 = 0;
     try std.testing.expect(failed(linux.waitpid(-1, &status, linux.W.NOHANG)));
+}
+
+test "the watchdog ends a noface awake and without a heartbeat on its second look, not first" {
+    // A noface that never beats, on a Kindle powerd says is awake
+    const noface = process.spawn(&.{ "/bin/sleep", "10" }) orelse return error.NotStarted;
+    _ = linux.close(noface.out); // Its output isn't wanted here
+    const awake_lipc = [_:null]?[*:0]const u8{ "/bin/echo", "active" };
+    const timing: Timing = .{ .good_start_ms = 10, .watch_every_ms = 300, .power_check_ms = 100 };
+    try run_paths.make(.{ .data = "/tmp/noface-supervisor-test", .library = "/tmp/none" });
+    const started = os.now_us();
+    const code = watch(noface.pid, false, timing, &awake_lipc, "/tmp/noface-supervisor-none");
+    const took_us = os.now_us() - started;
+    try std.testing.expectEqual(@as(u32, 128 + 9), code); // Killed
+    // The first look, a good start on, is a question asked at 310 ms; a kill then
+    // would come before the second, asked at 610 ms
+    try std.testing.expect(took_us >= 600_000);
+    try std.testing.expect(took_us < 5_000_000);
 }

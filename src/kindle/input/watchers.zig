@@ -149,8 +149,11 @@ pub fn restart_watcher_if_dead(in: *Input) ?Action {
     if (!in.locked) return null;
     // No answer: still locked as far as anyone knows, till powerd's next event reaches
     // the new watcher (there's no restart after this one to ask again)
-    const saver = lipc.in_screen_saver() orelse return null;
-    return if (saver) null else unlocked(in);
+    const state = lipc.power_state() orelse return null;
+    return switch (state) {
+        .awake => unlocked(in),
+        .asleep => null,
+    };
 }
 
 /// A computer setting up USB for files (not for a network, as SSH uses).

@@ -69,9 +69,9 @@ fn save_marked(a: *app.App, e: *const catalog.Entry) !void {
     state.save(path, saved);
 }
 
-/// What a book's actions changed, which decides what the library does next.
-/// What a book's sheet changed: `reload` re-reads the library (a series set by hand),
-/// `redraw` only repaints it (a screen of its own was shown and nothing changed).
+/// What a book's actions changed, which decides what the library does next: `reload`
+/// re-reads the library (a series set by hand), `redraw` only repaints it (a screen of
+/// its own was shown and nothing changed).
 pub const Change = enum { none, downloading, other, reload, redraw };
 
 /// Starts a book's actions in `s`, where they stay while open (`screen.open`): a card
@@ -231,7 +231,6 @@ pub fn up_next(
     offer: *UpNext,
 ) ?screen.Frame {
     if (next.availability != .local) return null;
-    assert(next.is_local());
     // The next of a series (`next_in_series`), so always in one
     const label = catalog.series_label(&offer.label_buffer, next.*).?;
     offer.subtitle = std.fmt.bufPrint(&offer.subtitle_buffer, "Up next in {s}", .{label}) catch

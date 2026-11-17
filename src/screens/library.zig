@@ -55,9 +55,6 @@ pub fn logged_hit(x: i32, y: i32, page_index: u32, count: u32, searching: bool) 
     return h;
 }
 
-/// After finishing a book of a series: the next one, to read now. Only books on the
-/// Kindle can offer it: a series is read from a book's file name, and books in the
-/// cloud have none yet.
 /// The library takes every touch, even along the bottom edge where the reader ignores
 /// a resting thumb (the pager and keyboard are there), and taps act on lift so pressing
 /// and holding a book can bring up its actions.
@@ -69,8 +66,8 @@ pub fn log_page(shown: []const catalog.Entry, page_index: u32) void {
     for (shown, 0..) |e, i| std.debug.print("cell {d} {d} {s}\n", .{ page_index, i, e.title });
 }
 
-/// The books to show: the filter's, without the hero, or while searching every match,
-/// the hero too.
+/// How the search sheet ended: cancelled, searching for what was typed, or a book
+/// opened from its list.
 const SearchEnd = union(enum) { cancel, search, open: *catalog.Entry };
 
 /// The search sheet, its matches listed as they're typed. Ends by cancelling (what was
@@ -197,8 +194,9 @@ const Browser = struct {
     status_until: u64 = 0,
     /// The screen open over the library, if one is, with how it ended once it has.
     over: Over = .none,
-    query_kept: search.Query = .{}, // The search before the sheet, kept if it's cancelled
-    offered: ?*catalog.Entry = null, // The book the up-next card offers
+    /// The minute (since 1970) the status was last read in: the strip along the top is
+    /// read again once a new one has begun, however often the library ticks.
+    status_minute: u64 = 0,
 
     /// The screens the library opens over itself, each kept with its ending.
     const Over = union(enum) {
@@ -207,9 +205,11 @@ const Browser = struct {
         battery: screen.Child(battery_screen.Bubble),
         lock: screen.Child(lock.Lock),
         panel: screen.Child(panel.Panel),
-        search: screen.Child(LibrarySearch),
+        /// The search sheet, and the search before it, kept if it's cancelled.
+        search: struct { child: screen.Child(LibrarySearch), kept: search.Query },
         sheet: screen.Child(actions.Sheet),
-        up_next: actions.UpNext,
+        /// The card offering `next`, the next of a series just finished.
+        up_next: struct { offer: actions.UpNext, next: *catalog.Entry },
         /// A book open, and whether it was read before it was opened.
         book: struct { child: screen.Child(reader.Reader), was_read: bool },
     };
@@ -326,7 +326,7 @@ const Browser = struct {
             },
             .search => |c| {
                 b.over = .none;
-                return step(try b.searched(c.ended()));
+                return step(try b.searched(c.child.ended(), &c.kept));
             },
             .sheet => |c| {
                 b.over = .none;
@@ -437,6 +437,7 @@ const Browser = struct {
     fn refresh_status(b: *Browser, area: enum { screen, strip }) !void {
         const a = b.a;
         const fresh = lipc.read(a.quick);
+        b.status_minute = os.unix_time() / std.time.s_per_min;
         if (fresh.same(&a.quick)) return;
         a.quick = fresh;
         try b.render();
@@ -472,9 +473,9 @@ const Browser = struct {
             .prev => return b.turn(-1),
             .search => {
                 assert(b.query.len <= b.query.buf.len);
-                b.query_kept = b.query;
-                b.over = .{ .search = .{ .screen = .{ .a = a, .lib = &b.lib, .q = &b.query } } };
-                return .{ .open = b.over.search.frame() };
+                const sheet = LibrarySearch{ .a = a, .lib = &b.lib, .q = &b.query };
+                b.over = .{ .search = .{ .child = .{ .screen = sheet }, .kept = b.query } };
+                return .{ .open = b.over.search.child.frame() };
             },
             .clear_search => {
                 b.query = .{};
@@ -508,7 +509,6 @@ const Browser = struct {
             },
             .hero_dots => return b.act_on(b.lib.hero() orelse return .nothing),
             .book => |i| {
-                assert(i < b.count);
                 const entry = b.lib.book(i - library.page_range(b.index, b.count).first);
                 if (entry.is_local()) {
                     a.flash(library.book_rect(i, b.index));
@@ -517,7 +517,8 @@ const Browser = struct {
                 if (entry.availability == .downloading) {
                     b.notice = "Still downloading. It will open once it's finished.";
                 } else {
-                    b.notice = "Not on this Kindle yet. Use the three dots to download it.";
+                    // Grid books have no dots: their actions come from holding them
+                    b.notice = "Not on this Kindle yet. Hold it to download it.";
                 }
                 return .page;
             },
@@ -528,10 +529,7 @@ const Browser = struct {
     fn on_hold(b: *Browser, x: i32, y: i32) !Next {
         assert(b.over == .none); // In front, taking touches
         return switch (logged_hit(x, y, b.index, b.count, b.query.words().len > 0)) {
-            .book => |i| {
-                assert(i < b.count);
-                return b.act_on(b.lib.book(i - library.page_range(b.index, b.count).first));
-            },
+            .book => |i| b.act_on(b.lib.book(i - library.page_range(b.index, b.count).first)),
             .hero, .hero_dots => b.act_on(b.lib.hero() orelse return .nothing),
             // Only a book has actions to hold for
             .none,
@@ -564,18 +562,17 @@ const Browser = struct {
     }
 
     /// The search sheet ended: cancelled, locked or leaving, what was searched before
-    /// stays.
-    fn searched(b: *Browser, ending: screen.Ending(SearchEnd)) !Next {
+    /// (`kept`) stays.
+    fn searched(b: *Browser, ending: screen.Ending(SearchEnd), kept: *const search.Query) !Next {
         assert(b.query.len <= b.query.buf.len);
+        assert(kept.len <= kept.buf.len);
         const end: SearchEnd = switch (ending) {
             .done => |end| end,
             .closed, .interrupted => .cancel,
         };
-        if (end == .cancel) b.query = b.query_kept;
-        // Only a book on the Kindle opens from the list
-        if (end == .open) assert(end.open.is_local());
         switch (end) {
             .cancel => {
+                b.query = kept.*;
                 try b.a.present(b.buf, .screen); // What was there before the sheet
                 return .nothing;
             },
@@ -584,7 +581,6 @@ const Browser = struct {
                 return .page;
             },
             .open => |e| {
-                assert(e.is_local());
                 b.query = .{};
                 b.index = 0;
                 return b.open_book(e);
@@ -610,7 +606,9 @@ const Browser = struct {
     }
 
     /// The book ended, `outcome` saying how: noface leaves, or the library is back,
-    /// offering the next of a series just finished.
+    /// offering the next of a series just finished, to read now. Only books on the
+    /// Kindle can offer it: a series is read from a book's file name, and books in the
+    /// cloud have none yet.
     fn book_closed(
         b: *Browser,
         entry: *catalog.Entry,
@@ -629,22 +627,20 @@ const Browser = struct {
         // The next is one not read yet, so never the book just finished
         assert(!next.is_read());
         assert(next != entry);
-        b.over = .{ .up_next = .{} };
-        const offer = actions.up_next(a, next, b.buf, &b.over.up_next) orelse {
+        b.over = .{ .up_next = .{ .offer = .{}, .next = next } };
+        const offer = actions.up_next(a, next, b.buf, &b.over.up_next.offer) orelse {
             b.over = .none;
             return .everything;
         };
-        b.offered = next;
         return .{ .open = offer };
     }
 
     /// The up-next card ended: the next book now, or the library back.
     fn offer_ended(b: *Browser) !Next {
-        const next = b.offered orelse unreachable; // Set as the card opened
-        b.offered = null;
-        assert(b.over.up_next.ending != null);
+        const next = b.over.up_next.next;
+        assert(b.over.up_next.offer.ending != null);
         assert(next.is_local());
-        const chosen = try actions.up_next_closed(b.a, b.buf, &b.over.up_next);
+        const chosen = try actions.up_next_closed(b.a, b.buf, &b.over.up_next.offer);
         b.over = .none;
         if (!chosen) return .everything;
         return b.open_book(next);
@@ -682,10 +678,11 @@ const Browser = struct {
         assert(b.over == .none); // In front, ticking
         const now = now_us();
         // The status: the whole screen while it's settling after a book; else just the
-        // strip, once a minute (a charger coming or going is an action of its own)
+        // strip, once a new minute has begun, the clock showing minutes, even while a
+        // download is watched (a charger coming or going is an action of its own)
         if (now < b.status_until) {
             try b.refresh_status(.screen);
-        } else if (!b.watching(now)) {
+        } else if (os.unix_time() / std.time.s_per_min != b.status_minute) {
             try b.refresh_status(.strip);
         }
         // A download being watched: the library again, in case it's finished. When the

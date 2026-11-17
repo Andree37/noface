@@ -1,4 +1,5 @@
-//! Actions for one book, opened from the three dots beside its cover. Shown as a card.
+//! Actions for one book, opened by holding it in the library, or from the dots beside
+//! the book to continue. Shown as a card.
 const std = @import("std");
 const assert = std.debug.assert;
 const stats = @import("../model/stats.zig");

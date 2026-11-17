@@ -53,9 +53,13 @@ To try it end to end without touching the reader's own books, places or settings
 `tools/e2e` plays a script of touches against it and checks what noface logs and how
 soon it draws: `tools/e2e/reader.e2e` takes every gesture the reader has (turning by
 tap and swipe, the toolbar, a bookmark, the quick panel, looking up and highlighting,
-locking, Home) with time budgets for each. Copy the tool and the script into the test
-folder (on `/mnt/us`: a file made executable in `/tmp` can't be run), start from a
-fresh `data`, and play it:
+locking, Home) with time budgets for each, and `tools/e2e/library.e2e` every control
+the library has (paging, the filter, each sort, stats, search typed on its keyboard, a
+book's actions, the quick panel). Both play on `documents` holding
+`src/testdata/scenario.epub` as `Scenario Book.epub` and 13 copies beside it
+(`Scenario Book 02.epub` to `14`), so the library has two pages. Copy the tool and the
+scripts into the test folder (on `/mnt/us`: a file made executable in `/tmp` can't be
+run), start from a fresh `data` each time, and play one:
 
 ```sh
 noface-launch e2e /mnt/us/noface-e2e   # its data folder removed first

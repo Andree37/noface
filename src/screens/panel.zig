@@ -10,6 +10,9 @@ const app = @import("../app.zig");
 const screen = @import("screen.zig");
 const input_mod = @import("../kindle/input.zig");
 
+/// How soon after it opens the panel reads the status: at once, once it's shown.
+const status_read_after_us = 1000;
+
 comptime {
     // A row is told apart from the other by its place alone
     assert(menu.warmth_row.y != menu.brightness_row.y);
@@ -18,11 +21,10 @@ comptime {
     assert(menu.warmth_row.y + menu.band_height <= menu.height);
 }
 
-/// Shows the panel at once with the last status read, then reads it again (about a
-/// quarter second of lipc calls) and redraws only if something changed.
-fn draw_fresh(a: *app.App, background: []const u8) !void {
+/// Reads the status again (about a quarter second of lipc calls), and redraws the
+/// panel only if something changed.
+fn refresh_status(a: *app.App, background: []const u8) !void {
     assert(background.len == a.screen.pixels.len);
-    try draw_menu(a, background);
     const fresh = lipc.read(a.quick);
     if (fresh.same(&a.quick)) return;
     a.quick = fresh;
@@ -261,14 +263,31 @@ pub fn ended(
 /// noface should go to the Kindle's own screens.
 pub const Panel = struct {
     pub const Result = void;
-    pub const touches = input_mod.Input.Modes.sheet;
     a: *app.App,
     background: []const u8,
     slider: SliderDrag = .{}, // A slider followed, over it
+    /// The status read again since it opened. It's drawn at once with the last one
+    /// read, and read on its first tick: a screen counts as shown once it's drawn, and
+    /// a tap touched before that is dropped, so a read while drawing lost the taps of
+    /// a reader who saw the panel and went on.
+    status_read: bool = false,
+
+    /// Touches as a sheet takes them, and one tick at once, to read the status.
+    pub fn setting(p: *const Panel) input_mod.Input.Scope {
+        const tick_us: ?u64 = if (p.status_read) null else status_read_after_us;
+        return .{ .modes = input_mod.Input.Modes.sheet, .tick_us = tick_us };
+    }
 
     pub fn draw(p: *Panel, _: screen.Part) !void {
         assert(p.background.len == p.a.screen.pixels.len);
-        try draw_fresh(p.a, p.background);
+        try draw_menu(p.a, p.background);
+    }
+
+    pub fn on_tick(p: *Panel) !screen.Step(void) {
+        assert(!p.status_read); // Only one tick is asked for
+        p.status_read = true;
+        try refresh_status(p.a, p.background);
+        return .stay;
     }
 
     pub fn on_tap(p: *Panel, t: screen.Tap) !screen.Step(void) {

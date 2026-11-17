@@ -179,11 +179,12 @@ pub const Lines = struct {
     /// The next line, without its line break, or null at the end. Valid until the next.
     pub fn next(l: *Lines) !?[]const u8 {
         assert(l.at <= l.reader.size);
-        // Each pass reads a buffer further on, so this many reach the end
-        const passes: u64 = l.reader.size / l.reader.buffer.len + 2;
-        const passes_max: u32 = @intCast(@min(passes, std.math.maxInt(u32)));
+        // Each pass that doesn't return moves on by at least a byte (a buffer, or to past
+        // a line's break), so this many reach the end, where the last one returns
+        const passes_max: u64 = l.reader.size - l.at + 1;
         var long = false;
-        for (0..passes_max) |_| {
+        var pass: u64 = 0;
+        while (pass < passes_max) : (pass += 1) {
             if (l.at == l.reader.size) return null;
             const want: u32 = @intCast(@min(l.reader.buffer.len, l.reader.size - l.at));
             const chunk = try l.reader.read_at(l.at, want);
@@ -199,7 +200,7 @@ pub const Lines = struct {
             l.skipped += 1;
             long = false;
         }
-        unreachable; // Each pass moved on by a buffer, or to a line's end
+        unreachable; // Each pass moved on by a byte at least, so the end was reached
     }
 
     pub fn close(l: *Lines) void {
@@ -284,4 +285,23 @@ test "only a file that isn't there opens as not found" {
     try std.testing.expect(!failed(calls.symlink(path, path)));
     defer remove(path);
     try std.testing.expectError(error.CantRead, Reader.open(path, &read_buffer));
+}
+
+test "lines longer than the buffer, one after another, are passed over to the end" {
+    var path_buffer: [64]u8 = undefined;
+    const path = try std.fmt.bufPrintSentinel(&path_buffer, "/tmp/noface-files-lines-{d}", .{
+        calls.getpid(),
+    }, 0);
+    defer remove(path);
+    var write_buffer: [64]u8 = undefined;
+    var w = try Writer.create(path, &write_buffer);
+    // Each line exactly the buffer's size: its break is found a pass later, a byte on,
+    // so one call passes over all three in more passes than the file has buffers
+    w.write("aaaa\nbbbb\ncccc\n");
+    _ = try w.finish();
+    var read_buffer: [4]u8 = undefined;
+    var lines: Lines = .{ .reader = try Reader.open(path, &read_buffer) };
+    defer lines.close();
+    try std.testing.expectEqual(null, try lines.next());
+    try std.testing.expectEqual(@as(u32, 3), lines.skipped);
 }

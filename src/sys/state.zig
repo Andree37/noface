@@ -18,8 +18,6 @@ pub const State = struct {
     back_turns: u32 = 0,
 };
 
-const failed = @import("os.zig").failed;
-
 /// `<dir>/state-<first 16 hex of md5 of "basename\n">`, matching earlier versions
 /// that named these files with `basename | md5sum`.
 pub fn path_for(buf: []u8, dir: []const u8, book_path: []const u8) ![:0]u8 {

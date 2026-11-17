@@ -109,7 +109,8 @@ pub const Value = struct {
             .uint => @floatFromInt(v.int),
             .nint => -@as(f64, @floatFromInt(v.int)),
             .float => v.float(),
-            else => null,
+            .pad, .null_, .bool_, .decimal, .timestamp, .symbol => null,
+            .string, .clob, .blob, .list, .sexp, .struct_ => null,
         };
     }
 

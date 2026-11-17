@@ -68,7 +68,7 @@ const Books = struct {
                 s.last = item.key;
             },
             .author => e.surname = e.author[item.key >> 16 ..][0 .. item.key & 0xffff],
-            else => {},
+            .recent, .progress, .title, .added => {}, // Nothing of the key to put back
         }
         return e;
     }

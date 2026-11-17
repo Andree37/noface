@@ -139,7 +139,8 @@ pub const Script = struct {
                 tap.us = touched_us;
             },
             .hold => |hold| if (in.ignores(hold.x, hold.y)) return null,
-            else => {},
+            .pull, .drag, .swipe, .drag_end, .tick, .charger => {},
+            .lock, .unlock, .power, .computer, .stop => {},
         }
         in.last_input = now_us();
         assert(in.last_input > touched_us);
@@ -362,7 +363,8 @@ pub const Input = struct {
             const action = in.waiting() orelse return latest;
             switch (action) {
                 .drag => |point| latest = point,
-                else => in.stashed = action,
+                .tap, .hold, .pull, .swipe, .drag_end, .tick, .charger => in.stashed = action,
+                .lock, .unlock, .power, .computer, .stop => in.stashed = action,
             }
         }
         // Stopped by something other than a drag, kept for the next call to `poll`
@@ -384,7 +386,8 @@ pub const Input = struct {
                         delta += turn_direction(tap.x, in.width);
                     }
                 },
-                else => in.stashed = action,
+                .hold, .pull, .drag, .swipe, .drag_end, .tick, .charger => in.stashed = action,
+                .lock, .unlock, .power, .computer, .stop => in.stashed = action,
             }
         }
         // Stopped by something other than a page turn, kept for the next call to `poll`

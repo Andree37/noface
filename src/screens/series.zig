@@ -34,14 +34,6 @@ comptime {
     assert(keyboard.top < style.screen_height);
 }
 
-/// The overrides file in the data folder.
-pub fn path(buffer: []u8, state_dir: []const u8) ![:0]u8 {
-    const p = try std.fmt.bufPrintSentinel(buffer, "{s}/series", .{state_dir}, 0);
-    assert(p.len > state_dir.len);
-    assert(std.mem.endsWith(u8, p, "/series"));
-    return p;
-}
-
 const Choices = struct {
     pub const Result = u32;
     /// A row takes its tap as it lands, however long it's held, as on any sheet: not
@@ -297,7 +289,7 @@ pub const Series = struct {
     fn saved(s: *Series, book: []const u8, place: Place) !bool {
         assert(book.len > 0);
         var path_buffer: [files.path_bytes_max]u8 = undefined;
-        if (save(try path(&path_buffer, s.a.state_dir), book, place)) {
+        if (save(try overrides.file_path(&path_buffer, s.a.state_dir), book, place)) {
             s.changed = true;
             return true;
         }

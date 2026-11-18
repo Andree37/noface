@@ -5,6 +5,15 @@ const std = @import("std");
 const assert = std.debug.assert;
 const catalog = @import("catalog.zig");
 
+/// The overrides file in the data folder `state_dir`. Its name is said only here, so the
+/// series screen that writes it and the library build that reads it never part ways.
+pub fn file_path(buffer: []u8, state_dir: []const u8) ![:0]u8 {
+    assert(state_dir.len > 0);
+    const p = try std.fmt.bufPrintSentinel(buffer, "{s}/series", .{state_dir}, 0);
+    assert(std.mem.endsWith(u8, p, "/series"));
+    return p;
+}
+
 /// A book's series set by hand: null for "not in one".
 pub const Override = struct { path: []const u8, series: ?catalog.Series };
 

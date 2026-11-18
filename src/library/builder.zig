@@ -78,7 +78,7 @@ pub fn sources_now(scratch: *memory.Budget, places: Places) index.Sources {
     const catalog_facts = file.facts_of(places.catalog_path);
     var series_buffer: [files.path_bytes_max]u8 = undefined;
     // A path too long to make: no overrides file to read
-    const series_facts = if (files.path_in(&series_buffer, places.state_dir, "series")) |p|
+    const series_facts = if (overrides.file_path(&series_buffer, places.state_dir)) |p|
         file.facts_of(p)
     else |_|
         null;
@@ -456,7 +456,7 @@ fn apply_overrides(
     places: Places,
 ) !void {
     var series_buffer: [files.path_bytes_max]u8 = undefined;
-    const series_path = try files.path_in(&series_buffer, places.state_dir, "series");
+    const series_path = try overrides.file_path(&series_buffer, places.state_dir);
     var lines: files.Lines = .{
         .reader = files.Reader.open(series_path, buffers.lines) catch return, // None set
     };

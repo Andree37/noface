@@ -158,7 +158,6 @@ fn main_reader(init: std.process.Init.Minimal) !void {
     std.debug.print("quit\n", .{});
 }
 
-/// The four fonts named on the command line, mapped.
 /// Gives the fonts the Kindle's Chinese typeface for characters they haven't got. A
 /// Kindle without it draws those as the fonts' empty boxes, as before.
 // Assertions: none; what it reads is the Kindle's file, checked by `Font.use_fallback`.
@@ -174,6 +173,7 @@ fn main_reader_fallback() void {
     if (!opened) std.debug.print("no fallback font: not a font\n", .{});
 }
 
+/// The four fonts named on the command line, mapped.
 fn main_reader_fonts(argv: []const [*:0]const u8) !setup.FontFiles {
     assert(argv.len == reader_arguments_count);
     const files: setup.FontFiles = .{

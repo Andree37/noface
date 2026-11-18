@@ -198,7 +198,8 @@ pub const Run = struct {
     }
 
     /// The phrase at `at`, or the first after it, in place of the one on screen, with
-    /// the ones before and after it: in one clean refresh of the box they're in.
+    /// the ends of the ones around it and the footer: in one clean refresh, from the
+    /// text's top to the screen's foot.
     fn move_to(
         run: *Run,
         a: *app.App,
@@ -208,15 +209,13 @@ pub const Run = struct {
     ) !Moved {
         assert(at.para <= s.paragraphs.len); // From a phrase's end, or a phrase kept
         run.phrase = try phrase_at(a, s, at);
-        try run.draw_phrases(a, s);
-        const left: u32 = phrase_margin_px / 2;
-        const width = a.screen.width - 2 * left;
-        const height = a.screen.height - footer_height_px - text_top;
-        const marker = try a.screen.show_region(left, text_top, width, height, .quick);
-        try a.screen.wait_complete(marker);
         run.start_timer(a, now);
         run.dial_step = 0; // Empty, for the phrase just shown
-        try run.show_footer(a, s);
+        try run.draw_phrases(a, s);
+        try run.draw_footer(a, s);
+        const height = a.screen.height - text_top;
+        const marker = try a.screen.show_region(0, text_top, a.screen.width, height, .quick);
+        try a.screen.wait_complete(marker);
         const p = run.phrase orelse return null;
         return .{ .para = p.para, .byte = p.start };
     }
@@ -242,12 +241,6 @@ pub const Run = struct {
         return run.stopped_at != null;
     }
 
-    /// Whether a tap at (`x`, `y`) is on the pause button.
-    pub fn on_pause_button(a: *const app.App, x: i32, y: i32) bool {
-        const cy = icons_y(a);
-        return @abs(x - pause_x) <= icon_reach_px and @abs(y - cy) <= icon_reach_px;
-    }
-
     /// Whether a tap at (`x`, `y`) is on the dial, which stops running.
     pub fn on_dial(run: *const Run, a: *const app.App, x: i32, y: i32) bool {
         // Placed as the footer is first drawn: until then there's no dial to tap
@@ -269,9 +262,9 @@ pub const Run = struct {
         return (now -| run.started_us) / std.time.us_per_min;
     }
 
-    /// The phrase on screen, large and bold, centred about `phrase_middle_y`, the one
-    /// before it a row above and the one after a row below, small; at the book's end,
-    /// saying so. Pure black and white, which the quick refresh changes cleanly. Drawn
+    /// The phrase on screen, large and bold, centred about `phrase_middle_y`, the end of
+    /// the one before it above and the start of the one after below, small; at the
+    /// book's end, saying so. Pure black and white, which the quick refresh changes cleanly. Drawn
     /// into the screen, not shown.
     fn draw_phrases(run: *const Run, a: *app.App, s: *sess.Session) !void {
         const page = a.page(a.screen.pixels);
@@ -353,6 +346,12 @@ pub const Run = struct {
         draw_dial(a, run.dial_x, cy, run.dial_step);
     }
 };
+
+/// Whether a tap at (`x`, `y`) is on the pause button.
+pub fn on_pause_button(a: *const app.App, x: i32, y: i32) bool {
+    const cy = icons_y(a);
+    return @abs(x - pause_x) <= icon_reach_px and @abs(y - cy) <= icon_reach_px;
+}
 
 /// The phrase at `at`, or the first after it, as long as fits the screen at the
 /// phrase's size (model/phrases.zig).

@@ -89,14 +89,20 @@ pub fn on_axis(in: *Input, event: InputEvent) ?Action {
         abs_mt_x => in.xs[in.slot] = event.value,
         abs_mt_y => in.ys[in.slot] = event.value,
         abs_mt_tracking => {
-            if (event.value < 0) return finger_up(in, @as(u64, event.sec) * 1_000_000 + event.usec);
+            if (event.value < 0) return finger_up(in, event_us(event));
             in.pending = in.slot; // Down: where is known at the packet's end
-            in.down_us = @as(u64, event.sec) * 1_000_000 + event.usec;
+            in.down_us = event_us(event);
         },
         else => {},
     }
     assert(in.slot < slots_count);
     return null;
+}
+
+/// When the panel says an event happened, in microseconds.
+fn event_us(event: InputEvent) u64 {
+    assert(event.usec < std.time.us_per_s);
+    return @as(u64, event.sec) * std.time.us_per_s + event.usec;
 }
 
 /// A finger lifting, at `up_us` by the panel's clock.
@@ -234,6 +240,25 @@ test "on book pages a tap waits for the finger to lift" {
     in.deferred = true;
     try std.testing.expect(press(&in, 0, 900, 900, true) == null);
     try std.testing.expectEqual(@as(i32, 900), lift(&in, 0).?.tap.y);
+}
+
+test "a tap that waits for the lift says how long the finger stayed, by the panel's clock" {
+    var in = test_input();
+    in.deferred = true;
+    // Down at 1.000 s and up at 1.090 s, as the panel stamps them, whenever they're read
+    var down = ev(ev_abs, abs_mt_tracking, 7);
+    down.sec = 1;
+    _ = handle(&in, ev(ev_abs, abs_mt_slot, 0));
+    _ = handle(&in, down);
+    _ = handle(&in, ev(ev_abs, abs_mt_x, 900));
+    _ = handle(&in, ev(ev_abs, abs_mt_y, 900));
+    try std.testing.expect(handle(&in, ev(0, 0, 0)) == null);
+    var up = ev(ev_abs, abs_mt_tracking, -1);
+    up.sec = 1;
+    up.usec = 90_000;
+    const tap = handle(&in, up).?.tap;
+    try std.testing.expectEqual(@as(?u64, 90_000), tap.held_us);
+    try std.testing.expectEqual(@as(u64, std.time.us_per_s), tap.us);
 }
 
 test "the top edge taps on lift, unless edge zones are off" {

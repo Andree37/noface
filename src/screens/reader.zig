@@ -462,8 +462,8 @@ pub const Reader = struct {
     pending: controls.Pending = .none, // The scrubber, an Aa slider, or a card from Aa
     selecting: hl.Selecting = .{}, // Words being selected, or a highlight's end dragged
     picture: picture_view.Viewer = undefined, // A picture held, shown whole
-    /// Running mode, while it's on: the page's timer (reader/run.zig). On exactly while
-    /// the App lays pages out as running's.
+    /// Running mode, while it's on: the phrase on screen and its timer (reader/run.zig).
+    /// On exactly while the App's `running` is.
     run: ?run_mode.Run = null,
     pause_note: [48]u8 = undefined, // The pause card's line: how long the run has been
 
@@ -704,7 +704,7 @@ pub const Reader = struct {
     /// The book closes: its place saved, Wi-Fi back, and its memory let go of.
     fn finish(r: *Reader, outcome: Outcome) screen.Step(Outcome) {
         assert(r.data.len > 0); // Its file mapped until `release` lets go of it
-        // Running ends with the book: the reader's own settings back for what's next
+        // Running ends with the book: its pace saved, and the Kindle free to sleep
         if (r.run != null) r.leave_running();
         if (r.reading_started) {
             const percent: ?u32 = switch (outcome) {
@@ -1118,7 +1118,7 @@ pub const Reader = struct {
             std.debug.print("running: tap dial\n", .{});
             return r.stop_running();
         }
-        if (run_mode.Run.on_pause_button(a, x, y)) {
+        if (run_mode.on_pause_button(a, x, y)) {
             try run.pause_or_resume(a, r.s, now);
             const stopped = run.stopped();
             std.debug.print("running: {s}\n", .{if (stopped) "paused" else "resumed"});
@@ -1149,7 +1149,7 @@ pub const Reader = struct {
         }
     }
 
-    /// The pause card over the page: the page's timer stops, and the Kindle may sleep.
+    /// The pause card over the page: the phrase's timer stops, and the Kindle may sleep.
     fn pause_running(r: *Reader) !void {
         assert(r.reading());
         const run = &r.run.?;

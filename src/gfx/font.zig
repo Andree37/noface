@@ -112,6 +112,8 @@ pub const Font = struct {
     pub fn use_fallback(ttf: []const u8) !bool {
         const cache = try glyph_cache.get();
         if (!tables_inside(ttf)) return false;
+        // Given once: glyphs measured against one fallback must not be drawn from another
+        assert(cache.fallback == null);
         cache.fallback = truetype.init(ttf) orelse return false;
         return true;
     }

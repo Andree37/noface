@@ -1,7 +1,8 @@
-//! Running mode's arithmetic: how long a page stays up at the reader's running pace,
-//! how that pace learns from their taps, and where a tap lands. Reading on a treadmill
-//! is slower than reading in the hand, and taps are rare, so the pace is its own,
-//! learned only from the reader turning early (faster) or going back (slower).
+//! Running mode's arithmetic: the reader's running pace, how it learns from their taps,
+//! and where a tap lands. Reading on a treadmill is slower than reading in the hand,
+//! and taps are rare, so the pace is its own, learned only from the reader going on
+//! early (faster) or going back (slower). How long each phrase stays is
+//! model/phrases.zig's.
 const std = @import("std");
 const assert = std.debug.assert;
 const stats = @import("stats.zig");
@@ -14,9 +15,6 @@ const first_wpm_unknown = 150;
 const step_share = 0.08;
 pub const pace_wpm_min = 60;
 pub const pace_wpm_max = 600;
-/// However few words, a page stays up long enough to look at; however many, it turns.
-pub const page_us_min = 5 * std.time.us_per_s;
-pub const page_us_max = 120 * std.time.us_per_s;
 /// A touch shorter than this is a drop of sweat or a brush, not a finger's tap, which
 /// stays on the glass a tenth of a second or so.
 pub const contact_us_min = 60 * std.time.us_per_ms;
@@ -30,7 +28,6 @@ comptime {
     assert(first_share < 1); // Slower than in the hand
     assert(step_share > 0);
     assert(step_share < 0.5);
-    assert(page_us_min < page_us_max);
 }
 
 /// The pace running starts at: a share of the reader's speed in the hand.
@@ -46,30 +43,18 @@ fn clamp_pace(wpm: f64) f64 {
     return std.math.clamp(wpm, pace_wpm_min, pace_wpm_max);
 }
 
-/// The reader turned before the page was due: they read faster than the pace.
+/// The reader went on before the phrase's time was up: they read faster than the pace.
 pub fn faster(wpm: f64) f64 {
     const next = clamp_pace(wpm * (1 + step_share));
     assert(next >= wpm or wpm > pace_wpm_max);
     return next;
 }
 
-/// The reader went back: the page turned before they'd read it.
+/// The reader went back: the phrase moved on before they'd read it.
 pub fn slower(wpm: f64) f64 {
     const next = clamp_pace(wpm * (1 - step_share));
     assert(next <= wpm or wpm < pace_wpm_min);
     return next;
-}
-
-/// How long a page of `words` stays up at `wpm`.
-pub fn page_us(wpm: f64, words: u64) u64 {
-    assert(wpm >= pace_wpm_min);
-    assert(wpm <= pace_wpm_max);
-    const seconds = @as(f64, @floatFromInt(words)) * 60 / wpm;
-    const us = @min(seconds * std.time.us_per_s, page_us_max);
-    const result = std.math.clamp(@as(u64, @intFromFloat(us)), page_us_min, page_us_max);
-    assert(result >= page_us_min);
-    assert(result <= page_us_max);
-    return result;
 }
 
 /// Minutes to read `words` at `wpm`, rounded up, for the footer's time left.
@@ -81,7 +66,7 @@ pub fn minutes_for(wpm: f64, words: u64) u64 {
 }
 
 /// Where a tap lands while running: the top band pauses, the left third goes back a
-/// page, and the rest, most of the screen, turns on. Big, so a hand mid-stride finds it.
+/// phrase, and the rest, most of the screen, goes on. Big, so a hand mid-stride finds it.
 pub const Zone = enum { pause, back, next };
 
 pub fn zone(x: i32, y: i32, width: u32, top_band: u32) Zone {
@@ -117,10 +102,8 @@ pub fn format_pace(buf: []u8, wpm: f64) []const u8 {
     return std.fmt.bufPrint(buf, pace_tag ++ " {d:.1}\n", .{wpm}) catch "";
 }
 
-test "a page stays up for its words at the pace, within bounds" {
-    try std.testing.expectEqual(@as(u64, 60 * std.time.us_per_s), page_us(150, 150));
-    try std.testing.expectEqual(page_us_min, page_us(150, 3)); // A title page
-    try std.testing.expectEqual(page_us_max, page_us(60, 10_000)); // A wall of text
+test "minutes left are the words at the pace, rounded up" {
+    try std.testing.expectEqual(@as(u64, 1), minutes_for(150, 150));
     try std.testing.expectEqual(@as(u64, 2), minutes_for(150, 300));
     try std.testing.expectEqual(@as(u64, 0), minutes_for(150, 0));
 }

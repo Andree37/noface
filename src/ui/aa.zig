@@ -498,7 +498,7 @@ fn draw_running(fonts: Fonts, page: Page, running: bool) !void {
     draw.box_with(page, margin, running_top, width, running_height, edge, style.button_corner);
     const label = if (running) "Stop running" else "Running";
     const note = if (running)
-        "Back to your own settings"
+        "Back to the page"
     else
         "A sentence at a time, large and still, at your pace, for a treadmill";
     try fonts.title.draw(page, margin + 32, running_top + 50, label);

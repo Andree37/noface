@@ -122,7 +122,7 @@ const themes_tab = tap(150, 274);
 const running_button = tap(636, 790);
 const start_running = [_]Step{ top, text_settings_button, themes_tab, running_button };
 const pause_tap = tap(636, 150);
-/// The pause button, in the margin left of the footer, at running's Wide margins.
+/// The pause button, at the left of running's footer (screens/reader/run.zig).
 const pause_button = tap(75, 1625);
 const pause_resume = card_row(3, 0);
 const pause_stop = card_row(3, 2);
@@ -1426,25 +1426,25 @@ const scenarios = [_]Scenario{
         }.run,
     },
     .{
-        .name = "running turns pages on its own, and stopping brings the reader's own " ++
-            "settings back, at the place it reached",
+        .name = "running moves on through the book by itself, and stopping leaves the " ++
+            "reader's settings as they were, at the place it reached",
         .run = struct {
             fn run() !void {
                 const start = try play(&.{});
                 // A few minutes on the treadmill, then stopped from the pause card
                 const steps = start_running ++ [_]Step{ wait(240_000), pause_tap, pause_stop };
                 const ran = try play(&steps);
-                try expect(!same_place(start.saved, ran.saved), "no page turned on its own");
+                try expect(!same_place(start.saved, ran.saved), "the place didn't move on");
                 try expect(!ran.running, "still running after Stop");
                 const own: settings_model.Settings = .{};
                 const back_as_were = std.meta.eql(ran.settings, own);
                 try expect(back_as_were, "the reader's settings came back changed");
                 const saved_as_were = std.meta.eql(ran.saved_settings, own);
                 try expect(saved_as_were, "the reader's settings were saved changed");
-                // Pages turned at the running pace say nothing of the speed in the hand
+                // Pages gone past at the running pace say nothing of the speed in the hand
                 try expect(ran.speed_pages == 0, "running taught the reader's speed");
                 try expect(ran.running_pace != null, "running had no pace");
-                // Leaving the book while running ends it too, the reader's own settings saved
+                // Leaving the book while running ends it too
                 const left = try play(&(start_running ++ [_]Step{wait(60_000)}));
                 try expect(!left.running, "running outlasted the book");
                 const left_own = std.meta.eql(left.saved_settings, own);
@@ -1453,7 +1453,7 @@ const scenarios = [_]Scenario{
         }.run,
     },
     .{
-        .name = "while running, a tap turns at once and quickens the pace, going back " ++
+        .name = "while running, a tap goes on at once and quickens the pace, going back " ++
             "slows it, and a second touch right after the first is let go",
         .run = struct {
             fn run() !void {
@@ -1464,12 +1464,12 @@ const scenarios = [_]Scenario{
                 const went_back = try play(&(turned ++ [_]Step{ wait(1_000), back }));
                 const slowed = went_back.running_pace.? < on.running_pace.?;
                 try expect(slowed, "going back didn't slow it");
-                // Two turns a second apart, and two a moment apart, of which one counts
+                // Two taps a second apart, and two a moment apart, of which one counts
                 const two = try play(&(turned ++ [_]Step{ wait(1_000), forward }));
                 const bumped = try play(&(turned ++ [_]Step{forward}));
-                try expect(same_place(bumped.saved, on.saved), "a bump right after a tap turned");
+                try expect(same_place(bumped.saved, on.saved), "a bump right after a tap acted");
                 const second = !same_place(two.saved, on.saved);
-                try expect(second, "a second tap a second later didn't turn");
+                try expect(second, "a second tap a second later didn't go on");
             }
         }.run,
     },
@@ -1485,11 +1485,11 @@ const scenarios = [_]Scenario{
         }.run,
     },
     .{
-        .name = "the pause card and the pause button stop the page's timer, and each " ++
+        .name = "the pause card and the pause button stop the phrase's timer, and each " ++
             "carries on",
         .run = struct {
             fn run() !void {
-                // Paused for long enough to have turned many pages: none turn
+                // Paused long enough to have gone through many phrases: the place stays
                 const paused = [_]Step{ wait(1_000), pause_tap, wait(300_000) };
                 const held = try play(&(start_running ++ paused));
                 const still = try play(&(start_running ++ [_]Step{wait(1_000)}));

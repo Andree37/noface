@@ -1,6 +1,9 @@
 ## Install
 
-You need a jailbroken Kindle Paperwhite (12th gen) with KMC and KPM.
+You need a jailbroken Kindle Paperwhite, 12th generation (2024), with KMC and KPM.
+**It runs on that Kindle only:** noface drives its display directly, so on any other
+model it checks the screen, says it can't run, and goes back to the Kindle's own home
+screen.
 
 1. Download **noface-*.zip** below and unzip it.
 2. Plug in the Kindle. Copy the **noface** folder to the Kindle's drive, then copy the

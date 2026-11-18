@@ -44,8 +44,10 @@ lock screen.
 
 ## Get it
 
-You'll need a **jailbroken Kindle Paperwhite (12th gen)** with KMC and KPM. That's the
-only Kindle it's tested on so far.
+You'll need a **jailbroken Kindle Paperwhite, 12th generation (2024)**, with KMC and
+KPM. **It runs on that Kindle only:** noface drives its display directly, so on any
+other model it checks the screen, says it can't run, and goes back to the Kindle's own
+home screen.
 
 1. Download the latest **noface-*.zip** from [Releases](../../releases/latest) and
    unzip it.

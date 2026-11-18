@@ -100,7 +100,10 @@ const wake: Step = .{ .act = .unlock };
 /// The quick panel pulled down from the top, and its Kindle button, which leaves noface.
 const pull_down: Step = .{ .act = .pull };
 const panel_kindle = tap(795, 430);
-/// The series lists' second row, "Not in a series", and "Library" along their top.
+/// Series… on a book's card, held in the library: its third row, after Remove and Mark
+/// as read. Then the series lists' second row, "Not in a series", and "Library" along
+/// their top.
+const book_series = card_row(3, 2);
 const not_in_a_series = tap(636, goto_ui.list_top + 150);
 const list_back_to_library = tap(636, 100);
 const forward = tap(1000, 900);
@@ -1312,11 +1315,10 @@ const scenarios = [_]Scenario{
         .name = "a series that can't be saved leaves its file as it was, and noface running",
         .run = struct {
             fn run() !void {
-                const series_rows = 3; // Remove, Mark as read, Series
                 const r = try play_on(.{ .library = true, .unreadable = &.{"series"} }, &.{
                     hold_in(library_ui.hero_rect(width)),
                     lift,
-                    card_row(series_rows, series_rows - 1),
+                    book_series,
                     not_in_a_series,
                     // Still on the list, which a tap along its top leaves
                     list_back_to_library,
@@ -1330,7 +1332,7 @@ const scenarios = [_]Scenario{
         .run = struct {
             fn run() !void {
                 const series = [_]Step{
-                    hold_in(library_ui.hero_rect(width)), lift, card_row(3, 2), // Its series
+                    hold_in(library_ui.hero_rect(width)), lift, book_series,
                 };
                 // No room left in the app's budget: the series lists can't be made
                 const broken = play_on(.{ .library = true, .app_bytes_spare = 0 }, &series);

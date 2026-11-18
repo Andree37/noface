@@ -82,13 +82,28 @@ pub const Speed = struct {
         if (!s.known()) return null;
         // Every page counted reads at `min_wpm` or more, so a known speed isn't zero.
         assert(s.wpm() > 0);
-        // Less a hair, so 1000 words at 250 a minute is 4 minutes, not 5 by rounding error.
-        const minutes = @ceil(@as(f64, @floatFromInt(words)) / s.wpm() - 1e-9);
-        const minutes_capped = @min(minutes, 1e9);
-        assert(minutes_capped <= 1e9);
-        return @intFromFloat(minutes_capped);
+        return minutes_at(s.wpm(), words);
     }
 };
+
+/// Minutes to read `words` at `wpm` words a minute, rounded up: the reader's speed's,
+/// and running mode's pace's.
+pub fn minutes_at(wpm: f64, words: u64) u64 {
+    assert(wpm > 0);
+    assert(std.math.isFinite(wpm));
+    // Less a hair, so 1000 words at 250 a minute is 4 minutes, not 5 by rounding error.
+    const minutes = @ceil(@as(f64, @floatFromInt(words)) / wpm - 1e-9);
+    const minutes_capped = @min(@max(minutes, 0), 1e9);
+    assert(minutes_capped <= 1e9);
+    return @intFromFloat(minutes_capped);
+}
+
+test "minutes at a pace are rounded up, and exact ones stay exact" {
+    try std.testing.expectEqual(@as(u64, 1), minutes_at(150, 150));
+    try std.testing.expectEqual(@as(u64, 2), minutes_at(150, 151));
+    try std.testing.expectEqual(@as(u64, 4), minutes_at(250, 1000));
+    try std.testing.expectEqual(@as(u64, 0), minutes_at(150, 0));
+}
 
 /// Words in some text: runs of anything but spaces, tabs and newlines. Whole books
 /// are counted when opened, so this goes 32 bytes at a time.

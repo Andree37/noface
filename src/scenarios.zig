@@ -188,8 +188,8 @@ const Outcome = struct {
     notes: u64, // A digest of the book's notes file, 0 when it has none
     unreadable_kept: bool, // Every file made unreadable is still there, unread and unwritten
     shown: [3]?Shown, // As `Kindle.pages_into` asks: the pages buffered at the end
-    running: bool, // Still in running mode at the end
     running_pace: ?f64, // Running's pace, once it has one
+    awake_at_end: bool, // The Kindle held awake as the steps ran out, before noface stopped
     speed_pages: u32, // Pages the reader's speed in the hand has counted
     settings: settings_model.Settings, // In use at the end
     saved_settings: settings_model.Settings, // As the settings file has them
@@ -406,7 +406,7 @@ fn play_on(kindle: Kindle, steps: []const Step) !Outcome {
     wifi_saver.use_data_dir(dir);
     defer wifi_saver.use_data_dir(paths.data_dir);
 
-    const devices = try play_on_devices(harness, steps);
+    const devices = try play_on_devices(harness, steps, &fake);
 
     // Before any font: the decoders allocate through it, in the region the Kindle has,
     // so a picture with no room there has none here
@@ -470,6 +470,7 @@ fn play_on_app(kindle: Kindle, steps: []const Step, stage: Stage) !Outcome {
             .alloc = stage.harness,
             .fake = stage.fake,
             .last_screen = stage.devices.last_screen,
+            .awake_at_end = stage.devices.keep.awake,
             .ms = ms,
             .dir = stage.dir,
         });
@@ -550,10 +551,15 @@ const Devices = struct {
     script: *input_mod.Script,
     input: *input_mod.Input,
     last_screen: []u8,
+    keep: *const Keep,
 };
 
 /// A screen in memory and a script of touches, kept in `alloc`, which outlives the App.
-fn play_on_devices(alloc: std.mem.Allocator, steps: []const Step) !Devices {
+fn play_on_devices(
+    alloc: std.mem.Allocator,
+    steps: []const Step,
+    fake: *const FakeKindle,
+) !Devices {
     const screen = try alloc.create(hwtcon.Screen);
     screen.* = try hwtcon.Screen.fake(alloc, width, height);
     const script = try alloc.create(input_mod.Script);
@@ -562,7 +568,7 @@ fn play_on_devices(alloc: std.mem.Allocator, steps: []const Step) !Devices {
     const last_screen = try alloc.alloc(u8, width * height);
     @memset(last_screen, 0xff);
     const keep = try alloc.create(Keep);
-    keep.* = .{ .screen = screen, .into = last_screen };
+    keep.* = .{ .screen = screen, .into = last_screen, .fake = fake };
     script.at_end = .{ .ctx = keep, .call = Keep.call };
     const input = try alloc.create(input_mod.Input);
     input.* = .{
@@ -576,7 +582,13 @@ fn play_on_devices(alloc: std.mem.Allocator, steps: []const Step) !Devices {
     };
     assert(screen.pixels.len == last_screen.len);
     assert(script.stops_given == 0);
-    return .{ .screen = screen, .script = script, .input = input, .last_screen = last_screen };
+    return .{
+        .screen = screen,
+        .script = script,
+        .input = input,
+        .last_screen = last_screen,
+        .keep = keep,
+    };
 }
 
 /// What an App points at for as long as it lives: its fonts and data file paths.
@@ -604,12 +616,18 @@ fn play_on_kept(alloc: std.mem.Allocator, dir: [:0]const u8) !Kept {
 const Keep = struct {
     screen: *hwtcon.Screen,
     into: []u8,
+    fake: *const FakeKindle,
+    /// Whether the Kindle was held awake as the steps ran out, before noface was told
+    /// to stop, which lets it sleep whatever was before
+    awake: bool = false,
 
     fn call(ctx: *anyopaque) void {
         const k: *@This() = @ptrCast(@alignCast(ctx));
         assert(k.into.len <= k.screen.pixels.len);
         assert(k.into.len == width * height); // The whole of the pretend screen
         @memcpy(k.into, k.screen.pixels[0..k.into.len]);
+        const held = k.fake.get("com.lab126.powerd preventScreenSaver");
+        k.awake = std.mem.eql(u8, held, "1");
     }
 };
 
@@ -740,6 +758,7 @@ const Ran = struct {
     alloc: std.mem.Allocator,
     fake: *const FakeKindle,
     last_screen: []const u8,
+    awake_at_end: bool, // As `Keep` found it when the steps ran out
     ms: u64,
     dir: []const u8, // The scenario's folder
 };
@@ -787,8 +806,8 @@ fn play_on_outcome(
         .unreadable_kept = try unreadable_kept(ran.alloc, kindle, ran.dir),
         .shown = if (kindle.pages_into) |into| try pages_shown(into, a) else @splat(null),
         .updates = a.screen.updates,
-        .running = a.running,
         .running_pace = a.running_pace,
+        .awake_at_end = ran.awake_at_end,
         .speed_pages = a.speed.pages,
         .settings = a.settings,
         .saved_settings = app.load_settings(a.settings_path),
@@ -1435,7 +1454,7 @@ const scenarios = [_]Scenario{
                 const steps = start_running ++ [_]Step{ wait(240_000), pause_tap, pause_stop };
                 const ran = try play(&steps);
                 try expect(!same_place(start.saved, ran.saved), "the place didn't move on");
-                try expect(!ran.running, "still running after Stop");
+                try expect(!ran.awake_at_end, "the Kindle was still held awake after Stop");
                 const own: settings_model.Settings = .{};
                 const back_as_were = std.meta.eql(ran.settings, own);
                 try expect(back_as_were, "the reader's settings came back changed");
@@ -1446,7 +1465,6 @@ const scenarios = [_]Scenario{
                 try expect(ran.running_pace != null, "running had no pace");
                 // Leaving the book while running ends it too
                 const left = try play(&(start_running ++ [_]Step{wait(60_000)}));
-                try expect(!left.running, "running outlasted the book");
                 const left_own = std.meta.eql(left.saved_settings, own);
                 try expect(left_own, "leaving running changed the reader's settings");
             }
@@ -1460,7 +1478,7 @@ const scenarios = [_]Scenario{
                 const first = running_model.first_pace(.{});
                 const turned = start_running ++ [_]Step{ wait(2_000), forward };
                 const on = try play(&turned);
-                try expect(on.running_pace.? > first, "turning early didn't quicken the pace");
+                try expect(on.running_pace.? > first, "going on early didn't quicken the pace");
                 const went_back = try play(&(turned ++ [_]Step{ wait(1_000), back }));
                 const slowed = went_back.running_pace.? < on.running_pace.?;
                 try expect(slowed, "going back didn't slow it");
@@ -1507,7 +1525,7 @@ const scenarios = [_]Scenario{
                 try expect(held_there, "the place moved on when paused");
                 const going = [_]Step{ wait(1_000), pause_button, wait(240_000) };
                 const button_resumed = try play(&(start_running ++ stopped ++ going));
-                const went_on = !same_place(button_resumed.saved, still.saved);
+                const went_on = !same_place(button_resumed.saved, button_held.saved);
                 try expect(went_on, "the pause button didn't carry on");
                 // The middle column, the screen's height, pauses as the button does
                 const middle = [_]Step{ wait(2_000), page_middle, wait(300_000) };
@@ -1516,6 +1534,46 @@ const scenarios = [_]Scenario{
                 const middle_tapped = try play(&(start_running ++ tapped_middle));
                 const middle_there = same_place(middle_held.saved, middle_tapped.saved);
                 try expect(middle_there, "the place moved on when paused from the middle");
+            }
+        }.run,
+    },
+    .{
+        .name = "running holds the Kindle awake only while it goes on: not paused, nor at " ++
+            "the book's end, where it stays after a lock",
+        .run = struct {
+            fn run() !void {
+                const going = try play_on(.{ .read_before = .{ .para = 120 } }, &(start_running ++
+                    [_]Step{wait(2_000)}));
+                try expect(going.awake_at_end, "the Kindle wasn't held awake while running");
+                const paused = try play(&(start_running ++ [_]Step{ wait(2_000), page_middle }));
+                try expect(!paused.awake_at_end, "the Kindle was held awake while paused");
+                // Near the book's end: run past its last phrase, then lock and wake
+                const near_end: Kindle = .{ .read_before = .{ .para = 120 } };
+                const to_end = start_running ++ [_]Step{wait(600_000)};
+                const ended = try play_on(near_end, &to_end);
+                try expect(!ended.awake_at_end, "the Kindle was held awake at the book's end");
+                const relocked = try play_on(near_end, &(to_end ++
+                    [_]Step{ lock_it, wake, wait(60_000) }));
+                try expect(same_place(relocked.saved, ended.saved), "the end moved after a lock");
+            }
+        }.run,
+    },
+    .{
+        .name = "the card's Resume carries on after the pause button stopped, and a tap " ++
+            "back with nothing before leaves the pace",
+        .run = struct {
+            fn run() !void {
+                const stopped = start_running ++ [_]Step{ wait(2_000), pause_button };
+                const held = try play(&stopped);
+                const resumed = try play(&(stopped ++ [_]Step{
+                    wait(1_000), pause_tap, pause_resume, wait(120_000),
+                }));
+                try expect(!same_place(resumed.saved, held.saved), "Resume didn't carry on");
+                try expect(resumed.awake_at_end, "Resume left the Kindle free to sleep");
+                // The first phrase since running began has none before it to go back to
+                const first = running_model.first_pace(.{});
+                const backed = try play(&(start_running ++ [_]Step{ wait(500), back }));
+                try expect(backed.running_pace.? == first, "a back tap with nothing before slowed");
             }
         }.run,
     },

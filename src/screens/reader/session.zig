@@ -184,22 +184,13 @@ pub const Session = struct {
         assert(s.words_before.len == s.paragraphs.len + 1);
         const here = s.words_at(s.pages[index]);
         const total = s.words_before[s.words_before.len - 1];
-        var chapter_end: ?u64 = null;
-        for (s.chapters) |c| {
-            const at = s.words_before[c.para];
-            if (at <= here) continue;
-            if (chapter_end == null or at < chapter_end.?) chapter_end = at;
-        }
         const speed = s.app.speed;
         const book_minutes = speed.minutes_for(total -| here);
         // Past the last chapter's start, the chapter runs to the book's end
-        var chapter_minutes: ?u64 = null;
-        if (chapter_end) |end| {
-            assert(end > here);
-            chapter_minutes = speed.minutes_for(end - here);
-        } else if (s.chapters.len > 0) {
-            chapter_minutes = book_minutes;
-        }
+        const chapter_minutes: ?u64 = if (s.chapters.len == 0)
+            null
+        else
+            speed.minutes_for(s.chapter_words_left(s.pages[index]));
         return .{ .chapter = chapter_minutes, .book = book_minutes };
     }
 

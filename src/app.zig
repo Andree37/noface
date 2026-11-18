@@ -242,7 +242,7 @@ pub const App = struct {
     pub fn set_running(a: *App, on: bool) void {
         assert(a.running != on);
         a.running = on;
-        // Running turns pages at a pace: the first time, one from the reader's speed
+        // Running moves on at a pace: the first time, one from the reader's speed
         if (on and a.running_pace == null) a.running_pace = running_model.first_pace(a.speed);
         if (a.running) assert(a.running_pace != null);
     }

@@ -57,14 +57,6 @@ pub fn slower(wpm: f64) f64 {
     return next;
 }
 
-/// Minutes to read `words` at `wpm`, rounded up, for the footer's time left.
-pub fn minutes_for(wpm: f64, words: u64) u64 {
-    assert(wpm >= pace_wpm_min);
-    // Less a hair, as stats.Speed rounds: 300 words at 150 a minute is 2, not 3
-    const minutes = @ceil(@as(f64, @floatFromInt(words)) / wpm - 1e-9);
-    return @intFromFloat(@max(minutes, 0));
-}
-
 /// Where a tap lands while running: the top band opens the card (text settings, stop),
 /// and below it three columns, each the screen's height, so a hand mid-stride finds
 /// them: the left goes back a phrase, the middle pauses or carries on, the right goes on.
@@ -103,12 +95,6 @@ pub fn format_pace(buf: []u8, wpm: f64) []const u8 {
     assert(wpm >= pace_wpm_min);
     assert(wpm <= pace_wpm_max);
     return std.fmt.bufPrint(buf, pace_tag ++ " {d:.1}\n", .{wpm}) catch "";
-}
-
-test "minutes left are the words at the pace, rounded up" {
-    try std.testing.expectEqual(@as(u64, 1), minutes_for(150, 150));
-    try std.testing.expectEqual(@as(u64, 2), minutes_for(150, 300));
-    try std.testing.expectEqual(@as(u64, 0), minutes_for(150, 0));
 }
 
 test "the first pace is slower than in the hand, and taps move it each way within bounds" {

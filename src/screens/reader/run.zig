@@ -29,8 +29,8 @@ const context_px = 46;
 const phrase_line_spacing = 1.35;
 /// The most lines a phrase takes: more, and the eye starts losing its line again.
 const phrase_lines_max = 6;
-/// Where the phrase sits: its middle a little above the screen's, nearer the eye on a
-/// treadmill's console.
+/// Where the phrase sits: its middle at about the screen's, between the line before it
+/// under the map and the line after it over the footer.
 const phrase_middle_y = 860;
 const phrase_margin_px = 70;
 const lines_max = phrase_lines_max + 1; // One more, to tell a phrase that doesn't fit
@@ -112,11 +112,16 @@ pub const Run = struct {
     /// Which way the reader's tap just moved the pace: shown in the dial while the
     /// phrase that tap brought up is on screen.
     pace_moved: ?Pace = null,
+    /// Where what's on screen is in the book: the phrase's start, or past the last
+    /// phrase at the book's end. The reader's place follows it.
+    place: ?book_model.Pos = null,
+    /// The Kindle held awake, as running last asked (lipc.hold_awake).
+    awake: bool = false,
 
     pub const Pace = enum { up, down };
 
-    /// What a move did: the place of the phrase now on screen, or null when none
-    /// changed.
+    /// What a move did: the place of what's on screen now, to follow and show
+    /// (`show_moved`), or null when nothing moved.
     pub const Moved = ?book_model.Pos;
 
     /// The whole screen: the phrase at `from`, or the first after it, the clock above
@@ -129,7 +134,12 @@ pub const Run = struct {
         now: u64,
     ) !void {
         assert(from.para < s.paragraphs.len); // The reader's place, inside the book
-        run.phrase = try phrase_at(a, s, from);
+        // Put back where it was, it goes on with its phrases; anywhere else (the
+        // reader jumped, from the toolbar), the phrases before it aren't these
+        if (run.place) |place| {
+            if (place.para != from.para or place.byte != from.byte) run.history_len = 0;
+        }
+        try run.set_phrase(a, s, from);
         const page = a.page(a.screen.pixels);
         page.fill_rect(0, 0, a.screen.width, a.screen.height, 0xff);
         a.stamp_clock();
@@ -139,6 +149,7 @@ pub const Run = struct {
         try a.screen.wait_complete(try a.screen.show(.flash));
         run.start_timer(a, now);
         assert(run.shown_us == now);
+        assert(run.place != null);
         std.debug.print("running: phrases from {d}:{d}\n", .{ from.para, from.byte });
     }
 
@@ -183,16 +194,26 @@ pub const Run = struct {
         const p = run.phrase orelse return null; // The book's end: nothing after
         run.remember(.{ .para = p.para, .byte = p.start });
         run.stopped_at = null;
-        return try run.move_to(a, s, p.after(), now);
+        return try run.go_to(a, s, p.after(), now);
+    }
+
+    /// Whether going on would move: not past the book's end.
+    pub fn can_go_on(run: *const Run) bool {
+        return run.phrase != null;
+    }
+
+    /// Whether going back would move: not before the first phrase since running began.
+    pub fn can_go_back(run: *const Run) bool {
+        return run.history_len > 0;
     }
 
     /// The phrase before, again, its timer going.
     pub fn back(run: *Run, a: *app.App, s: *sess.Session, now: u64) !Moved {
-        if (run.history_len == 0) return null; // The first since running began
+        if (!run.can_go_back()) return null;
         run.history_len -= 1;
         const before = run.history[run.history_len];
         run.stopped_at = null;
-        return try run.move_to(a, s, before, now);
+        return try run.go_to(a, s, before, now);
     }
 
     fn remember(run: *Run, at: book_model.Pos) void {
@@ -208,27 +229,35 @@ pub const Run = struct {
         assert(run.history_len <= history_max);
     }
 
-    /// The phrase at `at`, or the first after it, in place of the one on screen, with
-    /// the ends of the ones around it and the footer: in one clean refresh, from the
-    /// text's top to the screen's foot.
-    fn move_to(
-        run: *Run,
-        a: *app.App,
-        s: *sess.Session,
-        at: book_model.Pos,
-        now: u64,
-    ) !Moved {
+    /// The phrase at `at`, or the first after it, in place of the one on screen, its
+    /// timer started and its dial empty; shown by `show_moved`, once the reader's place
+    /// has followed it.
+    fn go_to(run: *Run, a: *app.App, s: *sess.Session, at: book_model.Pos, now: u64) !Moved {
         assert(at.para <= s.paragraphs.len); // From a phrase's end, or a phrase kept
-        run.phrase = try phrase_at(a, s, at);
+        try run.set_phrase(a, s, at);
         run.start_timer(a, now);
-        run.dial_step = 0; // Empty, for the phrase just shown
+        run.dial_step = 0;
+        return run.place.?;
+    }
+
+    /// The phrase at `at`, or the first after it, and where that is: at the book's
+    /// end, `at` itself, past the last phrase.
+    fn set_phrase(run: *Run, a: *app.App, s: *sess.Session, at: book_model.Pos) !void {
+        run.phrase = try phrase_at(a, s, at);
+        run.place = if (run.phrase) |p| .{ .para = p.para, .byte = p.start } else at;
+        assert(run.place != null);
+    }
+
+    /// What a move put on screen: the phrases, the footer and the map, the map on the
+    /// page the reader's place has followed to, all in one clean refresh.
+    pub fn show_moved(run: *Run, a: *app.App, s: *sess.Session) !void {
+        assert(run.place != null);
         try run.draw_phrases(a, s);
         try run.draw_footer(a, s);
-        const height = a.screen.height - text_top;
-        const marker = try a.screen.show_region(0, text_top, a.screen.width, height, .quick);
+        try draw_map(a, s, run.phrase);
+        const height = a.screen.height - map_top;
+        const marker = try a.screen.show_region(0, map_top, a.screen.width, height, .quick);
         try a.screen.wait_complete(marker);
-        const p = run.phrase orelse return null;
-        return .{ .para = p.para, .byte = p.start };
     }
 
     /// Stops the phrase where its timer is, the button showing it'll carry on; or
@@ -299,15 +328,6 @@ pub const Run = struct {
         page.threshold(text_top, band);
     }
 
-    /// The page map, marking the phrase on screen on the page now holding it: after
-    /// the reader's place has followed the phrase there.
-    pub fn show_map(run: *const Run, a: *app.App, s: *sess.Session) !void {
-        try draw_map(a, s, run.phrase);
-        const left = a.screen.width - map_margin_px - map_width_px;
-        const marker = try a.screen.show_region(left, map_top, map_width_px, map_height(a), .quick);
-        try a.screen.wait_complete(marker);
-    }
-
     fn show_footer(run: *Run, a: *app.App, s: *sess.Session) !void {
         try run.draw_footer(a, s);
         const top = a.screen.height - footer_height_px;
@@ -331,15 +351,17 @@ pub const Run = struct {
         const pace = std.fmt.bufPrint(&pace_line, "{d} words a minute", .{wpm}) catch "";
         const pace_x: f32 = @floatFromInt(pause_x + pause_radius_px + pace_gap_px);
         try a.footer.draw(page, pace_x, baseline, pace);
-        const words_left = if (run.phrase) |p|
-            s.chapter_words_left(.{ .para = p.para, .byte = p.start })
-        else
-            0;
-        const chapter_minutes = running_model.minutes_for(a.running_pace.?, words_left);
+        // The minutes left in the chapter; past the book's last phrase, none
         var minutes_buffer: [48]u8 = undefined;
         var line: [64]u8 = undefined;
-        const left = stats.format_minutes(&minutes_buffer, chapter_minutes);
-        const text = std.fmt.bufPrint(&line, "{s} left in chapter", .{left}) catch "";
+        var text: []const u8 = "End of the book";
+        if (run.phrase) |p| {
+            const words_left = s.chapter_words_left(.{ .para = p.para, .byte = p.start });
+            assert(words_left >= p.words); // The phrase's own, at least
+            const chapter_minutes = stats.minutes_at(a.running_pace.?, words_left);
+            const left = stats.format_minutes(&minutes_buffer, chapter_minutes);
+            text = std.fmt.bufPrint(&line, "{s} left in chapter", .{left}) catch "";
+        }
         const right: f32 = @floatFromInt(a.screen.width - footer_margin_px);
         const text_x = right - try a.footer.measure(text);
         try a.footer.draw(page, text_x, baseline, text);
@@ -347,6 +369,8 @@ pub const Run = struct {
         // The dial stays clear of the pause button, whatever the minutes' width
         assert(run.dial_x - icon_reach_px > pause_x + icon_reach_px);
         draw_dial(a, run.dial_x, cy, run.dial_step, run.pace_moved);
+        // Pure black and white, as the quick refresh it changes with shows it
+        page.threshold(top, footer_height_px);
     }
 };
 

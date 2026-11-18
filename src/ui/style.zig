@@ -1,8 +1,14 @@
 //! Layout and tones every screen shares, so they stay in step.
 const std = @import("std");
 const assert = std.debug.assert;
-pub const screen_width = 1272;
-pub const screen_height = 1696;
+const device = @import("../model/device.zig");
+
+/// The screen every layout is worked out for. For now, the one Kindle noface knows;
+/// its size comes from the device's own facts (model/device.zig), never typed in here.
+pub const screen = device.screen(.paperwhite_12);
+/// As untyped numbers, as layout arithmetic takes them in signed and unsigned alike.
+pub const screen_width: comptime_int = screen.width_px;
+pub const screen_height: comptime_int = screen.height_px;
 pub const margin = 72; // Left and right edge of interface text
 
 /// The clock, battery and Wi-Fi strip along the top of the home screen and the

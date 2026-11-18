@@ -6,6 +6,7 @@ const assert = std.debug.assert;
 const file = @import("../sys/file.zig");
 const check = @import("../base/check.zig");
 const linux = @import("../sys/calls.zig");
+const device = @import("../model/device.zig");
 const failed = @import("../sys/os.zig").failed;
 
 pub const Waveform = enum(u32) {
@@ -88,16 +89,10 @@ const fbioget_fscreeninfo: u32 = 0x4602;
 /// The first marker sent: any number the driver isn't using itself.
 const marker_first = 0x7000;
 
-/// The one screen noface's interface is laid out for: the Paperwhite 12th gen's panel,
-/// in portrait. Every screen's controls sit at fixed places on it (ui/style.zig's
-/// `screen_width` and `screen_height`), so on another size they'd fall off the edge or
-/// out of reach: noface refuses to start there, and `noface doctor` says why.
-pub const width_px = 1272;
-pub const height_px = 1696;
-
-/// Whether noface's interface is laid out for a screen this size.
+/// Whether noface knows a Kindle with a screen this size (model/device.zig): on any
+/// other it refuses to start, and `noface doctor` says why.
 pub fn supported_size(width: u32, height: u32) bool {
-    return width == width_px and height == height_px;
+    return device.with_screen(width, height) != null;
 }
 
 /// A screen's visible size, as its driver reports it.

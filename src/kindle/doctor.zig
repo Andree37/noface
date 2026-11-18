@@ -6,6 +6,7 @@ const assert = std.debug.assert;
 const file = @import("../sys/file.zig");
 const devices = @import("devices.zig");
 const hwtcon = @import("hwtcon.zig");
+const device = @import("../model/device.zig");
 const lipc = @import("lipc.zig");
 const linux = @import("../sys/calls.zig");
 
@@ -71,15 +72,14 @@ fn report_size(fd: i32, line_buffer: []u8) bool {
         report_line(fd, line_buffer, "screen size:  unknown (not supported yet)", .{});
         return false;
     };
-    const size_ok = hwtcon.supported_size(size.width, size.height);
-    report_line(fd, line_buffer, "screen size:  {d} x {d} ({s} {d} x {d})", .{
+    const known = device.with_screen(size.width, size.height);
+    const name = if (known) |model| @tagName(model) else "no Kindle noface knows yet";
+    report_line(fd, line_buffer, "screen size:  {d} x {d} ({s})", .{
         size.width,
         size.height,
-        if (size_ok) "supported:" else "not supported yet: noface is laid out for",
-        hwtcon.width_px,
-        hwtcon.height_px,
+        name,
     });
-    return size_ok;
+    return known != null;
 }
 
 /// Writes the report to `fd`. Returns whether noface should be able to run here.

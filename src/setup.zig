@@ -11,7 +11,6 @@ const hwtcon = @import("kindle/hwtcon.zig");
 const Input = @import("kindle/input.zig").Input;
 const Font = @import("gfx/font.zig").Font;
 const Fonts = @import("ui/fonts.zig").Fonts;
-const style = @import("ui/style.zig");
 const text = @import("layout/text.zig");
 const books = @import("screens/books.zig");
 const library_view = @import("library/view.zig");
@@ -67,13 +66,6 @@ pub const region_bytes = struct {
     /// One action's: a Go To list (27 KB measured) or search results (500 at most).
     pub const scratch: u32 = 8 << 20;
 };
-
-comptime {
-    // The screen size the driver accepts is the one the interface is laid out for;
-    // kindle/ and ui/ can't import each other, so the two are tied here.
-    assert(hwtcon.width_px == style.screen_width);
-    assert(hwtcon.height_px == style.screen_height);
-}
 
 /// A page holds at least this many bytes of a book's text, at the largest type: the
 /// pages region is sized for a book region full of text cut that finely.

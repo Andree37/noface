@@ -6,28 +6,64 @@ const Page = @import("../gfx/page.zig").Page;
 const Font = @import("../gfx/font.zig").Font;
 const draw = @import("draw.zig");
 const style = @import("style.zig");
+const toolbar = @import("toolbar.zig");
 const Fonts = @import("fonts.zig").Fonts;
 const slider = @import("slider.zig");
 const icons = @import("icons.zig");
 
-const top = 228; // Under the toolbar
+/// The sheet hangs under the toolbar: its tabs, then, a gap under them, its controls.
+const top = toolbar.top_height;
 const tabs_height = 92;
-/// Where the sheet ends on screen: lower on More, which has a row more, and on Font;
-/// lowest on Themes, which has the Running button under its tiles.
+const tabs_gap = 16;
+/// A tab's label, down from the tabs' top: its baseline, the line under the open one,
+/// and the band the others' tint covers, in from each side of its cell.
+const tab_label = struct {
+    const label_drop = 60;
+    const underline_drop = 78;
+    const tint_drop = 20;
+    const tint_height = 54;
+    const tint_inset = 8;
+};
+/// Under a tab's last control, before the sheet's edge.
+const foot_pad = 32;
+
+/// Where the sheet ends on screen: a padding under its tab's last control.
 pub fn height_for(tab: Tab) u32 {
-    const result: u32 = switch (tab) {
-        .layout => 760,
-        .font, .more => 860,
-        .themes => running_top + running_height + 36,
-    };
+    const result = content_foot(tab) + foot_pad;
     assert(result > content_top);
-    assert(result <= max_height);
     return result;
 }
-pub const max_height = 882;
+
+/// Where a tab's last control ends: its last switch's taps, or below what's under them.
+fn content_foot(tab: Tab) u32 {
+    const result: u32 = switch (tab) {
+        .themes => running_top + running_height,
+        .font => size_row.top + row_height,
+        .layout, .more => last_switch_foot(tab),
+    };
+    assert(result > content_top);
+    return result;
+}
+
+/// The foot of the last switch's taps on `tab`.
+fn last_switch_foot(tab: Tab) u32 {
+    var foot: u32 = switches_top(tab);
+    for (switches, 0..) |sw, i| {
+        if (sw.tab == tab) foot = switch_top(@intCast(i)) + toggle_height + toggle_reach;
+    }
+    assert(foot >= switches_top(tab));
+    return foot;
+}
+
+/// The tallest any tab's sheet reaches.
+pub const max_height = max: {
+    var most: u32 = 0;
+    for (std.enums.values(Tab)) |tab| most = @max(most, height_for(tab));
+    break :max most;
+};
 const margin = style.margin;
 const screen_width = style.screen_width;
-const content_top = top + tabs_height + 16;
+const content_top = top + tabs_height + tabs_gap;
 
 pub const Tab = enum { themes, font, layout, more };
 const tab_labels = [_][]const u8{ "Themes", "Font", "Layout", "More" };
@@ -137,17 +173,20 @@ pub fn switch_for(comptime field: []const u8) u32 {
 fn switches_top(tab: Tab) u32 {
     const result: u32 = switch (tab) {
         .themes => content_top, // It has none
-        .font => content_top + 186, // Under the typefaces
+        .font => family_top + family_rows * family_height + family_gap, // Under the typefaces
         // Under the two sliders, its taps starting where theirs end
         .layout => margin_row.top + row_height + toggle_reach,
-        .more => content_top + 8,
+        .more => content_top + more_gap,
     };
+    // Each switch ending inside its tab's sheet is checked once, at comptime below
     assert(result >= content_top);
-    assert(result < height_for(tab));
     return result;
 }
 
-const switch_step = 100;
+const switch_step = style.fingertip; // A switch's taps, and so the next one's place
+/// Between the typefaces' grid and the switches under it, and above More's switches.
+const family_gap = 10;
+const more_gap = 8;
 
 /// Where switch `i` sits: a step under the switches before it on its tab.
 pub fn switch_top(i: u32) u32 {
@@ -179,7 +218,7 @@ pub const spacing_row = Row{
 pub const margin_row = Row{
     .slider = .margins,
     .label = "Margins",
-    .top = content_top + 146,
+    .top = content_top + row_height, // Under the spacing's row
     .steps = settings_model.margins.len,
 };
 pub const row_height = 146;
@@ -196,6 +235,17 @@ const row_bar = 92; // From a slider row's top to its bar
 
 const family_top = content_top;
 const family_height = 88;
+/// The first row's taps reach up this far toward the tabs, so both rows take a fingertip.
+const family_reach_above = 12;
+/// A typeface's name, and the line under the chosen one, down from its cell's top; the
+/// room kept right of a name, so long ones stop short of the next cell.
+const family_baseline_drop = 56;
+const family_underline_drop = 70;
+const family_name_gap = 24;
+/// The pager's arrow: in from the end of its label, and how big its two strokes are.
+const pager_arrow_gap = 36;
+const pager_arrow_half = 9;
+const pager_arrow_stroke = 4;
 const family_rows = 2;
 
 /// Two columns for the Kindle's four typefaces; three once the reader's own join them.
@@ -254,18 +304,52 @@ fn family_width() u32 {
     return result;
 }
 const toggle_height = 76;
+/// A switch's parts, down from its top: its label's baseline and its pill's middle; and
+/// the pill's size.
+const toggle = struct {
+    const label_drop = 50;
+    const middle_drop = 38;
+    const width = 104;
+    const radius = 26;
+};
 const toggle_reach = 12; // Taps reach this far above and below a switch's drawn height
 
 const theme_width = 340;
 const theme_gap = 34;
-const theme_top = content_top + 20;
+/// A theme's tile, down from its top: the band its sample lines fill, its label's
+/// baseline; the tick's middle in from its corner; and its lines' gap, margin and
+/// thickness before a step of spacing, margins or size adds to them.
+const tile = struct {
+    const lines_top = 44;
+    const lines_bottom = 204;
+    const label_drop = 264;
+    const tick_inset = 38;
+    const line_gap = 16;
+    const line_gap_step = 8;
+    const lines_inset = 28;
+    const lines_inset_step = 16;
+    const line_thick = 5;
+};
+const theme_top = content_top + theme_gap_above;
+const theme_gap_above = 20; // Between the tabs and the tiles
 const theme_height = 300;
-const theme_note_baseline = theme_top + theme_height + 52; // Under them, when none is in use
+/// The note under the tiles when none is in use: its baseline, and the band its tint
+/// covers, down from the tiles' foot.
+const theme_note_drop = 52;
+const theme_note_tint_drop = 22;
+const theme_note_tint_height = 40;
+const theme_note_baseline = theme_top + theme_height + theme_note_drop;
 /// The Running button, across the sheet under the tiles and their note.
-const running_top = theme_note_baseline + 26;
+const running_top = theme_note_baseline + running_gap;
+const running_gap = 26; // Between the note's baseline and the Running button
 /// The tiles side by side, from the left margin.
 const themes_width = themes.len * theme_width + (themes.len - 1) * theme_gap;
 const running_height = 112;
+/// The Running button's label and the line under it: in from its left, and their
+/// baselines down from its top.
+const running_text_inset = 32;
+const running_label_drop = 50;
+const running_note_drop = 90;
 
 pub const Theme = struct { label: []const u8, size: u32, spacing: u32, margin: u32 };
 pub const themes = [_]Theme{
@@ -278,11 +362,11 @@ const margin_names = [_][]const u8{ "Narrow", "Medium", "Wide", "Widest" };
 
 comptime {
     assert(tab_labels.len == std.enums.values(Tab).len);
-    assert(row_height >= 100); // A fingertip
+    assert(row_height >= style.fingertip);
     assert(row_baseline < row_bar);
     assert(row_bar < row_height);
     // A switch takes a fingertip, and the next one starts where its taps end
-    assert(toggle_height + 2 * toggle_reach >= 100);
+    assert(toggle_height + 2 * toggle_reach >= style.fingertip);
     assert(toggle_height + 2 * toggle_reach <= switch_step);
     // Each tab's controls, top to bottom, end above its switches
     assert(family_top + family_rows * family_height <= switches_top(.font));
@@ -292,8 +376,8 @@ comptime {
     assert(size_row.top + row_height <= height_for(.font));
     assert(theme_note_baseline < height_for(.themes));
     // The Running button is a fingertip and more, under the note, above the sheet's edge
-    assert(running_height >= 100);
-    assert(theme_note_baseline + 10 < running_top);
+    assert(running_height >= style.fingertip);
+    assert(theme_note_baseline < running_top);
     assert(running_top + running_height + 4 <= height_for(.themes));
     for (switches, 0..) |sw, i| {
         assert(switch_top(i) + toggle_height + toggle_reach <= height_for(sw.tab));
@@ -325,7 +409,8 @@ comptime {
 fn row_slider(r: Row) slider.Slider {
     assert(r.steps >= 2);
     assert(r.top >= content_top);
-    return .{ .left = 110, .right = 1162, .y = r.top + row_bar };
+    const inset = style.slider_inset;
+    return .{ .left = inset, .right = screen_width - inset, .y = r.top + row_bar };
 }
 
 /// Step for a finger at `x` on a row's slider.
@@ -369,7 +454,8 @@ pub fn hit(tab: Tab, x: i32, y: i32) Hit {
         },
         .font => {
             // The first row reaches up to the tabs, so both rows take a full fingertip
-            if (within(y, family_top - 12, family_rows * family_height + 12)) {
+            const reach = family_reach_above;
+            if (within(y, family_top - reach, family_rows * family_height + reach)) {
                 return hit_family(x, y);
             }
             if (within(y, size_row.top, row_height)) return .text_size;
@@ -408,15 +494,19 @@ fn hit_family(x: i32, y: i32) Hit {
 fn draw_toggle(fonts: Fonts, page: Page, y: u32, label: []const u8, on: bool) !void {
     assert(y >= content_top);
     assert(y + toggle_height <= max_height);
-    try fonts.small.draw(page, margin, @intCast(y + 50), label);
+    try fonts.small.draw(page, margin, @intCast(y + toggle.label_drop), label);
     // A rounded switch: filled with a white knob on the right when on, outlined with a
     // black knob on the left when off
-    const w: f32 = 104;
-    const r: f32 = 26;
+    const w: f32 = toggle.width;
+    const r: f32 = toggle.radius;
     const right: f32 = @floatFromInt(page.width - margin);
     const ends = [2]f32{ right - w + r, right - r };
-    const cy: f32 = @floatFromInt(y + 38);
-    page.fill_rect(@intFromFloat(ends[0] - r - 2), y + 10, @intFromFloat(w + 4), 56, 0xff);
+    const cy: f32 = @floatFromInt(y + toggle.middle_drop);
+    // Cleared first: a knob's smooth edge outside the pill, and a pixel's slack each side
+    const clear_top = y + toggle.middle_drop - @as(u32, @intFromFloat(r)) - 2;
+    const clear_height: u32 = @intFromFloat(2 * r + 4);
+    const clear_left: u32 = @intFromFloat(ends[0] - r - 2);
+    page.fill_rect(clear_left, clear_top, @intFromFloat(w + 4), clear_height, 0xff);
     page.pill(ends[0], ends[1], cy, r, 0x00);
     if (on) {
         page.pill(ends[1], ends[1], cy, r - 6, 0xff);
@@ -464,8 +554,14 @@ fn draw_tabs(fonts: Fonts, page: Page, tab: Tab) !void {
         const left: u32 = @as(u32, @intCast(i)) * cell;
         const active = i == @backingInt(tab);
         const centre: f32 = @floatFromInt(left + cell / 2);
-        try draw.choice(fonts, page, centre, .center, top + 60, label, active, top + 78);
-        if (!active) page.tint(left + 8, top + 20, cell - 16, 54, style.faded);
+        const baseline = top + tab_label.label_drop;
+        const underline = top + tab_label.underline_drop;
+        try draw.choice(fonts, page, centre, .center, baseline, label, active, underline);
+        const inset = tab_label.tint_inset;
+        const tint_top = top + tab_label.tint_drop;
+        const tint_width = cell - 2 * inset;
+        const tint_height = tab_label.tint_height;
+        if (!active) page.tint(left + inset, tint_top, tint_width, tint_height, style.faded);
     }
     page.fill_rect(0, top + tabs_height - 2, page.width, 1, style.rule);
 }
@@ -486,8 +582,8 @@ fn draw_themes(fonts: Fonts, page: Page, chosen: settings_model.Settings) !void 
     if (active_count == 0) {
         const note = "Using your own settings. Pick a theme to switch to it.";
         try fonts.caption.draw(page, margin, theme_note_baseline, note);
-        const note_top = theme_top + theme_height + 22;
-        page.tint(margin, note_top, page.width - 2 * margin, 40, style.faded);
+        const note_top = theme_top + theme_height + theme_note_tint_drop;
+        page.tint(margin, note_top, page.width - 2 * margin, theme_note_tint_height, style.faded);
     }
 }
 
@@ -501,8 +597,9 @@ fn draw_running(fonts: Fonts, page: Page, running: bool) !void {
         "Back to the page"
     else
         "A sentence at a time, large and still, at your pace, for a treadmill";
-    try fonts.title.draw(page, margin + 32, running_top + 50, label);
-    try fonts.caption.draw(page, margin + 32, running_top + 90, note);
+    const text_left = margin + running_text_inset;
+    try fonts.title.draw(page, text_left, running_top + running_label_drop, label);
+    try fonts.caption.draw(page, text_left, running_top + running_note_drop, note);
 }
 
 /// One theme's tile: rounded, with a thick edge and a tick in its corner when in use.
@@ -511,17 +608,19 @@ fn draw_themes_tile(fonts: Fonts, page: Page, t: Theme, left: u32, active: bool)
     assert(left + theme_width <= screen_width - margin);
     const edge: u32 = if (active) 6 else 2;
     draw.box_with(page, left, theme_top, theme_width, theme_height, edge, style.button_corner);
-    if (active) icons.check(page, @floatFromInt(left + theme_width - 38), theme_top + 38);
-    // Text lines drawn to scale, so the choice shows rather than tells.
-    const gap: u32 = 16 + t.spacing * 8;
-    const inset: u32 = 28 + t.margin * 16;
-    const thick: u32 = 5 + t.size;
-    var y: u32 = theme_top + 44;
-    while (y < theme_top + 204) : (y += gap + thick) {
+    const tick = tile.tick_inset;
+    if (active) icons.check(page, @floatFromInt(left + theme_width - tick), theme_top + tick);
+    // Text lines drawn to scale, so the choice shows rather than tells: a step of the
+    // setting is this much more of each
+    const gap: u32 = tile.line_gap + t.spacing * tile.line_gap_step;
+    const inset: u32 = tile.lines_inset + t.margin * tile.lines_inset_step;
+    const thick: u32 = tile.line_thick + t.size;
+    var y: u32 = theme_top + tile.lines_top;
+    while (y < theme_top + tile.lines_bottom) : (y += gap + thick) {
         page.fill_rect(left + inset, y, theme_width - 2 * inset, thick, style.quiet);
     }
     const centre: f32 = @floatFromInt(left + theme_width / 2);
-    try draw.centered(fonts.small, page, centre, theme_top + 264, t.label);
+    try draw.centered(fonts.small, page, centre, theme_top + tile.label_drop, t.label);
 }
 
 /// The typefaces' grid, the page of it from `fonts.family_first`, and the size row.
@@ -557,10 +656,13 @@ fn draw_family_pager(fonts: Fonts, page: Page, first: u32) !void {
     try draw_family(fonts, page, per_page, label, null, false);
     const cols = family_columns();
     const left: f32 = @floatFromInt(margin + per_page % cols * family_width());
-    const mid: f32 = @floatFromInt(family_top + per_page / cols * family_height + 56 - 11);
-    const x = left + try fonts.small.measure(label) + 36;
-    page.stroke(x - 9, mid - 18, x + 9, mid, 4);
-    page.stroke(x + 9, mid, x - 9, mid + 18, 4);
+    // The arrow's middle on the label's letters, a little above its baseline
+    const baseline = family_top + per_page / cols * family_height + family_baseline_drop;
+    const mid: f32 = @floatFromInt(baseline - 11);
+    const x = left + try fonts.small.measure(label) + pager_arrow_gap;
+    const h = pager_arrow_half;
+    page.stroke(x - h, mid - 2 * h, x + h, mid, pager_arrow_stroke);
+    page.stroke(x + h, mid, x - h, mid + 2 * h, pager_arrow_stroke);
 }
 
 /// A typeface's name in cell `cell` of the grid, in `own` when it's loaded, else in the
@@ -580,15 +682,17 @@ fn draw_family(
     assert(row < family_rows);
     assert(name.len > 0);
     if (own) |font| {
-        const avail: f32 = @floatFromInt(family_width() - 24);
-        try draw.clipped(font, page, @floatFromInt(left), @intCast(y + 56), name, avail);
+        const avail: f32 = @floatFromInt(family_width() - family_name_gap);
+        const baseline: i32 = @intCast(y + family_baseline_drop);
+        try draw.clipped(font, page, @floatFromInt(left), baseline, name, avail);
         if (chosen) {
             const width: u32 = @intFromFloat(@min(try font.measure(name), avail));
-            page.fill_rect(left, y + 70, width, style.underline, style.black);
+            page.fill_rect(left, y + family_underline_drop, width, style.underline, style.black);
         }
     } else {
         const x: f32 = @floatFromInt(left);
-        try draw.choice(fonts, page, x, .left, @intCast(y + 56), name, chosen, y + 70);
+        const baseline: i32 = @intCast(y + family_baseline_drop);
+        try draw.choice(fonts, page, x, .left, baseline, name, chosen, y + family_underline_drop);
     }
 }
 
@@ -623,14 +727,34 @@ pub fn render(
     }
 }
 
+/// The middle of typeface cell `cell` of the grid, as it's laid out now.
+fn test_family_middle(cell: u32) [2]i32 {
+    const cols = family_columns();
+    const x = margin + cell % cols * family_width() + family_width() / 2;
+    const y = family_top + cell / cols * family_height + family_height / 2;
+    return .{ @intCast(x), @intCast(y) };
+}
+
+/// The middle of a slider row, and of switch `i`.
+fn test_row_middle(r: Row) i32 {
+    return @intCast(r.top + row_height / 2);
+}
+fn test_switch_middle(i: u32) i32 {
+    return @intCast(switch_top(i) + toggle_height / 2);
+}
+
+const test_x = screen_width / 2; // Across the sheet, clear of anything at its sides
+
 test "with the reader's own typefaces, three to a row" {
     defer settings_model.reset_families();
     settings_model.offer_families(&(settings_model.builtin_families ++ .{"Literata"}));
-    try std.testing.expectEqual(Hit{ .family = 2 }, hit(.font, 1100, family_top + 20));
-    const second_row = family_top + family_height + 20;
-    try std.testing.expectEqual(Hit{ .family = 4 }, hit(.font, 600, second_row));
+    for (0..5) |cell| {
+        const at = test_family_middle(@intCast(cell));
+        try std.testing.expectEqual(Hit{ .family = @intCast(cell) }, hit(.font, at[0], at[1]));
+    }
     // No sixth
-    try std.testing.expectEqual(Hit.none, hit(.font, 1100, family_top + family_height + 20));
+    const sixth = test_family_middle(5);
+    try std.testing.expectEqual(Hit.none, hit(.font, sixth[0], sixth[1]));
     try std.testing.expectEqual(@as(u32, 6), families_per_page());
 }
 
@@ -638,9 +762,10 @@ test "with more typefaces than cells, the last cell turns the page, round to the
     defer settings_model.reset_families();
     const own = .{ "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K" };
     settings_model.offer_families(&(settings_model.builtin_families ++ own));
-    const second_row = family_top + family_height + 20;
-    try std.testing.expectEqual(Hit.more_families, hit(.font, 1100, second_row));
-    try std.testing.expectEqual(Hit{ .family = 4 }, hit(.font, 600, second_row));
+    const last = test_family_middle(5);
+    try std.testing.expectEqual(Hit.more_families, hit(.font, last[0], last[1]));
+    const fifth = test_family_middle(4);
+    try std.testing.expectEqual(Hit{ .family = 4 }, hit(.font, fifth[0], fifth[1]));
     try std.testing.expectEqual(@as(u32, 5), families_per_page());
     // Fifteen typefaces, five a page
     try std.testing.expectEqual(@as(u32, 5), next_family_page(0));
@@ -651,45 +776,63 @@ test "with more typefaces than cells, the last cell turns the page, round to the
 }
 
 test "tabs split the top row evenly" {
-    try std.testing.expectEqual(Hit{ .tab = .themes }, hit(.font, 100, 260));
-    try std.testing.expectEqual(Hit{ .tab = .more }, hit(.font, 1200, 260));
+    const cell = screen_width / tab_labels.len;
+    const y = top + tabs_height / 2;
+    for (std.enums.values(Tab), 0..) |t, i| {
+        const x: i32 = @intCast(i * cell + cell / 2);
+        try std.testing.expectEqual(Hit{ .tab = t }, hit(.font, x, y));
+    }
 }
 
 test "each tab maps its own controls" {
-    try std.testing.expectEqual(Hit{ .theme = 1 }, hit(.themes, 620, 500));
-    try std.testing.expectEqual(Hit{ .family = 0 }, hit(.font, 200, family_top + 20));
-    const second_row = family_top + family_height + 20;
-    try std.testing.expectEqual(Hit{ .family = 3 }, hit(.font, 900, second_row));
-    try std.testing.expectEqual(Hit.text_size, hit(.font, 600, size_row.top + 90));
-    try std.testing.expectEqual(Hit.spacing, hit(.layout, 600, spacing_row.top + 90));
-    try std.testing.expectEqual(Hit.margins, hit(.layout, 600, margin_row.top + 90));
+    for (0..themes.len) |i| {
+        const x: i32 = @intCast(margin + i * (theme_width + theme_gap) + theme_width / 2);
+        const y = theme_top + theme_height / 2;
+        try std.testing.expectEqual(Hit{ .theme = @intCast(i) }, hit(.themes, x, y));
+    }
+    for (0..4) |cell| {
+        const at = test_family_middle(@intCast(cell));
+        try std.testing.expectEqual(Hit{ .family = @intCast(cell) }, hit(.font, at[0], at[1]));
+    }
+    try std.testing.expectEqual(Hit.text_size, hit(.font, test_x, test_row_middle(size_row)));
+    try std.testing.expectEqual(Hit.spacing, hit(.layout, test_x, test_row_middle(spacing_row)));
+    try std.testing.expectEqual(Hit.margins, hit(.layout, test_x, test_row_middle(margin_row)));
     // Every switch answers on its own tab, where it's drawn
     for (switches, 0..) |sw, i| {
-        const y: i32 = @intCast(switch_top(@intCast(i)) + 20);
-        try std.testing.expectEqual(Hit{ .toggle = @intCast(i) }, hit(sw.tab, 600, y));
+        const y = test_switch_middle(@intCast(i));
+        try std.testing.expectEqual(Hit{ .toggle = @intCast(i) }, hit(sw.tab, test_x, y));
     }
+    const running_y = running_top + running_height / 2;
+    try std.testing.expectEqual(Hit.running, hit(.themes, test_x, running_y));
 }
 
 test "the sheet stays inside itself" {
     try std.testing.expect(size_row.top + row_height <= height_for(.font));
     // A switch added to a full tab shows here before it's drawn past the sheet
     for (switches, 0..) |sw, i| {
-        const bottom = switch_top(@intCast(i)) + toggle_height + 12;
+        const bottom = switch_top(@intCast(i)) + toggle_height + toggle_reach;
         try std.testing.expect(bottom <= height_for(sw.tab));
     }
     try std.testing.expect(theme_top + theme_height <= height_for(.themes));
 }
 
 test "switches and fonts take a fingertip of height" {
+    // Inside a switch's reach above and below what's drawn of it, and above the grid
     const bold = switch_for("bold");
     const bold_top: i32 = @intCast(switch_top(bold));
-    try std.testing.expectEqual(Hit{ .toggle = bold }, hit(.font, 600, bold_top - 10));
-    const bold_below = bold_top + toggle_height + 10;
-    try std.testing.expectEqual(Hit{ .toggle = bold }, hit(.font, 600, bold_below));
+    const reach: i32 = toggle_reach;
+    // The first switch on Font reaches up to the typefaces' grid, its gap's worth
+    const up_to_grid = bold_top - family_gap;
+    try std.testing.expectEqual(Hit{ .toggle = bold }, hit(.font, test_x, up_to_grid));
+    const bold_foot = bold_top + toggle_height + reach - 1;
+    try std.testing.expectEqual(Hit{ .toggle = bold }, hit(.font, test_x, bold_foot));
     const clock = switch_for("clock");
     const clock_top: i32 = @intCast(switch_top(clock));
-    try std.testing.expectEqual(Hit{ .toggle = clock }, hit(.more, 600, clock_top - 10));
-    try std.testing.expectEqual(Hit{ .family = 0 }, hit(.font, 200, family_top - 10));
+    const clock_reach = clock_top - reach + 1;
+    try std.testing.expectEqual(Hit{ .toggle = clock }, hit(.more, test_x, clock_reach));
+    const first = test_family_middle(0);
+    const above: i32 = family_top - family_reach_above + 1;
+    try std.testing.expectEqual(Hit{ .family = 0 }, hit(.font, first[0], above));
 }
 
 test "sliders say what they're set to" {
@@ -699,24 +842,24 @@ test "sliders say what they're set to" {
     try std.testing.expectEqualStrings("3 of 6", value_label(&buf, size_row, 2));
 }
 
-test "switches sit where they always have" {
+test "switches stack a fingertip apart from the top of their tab's switches" {
+    const bold = switch_for("bold");
     const bold_starts = switch_for("bold_starts");
-    try std.testing.expectEqual(@as(u32, content_top + 186), switch_top(switch_for("bold")));
-    try std.testing.expectEqual(@as(u32, content_top + 286), switch_top(bold_starts));
+    try std.testing.expectEqual(switches_top(.font), switch_top(bold));
+    try std.testing.expectEqual(switch_top(bold) + switch_step, switch_top(bold_starts));
     const left_align = switch_for("left_align");
-    try std.testing.expectEqual(@as(u32, content_top + 304), switch_top(left_align));
-    const lock_picture = switch_for("lock_picture");
-    try std.testing.expectEqual(@as(u32, content_top + 408), switch_top(lock_picture));
+    try std.testing.expectEqual(switches_top(.layout), switch_top(left_align));
 }
 
 test "a switch keeps a fingertip's taps where a slider row is next to it" {
     // Sliders are asked first, so a row running into a switch's reach took its taps
     const bold_starts = switch_for("bold_starts");
     const bold_starts_end: i32 = @intCast(switch_top(bold_starts) + toggle_height + toggle_reach);
-    try std.testing.expectEqual(Hit{ .toggle = bold_starts }, hit(.font, 600, bold_starts_end - 1));
-    try std.testing.expectEqual(Hit.text_size, hit(.font, 600, bold_starts_end));
+    const last_tap = bold_starts_end - 1;
+    try std.testing.expectEqual(Hit{ .toggle = bold_starts }, hit(.font, test_x, last_tap));
+    try std.testing.expectEqual(Hit.text_size, hit(.font, test_x, bold_starts_end));
     const left_align = switch_for("left_align");
     const left_align_top: i32 = @intCast(switch_top(left_align) - toggle_reach);
-    try std.testing.expectEqual(Hit{ .toggle = left_align }, hit(.layout, 600, left_align_top));
-    try std.testing.expectEqual(Hit.margins, hit(.layout, 600, left_align_top - 1));
+    try std.testing.expectEqual(Hit{ .toggle = left_align }, hit(.layout, test_x, left_align_top));
+    try std.testing.expectEqual(Hit.margins, hit(.layout, test_x, left_align_top - 1));
 }

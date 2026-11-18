@@ -19,6 +19,8 @@ pub const screen_height: comptime_int = screen.height_px;
 pub const margin = 72; // Left and right edge of interface text
 /// The least a control takes taps across: about 8.5 mm, a fingertip.
 pub const fingertip = 100;
+/// A slider's bar runs this far in from each edge of the screen.
+pub const slider_inset = 110;
 
 /// The clock, battery and Wi-Fi strip along the top of the home screen and the
 /// screens opened over it, which stay under it.

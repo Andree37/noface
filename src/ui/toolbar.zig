@@ -58,7 +58,7 @@ pub const scrub_top = bottom_top + chapters_band;
 const chapter_icon_drop = 46;
 /// From each edge to the middle of a chapter button's icon, and to an end of the
 /// scrubber's bar under it; the buttons take taps out to twice that from each edge.
-const skip_inset = 110;
+const skip_inset = style.slider_inset;
 const chapter_prev_right = 2 * skip_inset;
 const chapter_next_left = screen_width - 2 * skip_inset;
 /// The scrubber's bar and its label, down from the scrubber's band's top.

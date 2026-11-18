@@ -64,7 +64,7 @@ tap 636 900
 log running: resumed
 still
 
-# The card from the top band, and Resume, which shows the whole screen again
+# The card from the top band, over the phrases, paused; and Resume, which carries on
 wait 1000
 tap 636 150
 log screen: Card opened
@@ -72,7 +72,6 @@ still
 shot card
 tap 636 1376
 log running: resume_running
-log running: phrases from
 still
 
 # The card again, and Stop running

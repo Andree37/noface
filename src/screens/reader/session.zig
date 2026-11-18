@@ -57,6 +57,9 @@ pub const Session = struct {
     paragraphs: []const book_model.Paragraph,
     pages: []const book_model.Pos,
     current: u32,
+    /// Whether a page read forward teaches the reader's speed: not while running mode
+    /// moves on at its own pace (reader/run.zig).
+    learns_speed: bool = true,
     /// What the reader is at. Settings changes keep to this, not the page edge.
     anchor: book_model.Pos,
     note_parts: [note_rules.max_note_parts]book_model.Paragraph = undefined,
@@ -234,9 +237,9 @@ pub const Session = struct {
         const journal_seconds: u32 = @intCast(@min(counted, std.math.maxInt(u32)));
         s.app.journal.add(s.app.today(), journal_seconds, if (read_on) 1 else 0);
         if (to != s.current + 1 or us == 0) return;
-        // Pages turned by running mode take its pace's time, which says nothing of the
-        // reader's speed in the hand
-        if (s.app.running) return;
+        // Pages gone past by running mode take its pace's time, which says nothing of
+        // the reader's speed in the hand
+        if (!s.learns_speed) return;
         const left = s.current;
         // Time on a picture isn't reading speed
         if (s.page_has_picture(left)) return;
@@ -297,6 +300,38 @@ pub const Session = struct {
         const end = s.pages[index + 1];
         assert(s.pages[index].is_before(end));
         return end;
+    }
+
+    /// The words of the current page as it was drawn, where each is on the screen:
+    /// none while it isn't drawn.
+    pub fn page_words(s: *const Session) []const book_model.Word {
+        assert(s.current < s.pages.len);
+        const slot = s.app.slot_for(s.current) orelse return &.{};
+        assert(slot.hits.word_count <= slot.hits.words.len);
+        return slot.hits.words[0..slot.hits.word_count];
+    }
+
+    /// The reader's place moved to `at` by itself, as running mode moves on: the page
+    /// holding it becomes the current one, page by page, so the reading time and the
+    /// journal count as turning does, and the place is `at`, more exactly than its
+    /// page's start. Returns how many pages it went on.
+    pub fn follow(s: *Session, at: book_model.Pos) !u32 {
+        assert(at.para < s.paragraphs.len);
+        // On a first open, the pages ahead may not be laid out yet
+        if (s.layout_pending()) try s.layout_until(s.current + 2);
+        var forward: u32 = 0;
+        // Each turn moves a page: bounded by the pages
+        for (0..s.pages.len) |_| {
+            if (s.current + 1 < s.pages.len and !at.is_before(s.pages[s.current + 1])) {
+                s.set_page(s.current + 1, .turn);
+                forward += 1;
+            } else if (s.current > 0 and at.is_before(s.pages[s.current])) {
+                s.set_page(s.current - 1, .turn);
+            } else break;
+        }
+        assert(!at.is_before(s.pages[s.current]) or s.current == 0);
+        s.anchor = at;
+        return forward;
     }
 
     pub fn is_bookmarked(s: *const Session, index: u32) bool {

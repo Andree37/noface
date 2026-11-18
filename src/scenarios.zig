@@ -692,7 +692,6 @@ fn play_on_start(
     a.pages_budget.peak = 0;
     a.pages_budget.limit = kindle.pages_bytes;
     a.settings = .{ .bold_starts = kindle.bold_starts };
-    a.running = false;
     a.running_pace = null;
     a.speed = .{};
     a.journal = .{};
@@ -1363,6 +1362,23 @@ const scenarios = [_]Scenario{
             try expect(same_place(plain.saved, locked.saved), "the lock jumped the book");
         }
     }.run },
+    .{
+        .name = "a text size drag cut short by the lock leaves the size as it was",
+        .run = struct {
+            fn run() !void {
+                // The Aa sheet opens on its Font tab, with the text size's slider
+                const slider_y: i32 = @intCast(aa.size_row.top + 90);
+                const along: Step = .{ .act = .{ .drag = .{ .x = 1172, .y = slider_y } } };
+                const begin = [_]Step{ top, text_settings_button, tap(400, slider_y), along };
+                const lifted = try play(&(begin ++ [_]Step{lift}));
+                const own: settings_model.Settings = .{};
+                try expect(lifted.settings.size != own.size, "the slider didn't change the size");
+                const locked = try play(&(begin ++ [_]Step{ lock_it, wait(3_000), wake }));
+                try expect(locked.settings.size == own.size, "the lock changed the size");
+                try expect(locked.saved_settings.size == own.size, "the lock saved a size");
+            }
+        }.run,
+    },
     .{
         .name = "a reading journal that's there but can't be read is never written over",
         .run = struct {

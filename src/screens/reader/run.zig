@@ -156,7 +156,7 @@ pub const Run = struct {
 
     /// The phrase on screen's timer started, or stopped at the book's end.
     fn start_timer(run: *Run, a: *const app.App, now: u64) void {
-        assert(a.running);
+        assert(a.running_pace != null); // Set as running began
         run.shown_us = now;
         const p = run.phrase orelse {
             run.stopped_at = 0;
@@ -343,10 +343,15 @@ pub const Run = struct {
         const cy = icons_y(a);
         draw_pause_button(a, pause_x, cy, run.stopped_at != null);
         const baseline: i32 = @intCast(a.screen.height - footer_baseline_above_bottom_px);
-        // The pace, so a reader can see it follow their taps
+        // Paused, the footer says so, white on a black bar seen from a stride away; going
+        // on, it shows the pace, so a reader can see it follow their taps
+        const paused = run.stopped_at != null and run.phrase != null;
         var pace_line: [32]u8 = undefined;
         const wpm: u32 = @intFromFloat(@round(a.running_pace.?));
-        const pace = std.fmt.bufPrint(&pace_line, "{d} words a minute", .{wpm}) catch "";
+        const pace = if (paused)
+            "Paused \u{00B7} tap the middle to carry on"
+        else
+            std.fmt.bufPrint(&pace_line, "{d} words a minute", .{wpm}) catch "";
         const pace_x: f32 = @floatFromInt(pause_x + pause_radius_px + pace_gap_px);
         try a.footer.draw(page, pace_x, baseline, pace);
         // The minutes left in the chapter; past the book's last phrase, none
@@ -367,6 +372,7 @@ pub const Run = struct {
         // The dial stays clear of the pause button, whatever the minutes' width
         assert(run.dial_x - icon_reach_px > pause_x + icon_reach_px);
         draw_dial(a, run.dial_x, cy, run.dial_step, run.pace_moved);
+        if (paused) invert(page, top, footer_height_px);
     }
 };
 
@@ -521,8 +527,7 @@ fn draw_map(a: *app.App, s: *sess.Session, phrase: ?phrases.Phrase) !void {
     page.fill_rect(left + map_width_px - 2, map_top, 2, height, 0x00);
     // The page as drawn, for where its words are
     _ = try s.ensure(s.current, s.current);
-    const slot = a.slot_for(s.current) orelse return;
-    const words = slot.hits.words[0..slot.hits.word_count];
+    const words = s.page_words();
     const scale = @as(f32, @floatFromInt(map_width_px)) / @as(f32, @floatFromInt(a.screen.width));
     for (words) |w| {
         const in_phrase = if (phrase) |p|
@@ -588,6 +593,16 @@ fn wrap(font: *Font, text: []const u8, width: f32, lines: [][]const u8) !u32 {
     }
     assert(count <= lines.len);
     return count;
+}
+
+/// Rows `top` to `top + height` turned over, black for white and white for black,
+/// their smooth edges with them.
+fn invert(page: Page, top: u32, height: u32) void {
+    assert(height > 0);
+    assert(top + height <= page.height);
+    for (top..top + height) |row| {
+        for (page.buf[row * page.stride ..][0..page.width]) |*pixel| pixel.* = 255 - pixel.*;
+    }
 }
 
 /// How finely an icon's pixels are sampled for their smooth edges: this many across

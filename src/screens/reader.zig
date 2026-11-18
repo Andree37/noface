@@ -463,9 +463,12 @@ pub const Reader = struct {
     selecting: hl.Selecting = .{}, // Words being selected, or a highlight's end dragged
     picture: picture_view.Viewer = undefined, // A picture held, shown whole
     /// Running mode, while it's on: the phrase on screen and its timer (reader/run.zig).
-    /// On exactly while the App's `running` is.
+    /// The reader alone knows it's on; the toolbar and the session are told.
     run: ?run_mode.Run = null,
     pause_note: [48]u8 = undefined, // The pause card's line: how long the run has been
+    /// The phrase screen as running last left it, under its card: running's own, made
+    /// in the book's memory the first time the card opens, kept while the book is.
+    run_screen: []u8 = &.{},
 
     /// The screens a book opens over itself.
     const Over = union(enum) {
@@ -524,7 +527,6 @@ pub const Reader = struct {
         // The Back button counts, where a resting thumb otherwise wouldn't
         const exempt = if (r.reading()) r.s.back_zone() else null;
         assert(tick_us > 0);
-        assert(r.a.running == (r.run != null));
         const modes = touches_for(r.view, r.run != null);
         return .{ .modes = modes, .tick_us = tick_us, .grip_exempt = exempt };
     }
@@ -586,8 +588,7 @@ pub const Reader = struct {
                 try r.show_highlight_page();
             },
             .controls => {
-                const title = r.entry.title;
-                try controls.resumed(&r.pending, r.a, s, title, r.sheet() != null);
+                try controls.resumed(&r.pending, r.a, s, r.toolbar_book(), r.sheet() != null);
             },
             .searching => |c| try r.paged(c.ended()),
             .going => |c| try r.paged(c.ended()),
@@ -820,12 +821,17 @@ pub const Reader = struct {
         }
     }
 
+    /// What the toolbar shows of the book: its title, and whether running is on.
+    fn toolbar_book(r: *const Reader) controls.Book {
+        return .{ .title = r.entry.title, .running = r.run != null };
+    }
+
     fn draw_toolbar(r: *Reader, whole_page: bool) !void {
         assert(r.view == .toolbar);
         assert(r.s.current < r.s.pages.len);
         const sheet_open = r.sheet() != null;
         const drawn: controls.Drawn = .{ .sheet_open = sheet_open, .whole_page = whole_page };
-        try controls.draw_toolbar(r.a, r.s, r.entry.title, drawn);
+        try controls.draw_toolbar(r.a, r.s, r.toolbar_book(), drawn);
     }
 
     /// Back to the page alone, at `target`, from whatever was over it.
@@ -974,7 +980,7 @@ pub const Reader = struct {
         const held = try hl.hold_ended(&r.selecting, a, r.s) orelse return;
         r.held = held;
         if (held.head == held.fixed) { // Held without moving: look it up, highlight only if asked
-            const words = hl.page_words(a, r.s);
+            const words = r.s.page_words();
             assert(held.fixed < words.len);
             // Made in place: it points into itself
             r.over = .{ .define = .{ .screen = undefined } };
@@ -987,7 +993,7 @@ pub const Reader = struct {
     /// The words held, highlighted, and the highlight selected.
     fn highlight_held(r: *Reader) !void {
         const held = r.held;
-        assert(held.fixed < hl.page_words(r.a, r.s).len);
+        assert(held.fixed < r.s.page_words().len);
         assert(r.view == .page);
         const id = try hl.new_highlight(r.a, r.s, r.alloc, held.fixed, held.head);
         if (id) |selected| try r.select_highlight(selected);
@@ -1009,7 +1015,7 @@ pub const Reader = struct {
     fn highlight_at(r: *Reader, x: i32, y: i32) ?[]const u8 {
         assert(r.view == .page);
         assert(r.s.current < r.s.pages.len);
-        const word = selection.word_under(hl.page_words(r.a, r.s), x, y) orelse return null;
+        const word = selection.word_under(r.s.page_words(), x, y) orelse return null;
         return highlights.at_word(r.s.highlights.items, word);
     }
 
@@ -1036,9 +1042,11 @@ pub const Reader = struct {
     fn start_running(r: *Reader) !void {
         assert(r.run == null);
         const a = r.a;
-        assert(!a.running); // The App runs exactly while the reader does
-        a.set_running(true);
+        assert(r.s.learns_speed); // Only running stops it
+        // Running moves on at a pace: the first time, one from the reader's speed
+        if (a.running_pace == null) a.running_pace = running_model.first_pace(a.speed);
         r.run = .{ .started_us = now_us() };
+        r.s.learns_speed = false;
         std.debug.print("running: on, {d:.0} words a minute\n", .{a.running_pace.?});
         r.view = .page; // Before the input's modes, which follow the view
         a.input.apply(r.setting(), false);
@@ -1051,7 +1059,7 @@ pub const Reader = struct {
     fn stop_running(r: *Reader) !void {
         assert(r.run != null);
         r.leave_running();
-        assert(!r.a.running);
+        assert(r.run == null);
         r.a.input.apply(r.setting(), false);
         try r.to_page(r.s.current);
         assert(r.reading());
@@ -1060,19 +1068,18 @@ pub const Reader = struct {
     /// Running's state let go of: the pace saved, and the Kindle free to sleep.
     fn leave_running(r: *Reader) void {
         const a = r.a;
-        assert(a.running);
+        assert(!r.s.learns_speed); // Stopped as running began
         if (r.run.?.awake) lipc.hold_awake(false);
         r.run = null;
+        r.s.learns_speed = true;
         std.debug.print("running: off\n", .{});
         app.save_speed(a);
-        a.set_running(false);
-        assert(!a.running);
+        assert(r.run == null);
     }
 
     /// The phrase's timer: the next phrase when it's up, the reader's place following.
     fn tick_running(r: *Reader) !void {
         assert(r.reading());
-        assert(r.a.running);
         const run = &r.run.?;
         if (try run.tick(r.a, r.s, now_us())) |at| {
             try r.follow_phrase(at);
@@ -1096,25 +1103,10 @@ pub const Reader = struct {
     /// A touch while running: when the panel says it came down, and how long it stayed
     /// (null for a hold or a swipe, down long already).
     const RunningTouch = struct { touched_us: u64, held_us: ?u64 = null };
-
-    /// The reader's place at the phrase now on screen: the page that holds it becomes
-    /// the current one, page by page, so the reading time and the journal count as
-    /// they do turning; and the place saved, every few pages, is the phrase's own.
+    /// The reader's place at the phrase now on screen (Session.follow), saved every
+    /// few pages, as turning saves it.
     fn follow_phrase(r: *Reader, at: book_model.Pos) !void {
-        const s = r.s;
-        // On a first open, the pages ahead may not be laid out yet
-        if (s.layout_pending()) try s.layout_until(s.current + 2);
-        // Each turn moves a page: bounded by the pages
-        for (0..s.pages.len) |_| {
-            if (s.current + 1 < s.pages.len and !at.is_before(s.pages[s.current + 1])) {
-                s.set_page(s.current + 1, .turn);
-                r.since_save += 1;
-            } else if (s.current > 0 and at.is_before(s.pages[s.current])) {
-                s.set_page(s.current - 1, .turn);
-            } else break;
-        }
-        assert(!at.is_before(s.pages[s.current]) or s.current == 0);
-        s.anchor = at; // The phrase, more exactly than its page's start
+        r.since_save += try r.s.follow(at);
         if (r.since_save >= save_every) r.save();
         assert(r.since_save < save_every);
     }
@@ -1127,7 +1119,6 @@ pub const Reader = struct {
     fn tap_running(r: *Reader, x: i32, y: i32, touch: RunningTouch) !void {
         assert(r.reading());
         const a = r.a;
-        assert(a.running);
         const run = &r.run.?;
         const now = now_us();
         // A contact too short for a finger: a drop of sweat, a brush. Let go before it
@@ -1185,50 +1176,52 @@ pub const Reader = struct {
     /// The pause card over the page: the phrase's timer stops, and the Kindle may sleep.
     fn pause_running(r: *Reader) !void {
         assert(r.reading());
+        const a = r.a;
         const run = &r.run.?;
-        run.shown_us = null; // Shown whole again once the card closes
-        // The card may stay up a while: the Kindle may sleep meanwhile
-        if (run.awake) lipc.hold_awake(false);
-        run.awake = false;
+        // Stopped while the card is up, as by the pause button, its footer saying so
+        // under the card; Resume carries on from there
+        if (!run.stopped()) try run.pause_or_resume(a, r.s, now_us());
+        r.keep_awake(); // The card may stay up a while: the Kindle may sleep meanwhile
         const minutes = run.minutes(now_us());
         const note = std.fmt.bufPrint(&r.pause_note, "Running for {d} min", .{minutes}) catch "";
-        const background = try r.s.ensure(r.s.current, r.s.current);
-        assert(background.ptr != r.a.screen.pixels.ptr); // A page's own, put back after
+        // The phrase screen as it is, kept in running's own buffer to show under the
+        // card and put back after
+        if (r.run_screen.len == 0) r.run_screen = try r.alloc.alloc(u8, a.screen.pixels.len);
+        @memcpy(r.run_screen, a.screen.pixels);
         const rows = &run_mode.pause_rows;
-        const c = card_screen.over(r.a, background, "Paused", note, rows, null);
+        const c = card_screen.over(a, r.run_screen, "Paused", note, rows, null);
         r.open_child(.{ .pause = .{ .screen = c } });
     }
 
-    /// The pause card closed: running on, the text settings open, or running off.
+    /// The pause card closed, the phrase screen back as it was: running on, the text
+    /// settings open, or running off.
     fn paused(r: *Reader, ending: screen.Ending(u32)) !void {
         assert(r.view == .page);
         assert(r.run != null); // Only running opens the card
-        const background = try r.s.ensure(r.s.current, r.s.current);
-        try card_screen.closed(r.a, background);
+        const a = r.a;
+        const run = &r.run.?;
+        try card_screen.closed(a, r.run_screen);
         const choice: run_mode.Paused = switch (ending) {
             .done => |row| @fromBackingInt(@intCast(row)),
             .closed, .interrupted => .resume_running,
         };
         std.debug.print("running: {s}\n", .{@tagName(choice)});
-        // Resuming carries on, a stop made by the pause button too; the next tick shows
-        // the whole screen again and keeps the Kindle awake
+        // Resuming carries on, a stop made by the pause button too
         switch (choice) {
-            .resume_running => run_resume(r),
+            .resume_running => {
+                if (run.stopped()) try run.pause_or_resume(a, r.s, now_us());
+                r.keep_awake();
+            },
             .text_settings => {
-                run_resume(r);
+                // Shown whole again by the tick after the toolbar closes, going on
+                run.shown_us = null;
+                run.stopped_at = null;
                 r.view = .{ .toolbar = .{ .sheet_open = true } };
-                r.a.input.apply(r.setting(), false);
+                a.input.apply(r.setting(), false);
                 try r.draw_toolbar(false);
             },
             .stop => try r.stop_running(),
         }
-    }
-
-    /// Carries on after the card: going, whatever stopped it.
-    fn run_resume(r: *Reader) void {
-        const run = &r.run.?;
-        assert(run.shown_us == null); // Shown whole again by the next tick
-        run.stopped_at = null;
     }
 
     // The toolbar, and its Aa sheet
@@ -1299,8 +1292,7 @@ pub const Reader = struct {
             },
             .scrub => r.open_over(.controls, try controls.drag_scrub(&r.pending, a, s, t.x)),
             .sheet => {
-                const title = r.entry.title;
-                switch (try controls.tap_sheet(&r.pending, a, s, title, t.x, t.y)) {
+                switch (try controls.tap_sheet(&r.pending, a, s, r.toolbar_book(), t.x, t.y)) {
                     .done => {},
                     .opened => |opened| r.open_over(.controls, opened),
                     .running => if (r.run == null) try r.start_running() else try r.stop_running(),
@@ -1353,7 +1345,7 @@ pub const Reader = struct {
                 return null;
             }
         }
-        const words = hl.page_words(a, r.s);
+        const words = r.s.page_words();
         if (highlights.word_range(words, r.s.highlights.items, id)) |range| {
             assert(range.lo <= range.hi);
             const chosen = words[range.lo .. range.hi + 1];

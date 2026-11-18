@@ -21,12 +21,16 @@ comptime {
     assert(toolbar.scrub_top > toolbar.bottom_top);
 }
 
+/// What the toolbar shows of the open book: its title, and whether running mode is on,
+/// which Aa's Running button says.
+pub const Book = struct { title: []const u8, running: bool };
+
 /// How the toolbar is drawn: with its Aa sheet open or not, and whether the whole
 /// page is shown again or only the bars.
 pub const Drawn = struct { sheet_open: bool, whole_page: bool };
 
 /// Draws the toolbar over the current page.
-pub fn draw_toolbar(a: *app.App, s: *sess.Session, title: []const u8, drawn: Drawn) !void {
+pub fn draw_toolbar(a: *app.App, s: *sess.Session, book: Book, drawn: Drawn) !void {
     assert(s.current < s.pages.len);
     @memcpy(a.overlay, try s.ensure(s.current, s.current));
     // No page count until the pages are known
@@ -40,12 +44,12 @@ pub fn draw_toolbar(a: *app.App, s: *sess.Session, title: []const u8, drawn: Dra
     try toolbar.render(
         fonts,
         a.page(a.overlay),
-        title,
+        book.title,
         at,
         &a.quick,
         if (drawn.sheet_open) a.aa_kept.tab else null,
         a.settings,
-        a.running,
+        book.running,
         s.is_bookmarked(s.current),
     );
     @memcpy(a.screen.pixels, a.overlay);
@@ -226,7 +230,7 @@ pub fn tap_sheet(
     p: *Pending,
     a: *app.App,
     s: *sess.Session,
-    title: []const u8,
+    book: Book,
     x: i32,
     y: i32,
 ) !SheetTap {
@@ -236,7 +240,7 @@ pub fn tap_sheet(
         .none => return .done,
         .tab => |tab| {
             a.aa_kept.tab = tab;
-            try draw_toolbar(a, s, title, sheet_only);
+            try draw_toolbar(a, s, book, sheet_only);
             return .done;
         },
         .text_size => return .{ .opened = try drag_setting(p, a, aa.size_row, x) },
@@ -258,7 +262,7 @@ pub fn tap_sheet(
         },
         .more_families => {
             a.aa_kept.family_first = aa.next_family_page(a.aa_kept.family_first);
-            try draw_toolbar(a, s, title, sheet_only);
+            try draw_toolbar(a, s, book, sheet_only);
             return .done;
         },
         .toggle => |index| {
@@ -268,12 +272,12 @@ pub fn tap_sheet(
                 const guard = aa.switches[index].guard;
                 if (try ask_first(p, a, s, guard, index)) |f| return .{ .opened = f };
             }
-            try flip(a, s, title, index);
+            try flip(a, s, book, index);
             return .done;
         },
     }
     try sess.relayout(a, s);
-    try draw_toolbar(a, s, title, .{ .sheet_open = true, .whole_page = true });
+    try draw_toolbar(a, s, book, .{ .sheet_open = true, .whole_page = true });
     return .done;
 }
 
@@ -281,7 +285,7 @@ pub fn tap_sheet(
 fn flip(
     a: *app.App,
     s: *sess.Session,
-    title: []const u8,
+    book: Book,
     index: u32,
 ) !void {
     assert(index < aa.switches.len);
@@ -292,13 +296,13 @@ fn flip(
     switch (switch_hit.effect) {
         .relayout => {
             try sess.relayout(a, s);
-            try draw_toolbar(a, s, title, .{ .sheet_open = true, .whole_page = true });
+            try draw_toolbar(a, s, book, .{ .sheet_open = true, .whole_page = true });
         },
         .footer, .nothing => {
             a.save_settings();
             // The footer is drawn into each page
             if (switch_hit.effect == .footer) a.forget_pages();
-            try draw_toolbar(a, s, title, .{ .sheet_open = true, .whole_page = false });
+            try draw_toolbar(a, s, book, .{ .sheet_open = true, .whole_page = false });
         },
     }
 }
@@ -351,7 +355,7 @@ pub fn resumed(
     p: *Pending,
     a: *app.App,
     s: *sess.Session,
-    title: []const u8,
+    book: Book,
     sheet_open: bool,
 ) !void {
     const sheet_only: Drawn = .{ .sheet_open = true, .whole_page = false };
@@ -365,7 +369,7 @@ pub fn resumed(
             const lifted = try drag.ended(&scrub.drag, scrub.ending.?);
             if (lifted) s.set_page(scrub.target, .jump);
             assert(scrub.target < s.pages.len); // The pages it was dragged over, unchanged
-            try draw_toolbar(a, s, title, .{ .sheet_open = sheet_open, .whole_page = true });
+            try draw_toolbar(a, s, book, .{ .sheet_open = sheet_open, .whole_page = true });
             // What locks or leaves covers the toolbar at once: a clean flash is for nothing
             if (lifted) {
                 try app.clean_band(a, toolbar.scrub_top, a.screen.height - toolbar.scrub_top);
@@ -378,19 +382,19 @@ pub fn resumed(
                 row_value_set(a, setting.row, setting.value);
                 try sess.relayout(a, s);
             }
-            try draw_toolbar(a, s, title, .{ .sheet_open = true, .whole_page = true });
+            try draw_toolbar(a, s, book, .{ .sheet_open = true, .whole_page = true });
             if (lifted) try app.clean_band(a, setting.row.top, aa.row_height);
         },
         .autostart => |ask| {
             try card_screen.closed(a, ask.background);
-            if (ask.ending.? != .done) return draw_toolbar(a, s, title, sheet_only);
-            if (autostart.install()) return flip(a, s, title, ask.toggle);
-            try draw_toolbar(a, s, title, sheet_only);
+            if (ask.ending.? != .done) return draw_toolbar(a, s, book, sheet_only);
+            if (autostart.install()) return flip(a, s, book, ask.toggle);
+            try draw_toolbar(a, s, book, sheet_only);
             try app.show_notice(a, "Couldn't set up starting with the Kindle.");
         },
         .lock_picture => |ask| {
             try card_screen.closed(a, ask.background);
-            try draw_toolbar(a, s, title, sheet_only);
+            try draw_toolbar(a, s, book, sheet_only);
         },
     }
 }

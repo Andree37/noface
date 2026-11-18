@@ -44,13 +44,6 @@ pub fn save_highlight(
     return s.notes.put(.highlight, id, start, end);
 }
 
-pub fn page_words(a: *app.App, s: *const sess.Session) []const book_model.Word {
-    assert(s.current < s.pages.len);
-    const slot = a.slot_for(s.current) orelse return &.{};
-    assert(slot.hits.word_count <= slot.hits.words.len);
-    return slot.hits.words[0..slot.hits.word_count];
-}
-
 /// Rebuilds the marks drawn on pages, after highlights change.
 pub fn refresh_marks(a: *app.App, s: *sess.Session, alloc: std.mem.Allocator) !void {
     s.marks.clearRetainingCapacity(); // One list, reused, rather than a new one each time
@@ -69,7 +62,7 @@ pub fn show_page(a: *app.App, s: *sess.Session, active: ?[]const u8) !?u32 {
     a.stamp_clock();
     var delete_top: ?u32 = null;
     if (active) |id| {
-        const words = page_words(a, s);
+        const words = s.page_words();
         if (highlights.word_range(words, s.highlights.items, id)) |range| {
             assert(range.lo <= range.hi);
             assert(range.hi < words.len);
@@ -309,7 +302,7 @@ pub fn select_from_hold(
     hold_x: i32,
     hold_y: i32,
 ) !?screen.Frame {
-    const words = page_words(a, s);
+    const words = s.page_words();
     const fixed = selection.word_at(words, hold_x, hold_y) orelse return null;
     assert(fixed < words.len);
     return try drag_selection(sel, a, words, fixed, fixed);
@@ -334,7 +327,7 @@ pub fn new_highlight(
     fixed: u32,
     head: u32,
 ) !?[]const u8 {
-    const words = page_words(a, s);
+    const words = s.page_words();
     assert(fixed < words.len);
     assert(head < words.len);
     const lo = words[@min(fixed, head)];
@@ -373,7 +366,7 @@ pub fn extend_highlight(
     id: []const u8,
     grab_start: bool,
 ) !?screen.Frame {
-    const words = page_words(a, s);
+    const words = s.page_words();
     const range = highlights.word_range(words, s.highlights.items, id) orelse return null;
     const whole = highlights.extent(s.highlights.items, id) orelse return null;
     assert(range.lo <= range.hi);

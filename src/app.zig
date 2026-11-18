@@ -118,7 +118,11 @@ pub const App = struct {
     note_font: *Font,
     footer: *Font,
     ui: Fonts,
+    /// The open book's pages as last drawn, a page each (screens/reader/session.zig owns
+    /// what's in them: only it draws into them and reads their words).
     slots: [3]Slot,
+    /// A whole screen of scratch, for composing one draw before it's copied to the
+    /// screen: a screen's while it draws, good for nothing after.
     overlay: []u8,
     lock_kept: LockKept,
     state_dir: []const u8,
@@ -143,8 +147,6 @@ pub const App = struct {
     running_pace: ?f64 = null,
     pictures: Pictures = .{}, // Pictures of the open book, ready to copy onto pages
     settings: settings_model.Settings,
-    /// Running mode (screens/reader/run.zig): the book shown a phrase at a time.
-    running: bool = false,
     quick: quick_model.Quick = .{},
     utc_offset: i64,
     clock_minute: u64 = 0,
@@ -236,15 +238,6 @@ pub const App = struct {
         }
         assert(slot.* != null);
         return &slot.*.?;
-    }
-
-    /// Turns running mode on or off.
-    pub fn set_running(a: *App, on: bool) void {
-        assert(a.running != on);
-        a.running = on;
-        // Running moves on at a pace: the first time, one from the reader's speed
-        if (on and a.running_pace == null) a.running_pace = running_model.first_pace(a.speed);
-        if (a.running) assert(a.running_pace != null);
     }
 
     pub fn save_settings(a: *const App) void {

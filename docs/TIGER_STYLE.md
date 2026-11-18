@@ -35,10 +35,15 @@ An `// Assertions:` function is left out of its file's average, its assertions w
 it. Never pad a function with assertions that check nothing to avoid one; never assert
 on outside data to avoid one either.
 
+Test blocks are checked for their imports, line length and comments only: a test
+states what must hold with `expect`, builds odd inputs on purpose and may drop what it
+doesn't look at, so the rules for the code it tests (assertions, ignored errors,
+`usize`, loops) don't apply inside one.
+
 ## Safety
 
-- **Simple, explicit control flow. No recursion [checked].** Every execution that
-  should be bounded is bounded. A tree (an EPUB's table of contents, a KFX structure)
+- **Simple, explicit control flow. No recursion [checked: a function calling itself
+  by name].** Every execution that should be bounded is bounded. A tree (an EPUB's table of contents, a KFX structure)
   is walked with an explicit stack of fixed depth, and a depth past it is an error.
 
 - **A limit on everything.** Every loop and every queue has a fixed upper bound.
@@ -128,7 +133,8 @@ on outside data to avoid one either.
 - **Split compound conditions** into nested `if`/`else`; state invariants positively
   (`if (index < count)`); give an `if` its `else` when the other case matters too.
 
-- **Every error is handled [checked: `catch {}` and `catch unreachable`].** An error
+- **Every error is handled [checked: `catch {}`, `catch unreachable` and
+  `else |_| {}`].** An error
   that can't happen is asserted with the reason. One that may be ignored (a cover that
   won't decode means no picture, nothing worse) says so on that line, in a comment
   starting `// Ignored: ` with the reason; the check accepts that and nothing else.
@@ -153,9 +159,11 @@ on outside data to avoid one either.
 ### Imports
 
 - **All of a file's imports at its top [checked]**, where a reader sees at once what it
-  depends on: never inside a function, a test or an expression. `_ = @import(…)`, which
-  only lists a file's tests, is the exception.
-- **No import a file doesn't use [checked].**
+  depends on: never inside a function, a test or an expression, and never below the
+  file's first function, test, type or comptime block. `_ = @import(…)`, which only
+  lists a file's tests, is the exception.
+- **No import a file doesn't use [checked]**: one named only on its own line, as
+  `const failed = @import("os.zig").failed;` with nothing else using `failed`, is unused.
 
 ### Names
 

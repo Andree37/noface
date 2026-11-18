@@ -259,6 +259,41 @@ fn imports_inline(code: []const u8) bool {
     return !declared;
 }
 
+/// Whether a top-level line declares an import: its value is an `@import(…)`, maybe
+/// followed by a field (`@import("x.zig").T`), and nothing else.
+fn declares_import(code: []const u8) bool {
+    assert(std.mem.indexOfScalar(u8, code, '\n') == null); // One line of the file
+    const at = std.mem.indexOf(u8, code, "= @import(") orelse return false;
+    const close = std.mem.indexOfScalarPos(u8, code, at, ')') orelse return false;
+    assert(close > at);
+    const rest = std.mem.trimEnd(u8, code[close + 1 ..], " ");
+    for (rest, 0..) |c, index| {
+        const last = index + 1 == rest.len;
+        if (last) return c == ';';
+        if (c != '.' and c != '_' and !std.ascii.isAlphanumeric(c)) return false;
+    }
+    return false; // Wrapped onto the next line: not one this check reads
+}
+
+/// Whether a top-level line begins what follows a file's imports: a function, a test, a
+/// type or a comptime block.
+fn starts_body(code: []const u8) bool {
+    assert(std.mem.indexOfScalar(u8, code, '\n') == null); // One line of the file
+    const openers = [_][]const u8{
+        "fn ", "pub fn ", "export fn ", "inline fn ", "test ", "comptime {",
+    };
+    for (openers) |opener| {
+        if (std.mem.startsWith(u8, code, opener)) return true;
+    }
+    const types = [_][]const u8{
+        "= struct", "= extern struct", "= packed struct", "= union", "= enum", "= opaque",
+    };
+    for (types) |kind| {
+        if (std.mem.indexOf(u8, code, kind) != null) return true;
+    }
+    return false;
+}
+
 /// Notes each file-level import (`const name = @import(…)…;`) whose name `code`, the
 /// file with its strings blanked, never mentions again.
 fn note_unused_imports(scan: *Scan, source: []const u8, code: []const u8) !void {
@@ -270,8 +305,11 @@ fn note_unused_imports(scan: *Scan, source: []const u8, code: []const u8) !void 
         const equals = std.mem.indexOf(u8, text, " = @import(") orelse continue;
         const name = text["const ".len..equals];
         assert(name.len > 0);
-        // Named once, by its own line, and never again
-        if (count_token(code, name) <= 1) try scan.note(.import_unused, line_number, 1);
+        // Named only on its own line, where `@import(…).name` names it a second time
+        const offset = @intFromPtr(text.ptr) - @intFromPtr(source.ptr);
+        const own = count_token(code[offset..][0..text.len], name);
+        assert(own >= 1);
+        if (count_token(code, name) == own) try scan.note(.import_unused, line_number, 1);
     }
     assert(line_number > 1);
 }
@@ -457,6 +495,9 @@ const Scan = struct {
     gpa: std.mem.Allocator,
     depth: i32 = 0,
     test_depth: ?i32 = null, // Inside a test block: its depth
+    /// Past the imports: a function, test, type or comptime block has begun at the top
+    /// level, and an import from here on is no longer at the file's top.
+    past_imports: bool = false,
     // The functions being read, innermost last: a struct inside a function has its own
     open: [open_max]Function = undefined,
     open_count: u32 = 0,
@@ -512,6 +553,11 @@ pub fn check_zig(path: []const u8, source: []const u8, gpa: std.mem.Allocator) !
         const line = split_line(text, buffer[offset..]);
         const said = try check_zig_text(&scan, &line, line_number);
         if (imports_inline(line.code)) try scan.note(.import_inline, line_number, 1);
+        if (scan.depth == 0 and starts_body(line.code)) scan.past_imports = true;
+        const top_import = scan.depth == 0 and declares_import(line.code);
+        if (scan.past_imports and top_import) {
+            try scan.note(.import_inline, line_number, 1);
+        }
         const trimmed = std.mem.trimStart(u8, line.code, " ");
         const test_start = std.mem.startsWith(u8, trimmed, "test \"") or
             std.mem.startsWith(u8, trimmed, "test {");
@@ -720,7 +766,8 @@ fn check_zig_statement(scan: *Scan, line: *const Line, line_number: u32, said: S
     const wrapped = ignores_wrapped_catch(scan.after_catch, code);
     if (ending.len > 0) scan.after_catch = std.mem.endsWith(u8, ending, " catch");
     if (!is_marker(line.comment, "// Ignored: ")) {
-        const inline_count = count_token(code, "catch {}") + count_token(code, "catch unreachable");
+        const inline_count = count_token(code, "catch {}") +
+            count_token(code, "catch unreachable") + count_token(code, "else |_| {}");
         const ignored = inline_count + @intFromBool(wrapped);
         try scan.note(.error_ignored, line_number, ignored);
     }
@@ -1275,4 +1322,42 @@ test "imports are at a file's top, and each is used" {
     ;
     try std.testing.expectEqual(@as(u32, 1), try count_in(source, .import_inline));
     try std.testing.expectEqual(@as(u32, 1), try count_in(source, .import_unused));
+}
+
+test "an import below the file's first function or type is out of place" {
+    const source =
+        \\const std = @import("std");
+        \\const T = @import("t.zig").T;
+        \\const is_root = @import("root") == @This();
+        \\pub const Kind = enum { a, b };
+        \\const late = @import("late.zig");
+        \\fn f() void {
+        \\    _ = std;
+        \\    _ = T;
+        \\    _ = is_root;
+        \\    _ = late;
+        \\}
+    ;
+    try std.testing.expectEqual(@as(u32, 1), try count_in(source, .import_inline));
+}
+
+test "an import named only by its own line, field and all, is unused" {
+    const source =
+        \\const failed = @import("os.zig").failed;
+        \\const used = @import("used.zig").used;
+        \\fn f() void {
+        \\    _ = used;
+        \\}
+    ;
+    try std.testing.expectEqual(@as(u32, 1), try count_in(source, .import_unused));
+}
+
+test "an error dropped by an empty else capture is ignored unless it says why" {
+    const source =
+        \\fn f() void {
+        \\    if (g()) |_| {} else |_| {}
+        \\    if (g()) |_| {} else |_| {} // Ignored: nothing to undo
+        \\}
+    ;
+    try std.testing.expectEqual(@as(u32, 1), try count_in(source, .error_ignored));
 }

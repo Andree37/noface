@@ -315,6 +315,22 @@ fn build_tests(b: *std.Build) void {
         const tool_tests = b.addTest(.{ .root_module = host_tool_module(b, name) });
         test_step.dependOn(&b.addRunArtifact(tool_tests).step);
     }
+    // The Kindle's tools, built for this computer to run their own tests: only what a
+    // test reaches is compiled, so their device code needn't build here
+    const core = b.createModule(.{
+        .root_source_file = b.path("src/core.zig"),
+        .target = b.graph.host,
+        .link_libc = true,
+    });
+    for (tool_names) |name| {
+        const tool_tests = b.addTest(.{ .root_module = b.createModule(.{
+            .root_source_file = b.path(b.fmt("tools/{s}.zig", .{name})),
+            .target = b.graph.host,
+            .link_libc = true,
+            .imports = &.{.{ .name = "core", .module = core }},
+        }) });
+        test_step.dependOn(&b.addRunArtifact(tool_tests).step);
+    }
     // Tests run on this computer, through its C library
     assert(tests.root_module.link_libc.?); // Asked for, as set above
     assert(tests.root_module.resolved_target != null);

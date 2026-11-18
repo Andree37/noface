@@ -280,12 +280,6 @@ pub fn power_state() ?PowerState {
     return power_state_of(state);
 }
 
-/// Whether the Kindle is locked. Null when powerd can't be asked.
-pub fn in_screen_saver() ?bool {
-    const state = power_state() orelse return null;
-    return state == .asleep;
-}
-
 /// Starts a child that prints the named events of one lipc publisher, one per line.
 /// Its `out` pipe is non-blocking.
 fn watch_events(comptime publisher: [*:0]const u8, comptime events: [*:0]const u8) ?process.Child {

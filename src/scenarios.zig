@@ -40,6 +40,7 @@ const wifi_saver = @import("kindle/wifi_saver.zig");
 const paths = @import("kindle/paths.zig");
 const setup = @import("setup.zig");
 const linux = @import("sys/calls.zig");
+const book_model = @import("model/book.zig");
 
 const go_regular = @embedFile("testdata/fonts/Go-Regular.ttf");
 const go_bold = @embedFile("testdata/fonts/Go-Bold.ttf");
@@ -143,7 +144,13 @@ const Outcome = struct {
     book_peak: u64,
     pages_peak: u64,
     breaks: u64, // A digest of the page breaks saved for the book, 0 when none were
+    notes: u64, // A digest of the book's notes file, 0 when it has none
+    unreadable_kept: bool, // Every file made unreadable is still there, unread and unwritten
+    shown: [3]?Shown, // As `Kindle.pages_into` asks: the pages buffered at the end
 };
+
+/// A page drawn, and its words where they were drawn.
+const Shown = struct { page: u32, words: []const book_model.Word };
 
 /// The most books a scenario puts in the documents folder.
 const books_max = 4;
@@ -158,8 +165,21 @@ const Kindle = struct {
     books: []const []const u8 = &.{"book.epub"},
     /// Starts in the library instead of the first book.
     library: bool = false,
-    /// A book read a while already, so the library shows it to continue.
-    read_before: ?u32 = null,
+    /// A book read a while already, so the library shows it to continue, and opens
+    /// at its place.
+    read_before: ?ReadBefore = null,
+    /// What the pages' region lets a layout after a settings change take: less than
+    /// the Kindle's makes that layout run out of room.
+    pages_bytes: u64 = setup.region_bytes.pages,
+    /// Room left in the app's budget once it's assembled, when it's to run out (the
+    /// Kindle's whole budget when null).
+    app_bytes_spare: ?u64 = null,
+    /// Files of the data folder that are there but can't be read, as on a drive that
+    /// fails a read: each a link to itself, which noface must never write over.
+    unreadable: []const []const u8 = &.{},
+    /// Where the pages in the app's page buffers at the end are copied, for a scenario
+    /// that looks at the words drawn: the run's own memory is gone once it returns.
+    pages_into: ?std.mem.Allocator = null,
     /// One of the reader's own books, opened where it is (never written to), with the
     /// Kindle's own fonts and its own highlights: the self-test's real books.
     real_book: ?RealBook = null,
@@ -168,6 +188,9 @@ const Kindle = struct {
     /// Compares the screen at the end with the reference image of this name.
     snapshot: ?Snapshot = null,
 };
+
+/// Which book was read before, and its place, as its state file keeps it.
+const ReadBefore = struct { book: u32 = 0, para: u32 = 0, byte: u32 = 0 };
 
 /// One of the reader's own books, as the self-test opens it.
 const RealBook = struct {
@@ -311,7 +334,7 @@ fn play(steps: []const Step) !Outcome {
 fn play_on(kindle: Kindle, steps: []const Step) !Outcome {
     assert(kindle.books.len > 0);
     assert(kindle.books.len <= books_max);
-    if (kindle.read_before) |i| assert(i < kindle.books.len);
+    if (kindle.read_before) |before| assert(before.book < kindle.books.len);
     var harness_arena = std.heap.ArenaAllocator.init(std.heap.smp_allocator);
     defer harness_arena.deinit();
     const harness = harness_arena.allocator();
@@ -344,33 +367,63 @@ fn play_on(kindle: Kindle, steps: []const Step) !Outcome {
     defer decoder_memory.stop_using(decoders_budget);
     try setup.use_glyph_cache();
 
-    const kept = try play_on_kept(harness, dir);
+    return play_on_app(kindle, steps, .{
+        .harness = harness,
+        .dir = dir,
+        .library_path = library_path,
+        .book_paths = &book_paths,
+        .fake = &fake,
+        .devices = devices,
+        .decoders_budget = decoders_budget,
+    });
+}
+
+/// What `play_on` made for a scenario's app, which outlives it.
+const Stage = struct {
+    harness: std.mem.Allocator,
+    dir: [:0]const u8,
+    library_path: [*:0]const u8,
+    book_paths: *const [books_max][:0]const u8,
+    fake: *const FakeKindle,
+    devices: Devices,
+    decoders_budget: *memory.Budget,
+};
+
+/// Assembles the scenario's app on the Kindle's budget, plays the steps in it, and
+/// lets it go: what it left, once it has given all of its memory back.
+fn play_on_app(kindle: Kindle, steps: []const Step, stage: Stage) !Outcome {
+    assert(kindle.pages_bytes <= setup.region_bytes.pages); // Within the pages' region
+    const kept = try play_on_kept(stage.harness, stage.dir);
     const app_budget = try app_memory();
     // What an earlier scenario's app kept, which that scenario reported
     const live_before = app_budget.live;
+    defer app_budget.limit = setup.region_bytes.app; // Whatever the scenario left
     var a = try setup.assemble(.{
         .alloc = app_budget.allocator(),
         .app_budget = app_budget,
-        .decoders_budget = decoders_budget,
-        .screen = devices.screen,
-        .input = devices.input,
+        .decoders_budget = stage.decoders_budget,
+        .screen = stage.devices.screen,
+        .input = stage.devices.input,
         .kit = kept.kit,
-        .data_dir = dir,
+        .data_dir = stage.dir,
         .files = kept.files,
-        .library_path = library_path,
+        .library_path = stage.library_path,
     });
     const outcome = outcome: {
         defer a.release();
-        try play_on_start(&a, kindle, dir, &book_paths);
-        const ms = try play_on_sealed(&a, kindle, book_paths[0]);
+        if (kindle.app_bytes_spare) |spare| app_budget.limit = app_budget.live + spare;
+        try play_on_start(&a, kindle, stage.dir, stage.book_paths);
+        const ms = try play_on_sealed(&a, kindle, stage.book_paths[0]);
         // Every step was played: the steps ran out and noface was told to stop, or the
         // last one left noface itself
-        try expect(devices.script.at == steps.len, "noface left before the script ended");
-        break :outcome try play_on_outcome(&a, kindle, &book_paths, .{
-            .alloc = harness,
-            .fake = &fake,
-            .last_screen = devices.last_screen,
+        const played = stage.devices.script.at == steps.len;
+        try expect(played, "noface left before the script ended");
+        break :outcome try play_on_outcome(&a, kindle, stage.book_paths, .{
+            .alloc = stage.harness,
+            .fake = stage.fake,
+            .last_screen = stage.devices.last_screen,
             .ms = ms,
+            .dir = stage.dir,
         });
     };
     try expect(app_budget.live == live_before, "the app kept memory after it ended");
@@ -535,6 +588,26 @@ fn play_on_folder(
         const dict_path = try std.fmt.bufPrintSentinel(&dict_buf, "{s}/dict-en", .{dir}, 0);
         try write_dictionary(alloc, dict_path);
     }
+    for (kindle.unreadable) |name| {
+        const link = try std.fmt.allocPrintSentinel(alloc, "{s}/{s}", .{ dir, name }, 0);
+        if (os.failed(linux.symlink(link, link))) return error.CantWrite;
+    }
+}
+
+/// Whether every file the scenario made unreadable is still the link it was: open
+/// fails on it, where noface renaming its own file over it would make it readable.
+fn unreadable_kept(alloc: std.mem.Allocator, kindle: Kindle, dir: []const u8) !bool {
+    assert(dir.len > 0);
+    for (kindle.unreadable) |name| {
+        const link = try std.fmt.allocPrintSentinel(alloc, "{s}/{s}", .{ dir, name }, 0);
+        const data = file.map(link) catch |err| switch (err) {
+            error.OpenFailed => continue, // The link, still
+            error.NotFound, error.SeekFailed, error.EmptyFile, error.MmapFailed => return false,
+        };
+        file.unmap(data);
+        return false;
+    }
+    return true;
 }
 
 /// Sets the App up as a new reader's, in the scenario's folder.
@@ -551,6 +624,7 @@ fn play_on_start(
     // and the regions' peaks its own
     a.book_region.end_peak = 0;
     a.pages_budget.peak = 0;
+    a.pages_budget.limit = kindle.pages_bytes;
     a.settings = .{};
     a.speed = .{};
     a.journal = .{};
@@ -561,12 +635,12 @@ fn play_on_start(
     }
     try a.apply_settings();
 
-    if (kindle.read_before) |i| {
+    if (kindle.read_before) |before| {
         var before_buf: [320]u8 = undefined;
-        const before_path = try a.state_path(&before_buf, book_paths[i]);
+        const before_path = try a.state_path(&before_buf, book_paths[before.book]);
         state.save(before_path, .{
-            .para = 0,
-            .byte = 0,
+            .para = before.para,
+            .byte = before.byte,
             .percent = 5,
             .opened = 1_700_000_000,
             .seconds = 600,
@@ -617,6 +691,7 @@ const Ran = struct {
     fake: *const FakeKindle,
     last_screen: []const u8,
     ms: u64,
+    dir: []const u8, // The scenario's folder
 };
 
 /// What a finished run left: in the App, its folder and the pretend Kindle.
@@ -658,6 +733,9 @@ fn play_on_outcome(
         .book_peak = a.book_region.end_peak,
         .pages_peak = a.pages_budget.peak,
         .breaks = breaks_digest(state_path),
+        .notes = notes_digest(state_path),
+        .unreadable_kept = try unreadable_kept(ran.alloc, kindle, ran.dir),
+        .shown = if (kindle.pages_into) |into| try pages_shown(into, a) else @splat(null),
         .updates = a.screen.updates,
         .airplane_asked_on = ran.fake.was_set(wifi_key ++ " 0"),
         .airplane_at_end = std.mem.eql(u8, ran.fake.get(wifi_key), "0"),
@@ -692,6 +770,32 @@ fn breaks_digest(state_path: []const u8) u64 {
     }
     if (total <= page_store.header_len) return 0;
     return h.final();
+}
+
+/// A digest of the book's notes file, 0 when it has none: whether two runs left the
+/// same highlights, bookmarks and notes, in the same places.
+fn notes_digest(state_path: []const u8) u64 {
+    assert(state_path.len > 0);
+    var path_buf: [320]u8 = undefined;
+    const path = state.sibling(&path_buf, state_path, "notes") catch return 0;
+    var buf: [8192]u8 = undefined;
+    const content = file.read_small(path, &buf);
+    if (content.len == 0) return 0;
+    return std.hash.Wyhash.hash(0, content);
+}
+
+/// The pages the app's page buffers hold, with their words copied into `alloc`: they
+/// stay as last drawn after the book closes.
+fn pages_shown(alloc: std.mem.Allocator, a: *const app.App) ![3]?Shown {
+    var shown: [3]?Shown = @splat(null);
+    comptime assert(shown.len == a.slots.len);
+    for (a.slots, &shown) |slot, *out| {
+        const page = slot.page orelse continue;
+        assert(slot.hits.word_count <= slot.hits.words.len);
+        const words = slot.hits.words[0..slot.hits.word_count];
+        out.* = .{ .page = page, .words = try alloc.dupe(book_model.Word, words) };
+    }
+    return shown;
 }
 
 fn write_file(path: [*:0]const u8, data: []const u8) !void {
@@ -915,7 +1019,7 @@ const scenarios = [_]Scenario{
                 const back_button = tap(205, 1626);
                 const home = tap(150, toolbar_button_y);
                 const hero = tap_in(library_ui.hero_rect(width));
-                const library: Kindle = .{ .library = true, .read_before = 0 };
+                const library: Kindle = .{ .library = true, .read_before = .{} };
                 const kept_on = try play_on(library, &.{
                     hero, wait(2_000), forward, forward, forward, top, home,
                 });
@@ -1026,7 +1130,7 @@ const scenarios = [_]Scenario{
                 const hero = tap_in(library_ui.hero_rect(width));
                 const hit = library_ui.hit(758, 558, 0, 1, false);
                 try expect(hit == .stats, "the stats button isn't where it was");
-                const kindle: Kindle = .{ .library = true, .read_before = 0 };
+                const kindle: Kindle = .{ .library = true, .read_before = .{} };
                 // The second tap touched as the first closed them, before the library
                 // was back: meant for the stats, it opens nothing
                 const twice = try play_on(kindle, &.{
@@ -1051,7 +1155,7 @@ const scenarios = [_]Scenario{
                         "Scenario Book -- noface tests -- Scenario Saga #1.epub",
                         "Scenario Book -- noface tests -- Scenario Saga #2.epub",
                     },
-                    .read_before = 0,
+                    .read_before = .{},
                 }, &.{
                     tap_in(library_ui.hero_rect(width)), wait(2_000), // Continue the first
                     top, tap(1176, toolbar_button_y), tap(600, 1600), // ⋮, Mark as finished
@@ -1123,6 +1227,23 @@ const scenarios = [_]Scenario{
             }
         }.run,
     },
+    .{
+        .name = "the page before a place mid-page ends where that place's page starts",
+        .run = struct {
+            fn run() !void {
+                // A place a page doesn't start at by itself: the page before it is cut
+                // short there, and must be drawn so, or its last lines show twice
+                var arena = std.heap.ArenaAllocator.init(std.heap.smp_allocator);
+                defer arena.deinit();
+                const r = try play_on(.{
+                    .read_before = .{ .para = 6, .byte = 120 },
+                    .pages_into = arena.allocator(),
+                }, &.{back});
+                try expect(adjacent_pages(r.shown), "the two pages weren't both drawn");
+                try expect(!word_shown_twice(r.shown), "a word showed on two pages");
+            }
+        }.run,
+    },
     .{ .name = "the app has the Kindle's memory and no more", .run = struct {
         fn run() !void {
             const alloc = (try app_memory()).allocator();
@@ -1142,6 +1263,36 @@ comptime {
         assert(s.name.len > 0);
         for (scenarios[index + 1 ..]) |other| assert(!std.mem.eql(u8, s.name, other.name));
     }
+}
+
+/// Whether two of the pages shown are next to each other in the book.
+fn adjacent_pages(shown: [3]?Shown) bool {
+    for (shown, 0..) |first, index| {
+        const one = first orelse continue;
+        for (shown[index + 1 ..]) |second| {
+            const other = second orelse continue;
+            assert(one.page != other.page); // A page is in one buffer at most
+            if (one.page + 1 == other.page or other.page + 1 == one.page) return true;
+        }
+    }
+    return false;
+}
+
+/// Whether any word was drawn on two of the pages shown.
+fn word_shown_twice(shown: [3]?Shown) bool {
+    for (shown, 0..) |first, index| {
+        const one = first orelse continue;
+        for (shown[index + 1 ..]) |second| {
+            const other = second orelse continue;
+            assert(one.page != other.page); // A page is in one buffer at most
+            for (one.words) |word| {
+                for (other.words) |again| {
+                    if (word.para == again.para and word.start == again.start) return true;
+                }
+            }
+        }
+    }
+    return false;
 }
 
 /// A tap in the middle of `r`.

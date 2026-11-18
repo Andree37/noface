@@ -288,7 +288,7 @@ fn render_notes(shot: *const Shot) !void {
     };
     var layout = body_layout;
     layout.reference = &mark;
-    _ = try text.render_page(&body, shot.page, &paragraphs, .{}, layout, null);
+    _ = try text.render_page(&body, shot.page, &paragraphs, .{}, &layout, null);
     const parts = [_]book_model.Paragraph{.{ .text = sample_note }};
     const fitted = try notes.fit(&note_font, &parts, .{}, screen_width, screen_width, null);
     assert(fitted.height > 0);
@@ -399,7 +399,7 @@ fn render_format(shot: *const Shot) !void {
     assert(base == &faces.fonts[0][core.book.normal_size].?);
     var layout = body_layout;
     layout.faces = .{ .ctx = &faces, .pick = PreviewFaces.pick };
-    _ = try text.render_page(base, shot.page, &paragraphs, .{}, layout, null);
+    _ = try text.render_page(base, shot.page, &paragraphs, .{}, &layout, null);
     write_image(shot.page.buf, screen_width, screen_height);
 }
 

@@ -789,12 +789,12 @@ pub fn render_page(
     page: Page,
     paras: []const Paragraph,
     start: book_model.Pos,
-    l: Layout,
+    l: *const Layout,
     hits: ?*Hits,
 ) !book_model.Pos {
     assert(page.buf.len > 0); // Drawn into, unlike a page only measured
     assert(page.width <= page.stride);
-    return layout_page(font, page, page, paras, start, &l, hits);
+    return layout_page(font, page, page, paras, start, l, hits);
 }
 
 /// Hard black and white, for waveforms that cannot show gray.
@@ -845,7 +845,7 @@ const TestPage = struct {
             .stride = test_width,
         };
         out.hits.clear();
-        out.next = try render_page(font, page, paras, start, l, &out.hits);
+        out.next = try render_page(font, page, paras, start, &l, &out.hits);
     }
 
     fn expect_same(a: *const TestPage, b: *const TestPage) !void {

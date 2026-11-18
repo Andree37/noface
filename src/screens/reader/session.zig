@@ -488,7 +488,7 @@ pub const Session = struct {
         // the reader's place was cut short there, and would otherwise run on into it
         var layout = a.layout;
         layout.stop = s.page_end(index);
-        _ = try text.render_page(a.body, page, s.paragraphs, s.pages[index], layout, hits);
+        _ = try text.render_page(a.body, page, s.paragraphs, s.pages[index], &layout, hits);
 
         var label: [32]u8 = undefined;
         // Left out until the whole book is laid out, rather than a wrong number

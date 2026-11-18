@@ -81,7 +81,7 @@ pub fn render(
 ) !void {
     assert(panel.width > 2 * margin);
     assert(is_panel_height(panel.height)); // As `fit` chose
-    _ = try text.render_page(font, panel, parts, start, layout, null);
+    _ = try text.render_page(font, panel, parts, start, &layout, null);
     panel.fill_rect(0, 0, panel.width, 4, 0x00);
     try fonts.title.draw(panel, margin, 62, "Note");
     const right: f32 = @floatFromInt(panel.width - margin);

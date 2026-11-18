@@ -105,6 +105,9 @@ fn main_reader(init: std.process.Init.Minimal) !void {
     const decoders_budget = try setup.decoders();
     decoder_memory.use(decoders_budget);
     try setup.use_glyph_cache();
+    // Characters the reading fonts haven't got, a Chinese name or note in an English
+    // book, come from the Kindle's own Chinese typeface rather than as empty boxes
+    main_reader_fallback();
 
     const state_dir = std.mem.sliceTo(argv[6], 0);
 
@@ -156,6 +159,21 @@ fn main_reader(init: std.process.Init.Minimal) !void {
 }
 
 /// The four fonts named on the command line, mapped.
+/// Gives the fonts the Kindle's Chinese typeface for characters they haven't got. A
+/// Kindle without it draws those as the fonts' empty boxes, as before.
+// Assertions: none; what it reads is the Kindle's file, checked by `Font.use_fallback`.
+fn main_reader_fallback() void {
+    const data = file.map(paths.fallback_font) catch |err| {
+        std.debug.print("no fallback font: {s}\n", .{@errorName(err)});
+        return;
+    };
+    const opened = Font.use_fallback(data) catch |err| {
+        std.debug.print("no fallback font: {s}\n", .{@errorName(err)});
+        return;
+    };
+    if (!opened) std.debug.print("no fallback font: not a font\n", .{});
+}
+
 fn main_reader_fonts(argv: []const [*:0]const u8) !setup.FontFiles {
     assert(argv.len == reader_arguments_count);
     const files: setup.FontFiles = .{

@@ -88,8 +88,13 @@ const State = union(enum) {
     too_large,
 };
 
+/// Which typeface a glyph comes from: the font's own, or the fallback for a character
+/// the font hasn't got (`Cache.fallback`).
+pub const Face = enum { own, fallback };
+
 const Entry = struct {
     index: u32,
+    face: Face = .own,
     advance: f32,
     width: i32 = 0,
     height: i32 = 0,
@@ -107,13 +112,18 @@ pub const FontRef = struct {
     scale: f32,
 };
 
+/// A face's outlines and the scale they're drawn at.
+const Drawing = struct { info: *const truetype.Info, scale: f32 };
+
 /// What measuring a character needs: its glyph, and how far it moves the pen.
-pub const Metrics = struct { index: u32, advance: f32 };
+/// Kerning pairs only glyphs of one face: `index` is a glyph of the face `face` names.
+pub const Metrics = struct { index: u32, face: Face, advance: f32 };
 
 /// A glyph ready to draw: `pixels` (null for none) are good until the cache is next
 /// used, so a caller draws them straight away.
 pub const Drawn = struct {
     index: u32,
+    face: Face,
     advance: f32,
     width: i32,
     height: i32,
@@ -132,6 +142,10 @@ pub const Cache = struct {
     spare: u32 = 1, // Empty, for the glyphs kept when a segment is emptied
     oldest: u32 = 2, // The next segment to empty
     scratch: *memory.Budget, // On a bump region, emptied before each glyph is drawn
+    /// A typeface with the characters fonts commonly lack (the Kindle's Chinese one),
+    /// drawn at the same pixel height for a character a font hasn't got; none: such a
+    /// character draws as the font's own missing-glyph box.
+    fallback: ?truetype.Info = null,
     // Counted for the log and the tests
     misses: u64 = 0,
     rasterized: u64 = 0,
@@ -180,7 +194,7 @@ pub const Cache = struct {
         const entry = &cache.entries[at];
         assert(cache.keys[at] == key_of(font, code_point));
         assert(std.math.isFinite(entry.advance));
-        return .{ .index = entry.index, .advance = entry.advance };
+        return .{ .index = entry.index, .face = entry.face, .advance = entry.advance };
     }
 
     /// A character's glyph with its bitmap, drawn now if it isn't kept.
@@ -202,6 +216,7 @@ pub const Cache = struct {
         }
         return .{
             .index = entry.index,
+            .face = entry.face,
             .advance = entry.advance,
             .width = entry.width,
             .height = entry.height,
@@ -229,17 +244,46 @@ pub const Cache = struct {
         }
         cache.misses += 1;
         const at = cache.give_up_in_set(set);
-        const index = truetype.glyph_index(font.info, code_point);
-        const advance = truetype.horizontal_metrics(font.info, index).advance;
+        const face = cache.face_of(font, code_point);
+        const face_drawn = cache.drawing(font, face);
+        const index = truetype.glyph_index(face_drawn.info, code_point);
+        const advance = truetype.horizontal_metrics(face_drawn.info, index).advance;
         cache.keys[at] = key;
         // Its bitmap, if the place's last glyph had one kept, is left in the log for
         // nothing: no glyph owns it now, so emptying its segment skips it
         cache.entries[at] = .{
             .index = index,
-            .advance = @as(f32, @floatFromInt(advance)) * font.scale,
+            .face = face,
+            .advance = @as(f32, @floatFromInt(advance)) * face_drawn.scale,
         };
         assert(cache.entries[at].state == .measured);
         return at;
+    }
+
+    /// The fallback for a character `font` hasn't got (glyph 0, its missing-glyph box)
+    /// and the fallback has; the font's own face otherwise.
+    fn face_of(cache: *const Cache, font: FontRef, code_point: u32) Face {
+        if (truetype.glyph_index(font.info, code_point) != 0) return .own;
+        const fallback = &(cache.fallback orelse return .own);
+        if (truetype.glyph_index(fallback, code_point) == 0) return .own;
+        return .fallback;
+    }
+
+    /// What draws `face` for `font`: the fallback at the font's pixel height, so its
+    /// characters stand as tall as the font's own.
+    fn drawing(cache: *const Cache, font: FontRef, face: Face) Drawing {
+        switch (face) {
+            .own => return .{ .info = font.info, .scale = font.scale },
+            .fallback => {
+                const fallback = &cache.fallback.?; // Only chosen when there is one
+                const vertical = truetype.vertical_metrics(font.info);
+                const units: f32 = @floatFromInt(vertical.ascent - vertical.descent);
+                const scale = truetype.scale_for_pixel_height(fallback, font.scale * units);
+                assert(std.math.isFinite(scale));
+                assert(scale > 0);
+                return .{ .info = fallback, .scale = scale };
+            },
+        }
     }
 
     /// An empty place in `set`, or one whose glyph was used least lately, given up.
@@ -307,8 +351,9 @@ pub const Cache = struct {
         cache.scratch.reset(.keep);
         cache.rasterized += 1;
         const scratch = cache.scratch.allocator();
-        const bitmap = truetype.glyph_bitmap(font.info, scratch, font.scale, entry.index) catch
-            truetype.glyph_bitmap_box(font.info, font.scale, entry.index);
+        const face = cache.drawing(font, entry.face);
+        const bitmap = truetype.glyph_bitmap(face.info, scratch, face.scale, entry.index) catch
+            truetype.glyph_bitmap_box(face.info, face.scale, entry.index);
         if (bitmap.pixels) |p| {
             assert(p.len == @as(u64, @intCast(bitmap.width)) * @as(u64, @intCast(bitmap.height)));
         }

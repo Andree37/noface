@@ -107,6 +107,15 @@ pub const Font = struct {
         };
     }
 
+    /// Gives every font `ttf` to draw the characters it hasn't got: a book's Chinese
+    /// name in a Latin font, say. Whether it opened as a font.
+    pub fn use_fallback(ttf: []const u8) !bool {
+        const cache = try glyph_cache.get();
+        if (!tables_inside(ttf)) return false;
+        cache.fallback = truetype.init(ttf) orelse return false;
+        return true;
+    }
+
     fn reference(f: *const Font) glyph_cache.FontRef {
         assert(f.id > 0);
         assert(std.math.isFinite(f.scale));
@@ -122,10 +131,20 @@ pub const Font = struct {
         return m;
     }
 
-    fn kern(f: *const Font, a: u32, b: u32) f32 {
+    /// Kerning between two glyphs of the font's own face; a fallback glyph has none,
+    /// its index being another face's.
+    fn kern(f: *const Font, a: Metrics, b: Metrics) f32 {
         assert(std.math.isFinite(f.scale));
         assert(f.scale > 0);
-        const units = truetype.kern_advance(&f.info, a, b);
+        switch (a.face) {
+            .own => {},
+            .fallback => return 0,
+        }
+        switch (b.face) {
+            .own => {},
+            .fallback => return 0,
+        }
+        const units = truetype.kern_advance(&f.info, a.index, b.index);
         return @as(f32, @floatFromInt(units)) * f.scale;
     }
 
@@ -137,7 +156,7 @@ pub const Font = struct {
         while (it.nextCodepoint()) |code_point| {
             if (is_combining(code_point)) continue;
             const g = f.metrics(cache, code_point);
-            if (previous) |p| width += f.kern(p.index, g.index);
+            if (previous) |p| width += f.kern(p, g);
             width += g.advance;
             previous = g;
         }
@@ -161,7 +180,7 @@ pub const Font = struct {
                 continue;
             }
             const g = f.metrics(cache, code_point);
-            if (previous) |p| width += f.kern(p.index, g.index);
+            if (previous) |p| width += f.kern(p, g);
             width += g.advance;
             if (width > avail and last > 0) break;
             last = @intCast(it.i);
@@ -195,11 +214,12 @@ pub const Font = struct {
                 blit(page, &g, mark_x, baseline + g.y_offset);
                 continue;
             }
-            if (previous) |p| x += f.kern(p.index, g.index);
+            const glyph: Metrics = .{ .index = g.index, .face = g.face, .advance = g.advance };
+            if (previous) |p| x += f.kern(p, glyph);
             blit(page, &g, @as(i32, @intFromFloat(x)) + g.x_offset, baseline + g.y_offset);
             base_x = x;
             x += g.advance;
-            previous = .{ .index = g.index, .advance = g.advance };
+            previous = glyph;
         }
     }
 };
@@ -276,6 +296,7 @@ test "a glyph drawn across any edge of the page is clipped there, pixel for pixe
     for (&coverage, 0..) |*pixel, index| pixel.* = @intCast(index * 7 % 256);
     const g = Glyph{
         .index = 1,
+        .face = .own,
         .advance = 7,
         .width = 7,
         .height = 5,
@@ -364,6 +385,28 @@ test "a glyph whose box lies past any page draws nothing, at the pen, never over
         try std.testing.expectEqual(@as(i32, 0), box.y_offset);
     }
     for (pixels) |pixel| try std.testing.expectEqual(@as(u8, 255), pixel);
+}
+
+test "a character a font hasn't got comes from the fallback, as tall as the font's own" {
+    const go = @embedFile("../testdata/fonts/Go-Regular.ttf");
+    // A font of a few letters: 'z' isn't one of them
+    const few = @embedFile("../testdata/fonts/GoKernGpos.ttf");
+    var font = try Font.init(few, 40, 1.2);
+    var whole = try Font.init(go, 40, 1.2);
+    try std.testing.expectEqual(@as(u32, 0), truetype.glyph_index(&font.info, 'z'));
+    const missing = try font.measure("z");
+    const cache = try glyph_cache.get();
+    try std.testing.expect(try Font.use_fallback(go));
+    defer cache.fallback = null;
+    // A new font, so no glyph measured before the fallback was given is reused
+    var with_fallback = try Font.init(few, 40, 1.2);
+    const fallen_back = try with_fallback.measure("z");
+    try std.testing.expect(fallen_back != missing);
+    // Both fonts are Go, so the same pixel height gives the same advance
+    try std.testing.expectApproxEqAbs(try whole.measure("z"), fallen_back, 0.01);
+    // Text that isn't a font is turned down, and the fallback kept
+    try std.testing.expect(!try Font.use_fallback("not a font"));
+    try std.testing.expect(cache.fallback != null);
 }
 
 test "words fit by whole characters, at least one" {

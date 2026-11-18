@@ -47,6 +47,8 @@ pub const data = struct {
 
 /// The Kindle's own typefaces, which noface sets its text in.
 pub const kindle_fonts = "/usr/java/lib/fonts";
+/// The Kindle's Chinese typeface: a serif, as the reading fonts mostly are.
+pub const fallback_font = kindle_fonts ++ "/STSongMedium.ttf";
 /// Amazon's catalog of books, and the copy read so Amazon's own is never held open.
 pub const catalog = "/var/local/cc.db";
 pub const catalog_copy = "/tmp/kf-cc.db";

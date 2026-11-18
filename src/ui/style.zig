@@ -3,13 +3,22 @@ const std = @import("std");
 const assert = std.debug.assert;
 const device = @import("../model/device.zig");
 
+comptime {
+    // The sizes here are for this density; another needs them scaled
+    assert(screen.dpi == 300);
+}
+
 /// The screen every layout is worked out for. For now, the one Kindle noface knows;
 /// its size comes from the device's own facts (model/device.zig), never typed in here.
 pub const screen = device.screen(.paperwhite_12);
 /// As untyped numbers, as layout arithmetic takes them in signed and unsigned alike.
 pub const screen_width: comptime_int = screen.width_px;
 pub const screen_height: comptime_int = screen.height_px;
+/// Every size below is in the screen's pixels at 300 to the inch, the density of every
+/// Kindle noface knows (model/device.zig), so they're the same size on each.
 pub const margin = 72; // Left and right edge of interface text
+/// The least a control takes taps across: about 8.5 mm, a fingertip.
+pub const fingertip = 100;
 
 /// The clock, battery and Wi-Fi strip along the top of the home screen and the
 /// screens opened over it, which stay under it.

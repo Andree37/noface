@@ -12,20 +12,67 @@ const slider = @import("slider.zig");
 const quick_model = @import("../model/quick.zig");
 const text = @import("../layout/text.zig");
 
-pub const top_height = 228;
-pub const bottom_top = 1410;
-pub const scrub_top = 1500;
+const screen_width = style.screen_width;
 const screen_height = style.screen_height;
 const margin = style.margin;
-pub const status_row = 66; // The clock and battery strip at the very top
-const tool_row = 156;
+
+// The top bar, three bands down from the screen's top: the status strip (the clock and
+// battery), the tools' row, and the book's title under them.
+const status_band = 66;
+const tools_band = 90;
+const title_band = 72;
+pub const status_row = status_band;
+const tool_row = status_row + tools_band;
+pub const top_height = tool_row + title_band;
+/// The tools' icons' middles, and Home's, down from the tools' row's top.
+const tool_icon_drop = 52;
+const tool_icon_y = status_row + tool_icon_drop;
+/// The text beside them, Home's and Aa's, a little lower, on the icons' line.
+const tool_label_y = tool_icon_y + 12;
 const tool_reach = 56; // Taps this far either side of a tool's centre
-const tool_icon_y = 118; // The middle of the tools' icons, and of Home's
+/// The tools take taps this far into the title's band under them.
+const tool_taps_below = 12;
+/// Home: its arrow's middle and its label's left, in from the margin.
+const home_icon_x = margin + 18;
+const home_label_x = margin + 56;
+/// The clock's baseline and the status icons' middle, down from the screen's top.
+const status_text_y = 54;
+const status_icons_y = 45;
+/// The book's title: its baseline, and the band its faded tint covers, down from the
+/// title band's top.
+const title_baseline_drop = 54;
+const title_tint_drop = 20;
+const title_tint_height = 46;
+const tool_spacing = 120; // From one tool's centre to the next
+/// The last tool's centre, in from the screen's right edge past the margin.
+const last_tool_inset = margin + 24;
 const home_right = 300; // Home takes taps left of here
-const chapter_prev_right = 220; // The chapter buttons take taps out to here from each edge
-const chapter_next_left = 1052;
-const skip_inset = 110; // From each edge to the middle of a chapter button's icon
-const scrub = slider.Slider{ .left = 110, .right = 1162, .y = 1610 };
+
+// The bottom bar, up from the screen's foot: the chapter buttons' band, then the
+// scrubber's under it.
+const bottom_band = 286;
+const chapters_band = 90;
+pub const bottom_top = screen_height - bottom_band;
+pub const scrub_top = bottom_top + chapters_band;
+/// The chapter buttons' icons' middles, down from the bottom bar's top.
+const chapter_icon_drop = 46;
+/// From each edge to the middle of a chapter button's icon, and to an end of the
+/// scrubber's bar under it; the buttons take taps out to twice that from each edge.
+const skip_inset = 110;
+const chapter_prev_right = 2 * skip_inset;
+const chapter_next_left = screen_width - 2 * skip_inset;
+/// The scrubber's bar and its label, down from the scrubber's band's top.
+const scrub_drop = 110;
+const scrub_label_drop = 56;
+/// While the pages are laid out, the label's band faded: from this far above its
+/// baseline, this tall.
+const scrub_label_tint_rise = 36;
+const scrub_label_tint_height = 50;
+const scrub = slider.Slider{
+    .left = skip_inset,
+    .right = screen_width - skip_inset,
+    .y = scrub_top + scrub_drop,
+};
 /// The scrubber takes taps this far above its bar, and all the way below it: a tap
 /// meant for a chapter button that lands a little low must not jump the book.
 const scrub_reach = 60;
@@ -46,12 +93,16 @@ pub const Hit = enum {
 };
 
 const Tool = struct { hit: Hit, x: i32 };
-const tools = [_]Tool{
-    .{ .hit = .text, .x = 696 },
-    .{ .hit = .goto, .x = 816 },
-    .{ .hit = .bookmark, .x = 936 },
-    .{ .hit = .search, .x = 1056 },
-    .{ .hit = .more, .x = 1176 },
+/// The tools, left to right, `tool_spacing` apart, the last `last_tool_inset` in from
+/// the right edge.
+const tools = tools: {
+    const order = [_]Hit{ .text, .goto, .bookmark, .search, .more };
+    var placed: [order.len]Tool = undefined;
+    for (order, 0..) |h, i| {
+        const from_last: i32 = @intCast(order.len - 1 - i);
+        placed[i] = .{ .hit = h, .x = screen_width - last_tool_inset - from_last * tool_spacing };
+    }
+    break :tools placed;
 };
 
 comptime {
@@ -66,7 +117,7 @@ comptime {
     assert(scrub.left < scrub.right);
     assert(scrub.right <= style.screen_width);
     // Each tool takes a fingertip, apart from Home and its neighbours, and on screen
-    assert(2 * tool_reach >= 100);
+    assert(2 * tool_reach >= style.fingertip);
     assert(home_right <= tools[0].x - tool_reach);
     for (tools[0 .. tools.len - 1], tools[1..]) |left, right| {
         assert(left.x + tool_reach <= right.x - tool_reach);
@@ -74,22 +125,22 @@ comptime {
     assert(tools[tools.len - 1].x + tool_reach <= style.screen_width);
     // Icons are drawn where they take taps
     assert(tool_icon_y >= status_row);
-    assert(tool_icon_y < tool_row + 12);
+    assert(tool_icon_y < tool_row + tool_taps_below);
     assert(skip_inset < chapter_prev_right);
     assert(style.screen_width - skip_inset >= chapter_next_left);
     assert(chapter_prev_right < chapter_next_left);
     // The chapter buttons take a fingertip of height above the scrubber's taps, and
     // those start inside the band the scrubber is drawn in
-    assert(scrub.y - scrub_reach - bottom_top >= 100);
+    assert(scrub.y - scrub_reach - bottom_top >= style.fingertip);
     assert(scrub.y - scrub_reach >= scrub_top);
-    assert(2 * scrub_reach >= 100);
+    assert(2 * scrub_reach >= style.fingertip);
 }
 
 /// `sheet` is the Aa tab open, if the sheet is.
 pub fn hit(x: i32, y: i32, sheet: ?aa.Tab) Hit {
     if (y < status_row) return .stay;
     if (y < top_height) {
-        if (y >= tool_row + 12) return .stay;
+        if (y >= tool_row + tool_taps_below) return .stay;
         if (x < home_right) return .home;
         for (tools) |t| {
             if (@abs(x - t.x) < tool_reach) return t.hit;
@@ -166,15 +217,17 @@ pub fn draw_scrub(fonts: Fonts, page: Page, at: ?Position, mono: bool) !void {
     page.fill_rect(0, scrub_top, page.width, screen_height - scrub_top, 0xff);
     const centre: f32 = @floatFromInt(page.width / 2);
     const p = at orelse {
-        try draw.centered(fonts.small, page, centre, scrub_top + 56, "Laying out pages\u{2026}");
-        page.tint(0, scrub_top + 20, page.width, 50, style.faded);
+        const y = scrub_top + scrub_label_drop;
+        try draw.centered(fonts.small, page, centre, y, "Laying out pages\u{2026}");
+        // The label faded, as nothing can be done with it yet
+        page.tint(0, y - scrub_label_tint_rise, page.width, scrub_label_tint_height, style.faded);
         if (mono) page.threshold(scrub_top, screen_height - scrub_top);
         return;
     };
     assert(p.index < p.total);
     var label: [32]u8 = undefined;
     const s = std.fmt.bufPrint(&label, "Page {d} of {d}", .{ p.index + 1, p.total }) catch "";
-    try draw.centered(fonts.small, page, centre, scrub_top + 56, s);
+    try draw.centered(fonts.small, page, centre, scrub_top + scrub_label_drop, s);
     const knob = slider.knob_at(scrub, p.index, p.total - 1);
     slider.draw(page, scrub, knob);
     if (mono) page.threshold(scrub_top, screen_height - scrub_top);
@@ -198,23 +251,27 @@ pub fn render(
     const clock = quick.clock_text();
     const time = clock[0 .. std.mem.indexOfScalar(u8, clock, ' ') orelse clock.len];
     // Centred, as on the page and in the library
-    try draw.centered(fonts.caption, page, w / 2, 54, time);
-    try icons.status_cluster(page, fonts.caption, w - margin, 45, 54, quick, false);
+    try draw.centered(fonts.caption, page, w / 2, status_text_y, time);
+    const right = w - margin;
+    const status_y = status_icons_y;
+    try icons.status_cluster(page, fonts.caption, right, status_y, status_text_y, quick, false);
 
-    icons.back(page, margin + 18, tool_icon_y);
-    try fonts.small.draw(page, margin + 56, 130, "Home");
+    icons.back(page, home_icon_x, tool_icon_y);
+    try fonts.small.draw(page, home_label_x, tool_label_y, "Home");
     // Each tool drawn where its entry says it takes taps
     for (tools) |t| try draw_tool(fonts, page, t, bookmarked);
 
-    try draw.clipped(fonts.caption, page, margin, tool_row + 54, title, w - 2 * margin);
-    page.tint(margin, tool_row + 20, page.width - 2 * margin, 46, style.faded);
+    const title_y = tool_row + title_baseline_drop;
+    try draw.clipped(fonts.caption, page, margin, title_y, title, w - 2 * margin);
+    const tint_top = tool_row + title_tint_drop;
+    page.tint(margin, tint_top, page.width - 2 * margin, title_tint_height, style.faded);
     page.fill_rect(0, top_height - 4, page.width, 4, 0x00);
     if (sheet) |tab| try aa.render(fonts, page, tab, chosen, running);
 
     page.fill_rect(0, bottom_top, page.width, screen_height - bottom_top, 0xff);
     page.fill_rect(0, bottom_top, page.width, 4, 0x00);
-    icons.skip(page, skip_inset, bottom_top + 46, false);
-    icons.skip(page, w - skip_inset, bottom_top + 46, true);
+    icons.skip(page, skip_inset, bottom_top + chapter_icon_drop, false);
+    icons.skip(page, w - skip_inset, bottom_top + chapter_icon_drop, true);
     try draw_scrub(fonts, page, at, false);
 }
 
@@ -223,7 +280,11 @@ fn draw_tool(fonts: Fonts, page: Page, t: Tool, bookmarked: bool) !void {
     const x: f32 = @floatFromInt(t.x);
     assert(t.x >= home_right); // Right of Home, as the tools are
     switch (t.hit) {
-        .text => try fonts.title.draw(page, x - 34, 132, "Aa"),
+        .text => {
+            // Centred on the tool, to the whole pixel, as the icons beside it are
+            const half = @floor(try fonts.title.measure("Aa") / 2);
+            try fonts.title.draw(page, x - half, tool_label_y + 2, "Aa");
+        },
         .goto => icons.lines(page, x, tool_icon_y),
         .bookmark => if (bookmarked) {
             icons.bookmark_filled(page, x, tool_icon_y);
@@ -238,43 +299,51 @@ fn draw_tool(fonts: Fonts, page: Page, t: Tool, bookmarked: bool) !void {
 }
 
 test "toolbar buttons map to actions" {
-    try std.testing.expectEqual(Hit.home, hit(120, 118, null));
-    try std.testing.expectEqual(Hit.text, hit(696, 118, null));
-    try std.testing.expectEqual(Hit.goto, hit(816, 118, null));
-    try std.testing.expectEqual(Hit.bookmark, hit(936, 118, null));
-    try std.testing.expectEqual(Hit.search, hit(1056, 118, null));
-    try std.testing.expectEqual(Hit.more, hit(1176, 118, null));
-    try std.testing.expectEqual(Hit.stay, hit(500, 118, null));
-    try std.testing.expectEqual(Hit.close, hit(600, 800, null));
-    try std.testing.expectEqual(Hit.chapter_prev, hit(110, 1450, null));
-    try std.testing.expectEqual(Hit.chapter_next, hit(1162, 1450, null));
-    try std.testing.expectEqual(Hit.scrub, hit(600, 1610, null));
-    try std.testing.expectEqual(Hit.scrub, hit(100, 1650, null));
+    const y = tool_icon_y;
+    try std.testing.expectEqual(Hit.home, hit(margin, y, null));
+    for (tools) |t| try std.testing.expectEqual(t.hit, hit(t.x, y, null));
+    // Between Home and the first tool
+    try std.testing.expectEqual(Hit.stay, hit(home_right + 1, y, null));
+    const middle_y = (top_height + bottom_top) / 2;
+    try std.testing.expectEqual(Hit.close, hit(screen_width / 2, middle_y, null));
+    const chapters_y = bottom_top + chapter_icon_drop;
+    try std.testing.expectEqual(Hit.chapter_prev, hit(skip_inset, chapters_y, null));
+    try std.testing.expectEqual(Hit.chapter_next, hit(screen_width - skip_inset, chapters_y, null));
+    try std.testing.expectEqual(Hit.scrub, hit(screen_width / 2, scrub.y, null));
+    try std.testing.expectEqual(Hit.scrub, hit(0, screen_height - 1, null));
 }
 
 test "a chapter button takes a fingertip, and a low tap on it never jumps the book" {
     // Where the scrubber's taps once began, under the chapter buttons
-    try std.testing.expectEqual(Hit.chapter_prev, hit(110, 1505, null));
-    try std.testing.expectEqual(Hit.chapter_next, hit(1162, 1505, null));
-    try std.testing.expectEqual(Hit.stay, hit(636, 1505, null));
-    try std.testing.expectEqual(Hit.chapter_prev, hit(110, bottom_top, null));
-    try std.testing.expectEqual(Hit.chapter_prev, hit(110, scrub.y - scrub_reach - 1, null));
-    try std.testing.expectEqual(Hit.scrub, hit(110, scrub.y - scrub_reach, null));
+    const low = scrub_top + 5;
+    try std.testing.expectEqual(Hit.chapter_prev, hit(skip_inset, low, null));
+    try std.testing.expectEqual(Hit.chapter_next, hit(screen_width - skip_inset, low, null));
+    try std.testing.expectEqual(Hit.stay, hit(screen_width / 2, low, null));
+    try std.testing.expectEqual(Hit.chapter_prev, hit(skip_inset, bottom_top, null));
+    const below = scrub.y - scrub_reach;
+    try std.testing.expectEqual(Hit.chapter_prev, hit(skip_inset, below - 1, null));
+    try std.testing.expectEqual(Hit.scrub, hit(skip_inset, below, null));
 }
 
 test "text sheet takes taps only while open" {
-    try std.testing.expectEqual(Hit.close, hit(350, 320, null));
-    try std.testing.expectEqual(Hit.sheet, hit(350, 320, .font));
-    try std.testing.expectEqual(Hit.sheet, hit(700, 800, .font)); // Font and More reach lower
-    try std.testing.expectEqual(Hit.close, hit(700, 800, .layout));
-    try std.testing.expectEqual(Hit.close, hit(700, 900, .font));
+    // Inside every tab's sheet; below Layout's but inside Font's; below Font's
+    const layout_foot: i32 = @intCast(aa.height_for(.layout));
+    const font_foot: i32 = @intCast(aa.height_for(.font));
+    const under = @divTrunc(top_height + layout_foot, 2);
+    try std.testing.expectEqual(Hit.close, hit(screen_width / 4, under, null));
+    try std.testing.expectEqual(Hit.sheet, hit(screen_width / 4, under, .font));
+    const low = @divTrunc(layout_foot + font_foot, 2);
+    try std.testing.expectEqual(Hit.sheet, hit(screen_width / 2, low, .font));
+    try std.testing.expectEqual(Hit.close, hit(screen_width / 2, low, .layout));
+    const past = @divTrunc(font_foot + bottom_top, 2);
+    try std.testing.expectEqual(Hit.close, hit(screen_width / 2, past, .font));
 }
 
 test "scrubber maps position to page" {
     try std.testing.expectEqual(@as(u32, 0), page_at(0, 280));
-    try std.testing.expectEqual(@as(u32, 279), page_at(1272, 280));
-    try std.testing.expectEqual(@as(u32, 140), page_at(636, 280));
-    try std.testing.expectEqual(@as(u32, 0), page_at(600, 1));
+    try std.testing.expectEqual(@as(u32, 279), page_at(screen_width, 280));
+    try std.testing.expectEqual(@as(u32, 140), page_at(screen_width / 2, 280));
+    try std.testing.expectEqual(@as(u32, 0), page_at(screen_width / 2, 1));
 }
 
 test "chapter skipping" {

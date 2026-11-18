@@ -20,6 +20,7 @@ const card = @import("../../ui/card.zig");
 const app = @import("../../app.zig");
 const sess = @import("session.zig");
 const Font = @import("../../gfx/font.zig").Font;
+const Page = @import("../../gfx/page.zig").Page;
 
 /// The phrase's size: nearly twice a page's, readable as it blurs, a sentence of an
 /// average length in a few lines. The lines before and after it are smaller, not bold:
@@ -52,8 +53,8 @@ const footer_baseline_above_bottom_px = 60;
 const footer_margin_px = 80;
 /// The dial: a thin ring thickening round from twelve o'clock like a clock's hand, from
 /// a phrase coming up to the next one coming, with an arrow in its middle while the
-/// pace has just gone up or down. Pure black and white, drawn without smoothing, as is
-/// the pause button: the quick waveform changes both cleanly, with no blink.
+/// pace has just gone up or down. Drawn with smooth edges, as is the pause button, as
+/// the letters beside them are: the text waveform changes so small a gray cleanly.
 const dial_radius_px = 22;
 const ring_px = 2;
 const sweep_px = 7; // How thick the ring is where it has swept
@@ -61,7 +62,7 @@ const arrow_half_px = 7; // The arrow's half width, and its height
 const dial_gap_px = 22; // From the dial to the minutes left beside it
 /// The dial's and the button's centre, up from the footer's baseline to its text's middle.
 const icons_above_baseline_px = 11;
-/// Steps of the sweep, as a clock's hours: each a quick refresh of the dial alone.
+/// Steps of the sweep, as a clock's hours: each a refresh of the dial alone.
 const dial_steps = 12;
 /// From the pause button to the pace beside it.
 const pace_gap_px = 20;
@@ -256,7 +257,7 @@ pub const Run = struct {
         try run.draw_footer(a, s);
         try draw_map(a, s, run.phrase);
         const height = a.screen.height - map_top;
-        const marker = try a.screen.show_region(0, map_top, a.screen.width, height, .quick);
+        const marker = try a.screen.show_region(0, map_top, a.screen.width, height, .page);
         try a.screen.wait_complete(marker);
     }
 
@@ -296,8 +297,7 @@ pub const Run = struct {
 
     /// The phrase on screen, large and bold, centred about `phrase_middle_y`, the end of
     /// the one before it above and the start of the one after below, small; at the
-    /// book's end, saying so. Pure black and white, which the quick refresh changes cleanly. Drawn
-    /// into the screen, not shown.
+    /// book's end, saying so. Drawn into the screen, not shown.
     fn draw_phrases(run: *const Run, a: *app.App, s: *sess.Session) !void {
         const page = a.page(a.screen.pixels);
         const band = a.screen.height - footer_height_px - text_top;
@@ -324,14 +324,12 @@ pub const Run = struct {
         } else {
             try draw_text(a, big, phrase_px, "The end", phrase_middle_y);
         }
-        // Pure black and white, so the quick refresh shows it as drawn
-        page.threshold(text_top, band);
     }
 
     fn show_footer(run: *Run, a: *app.App, s: *sess.Session) !void {
         try run.draw_footer(a, s);
         const top = a.screen.height - footer_height_px;
-        const marker = try a.screen.show_region(0, top, a.screen.width, footer_height_px, .quick);
+        const marker = try a.screen.show_region(0, top, a.screen.width, footer_height_px, .page);
         try a.screen.wait_complete(marker);
     }
 
@@ -369,8 +367,6 @@ pub const Run = struct {
         // The dial stays clear of the pause button, whatever the minutes' width
         assert(run.dial_x - icon_reach_px > pause_x + icon_reach_px);
         draw_dial(a, run.dial_x, cy, run.dial_step, run.pace_moved);
-        // Pure black and white, as the quick refresh it changes with shows it
-        page.threshold(top, footer_height_px);
     }
 };
 
@@ -511,8 +507,8 @@ fn map_height(a: *const app.App) u32 {
 }
 
 /// The page map: the page holding the reader's place, drawn as the reader would see
-/// it, shrunk to the corner, its words thin bars and `phrase`'s thick. Black and white,
-/// for the quick waveform. Drawn into the screen, not shown.
+/// it, shrunk to the corner, its words thin bars and `phrase`'s thick. Drawn into the
+/// screen, not shown.
 fn draw_map(a: *app.App, s: *sess.Session, phrase: ?phrases.Phrase) !void {
     const height = map_height(a);
     const left = a.screen.width - map_margin_px - map_width_px;
@@ -556,7 +552,7 @@ fn show_dial(a: *app.App, cx: i32, step: u32, arrow: ?Run.Pace) !void {
     draw_dial(a, cx, cy, step, arrow);
     const r = dial_radius_px;
     const side: u32 = 2 * r + 1;
-    const marker = try a.screen.show_region(@intCast(cx - r), @intCast(cy - r), side, side, .quick);
+    const marker = try a.screen.show_region(@intCast(cx - r), @intCast(cy - r), side, side, .page);
     try a.screen.wait_complete(marker);
 }
 
@@ -594,36 +590,99 @@ fn wrap(font: *Font, text: []const u8, width: f32, lines: [][]const u8) !u32 {
     return count;
 }
 
-/// The pause button centred on (`cx`, `cy`): a ring like the dial's, a little larger,
-/// with two bars in it while the phrases go on, and a triangle to carry on once
-/// stopped. Drawn into the screen, not shown.
+/// How finely an icon's pixels are sampled for their smooth edges: this many across
+/// and down, as the letters beside them are smoothed.
+const samples = 4;
+
+/// Paints the square of `side` pixels from (`left`, `top`) in each pixel's share of
+/// `shape`: black where it covers it all, gray where only some, as smooth as the text.
+/// `shape.inside(x, y)` takes a point from the square's middle.
+fn paint(page: Page, left: u32, top: u32, side: u32, shape: anytype) void {
+    assert(side > 0);
+    assert(left + side <= page.width);
+    assert(top + side <= page.height);
+    const half = @as(f32, @floatFromInt(side)) / 2;
+    for (0..side) |row| for (0..side) |column| {
+        var covered: u32 = 0;
+        for (0..samples) |i| for (0..samples) |j| {
+            const x = sample_at(column, j) - half;
+            const y = sample_at(row, i) - half;
+            if (shape.inside(x, y)) covered += 1;
+        };
+        assert(covered <= samples * samples);
+        const value = 255 - covered * 255 / (samples * samples);
+        const y: u32 = top + @as(u32, @intCast(row));
+        const x: u32 = left + @as(u32, @intCast(column));
+        page.buf[y * page.stride + x] = @intCast(value);
+    };
+}
+
+/// Sample `sample` of pixel `pixel`, across or down: evenly inside it.
+fn sample_at(pixel: usize, sample: usize) f32 { // usize: loop counters
+    assert(sample < samples);
+    const offset = (@as(f32, @floatFromInt(sample)) + 0.5) / samples;
+    return @as(f32, @floatFromInt(pixel)) + offset;
+}
+
+/// Whether (`x`, `y`) lies in a ring of `outer` and `inner` radii about the middle.
+fn in_ring(x: f32, y: f32, outer: f32, inner: f32) bool {
+    assert(inner < outer);
+    const d2 = x * x + y * y;
+    return d2 <= outer * outer and d2 >= inner * inner;
+}
+
+/// The pause button: a ring like the dial's, a little larger, with two bars in it while
+/// the phrases go on, and a triangle to carry on once stopped.
+const PauseShape = struct {
+    stopped: bool,
+
+    fn inside(shape: PauseShape, x: f32, y: f32) bool {
+        const r: f32 = pause_radius_px;
+        if (in_ring(x, y, r, r - ring_px)) return true;
+        const icon = r / 2; // The bars' and the triangle's half height
+        if (@abs(y) > icon) return false;
+        if (shape.stopped) {
+            // A triangle pointing right, its middle a little right of the centre
+            const from = -icon + 3;
+            return x >= from and x - from <= 2 * (icon - @abs(y));
+        }
+        return @abs(x) >= 3 and @abs(x) <= 3 + 4; // Two bars
+    }
+};
+
+/// The dial: a thin ring, thick where it has swept, with an arrow up or down in it.
+const DialShape = struct {
+    swept: f32, // How far round, from twelve o'clock, in radians
+    arrow: ?Run.Pace,
+
+    fn inside(shape: DialShape, x: f32, y: f32) bool {
+        const r: f32 = dial_radius_px;
+        if (in_ring(x, y, r, r - ring_px)) return true;
+        if (shape.swept > 0 and in_ring(x, y, r, r - sweep_px)) {
+            // Clockwise from twelve o'clock
+            var angle = std.math.atan2(x, -y);
+            if (angle < 0) angle += std.math.tau;
+            if (angle < shape.swept) return true;
+        }
+        const way = shape.arrow orelse return false;
+        // A triangle, its point up for a quicker pace, down for a slower
+        const h: f32 = arrow_half_px;
+        const from_point = switch (way) {
+            .up => y + h / 2,
+            .down => h / 2 - y,
+        };
+        return from_point >= 0 and from_point <= h and @abs(x) <= from_point;
+    }
+};
+
+/// The pause button centred on (`cx`, `cy`). Drawn into the screen, not shown.
 fn draw_pause_button(a: *app.App, cx: i32, cy: i32, stopped: bool) void {
     const r = pause_radius_px;
     assert(cx - r >= 0);
     assert(cy + r < a.screen.height);
-    const page = a.page(a.screen.pixels);
     const left: u32 = @intCast(cx - r);
     const top: u32 = @intCast(cy - r);
-    const side: u32 = 2 * r + 1;
-    const ring_inner = r - ring_px;
-    const icon = r / 2; // The bars' and the triangle's half height
-    for (0..side) |row| for (0..side) |column| {
-        const dx: i32 = @as(i32, @intCast(column)) - r;
-        const dy: i32 = @as(i32, @intCast(row)) - r;
-        const d2 = dx * dx + dy * dy;
-        var black = d2 <= r * r and d2 >= ring_inner * ring_inner;
-        if (@abs(dy) <= icon) {
-            if (stopped) {
-                // A triangle pointing right, its middle a little right of the centre
-                const from = -icon + 3;
-                const reach = 2 * (icon - @as(i32, @intCast(@abs(dy))));
-                black = black or (dx >= from and dx - from <= reach);
-            } else {
-                black = black or (@abs(dx) >= 3 and @abs(dx) <= 3 + 4); // Two bars
-            }
-        }
-        page.buf[(top + row) * page.stride + left + column] = if (black) 0x00 else 0xff;
-    };
+    paint(a.page(a.screen.pixels), left, top, 2 * r + 1, PauseShape{ .stopped = stopped });
 }
 
 /// The dial centred on (`cx`, `cy`), swept `step` twelfths of the way round, with
@@ -634,36 +693,11 @@ fn draw_dial(a: *app.App, cx: i32, cy: i32, step: u32, arrow: ?Run.Pace) void {
     const r = dial_radius_px;
     assert(cx - r >= 0);
     assert(cy + r < a.screen.height);
-    const page = a.page(a.screen.pixels);
     const left: u32 = @intCast(cx - r);
     const top: u32 = @intCast(cy - r);
-    const side: u32 = 2 * r + 1;
-    const thin = r - ring_px;
-    const thick = r - sweep_px;
     const swept = @as(f32, @floatFromInt(step)) / dial_steps * std.math.tau;
-    for (0..side) |row| for (0..side) |column| {
-        const dx: i32 = @as(i32, @intCast(column)) - r;
-        const dy: i32 = @as(i32, @intCast(row)) - r;
-        const d2 = dx * dx + dy * dy;
-        var black = d2 <= r * r and d2 >= thin * thin;
-        if (d2 <= r * r and d2 >= thick * thick and step > 0) {
-            // Clockwise from twelve o'clock
-            var angle = std.math.atan2(@as(f32, @floatFromInt(dx)), @as(f32, @floatFromInt(-dy)));
-            if (angle < 0) angle += std.math.tau;
-            if (angle < swept) black = true;
-        }
-        if (arrow) |way| {
-            // A triangle, its point up for a quicker pace, down for a slower
-            const h = arrow_half_px;
-            const from_point = switch (way) {
-                .up => dy + h / 2,
-                .down => h / 2 - dy,
-            };
-            const in_arrow = from_point >= 0 and from_point <= h and @abs(dx) <= from_point;
-            if (in_arrow) black = true;
-        }
-        page.buf[(top + row) * page.stride + left + column] = if (black) 0x00 else 0xff;
-    };
+    const shape: DialShape = .{ .swept = swept, .arrow = arrow };
+    paint(a.page(a.screen.pixels), left, top, 2 * r + 1, shape);
 }
 
 /// Running's card, opened by a tap in the pause band: carry on, change the text, or stop.

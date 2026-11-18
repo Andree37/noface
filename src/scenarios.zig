@@ -367,7 +367,7 @@ fn play_on(kindle: Kindle, steps: []const Step) !Outcome {
     const ms = try play_on_sealed(&a, kindle, book_paths[0]);
     // Every step was played: the steps ran out and noface was told to stop, or the
     // last one left noface itself
-    assert(devices.script.at == steps.len);
+    try expect(devices.script.at == steps.len, "noface left before the script ended");
     return play_on_outcome(&a, kindle, &book_paths, .{
         .alloc = harness,
         .fake = &fake,
@@ -476,7 +476,7 @@ fn play_on_devices(alloc: std.mem.Allocator, steps: []const Step) !Devices {
         .script = script,
     };
     assert(screen.pixels.len == last_screen.len);
-    assert(!script.ended);
+    assert(script.stops_given == 0);
     return .{ .screen = screen, .script = script, .input = input, .last_screen = last_screen };
 }
 
@@ -629,7 +629,8 @@ fn play_on_outcome(
     ran: Ran,
 ) !Outcome {
     assert(ran.last_screen.len == width * height);
-    assert(a.screen.updates > 0); // Something was drawn, at least the first screen
+    // Something was drawn, at least the first screen
+    try expect(a.screen.updates > 0, "nothing was drawn");
     var state_buf: [320]u8 = undefined;
     var note_buf: [8]u8 = undefined;
     const state_path = try a.state_path(&state_buf, book_paths[0]);
@@ -1218,7 +1219,10 @@ fn selftest_files() bool {
     var ok = true;
     for (settings_model.builtin_families, 0..) |name, i| {
         const path = fonts_db.path(i, false, false);
-        const usable = if (file.map(path)) |data| Font.usable(data) else |_| false;
+        const usable = if (file.map(path)) |data| usable: {
+            defer file.unmap(data);
+            break :usable Font.usable(data);
+        } else |_| false;
         std.debug.print("{s}  font {s}\n", .{ if (usable) "ok  " else "FAIL", name });
         ok = ok and usable;
     }
@@ -1237,6 +1241,7 @@ fn selftest_files() bool {
             std.debug.print("--    {s} not installed\n", .{name});
             continue;
         };
+        defer file.unmap(data); // Tens of MB each, in an address space the scenarios crowd
         const readable = dictionary.Dictionary.open(data) != null;
         std.debug.print("{s}  {s}\n", .{ if (readable) "ok  " else "FAIL", name });
         ok = ok and readable;
@@ -1263,11 +1268,22 @@ fn selftest_books() bool {
     var arena = std.heap.ArenaAllocator.init(std.heap.smp_allocator);
     defer arena.deinit();
     const alloc = arena.allocator();
-    const epubs = selftest_epubs(alloc) catch &.{};
-    const kindle_books = selftest_kindle_books(alloc) catch &.{};
-    const epubs_ok = selftest_open("epub", epubs);
-    const kindle_books_ok = selftest_open("kfx", kindle_books);
-    return epubs_ok and kindle_books_ok;
+    // A list that can't be read opens no book: said, and failed, so a run that opened
+    // none never reports everything passed
+    var ok = true;
+    if (selftest_epubs(alloc)) |epubs| {
+        ok = selftest_open("epub", epubs) and ok;
+    } else |err| {
+        std.debug.print("FAIL  listing epub books: {s}\n", .{@errorName(err)});
+        ok = false;
+    }
+    if (selftest_kindle_books(alloc)) |kindle_books| {
+        ok = selftest_open("kfx", kindle_books) and ok;
+    } else |err| {
+        std.debug.print("FAIL  listing kfx books: {s}\n", .{@errorName(err)});
+        ok = false;
+    }
+    return ok;
 }
 
 /// The first EPUBs in the documents folder. Their notes are in noface's own files,
@@ -1294,7 +1310,10 @@ fn selftest_epubs(alloc: std.mem.Allocator) ![]const RealBook {
 /// has them: those with highlights first.
 fn selftest_kindle_books(alloc: std.mem.Allocator) ![]const RealBook {
     const list_path = paths.data_dir ++ "/" ++ paths.data.library;
-    const mapped = file.map(list_path) catch return &.{}; // Not exported yet: none
+    const mapped = file.map(list_path) catch |err| switch (err) {
+        error.NotFound, error.EmptyFile => return &.{}, // Not exported yet, or no books
+        error.OpenFailed, error.SeekFailed, error.MmapFailed => return err,
+    };
     const list = try alloc.dupe(u8, mapped); // The entries keep slices of it
     file.unmap(mapped);
     const entries = try kindle_catalog.parse(alloc, list);
@@ -1331,6 +1350,11 @@ fn more_highlighted(_: void, a: RealBook, b: RealBook) bool {
 /// Amazon) open in the Kindle's own reader instead, so they're passed over, not failed.
 fn selftest_open(kind: []const u8, books: []const RealBook) bool {
     assert(books.len <= selftest_books_tried_max);
+    if (books.len == 0) {
+        // Said, so a run with nothing of this kind to open is told from one that passed
+        std.debug.print("--    no {s} books to open\n", .{kind});
+        return true;
+    }
     var ok = true;
     var opened: u32 = 0;
     // Named by kind and number, not title: this report is pasted into public issues

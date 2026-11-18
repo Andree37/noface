@@ -203,27 +203,18 @@ pub const Session = struct {
         return .{ .chapter = chapter_minutes, .book = book_minutes };
     }
 
-    /// How far into its chapter `at` is, and the words from it to the chapter's end:
-    /// running's dial and minutes left (reader/run.zig). A book without chapters is one.
-    pub fn chapter_progress(s: *const Session, at: book_model.Pos) struct {
-        share: f64,
-        words_left: u64,
-    } {
+    /// The words from `at` to its chapter's end, for running's minutes left
+    /// (reader/run.zig). A book without chapters is one.
+    pub fn chapter_words_left(s: *const Session, at: book_model.Pos) u64 {
         assert(s.words_before.len == s.paragraphs.len + 1);
         const here = s.words_at(at);
-        var begin: u64 = 0;
         var end: u64 = s.words_before[s.words_before.len - 1];
         for (s.chapters) |c| {
             const w = s.words_before[c.para];
-            if (w <= here and w > begin) begin = w;
             if (w > here and w < end) end = w;
         }
-        assert(begin <= here);
         assert(here <= end);
-        const span = end - begin;
-        const share: f64 = if (span == 0) 1 else @as(f64, @floatFromInt(here - begin)) /
-            @as(f64, @floatFromInt(span));
-        return .{ .share = share, .words_left = end - here };
+        return end - here;
     }
 
     /// Minutes to read `words`: at the running pace while running, else at the reader's

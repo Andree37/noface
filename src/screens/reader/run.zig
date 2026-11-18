@@ -1,14 +1,14 @@
 //! Running mode over an open book: reading on a treadmill. A bouncing head loses its
 //! line on a page, so running shows no page: the book a phrase at a time
-//! (model/phrases.zig), a sentence or so large and bold at one fixed spot, each changing to
-//! the next at the reader's running pace (model/running.zig) in a single refresh, the
-//! text standing still between: e-ink can't move text smoothly, each frame taking a
-//! tenth of a second and more. The end of the phrase before is above it and the start
-//! of the one after below, small, and a small map
-//! of the page in the corner marking where it is on it. Under them, a pause
-//! button, and a dial filling over the chapter beside the minutes left in it; a tap on
-//! the dial stops running. The reader (screens/reader.zig) routes taps and ticks here
-//! while it's on, and moves its place along as the phrases do.
+//! (model/phrases.zig), a sentence or so, large and bold at one fixed spot, each
+//! changing to the next at the reader's running pace (model/running.zig) in a single
+//! refresh, the text standing still between: e-ink can't move text smoothly, each
+//! frame taking a tenth of a second and more. The end of the phrase before is above
+//! it and the start of the one after below, small, and a small map of the page in the
+//! corner marks where it is on it. Under them, a pause button with the pace beside
+//! it, and a dial filling over the phrase's time beside the minutes left in the
+//! chapter; a tap on the dial stops running. The reader (screens/reader.zig) routes
+//! taps and ticks here while it's on, and moves its place along as the phrases do.
 const std = @import("std");
 const assert = std.debug.assert;
 const running_model = @import("../../model/running.zig");
@@ -49,16 +49,20 @@ const after_above_footer_px = 60;
 const footer_height_px = 140;
 const footer_baseline_above_bottom_px = 60;
 const footer_margin_px = 80;
-/// The dial: a ring with a wedge sweeping round inside it like a clock's hand, filling
-/// over the chapter. Pure black and white, drawn without smoothing, as is the pause
-/// button: the quick waveform changes both cleanly, with no blink.
+/// The dial: a ring with a wedge sweeping round inside it like a clock's hand, from
+/// empty as a phrase comes up to full as the next one comes. Pure black and white,
+/// drawn without smoothing, as is the pause button: the quick waveform changes both
+/// cleanly, with no blink.
 const dial_radius_px = 17;
 const ring_px = 3;
 const wedge_gap_px = 2; // Between the ring and the wedge, so each reads on its own
 const dial_gap_px = 22; // From the dial to the minutes left beside it
 /// The dial's and the button's centre, up from the footer's baseline to its text's middle.
 const icons_above_baseline_px = 11;
-const dial_steps = 60;
+/// Steps of the sweep, as a clock's hours: each a quick refresh of the dial alone.
+const dial_steps = 12;
+/// From the pause button to the pace beside it.
+const pace_gap_px = 20;
 const pause_radius_px = 24;
 const pause_x = footer_margin_px + pause_radius_px;
 /// A tap this near the dial's or the button's centre is on it: a fingertip around it.
@@ -101,8 +105,7 @@ pub const Run = struct {
     history: [history_max]book_model.Pos = undefined,
     history_len: u32 = 0,
     dial_x: i32 = 0, // The dial's centre, which follows the minutes left beside it
-    dial_step: u32 = 0,
-    minutes_left: u64 = 0,
+    dial_step: u32 = 0, // How far the dial has swept over the phrase's time
 
     /// What a move did: the place of the phrase now on screen, or null when none
     /// changed.
@@ -153,8 +156,15 @@ pub const Run = struct {
         // A phrase on screen with its timer going has a time to stay
         assert(run.phrase != null);
         assert(run.phrase_us >= phrases.phrase_us_min);
-        if (now -| shown < run.phrase_us) return null;
-        return try run.forward(a, s, now);
+        const elapsed = now -| shown;
+        if (elapsed >= run.phrase_us) return try run.forward(a, s, now);
+        const step: u32 = @intCast(elapsed * dial_steps / run.phrase_us);
+        assert(step < dial_steps);
+        if (step != run.dial_step) {
+            run.dial_step = step;
+            try show_dial(a, run.dial_x, step);
+        }
+        return null;
     }
 
     /// The next phrase now, the one on screen kept for going back to.
@@ -205,7 +215,8 @@ pub const Run = struct {
         const marker = try a.screen.show_region(left, text_top, width, height, .quick);
         try a.screen.wait_complete(marker);
         run.start_timer(a, now);
-        if (run.footer_changed(a, s)) try run.show_footer(a, s);
+        run.dial_step = 0; // Empty, for the phrase just shown
+        try run.show_footer(a, s);
         const p = run.phrase orelse return null;
         return .{ .para = p.para, .byte = p.start };
     }
@@ -301,13 +312,6 @@ pub const Run = struct {
         try a.screen.wait_complete(marker);
     }
 
-    /// Whether the footer would show something else now: the dial a step on, or
-    /// another minute left.
-    fn footer_changed(run: *const Run, a: *const app.App, s: *sess.Session) bool {
-        const now = footer_state(run, a, s);
-        return now.step != run.dial_step or now.minutes != run.minutes_left;
-    }
-
     fn show_footer(run: *Run, a: *app.App, s: *sess.Session) !void {
         try run.draw_footer(a, s);
         const top = a.screen.height - footer_height_px;
@@ -324,21 +328,29 @@ pub const Run = struct {
         page.fill_rect(0, top, a.screen.width, footer_height_px, 0xff);
         const cy = icons_y(a);
         draw_pause_button(a, pause_x, cy, run.stopped_at != null);
-        const state = footer_state(run, a, s);
-        run.dial_step = state.step;
-        run.minutes_left = state.minutes;
+        const baseline: i32 = @intCast(a.screen.height - footer_baseline_above_bottom_px);
+        // The pace, so a reader can see it follow their taps
+        var pace_line: [32]u8 = undefined;
+        const wpm: u32 = @intFromFloat(@round(a.running_pace.?));
+        const pace = std.fmt.bufPrint(&pace_line, "{d} words a minute", .{wpm}) catch "";
+        const pace_x: f32 = @floatFromInt(pause_x + pause_radius_px + pace_gap_px);
+        try a.footer.draw(page, pace_x, baseline, pace);
+        const words_left = if (run.phrase) |p|
+            s.chapter_words_left(.{ .para = p.para, .byte = p.start })
+        else
+            0;
+        const chapter_minutes = running_model.minutes_for(a.running_pace.?, words_left);
         var minutes_buffer: [48]u8 = undefined;
         var line: [64]u8 = undefined;
-        const left = stats.format_minutes(&minutes_buffer, state.minutes);
+        const left = stats.format_minutes(&minutes_buffer, chapter_minutes);
         const text = std.fmt.bufPrint(&line, "{s} left in chapter", .{left}) catch "";
         const right: f32 = @floatFromInt(a.screen.width - footer_margin_px);
         const text_x = right - try a.footer.measure(text);
-        const baseline: i32 = @intCast(a.screen.height - footer_baseline_above_bottom_px);
         try a.footer.draw(page, text_x, baseline, text);
         run.dial_x = @as(i32, @intFromFloat(text_x)) - dial_gap_px - dial_radius_px;
         // The dial stays clear of the pause button, whatever the minutes' width
         assert(run.dial_x - icon_reach_px > pause_x + icon_reach_px);
-        draw_dial(a, run.dial_x, cy, state.step);
+        draw_dial(a, run.dial_x, cy, run.dial_step);
     }
 };
 
@@ -512,15 +524,14 @@ fn shrink(length: i32, scale: f32) u32 {
     return @intFromFloat(@as(f32, @floatFromInt(@max(length, 0))) * scale);
 }
 
-const FooterState = struct { step: u32, minutes: u64 };
-
-/// The dial's step and the minutes left, for the phrase on screen.
-fn footer_state(run: *const Run, a: *const app.App, s: *sess.Session) FooterState {
-    const p = run.phrase orelse return .{ .step = dial_steps - 1, .minutes = 0 };
-    const progress = s.chapter_progress(.{ .para = p.para, .byte = p.start });
-    const step: u32 = @intFromFloat(@min(progress.share * dial_steps, dial_steps - 1));
-    const minutes = running_model.minutes_for(a.running_pace.?, progress.words_left);
-    return .{ .step = step, .minutes = minutes };
+/// The dial swept to `step`, refreshed alone.
+fn show_dial(a: *app.App, cx: i32, step: u32) !void {
+    const cy = icons_y(a);
+    draw_dial(a, cx, cy, step);
+    const r = dial_radius_px;
+    const side: u32 = 2 * r + 1;
+    const marker = try a.screen.show_region(@intCast(cx - r), @intCast(cy - r), side, side, .quick);
+    try a.screen.wait_complete(marker);
 }
 
 fn icons_y(a: *const app.App) i32 {

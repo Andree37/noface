@@ -1132,7 +1132,9 @@ pub const Reader = struct {
                 return;
             },
             .next => moved: {
-                // Read before its time was up; not from one stopped, read already
+                // Read before its time was up; not from one stopped, read already. The
+                // dial shows only what this tap did to the pace
+                run.pace_moved = null;
                 if (!was_stopped) {
                     a.running_pace = running_model.faster(a.running_pace.?);
                     run.pace_moved = .up;
@@ -1140,6 +1142,7 @@ pub const Reader = struct {
                 break :moved try run.forward(a, r.s, now);
             },
             .back => moved: {
+                run.pace_moved = null;
                 if (!was_stopped) {
                     a.running_pace = running_model.slower(a.running_pace.?);
                     run.pace_moved = .down;

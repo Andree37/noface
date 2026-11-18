@@ -8,8 +8,8 @@
 //! corner marks where it is on it. Under them, the pause button with the pace beside
 //! it, and a dial filling over the phrase's time beside the minutes left in the
 //! chapter, an arrow in it when the pace has just gone up or down. The reader
-//! (screens/reader.zig) routes
-//! taps and ticks here while it's on, and moves its place along as the phrases do.
+//! (screens/reader.zig) routes taps and ticks here while it's on, and moves its place
+//! along as the phrases do.
 const std = @import("std");
 const assert = std.debug.assert;
 const running_model = @import("../../model/running.zig");

@@ -42,6 +42,7 @@ const setup = @import("setup.zig");
 const linux = @import("sys/calls.zig");
 const book_model = @import("model/book.zig");
 const goto_ui = @import("ui/goto.zig");
+const selection = @import("ui/selection.zig");
 
 const go_regular = @embedFile("testdata/fonts/Go-Regular.ttf");
 const go_bold = @embedFile("testdata/fonts/Go-Bold.ttf");
@@ -1342,6 +1343,42 @@ const scenarios = [_]Scenario{
             }
         }.run,
     },
+    .{
+        .name = "a highlight's handle still drags once the book is laid out behind it",
+        .run = struct {
+            fn run() !void {
+                var arena = std.heap.ArenaAllocator.init(std.heap.smp_allocator);
+                defer arena.deinit();
+                const held_at = a_word.act.hold;
+                const highlighted = [_]Step{ a_word, lift, highlight_button, page_middle };
+                // Read before, so it opens with its first pages and lays out the rest on
+                // ticks, as a book opened again after a layout change does
+                const read: Kindle = .{ .dictionary = true, .read_before = .{} };
+                var looked = read;
+                looked.pages_into = arena.allocator();
+                // Where the word held and the one after it were drawn on the first page
+                const first = try play_on(looked, &highlighted);
+                const words = shown_words(first.shown, 0);
+                const held = word_at(words, held_at.x, held_at.y) orelse
+                    return expect(false, "no word where the word was held");
+                const next = word_after(words, held) orelse
+                    return expect(false, "nothing after the word on its line");
+                const handle = selection.end_handle(&.{held});
+                // The highlight tapped to select it, then the whole book laid out on ticks
+                const selected = highlighted ++ [_]Step{ tap(held_at.x, held_at.y), wait(3_000) };
+                const kept = try play_on(read, &(selected ++ .{page_middle}));
+                const dragged = try play_on(read, &(selected ++ .{
+                    tap(handle.x, handle.y),
+                    drag_to(next),
+                    lift,
+                    page_middle,
+                }));
+                try expect(kept.highlights == 1, "the word wasn't highlighted");
+                try expect(dragged.highlights == 1, "the drag made another highlight");
+                try expect(dragged.notes != kept.notes, "the handle's drag didn't move the end");
+            }
+        }.run,
+    },
     .{ .name = "the app has the Kindle's memory and no more", .run = struct {
         fn run() !void {
             const alloc = (try app_memory()).allocator();
@@ -1374,6 +1411,45 @@ fn adjacent_pages(shown: [3]?Shown) bool {
         }
     }
     return false;
+}
+
+/// The words drawn on page `page`, none when it isn't among those shown.
+fn shown_words(shown: [3]?Shown, page: u32) []const book_model.Word {
+    for (shown) |slot| {
+        const one = slot orelse continue;
+        if (one.page == page) return one.words;
+    }
+    return &.{};
+}
+
+/// A finger moved, still down, to the middle of `word`.
+fn drag_to(word: book_model.Word) Step {
+    assert(word.w > 0);
+    assert(word.h > 0);
+    const x = word.x + @divTrunc(word.w, 2);
+    const y = word.y + @divTrunc(word.h, 2);
+    return .{ .act = .{ .drag = .{ .x = x, .y = y } } };
+}
+
+/// The word drawn at a point, if any.
+fn word_at(words: []const book_model.Word, x: i32, y: i32) ?book_model.Word {
+    for (words) |word| {
+        if (x < word.x or x >= word.x + word.w) continue;
+        if (y < word.y or y >= word.y + word.h) continue;
+        return word;
+    }
+    return null;
+}
+
+/// The word drawn next after `word` on its line, if any.
+fn word_after(words: []const book_model.Word, word: book_model.Word) ?book_model.Word {
+    var after: ?book_model.Word = null;
+    for (words) |other| {
+        if (other.y != word.y or other.x <= word.x) continue;
+        if (after == null or other.x < after.?.x) after = other;
+    }
+    if (after) |found| assert(found.x > word.x); // Right of it, on its line
+    return after;
 }
 
 /// Whether any word was drawn on two of the pages shown.

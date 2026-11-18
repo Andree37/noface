@@ -19,7 +19,6 @@ const state = @import("../../sys/state.zig");
 const text = @import("../../layout/text.zig");
 const now_us = os.now_us;
 const unix_time = os.unix_time;
-const failed = os.failed;
 const app = @import("../../app.zig");
 const draw = @import("../../ui/draw.zig");
 const Zone = @import("../../kindle/input.zig").Zone;

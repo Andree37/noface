@@ -136,8 +136,11 @@ const Build = struct {
     downloading: u32 = 0,
     left_out: u32 = 0, // Past `index.books_max`, or the text file's most
 
-    /// Adds book `e` to the index, as the next id; an EPUB with its file's `facts`.
-    fn add(b: *Build, e: *const catalog.Entry, facts: calls.Facts) void {
+    /// Adds book `e` to the index, as the next id. An EPUB read whole comes with its
+    /// file's `facts`, so the next build reads it only if its file changed; without
+    /// them (a Kindle book, the catalog's; an EPUB whose cover couldn't be saved), the
+    /// next build reads it again.
+    fn add(b: *Build, e: *const catalog.Entry, facts: ?calls.Facts) void {
         assert(b.count <= index.books_max);
         if (b.count == index.books_max) {
             b.left_out += 1;
@@ -149,9 +152,11 @@ const Build = struct {
             return;
         }
         var r = index.record_of(e, b.text.size, len);
-        r.file_size = facts.size;
-        r.file_modified = facts.modified_s;
-        r.seal();
+        if (facts) |f| {
+            r.file_size = f.size;
+            r.file_modified = f.modified_s;
+            r.seal();
+        }
         b.text.write(b.buffers.blob[0..len]);
         b.records.write(std.mem.asBytes(&r));
         b.count += 1;
@@ -248,7 +253,7 @@ fn add_kindle_books(b: *Build) void {
             continue;
         // The catalog's flag can stay set long after a download ended: the file decides
         if (e.availability == .downloading and is_complete_book(e.path)) e.availability = .local;
-        b.add(&e, .{ .size = 0, .modified_s = 0 });
+        b.add(&e, null);
     }
     if (lines.skipped > 0) log("library: {d} catalog lines too long\n", .{lines.skipped});
     assert(lines.at <= lines.reader.size);
@@ -298,7 +303,8 @@ fn add_epub(b: *Build, path: [:0]const u8) void {
     const known = if (b.last) |*last| last.find(path, facts) else null;
     const about = known orelse read_epub(b, path, cover_path) orelse return;
     const e = epub_entry(path, &about, if (about.has_cover) cover_path else null);
-    b.add(&e, facts);
+    // A cover that couldn't be saved (a full drive) is tried again by the next build
+    b.add(&e, if (about.cover_unsaved) null else facts);
 }
 
 /// What the library keeps of an EPUB, read from the book or from the last build.
@@ -307,6 +313,8 @@ const About = struct {
     author: []const u8,
     series: ?catalog.Series,
     has_cover: bool, // Its cover was saved beside its state once
+    /// The book has a cover, but saving it failed: none is shown for now.
+    cover_unsaved: bool = false,
 };
 
 /// What an EPUB says of itself, read from the book, its cover saved the first time.
@@ -322,8 +330,10 @@ fn read_epub(b: *Build, path: [:0]const u8, cover_path: [:0]const u8) ?About {
         .title = about.title,
         .author = about.author,
         .series = about.series,
-        // Whether it's there now: a cover whose write failed (a full drive) is none
+        // Whether it's there now: a cover whose write failed (a full drive) is none,
+        // for now
         .has_cover = file.exists(cover_path),
+        .cover_unsaved = about.cover != null and !file.exists(cover_path),
     };
 }
 

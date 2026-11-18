@@ -1244,6 +1244,32 @@ const scenarios = [_]Scenario{
             }
         }.run,
     },
+    .{
+        .name = "a layout after a text change that runs out of room keeps the place " ++
+            "and how far in the book is",
+        .run = struct {
+            fn run() !void {
+                const hero = tap_in(library_ui.hero_rect(width));
+                const home = tap(150, toolbar_button_y);
+                const bigger = [_]Step{
+                    top, tap(696, toolbar_button_y), tap(1172, aa.size_row.top + 90), lift,
+                };
+                const before: ReadBefore = .{ .para = 6, .byte = 120 };
+                const kept_on = try play_on(.{ .library = true, .read_before = before }, &.{
+                    hero, wait(2_000), top, home,
+                });
+                // No room for even the first of the new pages: the book closes, failed
+                const failed = try play_on(.{
+                    .library = true,
+                    .read_before = before,
+                    .pages_bytes = 1,
+                }, &([_]Step{ hero, wait(2_000) } ++ bigger));
+                try expect(same_place(kept_on.saved, failed.saved), "the place was lost");
+                const percent_kept = failed.saved.percent == kept_on.saved.percent;
+                try expect(percent_kept, "how far in it is changed");
+            }
+        }.run,
+    },
     .{ .name = "the app has the Kindle's memory and no more", .run = struct {
         fn run() !void {
             const alloc = (try app_memory()).allocator();

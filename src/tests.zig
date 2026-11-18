@@ -20,6 +20,7 @@ test {
     _ = @import("base/memory.zig");
     _ = @import("gfx/decoder_memory.zig");
     _ = @import("model/settings.zig");
+    _ = @import("model/running.zig");
     _ = @import("kindle/fonts.zig");
     _ = @import("gfx/page.zig");
     _ = @import("gfx/rows.zig");

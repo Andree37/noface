@@ -352,6 +352,12 @@ pub fn set_schedule(on: bool) void {
     set("com.lab126.powerd", "amberSchedEnable", if (on) 1 else 0);
 }
 
+/// Keeps the Kindle awake, its screensaver and sleep held off, while running mode turns
+/// pages on its own; off again lets it sleep when idle, as usual.
+pub fn hold_awake(on: bool) void {
+    set("com.lab126.powerd", "preventScreenSaver", @intFromBool(on));
+}
+
 pub fn set_airplane(on: bool) void {
     set("com.lab126.cmd", "wirelessEnable", if (on) 0 else 1);
 }

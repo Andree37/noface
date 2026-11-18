@@ -45,6 +45,7 @@ pub fn draw_toolbar(a: *app.App, s: *sess.Session, title: []const u8, drawn: Dra
         &a.quick,
         if (drawn.sheet_open) a.aa_kept.tab else null,
         a.settings,
+        a.running,
         s.is_bookmarked(s.current),
     );
     @memcpy(a.screen.pixels, a.overlay);
@@ -216,8 +217,11 @@ fn drag_setting(p: *Pending, a: *app.App, row: aa.Row, first_x: i32) !screen.Fra
     return screen.open(&setting.drag, &setting.ending);
 }
 
-/// Handles a tap inside the Aa sheet: a slider or a card to open over the book, or
-/// null when it's done.
+/// What a tap inside the Aa sheet did: all of it already, a slider or a card to open
+/// over the book, or running mode to turn on or off, which the reader does.
+pub const SheetTap = union(enum) { done, opened: screen.Frame, running };
+
+/// Handles a tap inside the Aa sheet.
 pub fn tap_sheet(
     p: *Pending,
     a: *app.App,
@@ -225,19 +229,20 @@ pub fn tap_sheet(
     title: []const u8,
     x: i32,
     y: i32,
-) !?screen.Frame {
+) !SheetTap {
     assert(s.current < s.pages.len);
     const sheet_only: Drawn = .{ .sheet_open = true, .whole_page = false };
     switch (aa.hit(a.aa_kept.tab, x, y)) {
-        .none => return null,
+        .none => return .done,
         .tab => |tab| {
             a.aa_kept.tab = tab;
             try draw_toolbar(a, s, title, sheet_only);
-            return null;
+            return .done;
         },
-        .text_size => return try drag_setting(p, a, aa.size_row, x),
-        .spacing => return try drag_setting(p, a, aa.spacing_row, x),
-        .margins => return try drag_setting(p, a, aa.margin_row, x),
+        .text_size => return .{ .opened = try drag_setting(p, a, aa.size_row, x) },
+        .spacing => return .{ .opened = try drag_setting(p, a, aa.spacing_row, x) },
+        .margins => return .{ .opened = try drag_setting(p, a, aa.margin_row, x) },
+        .running => return .running,
         .theme => |index| {
             assert(index < aa.themes.len);
             const theme = aa.themes[index];
@@ -248,27 +253,28 @@ pub fn tap_sheet(
         .family => |cell| {
             const family = a.aa_kept.family_first + cell;
             // The last page may have fewer typefaces than cells
-            if (family >= settings_model.families.len) return null;
+            if (family >= settings_model.families.len) return .done;
             a.settings.font = settings_model.Family.of(settings_model.families[family]).?;
         },
         .more_families => {
             a.aa_kept.family_first = aa.next_family_page(a.aa_kept.family_first);
             try draw_toolbar(a, s, title, sheet_only);
-            return null;
+            return .done;
         },
         .toggle => |index| {
             assert(index < aa.switches.len);
             const turning_on = !aa.is_on(index, a.settings);
             if (turning_on) {
-                if (try ask_first(p, a, s, aa.switches[index].guard, index)) |f| return f;
+                const guard = aa.switches[index].guard;
+                if (try ask_first(p, a, s, guard, index)) |f| return .{ .opened = f };
             }
             try flip(a, s, title, index);
-            return null;
+            return .done;
         },
     }
     try sess.relayout(a, s);
     try draw_toolbar(a, s, title, .{ .sheet_open = true, .whole_page = true });
-    return null;
+    return .done;
 }
 
 /// Turns switch `index` over, and applies it.
@@ -289,7 +295,7 @@ fn flip(
             try draw_toolbar(a, s, title, .{ .sheet_open = true, .whole_page = true });
         },
         .footer, .nothing => {
-            app.save_settings(a.settings_path, a.settings);
+            a.save_settings();
             // The footer is drawn into each page
             if (switch_hit.effect == .footer) a.forget_pages();
             try draw_toolbar(a, s, title, .{ .sheet_open = true, .whole_page = false });

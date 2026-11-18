@@ -12,14 +12,19 @@ const icons = @import("icons.zig");
 
 const top = 228; // Under the toolbar
 const tabs_height = 92;
-/// Where the sheet ends on screen: lower on More, which has a row more.
+/// Where the sheet ends on screen: lower on More, which has a row more, and on Font;
+/// lowest on Themes, which has the Running button under its tiles.
 pub fn height_for(tab: Tab) u32 {
-    const result: u32 = if (tab == .more or tab == .font) max_height else 760;
+    const result: u32 = switch (tab) {
+        .layout => 760,
+        .font, .more => 860,
+        .themes => running_top + running_height + 36,
+    };
     assert(result > content_top);
     assert(result <= max_height);
     return result;
 }
-pub const max_height = 860;
+pub const max_height = 882;
 const margin = style.margin;
 const screen_width = style.screen_width;
 const content_top = top + tabs_height + 16;
@@ -37,6 +42,7 @@ pub const Hit = union(enum) {
     spacing,
     margins,
     toggle: u32, // Which of `switches`
+    running, // Running mode on or off (screens/reader/run.zig)
 };
 
 /// What else a switch changes when flipped: the pages, laid out again; the footer
@@ -255,6 +261,11 @@ const theme_gap = 34;
 const theme_top = content_top + 20;
 const theme_height = 300;
 const theme_note_baseline = theme_top + theme_height + 52; // Under them, when none is in use
+/// The Running button, across the sheet under the tiles and their note.
+const running_top = theme_note_baseline + 26;
+/// The tiles side by side, from the left margin.
+const themes_width = themes.len * theme_width + (themes.len - 1) * theme_gap;
+const running_height = 112;
 
 pub const Theme = struct { label: []const u8, size: u32, spacing: u32, margin: u32 };
 pub const themes = [_]Theme{
@@ -280,6 +291,10 @@ comptime {
     // And everything ends inside the sheet
     assert(size_row.top + row_height <= height_for(.font));
     assert(theme_note_baseline < height_for(.themes));
+    // The Running button is a fingertip and more, under the note, above the sheet's edge
+    assert(running_height >= 100);
+    assert(theme_note_baseline + 10 < running_top);
+    assert(running_top + running_height + 4 <= height_for(.themes));
     for (switches, 0..) |sw, i| {
         assert(switch_top(i) + toggle_height + toggle_reach <= height_for(sw.tab));
         // A slider row and a switch never take the same taps: `hit` asks sliders first
@@ -293,7 +308,6 @@ comptime {
     }
     for (std.enums.values(Tab)) |tab| assert(height_for(tab) <= max_height);
     // The themes side by side between the margins, each a choice the sliders can make
-    const themes_width = themes.len * theme_width + (themes.len - 1) * theme_gap;
     assert(margin + themes_width <= screen_width - margin);
     for (themes) |t| {
         assert(t.size < settings_model.sizes.len);
@@ -343,6 +357,10 @@ pub fn hit(tab: Tab, x: i32, y: i32) Hit {
     }
     switch (tab) {
         .themes => {
+            if (within(y, running_top, running_height)) {
+                if (x >= margin and x < margin + themes_width) return .running;
+                return .none;
+            }
             if (!within(y, theme_top, theme_height)) return .none;
             for (0..themes.len) |i| {
                 const left: i32 = margin + @as(i32, @intCast(i)) * (theme_width + theme_gap);
@@ -473,6 +491,20 @@ fn draw_themes(fonts: Fonts, page: Page, chosen: settings_model.Settings) !void 
     }
 }
 
+/// The Running button: running mode on, or, while it's on, off again.
+fn draw_running(fonts: Fonts, page: Page, running: bool) !void {
+    const width = themes_width; // Lined up with the tiles above
+    const edge: u32 = if (running) 6 else 2;
+    draw.box_with(page, margin, running_top, width, running_height, edge, style.button_corner);
+    const label = if (running) "Stop running" else "Running";
+    const note = if (running)
+        "Back to your own settings"
+    else
+        "Big bold text that turns its own pages, for a treadmill";
+    try fonts.title.draw(page, margin + 32, running_top + 50, label);
+    try fonts.caption.draw(page, margin + 32, running_top + 90, note);
+}
+
 /// One theme's tile: rounded, with a thick edge and a tick in its corner when in use.
 fn draw_themes_tile(fonts: Fonts, page: Page, t: Theme, left: u32, active: bool) !void {
     assert(left >= margin);
@@ -560,14 +592,23 @@ fn draw_family(
     }
 }
 
-pub fn render(fonts: Fonts, page: Page, tab: Tab, chosen: settings_model.Settings) !void {
+pub fn render(
+    fonts: Fonts,
+    page: Page,
+    tab: Tab,
+    chosen: settings_model.Settings,
+    running: bool,
+) !void {
     const height = height_for(tab);
     assert(height > top);
     page.fill_rect(0, top, page.width, height - top, 0xff);
     page.fill_rect(0, height - 4, page.width, 4, 0x00);
     try draw_tabs(fonts, page, tab);
     switch (tab) {
-        .themes => try draw_themes(fonts, page, chosen),
+        .themes => {
+            try draw_themes(fonts, page, chosen);
+            try draw_running(fonts, page, running);
+        },
         .font => try draw_font(fonts, page, chosen),
         .layout => {
             try draw_row(fonts, page, spacing_row, chosen.spacing, false);

@@ -52,6 +52,8 @@ pub fn restore() void {
     restoring = true;
     _ = service.signal_named("awesome", .CONT);
     set("com.lab126.pillow", "disableEnablePillow", "enable");
+    // Running mode may have held sleep off: the Kindle sleeps when idle again
+    set("com.lab126.powerd", "preventScreenSaver", "0");
     set("com.lab126.blanket", "load", "screensaver");
     // Only noface's own, in case noface died before ending them
     const stopped = service.each_named("lipc-wait-event", @as(u8, 0), stop_watcher);

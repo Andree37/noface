@@ -8,6 +8,7 @@ const Page = @import("../../gfx/page.zig").Page;
 const book_model = @import("../../model/book.zig");
 const note_rules = @import("../../model/notes.zig");
 const stats = @import("../../model/stats.zig");
+const running_model = @import("../../model/running.zig");
 const bookmarks = @import("../../model/bookmarks.zig");
 const icons = @import("../../ui/icons.zig");
 const catalog = @import("../../model/catalog.zig");
@@ -170,7 +171,7 @@ pub const Session = struct {
         return s.words_before[p.para] + stats.count_words(before);
     }
 
-    fn words_on_page(s: *const Session, index: u32) u64 {
+    pub fn words_on_page(s: *const Session, index: u32) u64 {
         assert(index < s.pages.len);
         assert(s.words_before.len > 0);
         const total = s.words_before[s.words_before.len - 1];
@@ -190,17 +191,24 @@ pub const Session = struct {
             if (at <= here) continue;
             if (chapter_end == null or at < chapter_end.?) chapter_end = at;
         }
-        const speed = s.app.speed;
-        const book_minutes = speed.minutes_for(total -| here);
+        const book_minutes = s.minutes_for(total -| here);
         // Past the last chapter's start, the chapter runs to the book's end
         var chapter_minutes: ?u64 = null;
         if (chapter_end) |end| {
             assert(end > here);
-            chapter_minutes = speed.minutes_for(end - here);
+            chapter_minutes = s.minutes_for(end - here);
         } else if (s.chapters.len > 0) {
             chapter_minutes = book_minutes;
         }
         return .{ .chapter = chapter_minutes, .book = book_minutes };
+    }
+
+    /// Minutes to read `words`: at the running pace while running, else at the reader's
+    /// speed, null while that's still being learned.
+    fn minutes_for(s: *const Session, words: u64) ?u64 {
+        const a = s.app;
+        if (a.running) return running_model.minutes_for(a.running_pace.?, words);
+        return a.speed.minutes_for(words);
     }
 
     /// Adds the time since the clock last started to the current page's reading time.
@@ -229,6 +237,9 @@ pub const Session = struct {
         const journal_seconds: u32 = @intCast(@min(counted, std.math.maxInt(u32)));
         s.app.journal.add(s.app.today(), journal_seconds, if (read_on) 1 else 0);
         if (to != s.current + 1 or us == 0) return;
+        // Pages turned by running mode take its pace's time, which says nothing of the
+        // reader's speed in the hand
+        if (s.app.running) return;
         const left = s.current;
         // Time on a picture isn't reading speed
         if (s.page_has_picture(left)) return;
@@ -596,10 +607,10 @@ pub fn relayout(a: *app.App, s: *Session) !void {
     assert(a.pages_budget.region.?.kind == .bump);
     a.apply_settings() catch |err| {
         std.debug.print("settings failed: {s}\n", .{@errorName(err)});
-        a.settings = app.load_settings(a.settings_path);
+        a.reload_settings();
         return a.apply_settings();
     };
-    app.save_settings(a.settings_path, a.settings);
+    a.save_settings();
     a.forget_pages();
     const t0 = now_us();
     const pages_key = page_store.key(a, s.book_bytes);

@@ -1,0 +1,64 @@
+# Running mode on the test book (tools/e2e.zig plays it): turned on from Aa's Themes
+# tab, its bar filling, its taps, the pause card, and Stop. Start from a fresh test
+# folder: noface on its library, the book not opened before.
+
+# Opening the book from the library's hero
+tap 200 300
+log screen: Reader opened
+drawn 600
+still
+
+# The toolbar, its Aa sheet, the Themes tab, and the Running button under the tiles
+tap 636 100
+drawn 200
+still
+tap 696 118
+drawn 400
+still
+tap 150 274
+drawn 400
+still
+shot themes
+tap 636 790
+log running: on
+log running: page 1
+still
+shot running
+
+# The bar fills as the page's time goes by
+wait 4000
+shot filling
+
+# A tap on the right turns at once; on the left goes back a page and holds it there;
+# on the right again reads on from it
+tap 1100 900
+log running: tap next
+log running: page 2
+still
+wait 1000
+tap 150 900
+log running: tap back
+still
+wait 1000
+tap 1100 900
+log running: page 2
+still
+
+# The pause card from the top band, Resume, then the card again and Stop
+wait 1000
+tap 636 150
+log screen: Card opened
+still
+shot paused
+tap 636 1376
+log running: resume_running
+still
+wait 1000
+tap 636 150
+log screen: Card opened
+still
+tap 636 1600
+log running: stop
+log running: off
+still
+shot stopped

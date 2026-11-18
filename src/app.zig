@@ -10,6 +10,7 @@ const Page = @import("gfx/page.zig").Page;
 const Font = @import("gfx/font.zig").Font;
 const book_model = @import("model/book.zig");
 const stats = @import("model/stats.zig");
+const running_model = @import("model/running.zig");
 const cover = @import("gfx/image.zig");
 const draw = @import("ui/draw.zig");
 const state = @import("sys/state.zig");
@@ -137,8 +138,16 @@ pub const App = struct {
     wifi_off_at: ?u64 = null,
     journal: journal_model.Journal = .{}, // What was read each day, for the stats screen
     speed: stats.Speed = .{}, // How fast this reader reads, across every book
+    /// The running pace (model/running.zig), once running mode has been used: words a
+    /// minute while reading on a treadmill, learned apart from `speed`.
+    running_pace: ?f64 = null,
     pictures: Pictures = .{}, // Pictures of the open book, ready to copy onto pages
     settings: settings_model.Settings,
+    /// The settings that lay the page out, of the profile not in use: running mode's
+    /// while reading as usual, the reader's own while running (`set_running`).
+    held_layout: settings_model.Settings,
+    /// Running mode (screens/reader/run.zig): `settings` lays the page out as running's.
+    running: bool = false,
     quick: quick_model.Quick = .{},
     utc_offset: i64,
     clock_minute: u64 = 0,
@@ -232,6 +241,33 @@ pub const App = struct {
         return &slot.*.?;
     }
 
+    /// Turns running mode on or off: its settings that lay the page out swap with the
+    /// reader's own. The caller lays the book out again.
+    pub fn set_running(a: *App, on: bool) void {
+        assert(a.running != on);
+        settings_model.swap_layout(&a.settings, &a.held_layout);
+        a.running = on;
+        // Running turns pages at a pace: the first time, one from the reader's speed
+        if (on and a.running_pace == null) a.running_pace = running_model.first_pace(a.speed);
+        if (a.running) assert(a.running_pace != null);
+    }
+
+    /// Both profiles saved, the reader's own whichever is in use.
+    pub fn save_settings(a: *const App) void {
+        var own = a.settings;
+        var running = a.held_layout;
+        if (a.running) settings_model.swap_layout(&own, &running);
+        write_settings(a.settings_path, own, running);
+    }
+
+    /// The settings as saved, in the profile in use: after a change that couldn't apply.
+    pub fn reload_settings(a: *App) void {
+        const saved = load_settings(a.settings_path);
+        a.settings = saved.own;
+        a.held_layout = saved.running;
+        if (a.running) settings_model.swap_layout(&a.settings, &a.held_layout);
+    }
+
     /// Fonts are kept per size, so stepping through sizes doesn't reload them.
     pub fn apply_settings(a: *App) !void {
         // Parsing clamps every setting to its steps: one past them is a bug of ours
@@ -241,6 +277,7 @@ pub const App = struct {
         a.layout.images = .{ .ctx = a, .draw = draw_image };
         a.layout.margin_x = settings_model.margins[a.settings.margin];
         a.layout.justify = !a.settings.left_align;
+        a.layout.hyphenate = a.settings.hyphenate;
         a.layout.bold_starts = a.settings.bold_starts;
         // The Aa sheet shows the page of typefaces with the one chosen
         a.aa_kept.family_first = aa.family_page_of(a.settings.family_index());
@@ -533,37 +570,54 @@ pub fn save_journal(a: *const App) void {
     file.write_parts(a.journal_path, &parts);
 }
 
-pub fn load_speed(path: [*:0]const u8) stats.Speed {
-    var buf: [64]u8 = undefined;
-    const speed = stats.parse(file.read_small(path, &buf));
+/// The speed file: the reader's speed, then the running pace once there is one.
+const speed_bytes_max = 128;
+
+pub const Speeds = struct { speed: stats.Speed, running_pace: ?f64 };
+
+pub fn load_speed(path: [*:0]const u8) Speeds {
+    var buf: [speed_bytes_max]u8 = undefined;
+    const content = file.read_small(path, &buf);
+    const speed = stats.parse(content);
     assert(speed.seconds >= 0); // Parsing starts over on anything else
     assert(speed.words >= 0);
-    return speed;
+    return .{ .speed = speed, .running_pace = running_model.parse_pace(content) };
 }
 
 pub fn save_speed(a: *const App) void {
-    var buf: [64]u8 = undefined;
+    var buf: [speed_bytes_max / 2]u8 = undefined;
+    var pace_buf: [speed_bytes_max / 2]u8 = undefined;
     assert(a.speed.seconds >= 0);
     assert(a.speed.words >= 0);
-    file.write_small(a.speed_path, stats.format(&buf, a.speed));
+    const pace = if (a.running_pace) |wpm| running_model.format_pace(&pace_buf, wpm) else "";
+    file.write_parts(a.speed_path, &.{ stats.format(&buf, a.speed), pace });
 }
 
-pub fn load_settings(path: [*:0]const u8) settings_model.Settings {
+/// Both profiles in the settings file: the reader's own, and running mode's.
+pub const Profiles = struct { own: settings_model.Settings, running: settings_model.Settings };
+
+pub fn load_settings(path: [*:0]const u8) Profiles {
     var buf: [settings_bytes_max]u8 = undefined;
-    const settings = settings_model.parse(file.read_small(path, &buf));
+    const content = file.read_small(path, &buf);
+    const own = settings_model.parse(content);
     // Parsing clamps every value to its steps
-    assert(settings.size < settings_model.sizes.len);
-    assert(settings.font.len > 0);
-    return settings;
+    assert(own.size < settings_model.sizes.len);
+    assert(own.font.len > 0);
+    return .{ .own = own, .running = settings_model.parse_running(content, own) };
 }
 
-/// Room for every setting with the longest typeface name a setting holds.
-const settings_bytes_max = settings_model.family_bytes_max + 1024;
+/// Room for every setting of both profiles, each with the longest typeface name a
+/// setting holds.
+const settings_bytes_max = 2 * settings_model.family_bytes_max + 2048;
 
-pub fn save_settings(path: [*:0]const u8, s: settings_model.Settings) void {
+fn write_settings(
+    path: [*:0]const u8,
+    own: settings_model.Settings,
+    running: settings_model.Settings,
+) void {
     assert(path[0] != 0);
     var buf: [settings_bytes_max]u8 = undefined;
-    const content = settings_model.format(&buf, s);
+    const content = settings_model.format_with_running(&buf, own, running);
     // Every setting but the name is a word or a number: the name is the only long one
     assert(content.len > 0);
     file.write_small(path, content);
@@ -674,7 +728,11 @@ test "the longest typeface name a setting holds saves and comes back" {
     settings_model.offer_families(&(kept ++ .{&long}));
     var s = settings_model.Settings{};
     s.font = settings_model.Family.of(&long).?;
-    save_settings(path, s);
-    try std.testing.expectEqual(s.font, load_settings(path).font);
+    var running = settings_model.running_default(s);
+    running.size = 0;
+    write_settings(path, s, running);
+    const read = load_settings(path);
+    try std.testing.expectEqual(s.font, read.own.font);
+    try std.testing.expectEqual(running, read.running);
     try std.testing.expect(s.family_index() + 1 == settings_model.families.len);
 }

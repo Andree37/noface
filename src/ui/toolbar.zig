@@ -188,6 +188,7 @@ pub fn render(
     quick: *const quick_model.Quick,
     sheet: ?aa.Tab,
     chosen: settings_model.Settings,
+    running: bool,
     bookmarked: bool,
 ) !void {
     assert(page.width > 2 * margin);
@@ -208,7 +209,7 @@ pub fn render(
     try draw.clipped(fonts.caption, page, margin, tool_row + 54, title, w - 2 * margin);
     page.tint(margin, tool_row + 20, page.width - 2 * margin, 46, style.faded);
     page.fill_rect(0, top_height - 4, page.width, 4, 0x00);
-    if (sheet) |tab| try aa.render(fonts, page, tab, chosen);
+    if (sheet) |tab| try aa.render(fonts, page, tab, chosen, running);
 
     page.fill_rect(0, bottom_top, page.width, screen_height - bottom_top, 0xff);
     page.fill_rect(0, bottom_top, page.width, 4, 0x00);

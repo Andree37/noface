@@ -39,6 +39,9 @@ const sess = @import("reader/session.zig");
 const hl = @import("reader/highlight.zig");
 const note_view = @import("reader/note.zig");
 const controls = @import("reader/controls.zig");
+const run_mode = @import("reader/run.zig");
+const running_model = @import("../model/running.zig");
+const card_screen = @import("card.zig");
 
 pub const save_every = 10;
 
@@ -87,12 +90,13 @@ pub const View = union(enum) {
 /// Wi-Fi may go off, and the Back button can be tapped. On the page a press may become
 /// a hold, so taps wait for the finger to lift; controls that sit where a thumb rests
 /// turn the thumb filter off; a highlight's handles can reach the screen's edges.
+/// While running, the page takes a touch anywhere: no thumb rests on a treadmill.
 /// How each view takes touches.
 // Assertions: a table, which the switch keeps complete.
-fn touches_for(view: View) input_mod.Input.Modes {
+fn touches_for(view: View, running: bool) input_mod.Input.Modes {
     const modes: input_mod.Input.Modes = switch (view) {
         // Taps on the lift, so a press can become a hold; a resting thumb is ignored
-        .page => .{ .grips = true, .deferred = true, .edge_zones = true },
+        .page => .{ .grips = !running, .deferred = true, .edge_zones = true },
         .toolbar => input_mod.Input.Modes.sheet,
         // The handles can sit at the screen edges
         .highlight => .{ .grips = true, .deferred = false, .edge_zones = false },
@@ -458,6 +462,10 @@ pub const Reader = struct {
     pending: controls.Pending = .none, // The scrubber, an Aa slider, or a card from Aa
     selecting: hl.Selecting = .{}, // Words being selected, or a highlight's end dragged
     picture: picture_view.Viewer = undefined, // A picture held, shown whole
+    /// Running mode, while it's on: the page's timer (reader/run.zig). On exactly while
+    /// the App lays pages out as running's.
+    run: ?run_mode.Run = null,
+    pause_note: [48]u8 = undefined, // The pause card's line: how long the run has been
 
     /// The screens a book opens over itself.
     const Over = union(enum) {
@@ -466,6 +474,7 @@ pub const Reader = struct {
         menu: screen.Child(more.More),
         searching: screen.Child(search.Search),
         going: screen.Child(goto.GoTo),
+        pause: screen.Child(card_screen.Card), // Running's card: resume, text, or stop
         define: screen.Child(define.Define),
         panel: screen.Child(panel.Panel),
         controls,
@@ -503,11 +512,16 @@ pub const Reader = struct {
     /// The input modes for the view on screen, and how often to tick: often while a
     /// first open is still laid out in idle moments, else for the clock.
     pub fn setting(r: *const Reader) input_mod.Input.Scope {
-        const tick_us: u64 = if (r.s.layout_pending()) layout_tick_us else clock_check_us;
+        var tick_us: u64 = clock_check_us;
+        // Running's bar fills, and its page turns, on ticks
+        if (r.run != null and r.reading()) tick_us = run_mode.bar_step_us;
+        if (r.s.layout_pending()) tick_us = layout_tick_us;
         // The Back button counts, where a resting thumb otherwise wouldn't
         const exempt = if (r.reading()) r.s.back_zone() else null;
         assert(tick_us > 0);
-        return .{ .modes = touches_for(r.view), .tick_us = tick_us, .grip_exempt = exempt };
+        assert(r.a.running == (r.run != null));
+        const modes = touches_for(r.view, r.run != null);
+        return .{ .modes = modes, .tick_us = tick_us, .grip_exempt = exempt };
     }
 
     pub fn on_tap(r: *Reader, t: screen.Tap) !screen.Step(Outcome) {
@@ -572,6 +586,7 @@ pub const Reader = struct {
             },
             .searching => |c| try r.paged(c.ended()),
             .going => |c| try r.paged(c.ended()),
+            .pause => |c| try r.paused(c.ended()),
         }
         return r.after();
     }
@@ -689,6 +704,8 @@ pub const Reader = struct {
     /// The book closes: its place saved, Wi-Fi back, and its memory let go of.
     fn finish(r: *Reader, outcome: Outcome) screen.Step(Outcome) {
         assert(r.data.len > 0); // Its file mapped until `release` lets go of it
+        // Running ends with the book: the reader's own settings back for what's next
+        if (r.run != null) r.leave_running();
         if (r.reading_started) {
             const percent: ?u32 = switch (outcome) {
                 .library, .quit => r.s.percent(),
@@ -819,6 +836,8 @@ pub const Reader = struct {
     /// The lock screen over the book, the place saved first.
     fn on_lock(r: *Reader) screen.Step(Outcome) {
         r.s.pause_clock(); // Asleep isn't reading
+        // Running's page starts over once it's unlocked
+        if (r.run) |*run| run.page_started_us = null;
         r.save(); // A lock is a natural stop, and anything after it may end noface
         assert(r.since_save == 0);
         r.open_child(.{ .lock = .{ .screen = lock.make(r.a, r.entry, .{}) } });
@@ -830,6 +849,8 @@ pub const Reader = struct {
         const a = r.a;
         if (r.s.layout_pending()) { // A first open laid out a little more
             if (try r.s.layout_step()) try r.show_page_count();
+            // Running goes on meanwhile: its pages are laid out ahead as it turns
+            if (r.run != null and r.reading()) try r.tick_running();
             return;
         }
         const minute = unix_time() / 60;
@@ -839,6 +860,7 @@ pub const Reader = struct {
         }
         assert(r.battery_minute == minute);
         if (!r.reading()) return; // The rest only while the page alone is up
+        if (r.run != null) try r.tick_running();
         r.pause_wifi();
         if (unix_time() / 60 != a.clock_minute) try a.update_clock();
     }
@@ -867,6 +889,22 @@ pub const Reader = struct {
     fn on_page(r: *Reader, action: input_mod.Action) !?Outcome {
         r.invariants();
         assert(r.view == .page);
+        // Running: a press held long, a swipe, a pull, is a hand mid-stride, not a gesture
+        if (r.run != null) {
+            switch (action) {
+                .tap => |t| try r.tap_running(t.x, t.y, t.us),
+                .hold => |h| try r.tap_running(h.x, h.y, now_us()),
+                .swipe => |swipe| {
+                    const x: i32 = if (swipe.direction > 0) @intCast(r.a.screen.width - 1) else 0;
+                    try r.tap_running(x, @intCast(r.a.screen.height / 2), swipe.us);
+                },
+                .pull => {},
+                .drag, .drag_end, .tick, .charger, .lock, .unlock, .power, .computer, .stop => {
+                    unreachable; // `on_touch` brings touches alone
+                },
+            }
+            return null;
+        }
         switch (action) {
             .tap => |t| try r.tap_page(t.x, t.y, t.us),
             .hold => |h| try r.hold_page(h.x, h.y),
@@ -981,6 +1019,155 @@ pub const Reader = struct {
         assert(r.since_save < save_every);
     }
 
+    // Running mode (reader/run.zig)
+
+    /// Running on: its settings lay the book out, the Kindle stays awake, and the page
+    /// turns on its own from the next tick.
+    fn start_running(r: *Reader) !void {
+        assert(r.run == null);
+        const a = r.a;
+        assert(!a.running); // The App runs exactly while the reader does
+        a.set_running(true);
+        r.run = .{ .started_us = now_us() };
+        std.debug.print("running: on, {d:.0} words a minute\n", .{a.running_pace.?});
+        lipc.hold_awake(true);
+        try r.to_running_page();
+        assert(r.reading()); // The page alone, its timer starting on the next tick
+    }
+
+    /// Running off: the reader's own settings back, at the same place.
+    fn stop_running(r: *Reader) !void {
+        assert(r.run != null);
+        r.leave_running();
+        assert(!r.a.running);
+        try r.to_running_page();
+        assert(r.reading());
+    }
+
+    /// The page alone, laid out again for the settings just swapped in.
+    fn to_running_page(r: *Reader) !void {
+        assert(r.a.running == (r.run != null));
+        try sess.relayout(r.a, r.s);
+        // At the same place: relayout keeps to the reader's anchor
+        assert(r.s.current < r.s.pages.len);
+        r.view = .page; // Before the input's modes, which follow the view
+        r.a.input.apply(r.setting(), false);
+        try r.to_page(r.s.current);
+    }
+
+    /// Running's state let go of: the pace saved, the Kindle free to sleep, and the
+    /// reader's own settings in use again, applied, with nothing laid out yet.
+    fn leave_running(r: *Reader) void {
+        const a = r.a;
+        assert(a.running);
+        r.run = null;
+        std.debug.print("running: off\n", .{});
+        lipc.hold_awake(false);
+        app.save_speed(a);
+        a.set_running(false);
+        a.save_settings();
+        a.apply_settings() catch |err| {
+            std.debug.print("settings failed: {s}\n", .{@errorName(err)});
+        };
+        assert(!a.running);
+    }
+
+    /// The page's timer: the bar filled further, or the next page.
+    fn tick_running(r: *Reader) !void {
+        assert(r.reading());
+        assert(r.a.running);
+        const run = &r.run.?;
+        switch (try run.tick(r.a, r.s, now_us())) {
+            .wait => {},
+            .turn => try r.turn_running(),
+        }
+    }
+
+    /// The next page, its timer started; at the book's end, held there.
+    fn turn_running(r: *Reader) !void {
+        assert(r.reading());
+        const run = &r.run.?;
+        const before = r.s.current;
+        try r.turn_by(1, null);
+        assert(r.s.current >= before); // Forward, or at the end
+        if (r.s.current == before) {
+            run.holding = true;
+            return;
+        }
+        try run.begin_page(r.a, r.s, now_us());
+    }
+
+    /// A tap while running, wherever it lands: the top band pauses, the left third goes
+    /// back a page and holds there, and the rest turns on now. Turning early says the
+    /// pace is slow; going back, that it's fast.
+    fn tap_running(r: *Reader, x: i32, y: i32, us: u64) !void {
+        assert(r.reading());
+        const a = r.a;
+        assert(a.running);
+        const run = &r.run.?;
+        if (!run.takes_touch(now_us())) return;
+        const zone = running_model.zone(x, y, a.screen.width, run_mode.pause_band_px);
+        std.debug.print("running: tap {s}\n", .{@tagName(zone)});
+        switch (zone) {
+            .pause => return r.pause_running(),
+            .next => {
+                // Read on before the page was due; not from one held, already read
+                if (!run.holding and run.page_started_us != null) {
+                    a.running_pace = running_model.faster(a.running_pace.?);
+                }
+                run.holding = false;
+                const before = r.s.current;
+                try r.turn_by(1, us);
+                run.holding = r.s.current == before; // The book's end
+                try run.begin_page(a, r.s, now_us());
+            },
+            .back => {
+                if (!run.holding) a.running_pace = running_model.slower(a.running_pace.?);
+                try r.turn_by(-1, us);
+                run.holding = true;
+                run.page_started_us = null;
+            },
+        }
+    }
+
+    /// The pause card over the page: the page's timer stops, and the Kindle may sleep.
+    fn pause_running(r: *Reader) !void {
+        assert(r.reading());
+        const run = &r.run.?;
+        run.page_started_us = null;
+        lipc.hold_awake(false);
+        const minutes = run.minutes(now_us());
+        const note = std.fmt.bufPrint(&r.pause_note, "Running for {d} min", .{minutes}) catch "";
+        const background = try r.s.ensure(r.s.current, r.s.current);
+        assert(background.ptr != r.a.screen.pixels.ptr); // A page's own, put back after
+        const rows = &run_mode.pause_rows;
+        const c = card_screen.over(r.a, background, "Paused", note, rows, null);
+        r.open_child(.{ .pause = .{ .screen = c } });
+    }
+
+    /// The pause card closed: running on, the text settings open, or running off.
+    fn paused(r: *Reader, ending: screen.Ending(u32)) !void {
+        assert(r.view == .page);
+        assert(r.run != null); // Only running opens the card
+        const background = try r.s.ensure(r.s.current, r.s.current);
+        try card_screen.closed(r.a, background);
+        const choice: run_mode.Paused = switch (ending) {
+            .done => |row| @fromBackingInt(@intCast(row)),
+            .closed, .interrupted => .resume_running,
+        };
+        std.debug.print("running: {s}\n", .{@tagName(choice)});
+        switch (choice) {
+            .resume_running => lipc.hold_awake(true),
+            .text_settings => {
+                lipc.hold_awake(true);
+                r.view = .{ .toolbar = .{ .sheet_open = true } };
+                r.a.input.apply(r.setting(), false);
+                try r.draw_toolbar(false);
+            },
+            .stop => try r.stop_running(),
+        }
+    }
+
     // The toolbar, and its Aa sheet
 
     /// Drawn with the last status at once, then again if it has changed since.
@@ -1050,8 +1237,11 @@ pub const Reader = struct {
             .scrub => r.open_over(.controls, try controls.drag_scrub(&r.pending, a, s, t.x)),
             .sheet => {
                 const title = r.entry.title;
-                const f = try controls.tap_sheet(&r.pending, a, s, title, t.x, t.y);
-                if (f) |opened| r.open_over(.controls, opened);
+                switch (try controls.tap_sheet(&r.pending, a, s, title, t.x, t.y)) {
+                    .done => {},
+                    .opened => |opened| r.open_over(.controls, opened),
+                    .running => if (r.run == null) try r.start_running() else try r.stop_running(),
+                }
             },
         }
         return null;

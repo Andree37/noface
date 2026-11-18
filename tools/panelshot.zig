@@ -475,6 +475,7 @@ fn render_sample_toolbar(shot: *const Shot, tab: ?core.aa.Tab) !void {
         shot.quick,
         tab,
         .{},
+        false,
         font_sheet,
     );
 }

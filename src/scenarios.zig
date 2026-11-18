@@ -43,6 +43,8 @@ const linux = @import("sys/calls.zig");
 const book_model = @import("model/book.zig");
 const goto_ui = @import("ui/goto.zig");
 const selection = @import("ui/selection.zig");
+const run_mode = @import("screens/reader/run.zig");
+const running_model = @import("model/running.zig");
 
 const go_regular = @embedFile("testdata/fonts/Go-Regular.ttf");
 const go_bold = @embedFile("testdata/fonts/Go-Bold.ttf");
@@ -112,6 +114,16 @@ const top = tap(636, 60);
 const page_middle = tap(636, 1000);
 /// A hold on a word of the first page.
 const a_word = hold(600, 700);
+/// Running mode on, from the page: the toolbar, its Aa sheet, the Themes tab, and the
+/// Running button under its tiles. Then, while running, a tap in the pause band and the
+/// pause card's rows.
+const text_settings_button = tap(696, toolbar_button_y);
+const themes_tab = tap(150, 274);
+const running_button = tap(636, 790);
+const start_running = [_]Step{ top, text_settings_button, themes_tab, running_button };
+const pause_tap = tap(636, 150);
+const pause_resume = card_row(3, 0);
+const pause_stop = card_row(3, 2);
 
 comptime {
     // The pretend screen is the one the interface is laid out for
@@ -140,6 +152,15 @@ comptime {
     assert(goto_ui.hit(none.x, none.y, 0, 2).row == 1);
     const back_to_library = list_back_to_library.act.tap;
     assert(goto_ui.hit(back_to_library.x, back_to_library.y, 0, 2) == .close);
+    // Aa's Themes tab, and the Running button on it
+    assert(toolbar.hit(text_settings_button.act.tap.x, toolbar_button_y, null) == .text);
+    const tab = themes_tab.act.tap;
+    assert(std.meta.eql(aa.hit(.themes, tab.x, tab.y), aa.Hit{ .tab = .themes }));
+    const run = running_button.act.tap;
+    assert(aa.hit(.themes, run.x, run.y) == .running);
+    // While running, taps in the top band pause, as `forward` and `back` turn
+    assert(pause_tap.act.tap.y < run_mode.pause_band_px);
+    assert(forward.act.tap.y >= run_mode.pause_band_px);
 }
 
 /// What a run left behind, for the checks.
@@ -165,6 +186,11 @@ const Outcome = struct {
     notes: u64, // A digest of the book's notes file, 0 when it has none
     unreadable_kept: bool, // Every file made unreadable is still there, unread and unwritten
     shown: [3]?Shown, // As `Kindle.pages_into` asks: the pages buffered at the end
+    running: bool, // Still in running mode at the end
+    running_pace: ?f64, // Running's pace, once it has one
+    speed_pages: u32, // Pages the reader's speed in the hand has counted
+    settings: settings_model.Settings, // In use at the end
+    saved_settings: app.Profiles, // As the settings file has them
 };
 
 /// A page drawn, and its words where they were drawn.
@@ -646,6 +672,9 @@ fn play_on_start(
     a.pages_budget.peak = 0;
     a.pages_budget.limit = kindle.pages_bytes;
     a.settings = .{ .bold_starts = kindle.bold_starts };
+    a.held_layout = settings_model.running_default(a.settings);
+    a.running = false;
+    a.running_pace = null;
     a.speed = .{};
     a.journal = .{};
     // Every typeface the settings could pick is the test font: no Kindle fonts needed.
@@ -757,6 +786,11 @@ fn play_on_outcome(
         .unreadable_kept = try unreadable_kept(ran.alloc, kindle, ran.dir),
         .shown = if (kindle.pages_into) |into| try pages_shown(into, a) else @splat(null),
         .updates = a.screen.updates,
+        .running = a.running,
+        .running_pace = a.running_pace,
+        .speed_pages = a.speed.pages,
+        .settings = a.settings,
+        .saved_settings = app.load_settings(a.settings_path),
         .airplane_asked_on = ran.fake.was_set(wifi_key ++ " 0"),
         .airplane_at_end = std.mem.eql(u8, ran.fake.get(wifi_key), "0"),
         .wifi_note_left = file.read_small(wifi_saver.note_path(), &note_buf).len > 0,
@@ -1387,6 +1421,84 @@ const scenarios = [_]Scenario{
                 try expect(kept.highlights == 1, "the word wasn't highlighted");
                 try expect(dragged.highlights == 1, "the drag made another highlight");
                 try expect(dragged.notes != kept.notes, "the handle's drag didn't move the end");
+            }
+        }.run,
+    },
+    .{
+        .name = "running turns pages on its own, and stopping brings the reader's own " ++
+            "settings back, at the place it reached",
+        .run = struct {
+            fn run() !void {
+                const start = try play(&.{});
+                // A few minutes on the treadmill, then stopped from the pause card
+                const steps = start_running ++ [_]Step{ wait(240_000), pause_tap, pause_stop };
+                const ran = try play(&steps);
+                try expect(!same_place(start.saved, ran.saved), "no page turned on its own");
+                try expect(!ran.running, "still running after Stop");
+                const own: settings_model.Settings = .{};
+                const back_as_were = std.meta.eql(ran.settings, own);
+                try expect(back_as_were, "the reader's settings came back changed");
+                const saved_as_were = std.meta.eql(ran.saved_settings.own, own);
+                try expect(saved_as_were, "the reader's settings were saved changed");
+                const runs_own = settings_model.running_default(own);
+                const running_kept = std.meta.eql(ran.saved_settings.running, runs_own);
+                try expect(running_kept, "running's settings weren't kept");
+                // Pages turned at the running pace say nothing of the speed in the hand
+                try expect(ran.speed_pages == 0, "running taught the reader's speed");
+                try expect(ran.running_pace != null, "running had no pace");
+                // Leaving the book while running ends it too, the reader's own settings saved
+                const left = try play(&(start_running ++ [_]Step{wait(60_000)}));
+                try expect(!left.running, "running outlasted the book");
+                const left_own = std.meta.eql(left.saved_settings.own, own);
+                try expect(left_own, "leaving saved running's settings as the reader's");
+            }
+        }.run,
+    },
+    .{
+        .name = "while running, a tap turns at once and quickens the pace, going back " ++
+            "slows it, and a second touch right after the first is let go",
+        .run = struct {
+            fn run() !void {
+                const first = running_model.first_pace(.{});
+                const turned = start_running ++ [_]Step{ wait(2_000), forward };
+                const on = try play(&turned);
+                try expect(on.running_pace.? > first, "turning early didn't quicken the pace");
+                const went_back = try play(&(turned ++ [_]Step{ wait(1_000), back }));
+                const slowed = went_back.running_pace.? < on.running_pace.?;
+                try expect(slowed, "going back didn't slow it");
+                // Two turns a second apart, and two a moment apart, of which one counts
+                const two = try play(&(turned ++ [_]Step{ wait(1_000), forward }));
+                const bumped = try play(&(turned ++ [_]Step{forward}));
+                try expect(same_place(bumped.saved, on.saved), "a bump right after a tap turned");
+                const second = !same_place(two.saved, on.saved);
+                try expect(second, "a second tap a second later didn't turn");
+            }
+        }.run,
+    },
+    .{
+        .name = "while running, holding a word neither looks it up nor highlights it",
+        .run = struct {
+            fn run() !void {
+                const steps = start_running ++ [_]Step{ wait(2_000), a_word, lift };
+                const held = try play_on(.{ .dictionary = true }, &steps);
+                try expect(!held.looked_up, "a hold looked a word up");
+                try expect(held.highlights == 0, "a hold highlighted");
+            }
+        }.run,
+    },
+    .{
+        .name = "the pause card stops the page's timer, and Resume carries on",
+        .run = struct {
+            fn run() !void {
+                // Paused for long enough to have turned many pages: none turn
+                const paused = [_]Step{ wait(1_000), pause_tap, wait(300_000) };
+                const held = try play(&(start_running ++ paused));
+                const still = try play(&(start_running ++ [_]Step{wait(1_000)}));
+                try expect(same_place(held.saved, still.saved), "a page turned while paused");
+                const resumed = try play(&(start_running ++ [_]Step{
+                    wait(1_000), pause_tap, pause_resume, wait(240_000),
+                }));
+                try expect(!same_place(resumed.saved, still.saved), "Resume didn't carry on");
             }
         }.run,
     },

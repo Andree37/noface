@@ -104,6 +104,9 @@ pub const Settings = struct {
     /// Open noface when the Kindle starts: the launcher reads it (src/kindle/boot.zig).
     autostart: bool = false,
     bold_starts: bool = false, // The first half of each word's letters in bold
+    /// Words broken at their syllables to fill a line. Running mode turns it off: a
+    /// word split across lines is hard to follow as the page bounces.
+    hyphenate: bool = true,
     /// Ask to download a missing dictionary; "Not now" stops it.
     offer_dictionary: bool = true,
     /// The reader's own picture when locked, instead of the book's cover.
@@ -154,6 +157,7 @@ const saved = [_]Saved{
     .{ .name = "autostart", .field = "autostart" },
     .{ .name = "lock-picture", .field = "lock_picture" },
     .{ .name = "bold-starts", .field = "bold_starts" },
+    .{ .name = "hyphenate", .field = "hyphenate" },
     .{ .name = "offer-dictionary", .field = "offer_dictionary" },
 };
 
@@ -186,14 +190,76 @@ fn steps_of(comptime field: []const u8) u32 {
 
 pub fn parse(content: []const u8) Settings {
     var s = Settings{};
+    read_lines(content, "", false, &s);
+    // Every value read is checked, so all are steps on offer (see `check_steps`).
+    assert(s.size < sizes.len);
+    assert(s.spacing < spacings.len);
+    assert(s.margin < margins.len);
+    assert(s.font.len > 0);
+    return s;
+}
+
+/// Running mode's own settings (screens/reader/run.zig): the ones that lay the page
+/// out, saved beside the others as "running-size 4" and so on. Running takes these
+/// in place of the reader's own, which are left as they were for when it stops.
+const running_prefix = "running-";
+
+/// Running's settings before the reader has changed any: the reader's own, with text
+/// big and bold enough to read from a treadmill's console as it bounces, wide line
+/// spacing so the eye keeps its line, and no justification, whose uneven gaps lose it.
+pub fn running_default(own: Settings) Settings {
+    var running = own;
+    running.size = 4;
+    running.spacing = 3;
+    running.margin = 1;
+    running.bold = true;
+    running.left_align = true;
+    running.hyphenate = false;
+    assert(running.size < sizes.len);
+    assert(running.spacing == spacings.len - 1); // The widest
+    return running;
+}
+
+/// Running's settings from the settings file, over `running_default(own)`. Only the
+/// settings that lay the page out are running's own; the rest are `own`'s.
+pub fn parse_running(content: []const u8, own: Settings) Settings {
+    var running = running_default(own);
+    read_lines(content, running_prefix, true, &running);
+    assert(running.size < sizes.len);
+    assert(running.font.len > 0);
+    return running;
+}
+
+/// Swaps the settings that lay the page out between `a` and `b`, the rest staying:
+/// running mode taking its own, and giving the reader's back.
+pub fn swap_layout(a: *Settings, b: *Settings) void {
+    inline for (@typeInfo(Settings).@"struct".field_names) |field| {
+        if (comptime moves_breaks(field)) {
+            std.mem.swap(@TypeOf(@field(a.*, field)), &@field(a.*, field), &@field(b.*, field));
+        }
+    }
+}
+
+/// Reads "name value" lines whose name is `prefix` and a saved setting's, into `s`:
+/// only the settings that lay the page out when `layout_only`.
+fn read_lines(
+    content: []const u8,
+    prefix: []const u8,
+    comptime layout_only: bool,
+    s: *Settings,
+) void {
     var lines = std.mem.tokenizeScalar(u8, content, '\n');
     while (lines.next()) |line| {
         var words = std.mem.tokenizeScalar(u8, line, ' ');
-        const name = words.next() orelse continue;
+        const prefixed = words.next() orelse continue;
         const value = words.next() orelse continue;
+        if (!std.mem.startsWith(u8, prefixed, prefix)) continue;
+        const name = prefixed[prefix.len..];
         inline for (saved) |f| {
-            if (std.mem.eql(u8, name, f.name)) {
-                const now = &@field(s, f.field);
+            if (layout_only and comptime !moves_breaks(f.field)) {
+                // Not running's own: left as the reader's
+            } else if (std.mem.eql(u8, name, f.name)) {
+                const now = &@field(s.*, f.field);
                 if (comptime std.mem.eql(u8, f.field, "font")) {
                     // A name can have spaces ("Open Sans"): the rest of the line
                     const rest = std.mem.trim(u8, line[value.ptr - line.ptr ..], " ");
@@ -206,28 +272,44 @@ pub fn parse(content: []const u8) Settings {
             }
         }
     }
-    // Every value read is checked, so all are steps on offer (see `check_steps`).
-    assert(s.size < sizes.len);
-    assert(s.spacing < spacings.len);
-    assert(s.margin < margins.len);
-    assert(s.font.len > 0);
-    return s;
 }
 
 pub fn format(buf: []u8, s: Settings) []const u8 {
     assert(s.font.len > 0);
     var w: std.Io.Writer = .fixed(buf);
+    write_lines(&w, "", false, s) catch return "";
+    return w.buffered();
+}
+
+/// The reader's own settings, then running's (`parse_running`).
+pub fn format_with_running(buf: []u8, own: Settings, running: Settings) []const u8 {
+    assert(own.font.len > 0);
+    assert(running.font.len > 0);
+    var w: std.Io.Writer = .fixed(buf);
+    write_lines(&w, "", false, own) catch return "";
+    write_lines(&w, running_prefix, true, running) catch return "";
+    return w.buffered();
+}
+
+fn write_lines(
+    w: *std.Io.Writer,
+    comptime prefix: []const u8,
+    comptime layout_only: bool,
+    s: Settings,
+) std.Io.Writer.Error!void {
     inline for (saved) |f| {
         const value = @field(s, f.field);
-        if (comptime std.mem.eql(u8, f.field, "font")) {
-            w.print(f.name ++ " {s}\n", .{value.name()}) catch return "";
+        const name = prefix ++ f.name;
+        if (layout_only and comptime !moves_breaks(f.field)) {
+            // Not running's own: saved as the reader's
+        } else if (comptime std.mem.eql(u8, f.field, "font")) {
+            try w.print(name ++ " {s}\n", .{value.name()});
         } else switch (@TypeOf(value)) {
-            bool => w.print(f.name ++ " {s}\n", .{on_off(value != f.inverted)}) catch return "",
-            u32 => w.print(f.name ++ " {d}\n", .{value}) catch return "",
+            bool => try w.print(name ++ " {s}\n", .{on_off(value != f.inverted)}),
+            u32 => try w.print(name ++ " {d}\n", .{value}),
             else => @compileError("settings: how is " ++ f.field ++ " written"),
         }
     }
-    return w.buffered();
 }
 
 fn step(value: []const u8, count: u32, fallback: u32) u32 {
@@ -270,11 +352,39 @@ test "settings survive being saved" {
         .autostart = true,
         .lock_picture = true,
         .bold_starts = true,
+        .hyphenate = false,
         .offer_dictionary = false,
     };
     try std.testing.expectEqual(s, parse(format(&buf, s)));
     try std.testing.expectEqual(Settings{}, parse(format(&buf, .{})));
     try std.testing.expect(std.mem.indexOf(u8, format(&buf, s), "font Baskerville\n") != null);
+}
+
+test "running's settings are saved beside the reader's own, and swap with them" {
+    var buf: [1024]u8 = undefined;
+    const own = Settings{ .size = 1, .font = Family.of("Bookerly").?, .clock = false };
+    var running = running_default(own);
+    running.size = 5;
+    const content = format_with_running(&buf, own, running);
+    // The reader's own read as before, past running's lines
+    try std.testing.expectEqual(own, parse(content));
+    const read = parse_running(content, own);
+    try std.testing.expectEqual(running, read);
+    // A file from before running mode: running's defaults, over the reader's typeface
+    const plain = parse_running(format(&buf, own), own);
+    try std.testing.expectEqual(running_default(own), plain);
+    try std.testing.expectEqualStrings("Bookerly", plain.font.name());
+    // Swapped in, running lays the page out; the clock, not one of those, stays
+    var active = own;
+    var kept = read;
+    kept.clock = true;
+    swap_layout(&active, &kept);
+    try std.testing.expectEqual(@as(u32, 5), active.size);
+    try std.testing.expect(active.bold);
+    try std.testing.expect(!active.clock);
+    try std.testing.expectEqual(own.size, kept.size);
+    swap_layout(&active, &kept);
+    try std.testing.expectEqual(own, active);
 }
 
 test "bad or unknown lines change nothing; a typeface not on offer is kept by name" {

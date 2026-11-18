@@ -8,6 +8,8 @@ const settings = @import("../model/settings.zig");
 const file = @import("../sys/file.zig");
 const process = @import("../sys/process.zig");
 const linux = @import("../sys/calls.zig");
+const os = @import("../sys/os.zig");
+const input = @import("input.zig");
 
 const font_dir = paths.kindle_fonts ++ "/";
 pub const own_dir = paths.own_fonts;
@@ -225,7 +227,11 @@ pub fn find_own(alloc: std.mem.Allocator, usable_font: *const fn ([]const u8) bo
     var own_list: std.ArrayList([4][:0]const u8) = .empty;
     var offered: std.ArrayList([]const u8) = .empty;
     offered.appendSlice(alloc, &settings.builtin_families) catch return;
+    // Each family's trials take up to seconds, before the loop that beats first turns: a
+    // folder of many keeps the watchdog told noface is alive, as a library build does
+    var beat_us = os.now_us();
     for (found) |family| {
+        input.beat_when_due(paths.heartbeat, &beat_us);
         if (find_own_offered(offered.items, family.name)) continue;
         // Its name is what the settings keep: one longer than they hold can't be chosen
         if (family.name.len > settings.family_bytes_max) {

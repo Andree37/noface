@@ -2,15 +2,13 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const sys = @import("calls.zig");
+const file = @import("file.zig");
 const os = @import("os.zig");
 const process = @import("process.zig");
 
-/// The longest path walked, as Linux's PATH_MAX: a path past it can't be opened.
-const path_bytes_max: u32 = 4096;
-
 /// How deep below the root folders are walked: as deep as a path can go, each folder
 /// adding at least "/x". A folder past it couldn't be opened, so none is missed.
-const depth_max: u32 = path_bytes_max / 2;
+const depth_max: u32 = file.path_bytes_max / 2;
 
 /// The most folders looked at in one walk (each listing at most `calls.each_entry`'s
 /// names): a Kindle holds far fewer. A walk that reaches it stops there, and says so.
@@ -50,7 +48,7 @@ pub fn walk(
         }
         const name = top.folders.items[top.folder_next];
         top.folder_next += 1;
-        var path_buffer: [path_bytes_max]u8 = undefined;
+        var path_buffer: [file.path_bytes_max]u8 = undefined;
         const path = std.fmt.bufPrint(&path_buffer, "{s}/{s}", .{ top.path, name }) catch
             continue; // Longer than Linux opens: it can't hold a book either
         assert(stack.items.len <= depth_max); // Each level adds to a path that fits
@@ -122,7 +120,7 @@ const Frame = struct {
         comptime each: fn (@TypeOf(context), [:0]const u8) void,
     ) !Frame {
         assert(dir.len > 0);
-        assert(dir.len < path_bytes_max);
+        assert(dir.len < file.path_bytes_max);
         var frame = Frame{ .path = try alloc.dupeSentinel(u8, dir, 0) };
         errdefer frame.free(alloc);
         const Listing = struct {
@@ -149,7 +147,7 @@ const Frame = struct {
                     return;
                 }
                 if (!std.ascii.endsWithIgnoreCase(name, l.suffix)) return;
-                var path_buffer: [path_bytes_max]u8 = undefined;
+                var path_buffer: [file.path_bytes_max]u8 = undefined;
                 const format = "{s}/{s}";
                 const path = std.fmt.bufPrintSentinel(&path_buffer, format, .{
                     l.frame.path,
@@ -186,7 +184,7 @@ test "files are found however deep their folders are, past the six levels once w
     const root = try std.fmt.bufPrintSentinel(&root_buffer, "/tmp/noface-dir-test-{d}", .{
         linux.getpid(),
     }, 0);
-    var path_buffer: [path_bytes_max]u8 = undefined;
+    var path_buffer: [file.path_bytes_max]u8 = undefined;
     @memcpy(path_buffer[0..root.len], root);
     var len: u32 = @intCast(root.len);
     path_buffer[len] = 0;

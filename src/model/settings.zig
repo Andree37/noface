@@ -206,12 +206,13 @@ const running_prefix = "running-";
 
 /// Running's settings before the reader has changed any: the reader's own, with text
 /// big and bold enough to read from a treadmill's console as it bounces, wide line
-/// spacing so the eye keeps its line, and no justification, whose uneven gaps lose it.
+/// spacing so the eye keeps its line, wide margins so each line is short and the eye's
+/// jump back to the next one is too, and no justification, whose uneven gaps lose it.
 pub fn running_default(own: Settings) Settings {
     var running = own;
     running.size = 4;
     running.spacing = 3;
-    running.margin = 1;
+    running.margin = 2;
     running.bold = true;
     running.left_align = true;
     running.hyphenate = false;
@@ -277,30 +278,37 @@ fn read_lines(
 pub fn format(buf: []u8, s: Settings) []const u8 {
     assert(s.font.len > 0);
     var w: std.Io.Writer = .fixed(buf);
-    write_lines(&w, "", false, s) catch return "";
+    write_lines(&w, "", false, s, null) catch return "";
     return w.buffered();
 }
 
-/// The reader's own settings, then running's (`parse_running`).
+/// The reader's own settings, then running's (`parse_running`): only where the reader
+/// changed them, so better defaults for running reach those who never did.
 pub fn format_with_running(buf: []u8, own: Settings, running: Settings) []const u8 {
     assert(own.font.len > 0);
     assert(running.font.len > 0);
     var w: std.Io.Writer = .fixed(buf);
-    write_lines(&w, "", false, own) catch return "";
-    write_lines(&w, running_prefix, true, running) catch return "";
+    write_lines(&w, "", false, own, null) catch return "";
+    write_lines(&w, running_prefix, true, running, running_default(own)) catch return "";
     return w.buffered();
 }
 
+/// Writes `s` as "name value" lines, each name after `prefix`: only the settings that
+/// lay the page out when `layout_only`, and only those that differ from `unless`.
 fn write_lines(
     w: *std.Io.Writer,
     comptime prefix: []const u8,
     comptime layout_only: bool,
     s: Settings,
+    unless: ?Settings,
 ) std.Io.Writer.Error!void {
     inline for (saved) |f| {
         const value = @field(s, f.field);
         const name = prefix ++ f.name;
-        if (layout_only and comptime !moves_breaks(f.field)) {
+        const as_default = if (unless) |d| std.meta.eql(value, @field(d, f.field)) else false;
+        if (as_default) {
+            // Read back as the default, so not written
+        } else if (layout_only and comptime !moves_breaks(f.field)) {
             // Not running's own: saved as the reader's
         } else if (comptime std.mem.eql(u8, f.field, "font")) {
             try w.print(name ++ " {s}\n", .{value.name()});
@@ -370,6 +378,9 @@ test "running's settings are saved beside the reader's own, and swap with them" 
     try std.testing.expectEqual(own, parse(content));
     const read = parse_running(content, own);
     try std.testing.expectEqual(running, read);
+    // Only what differs from running's defaults is written
+    try std.testing.expect(std.mem.indexOf(u8, content, "running-size 5\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, content, "running-spacing") == null);
     // A file from before running mode: running's defaults, over the reader's typeface
     const plain = parse_running(format(&buf, own), own);
     try std.testing.expectEqual(running_default(own), plain);

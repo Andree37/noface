@@ -17,6 +17,9 @@ pub const pace_wpm_max = 600;
 /// However few words, a page stays up long enough to look at; however many, it turns.
 pub const page_us_min = 5 * std.time.us_per_s;
 pub const page_us_max = 120 * std.time.us_per_s;
+/// A touch shorter than this is a drop of sweat or a brush, not a finger's tap, which
+/// stays on the glass a tenth of a second or so.
+pub const contact_us_min = 60 * std.time.us_per_ms;
 /// A second touch this soon after one that acted is a bump or a drip, not a choice.
 pub const touch_gap_us = 700 * std.time.us_per_ms;
 

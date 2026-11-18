@@ -1,5 +1,6 @@
 # Running mode on the test book (tools/e2e.zig plays it): turned on from Aa's Themes
-# tab, its dial sweeping, its taps, the pause card, and the dial's tap that stops it.
+# tab, its dial and line arrow, its taps, a drip let go, the pause card, and the
+# dial's tap that stops it.
 # Start from a fresh test folder: noface on its library, the book not opened before.
 
 # Opening the book from the library's hero
@@ -25,9 +26,15 @@ log running: page 1
 still
 shot running
 
-# The dial sweeps round as the page's time goes by
+# The dial sweeps round, and the arrow in the margin moves down the lines, as the
+# page's time goes by
 wait 4000
 shot filling
+
+# A contact too short for a finger, as a drop of sweat makes, turns nothing
+hold 1100 900 30
+log running: too short a touch
+wait 1000
 
 # A tap on the right turns at once; on the left goes back a page and holds it there;
 # on the right again reads on from it

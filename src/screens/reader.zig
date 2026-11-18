@@ -893,7 +893,7 @@ pub const Reader = struct {
         if (r.run != null) {
             switch (action) {
                 .tap => |t| try r.tap_running(t.x, t.y, t.us),
-                .hold => |h| try r.tap_running(h.x, h.y, now_us()),
+                .hold => |h| try r.tap_running(h.x, h.y, null),
                 .swipe => |swipe| {
                     const x: i32 = if (swipe.direction > 0) @intCast(r.a.screen.width - 1) else 0;
                     try r.tap_running(x, @intCast(r.a.screen.height / 2), swipe.us);
@@ -1100,12 +1100,21 @@ pub const Reader = struct {
     /// A tap while running, wherever it lands: the dial stops running, the top band
     /// pauses, the left third goes back a page and holds there, and the rest turns on
     /// now. Turning early says the pace is slow; going back, that it's fast.
-    fn tap_running(r: *Reader, x: i32, y: i32, us: u64) !void {
+    /// `touched_us` is when the finger came down; null for a hold, down long already.
+    fn tap_running(r: *Reader, x: i32, y: i32, touched_us: ?u64) !void {
         assert(r.reading());
         const a = r.a;
         assert(a.running);
         const run = &r.run.?;
-        if (!run.takes_touch(now_us())) return;
+        const now = now_us();
+        // A contact too short for a finger: a drop of sweat, a brush. Let go before it
+        // counts as a touch, so it never holds off the tap that follows
+        if (touched_us) |t| if (now -| t < running_model.contact_us_min) {
+            std.debug.print("running: too short a touch, {d} ms\n", .{(now -| t) / 1000});
+            return;
+        };
+        if (!run.takes_touch(now)) return;
+        const us = touched_us;
         // The dial in the footer stops running, wherever else that tap would land
         if (run.on_dial(x, y)) {
             std.debug.print("running: tap dial\n", .{});

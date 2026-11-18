@@ -23,8 +23,9 @@ const abs_mt_tracking_id = 0x39;
 const touch_major_fingertip = 8;
 /// The first finger's id: far from the panel's own, so the app sees a new finger.
 const tracking_id_first = 9000;
-/// How long a tap's finger stays down.
-pub const tap_ms = 40;
+/// How long a tap's finger stays down: a finger's, longer than running mode takes
+/// for a drop of sweat (model/running.zig).
+pub const tap_ms = 80;
 
 comptime {
     assert(@sizeOf(InputEvent) == 16);

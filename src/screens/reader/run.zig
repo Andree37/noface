@@ -1,7 +1,9 @@
 //! Running mode over an open book: reading on a treadmill. A bouncing head loses its
 //! line on a page, so running shows no page: the book a phrase at a time
 //! (model/phrases.zig), a few words large and bold at one fixed spot, each changing to
-//! the next at the reader's running pace (model/running.zig). Under them, a pause
+//! the next at the reader's running pace (model/running.zig), sliding up as it does,
+//! with the phrase before above it and the one after below, smaller, and a small map
+//! of the page in the corner marking where it is on it. Under them, a pause
 //! button, and a dial filling over the chapter beside the minutes left in it; a tap on
 //! the dial stops running. The reader (screens/reader.zig) routes taps and ticks here
 //! while it's on, and moves its place along as the phrases do.
@@ -16,15 +18,28 @@ const app = @import("../../app.zig");
 const sess = @import("session.zig");
 const Font = @import("../../gfx/font.zig").Font;
 
-/// The phrases' size: about two and a half times a page's, readable as it blurs.
+/// The phrase's size: about two and a half times a page's, readable as it blurs. The
+/// phrases before and after it are half that, not bold: there to place it, not to read.
 const phrase_px = 112;
+const context_px = 56;
 const phrase_line_spacing = 1.3;
-/// Where the phrases sit: their middle a little above the screen's, nearer the eye on
-/// a treadmill's console, between the clock and the footer.
-const phrase_middle_y = 760;
+/// Where the phrase sits: its middle a little above the screen's, nearer the eye on a
+/// treadmill's console; the ones before and after a row above and below.
+const phrase_middle_y = 800;
+const row_gap_px = 300;
 const phrase_margin_px = 70;
 const lines_max = 4; // A phrase is at most two lines, but for one long word broken
-const text_top = 120; // Under the clock
+/// The page map, in the top right corner: the page as the reader would see it, shrunk,
+/// its words as bars and the phrase's thick.
+const map_width_px = 180;
+const map_margin_px = 80;
+const map_top = 40;
+const map_word_px = 2;
+const map_phrase_px = 6;
+const text_top = map_top + map_width_px * 4 / 3 + 30; // Under the map
+/// The slide as a phrase moves on: the new ones drawn this far below their places,
+/// then nearer, then there; quick refreshes for the steps, the text one for the last.
+const slide_offsets = [_]i32{ row_gap_px * 2 / 3, row_gap_px / 3 };
 /// The footer: the pause button on the left, the dial and the minutes left on the right.
 const footer_height_px = 140;
 const footer_baseline_above_bottom_px = 60;
@@ -55,7 +70,8 @@ comptime {
     assert(ring_px + wedge_gap_px < dial_radius_px);
     assert(2 * icon_reach_px >= 100); // A fingertip
     assert(icon_reach_px > pause_radius_px);
-    assert(text_top < phrase_middle_y);
+    assert(text_top < phrase_middle_y - row_gap_px - context_px);
+    assert(map_phrase_px > map_word_px);
     assert(tick_us < phrases.phrase_us_min);
     assert(pause_band_px < phrase_middle_y);
 }
@@ -90,7 +106,7 @@ pub const Run = struct {
     pub fn show_all(
         run: *Run,
         a: *app.App,
-        s: *const sess.Session,
+        s: *sess.Session,
         from: book_model.Pos,
         now: u64,
     ) !void {
@@ -99,8 +115,9 @@ pub const Run = struct {
         const page = a.page(a.screen.pixels);
         page.fill_rect(0, 0, a.screen.width, a.screen.height, 0xff);
         a.stamp_clock();
-        try run.draw_phrase(a, s);
+        try run.draw_phrases(a, s, 0);
         try run.draw_footer(a, s);
+        try draw_map(a, s, run.phrase);
         try a.screen.wait_complete(try a.screen.show(.flash));
         run.start_timer(a, now);
         assert(run.shown_us == now);
@@ -120,7 +137,7 @@ pub const Run = struct {
     }
 
     /// The timer gone on: the next phrase when this one's time is up.
-    pub fn tick(run: *Run, a: *app.App, s: *const sess.Session, now: u64) !Moved {
+    pub fn tick(run: *Run, a: *app.App, s: *sess.Session, now: u64) !Moved {
         const shown = run.shown_us orelse {
             try run.show_all(a, s, s.anchor, now);
             return null;
@@ -134,20 +151,20 @@ pub const Run = struct {
     }
 
     /// The next phrase now, the one on screen kept for going back to.
-    pub fn forward(run: *Run, a: *app.App, s: *const sess.Session, now: u64) !Moved {
+    pub fn forward(run: *Run, a: *app.App, s: *sess.Session, now: u64) !Moved {
         const p = run.phrase orelse return null; // The book's end: nothing after
         run.remember(.{ .para = p.para, .byte = p.start });
         run.stopped_at = null;
-        return try run.move_to(a, s, p.after(), now);
+        return try run.move_to(a, s, p.after(), now, .slide);
     }
 
     /// The phrase before, again, its timer going.
-    pub fn back(run: *Run, a: *app.App, s: *const sess.Session, now: u64) !Moved {
+    pub fn back(run: *Run, a: *app.App, s: *sess.Session, now: u64) !Moved {
         if (run.history_len == 0) return null; // The first since running began
         run.history_len -= 1;
         const before = run.history[run.history_len];
         run.stopped_at = null;
-        return try run.move_to(a, s, before, now);
+        return try run.move_to(a, s, before, now, .at_once);
     }
 
     fn remember(run: *Run, at: book_model.Pos) void {
@@ -163,18 +180,28 @@ pub const Run = struct {
         assert(run.history_len <= history_max);
     }
 
-    /// The phrase at `at`, or the first after it, in place of the one on screen.
+    /// The phrase at `at`, or the first after it, in place of the one on screen:
+    /// sliding up into place, going on, or at once, going back.
     fn move_to(
         run: *Run,
         a: *app.App,
-        s: *const sess.Session,
+        s: *sess.Session,
         at: book_model.Pos,
         now: u64,
+        how: enum { slide, at_once },
     ) !Moved {
         assert(at.para <= s.paragraphs.len); // From a phrase's end, or a phrase kept
         run.phrase = phrases.at(s.paragraphs, at);
-        try run.draw_phrase(a, s);
         const band = a.screen.height - footer_height_px - text_top;
+        switch (how) {
+            .slide => for (slide_offsets) |offset| {
+                try run.draw_phrases(a, s, offset);
+                const step = try a.screen.show_region(0, text_top, a.screen.width, band, .quick);
+                try a.screen.wait_complete(step);
+            },
+            .at_once => {},
+        }
+        try run.draw_phrases(a, s, 0);
         const marker = try a.screen.show_region(0, text_top, a.screen.width, band, .page);
         try a.screen.wait_complete(marker);
         run.start_timer(a, now);
@@ -185,7 +212,7 @@ pub const Run = struct {
 
     /// Stops the phrase where its timer is, the button showing it'll carry on; or
     /// carries on from there.
-    pub fn pause_or_resume(run: *Run, a: *app.App, s: *const sess.Session, now: u64) !void {
+    pub fn pause_or_resume(run: *Run, a: *app.App, s: *sess.Session, now: u64) !void {
         // A tap comes once the screen is shown, its timer started
         const shown = run.shown_us.?;
         if (run.stopped_at) |elapsed| {
@@ -231,46 +258,49 @@ pub const Run = struct {
         return (now -| run.started_us) / std.time.us_per_min;
     }
 
-    /// The phrase on screen, large and bold, its lines centred about `phrase_middle_y`;
-    /// at the book's end, saying so. Drawn into the screen, not shown.
-    fn draw_phrase(run: *const Run, a: *app.App, s: *const sess.Session) !void {
+    /// The phrase on screen, large and bold, centred about `phrase_middle_y`, the one
+    /// before it a row above and the one after a row below, small; all `offset` lower
+    /// than their places, for the slide. At the book's end, saying so. Drawn into the
+    /// screen, not shown.
+    fn draw_phrases(run: *const Run, a: *app.App, s: *sess.Session, offset: i32) !void {
+        assert(offset >= 0);
+        assert(offset <= row_gap_px);
         const page = a.page(a.screen.pixels);
         const band = a.screen.height - footer_height_px - text_top;
         page.fill_rect(0, text_top, a.screen.width, band, 0xff);
-        const font = try a.typefaces.phrase_face(a.settings.family_index(), 1, phrase_px);
-        const centre: f32 = @floatFromInt(a.screen.width / 2);
-        const p = run.phrase orelse {
-            const end_text = "The end";
-            const x = centre - try font.measure(end_text) / 2;
-            return font.draw(page, x, phrase_middle_y + phrase_px / 3, end_text);
-        };
-        assert(p.end <= s.paragraphs[p.para].text.len);
-        const text = s.paragraphs[p.para].text[p.start..p.end];
-        var lines: [lines_max][]const u8 = undefined;
-        const width: f32 = @floatFromInt(a.screen.width - 2 * phrase_margin_px);
-        const count = try wrap(font, text, width, &lines);
-        assert(count > 0); // A phrase has a word at least
-        const line_px: i32 = @intFromFloat(phrase_px * phrase_line_spacing);
-        // The block of lines centred: each line's text's middle sits a third of the
-        // size above its baseline
-        const block = @as(i32, @intCast(count)) * line_px;
-        var baseline = phrase_middle_y - @divTrunc(block, 2) + @divTrunc(line_px, 2) +
-            phrase_px / 3;
-        for (lines[0..count]) |line| {
-            const x = centre - try font.measure(line) / 2;
-            try font.draw(page, x, baseline, line);
-            baseline += line_px;
+        const family = a.settings.family_index();
+        const big = try a.typefaces.phrase_face(family, true, phrase_px);
+        const small = try a.typefaces.phrase_face(family, false, context_px);
+        const middle = phrase_middle_y + offset;
+        if (run.history_len > 0) {
+            if (phrases.at(s.paragraphs, run.history[run.history_len - 1])) |before| {
+                try draw_text(a, small, context_px, phrase_text(s, before), middle - row_gap_px);
+            }
         }
+        const p = run.phrase orelse return draw_text(a, big, phrase_px, "The end", middle);
+        try draw_text(a, big, phrase_px, phrase_text(s, p), middle);
+        if (phrases.at(s.paragraphs, p.after())) |after| {
+            try draw_text(a, small, context_px, phrase_text(s, after), middle + row_gap_px);
+        }
+    }
+
+    /// The page map, marking the phrase on screen on the page now holding it: after
+    /// the reader's place has followed the phrase there.
+    pub fn show_map(run: *const Run, a: *app.App, s: *sess.Session) !void {
+        try draw_map(a, s, run.phrase);
+        const left = a.screen.width - map_margin_px - map_width_px;
+        const marker = try a.screen.show_region(left, map_top, map_width_px, map_height(a), .quick);
+        try a.screen.wait_complete(marker);
     }
 
     /// Whether the footer would show something else now: the dial a step on, or
     /// another minute left.
-    fn footer_changed(run: *const Run, a: *const app.App, s: *const sess.Session) bool {
+    fn footer_changed(run: *const Run, a: *const app.App, s: *sess.Session) bool {
         const now = footer_state(run, a, s);
         return now.step != run.dial_step or now.minutes != run.minutes_left;
     }
 
-    fn show_footer(run: *Run, a: *app.App, s: *const sess.Session) !void {
+    fn show_footer(run: *Run, a: *app.App, s: *sess.Session) !void {
         try run.draw_footer(a, s);
         const top = a.screen.height - footer_height_px;
         const marker = try a.screen.show_region(0, top, a.screen.width, footer_height_px, .quick);
@@ -280,7 +310,7 @@ pub const Run = struct {
     /// The footer: the pause button, two bars while the phrases go on and a triangle
     /// once stopped; and the dial with the minutes left in the chapter beside it.
     /// Drawn into the screen, not shown.
-    fn draw_footer(run: *Run, a: *app.App, s: *const sess.Session) !void {
+    fn draw_footer(run: *Run, a: *app.App, s: *sess.Session) !void {
         const page = a.page(a.screen.pixels);
         const top = a.screen.height - footer_height_px;
         page.fill_rect(0, top, a.screen.width, footer_height_px, 0xff);
@@ -304,10 +334,81 @@ pub const Run = struct {
     }
 };
 
+fn phrase_text(s: *const sess.Session, p: phrases.Phrase) []const u8 {
+    const text = s.paragraphs[p.para].text;
+    assert(p.end <= text.len);
+    return text[p.start..p.end];
+}
+
+/// `text` in `font`, its lines centred across the screen and, as a block, about `middle`.
+fn draw_text(a: *app.App, font: *Font, px: i32, text: []const u8, middle: i32) !void {
+    assert(px > 0);
+    const page = a.page(a.screen.pixels);
+    var lines: [lines_max][]const u8 = undefined;
+    const width: f32 = @floatFromInt(a.screen.width - 2 * phrase_margin_px);
+    const count = try wrap(font, text, width, &lines);
+    assert(count > 0); // A phrase has a word at least
+    const line_px: i32 = @intFromFloat(@as(f32, @floatFromInt(px)) * phrase_line_spacing);
+    // Each line's text's middle sits a third of its size above its baseline
+    const block = @as(i32, @intCast(count)) * line_px;
+    var baseline = middle - @divTrunc(block, 2) + @divTrunc(line_px, 2) + @divTrunc(px, 3);
+    const centre: f32 = @floatFromInt(a.screen.width / 2);
+    for (lines[0..count]) |line| {
+        const x = centre - try font.measure(line) / 2;
+        try font.draw(page, x, baseline, line);
+        baseline += line_px;
+    }
+}
+
+fn map_height(a: *const app.App) u32 {
+    // The page's own shape
+    return map_width_px * a.screen.height / a.screen.width;
+}
+
+/// The page map: the page holding the reader's place, drawn as the reader would see
+/// it, shrunk to the corner, its words thin bars and `phrase`'s thick. Black and white,
+/// for the quick waveform. Drawn into the screen, not shown.
+fn draw_map(a: *app.App, s: *sess.Session, phrase: ?phrases.Phrase) !void {
+    const height = map_height(a);
+    const left = a.screen.width - map_margin_px - map_width_px;
+    const page = a.page(a.screen.pixels);
+    page.fill_rect(left, map_top, map_width_px, height, 0xff);
+    // Its edge
+    page.fill_rect(left, map_top, map_width_px, 2, 0x00);
+    page.fill_rect(left, map_top + height - 2, map_width_px, 2, 0x00);
+    page.fill_rect(left, map_top, 2, height, 0x00);
+    page.fill_rect(left + map_width_px - 2, map_top, 2, height, 0x00);
+    // The page as drawn, for where its words are
+    _ = try s.ensure(s.current, s.current);
+    const slot = a.slot_for(s.current) orelse return;
+    const words = slot.hits.words[0..slot.hits.word_count];
+    const scale = @as(f32, @floatFromInt(map_width_px)) / @as(f32, @floatFromInt(a.screen.width));
+    for (words) |w| {
+        const in_phrase = if (phrase) |p|
+            w.para == p.para and w.start >= p.start and w.end <= p.end
+        else
+            false;
+        const thick: u32 = if (in_phrase) map_phrase_px else map_word_px;
+        const x: u32 = left + shrink(w.x, scale);
+        const y: u32 = map_top + shrink(w.y + @divTrunc(w.h, 2), scale) -| thick / 2;
+        const width: u32 = @max(1, shrink(w.w, scale));
+        // Inside the map's edge
+        if (x + width >= left + map_width_px - 2 or y + thick >= map_top + height - 2) continue;
+        page.fill_rect(x, @max(y, map_top + 2), width, thick, 0x00);
+    }
+}
+
+/// A length on the page, shrunk to the map; nothing for one off the page's top or left.
+fn shrink(length: i32, scale: f32) u32 {
+    assert(scale > 0);
+    assert(scale < 1);
+    return @intFromFloat(@as(f32, @floatFromInt(@max(length, 0))) * scale);
+}
+
 const FooterState = struct { step: u32, minutes: u64 };
 
 /// The dial's step and the minutes left, for the phrase on screen.
-fn footer_state(run: *const Run, a: *const app.App, s: *const sess.Session) FooterState {
+fn footer_state(run: *const Run, a: *const app.App, s: *sess.Session) FooterState {
     const p = run.phrase orelse return .{ .step = dial_steps - 1, .minutes = 0 };
     const progress = s.chapter_progress(.{ .para = p.para, .byte = p.start });
     const step: u32 = @intFromFloat(@min(progress.share * dial_steps, dial_steps - 1));

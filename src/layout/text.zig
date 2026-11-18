@@ -137,8 +137,6 @@ pub const Layout = struct {
     justify: bool = true,
     bold_starts: bool = false, // The first half of each word's letters in bold, to lead the eye
     hyphenator: ?*const hyphen.Hyphenator = null, // The book's language, when known
-    /// Words broken at their syllables to fill a line; off, only at their own dashes.
-    hyphenate: bool = true,
     // A page ends here at the latest, so a page can be made to break exactly where
     // another page is known to start
     stop: ?book_model.Pos = null,
@@ -634,7 +632,7 @@ fn hyphenated(
 ) !?struct { at: u32, hyphen: bool, width: f32 } {
     assert(room > 0);
     var found: [24]hyphen.Break = undefined;
-    const breaks = hyphen.breaks(if (l.hyphenate) l.hyphenator else null, word, &found);
+    const breaks = hyphen.breaks(l.hyphenator, word, &found);
     var k = breaks.len;
     while (k > 0) {
         k -= 1;
@@ -916,34 +914,6 @@ test "a stop at a page's own end draws that page exactly as it falls without one
     } else return error.TestUnexpectedResult;
     try std.testing.expect(mid_paragraph > 0);
     try std.testing.expect(broken_words > 0);
-}
-
-test "with hyphenation off, no word is broken across lines but at its own dashes" {
-    var font = try Font.init(@embedFile("../testdata/fonts/Go-Regular.ttf"), 30, 1.2);
-    var english = try hyphen.Hyphenator.init(std.testing.allocator, .english);
-    defer english.deinit();
-    const paras = [_]Paragraph{.{ .text = test_text }};
-    const out = try std.testing.allocator.create(TestPage);
-    defer std.testing.allocator.destroy(out);
-    // Hyphenated, some line ends inside a word; not, none does
-    for ([_]bool{ true, false }) |hyphenate| {
-        out.* = .{};
-        const l = Layout{
-            .margin_x = 40,
-            .margin_top = 30,
-            .margin_bottom = 30,
-            .indent = 40,
-            .hyphenator = &english,
-            .hyphenate = hyphenate,
-        };
-        try out.draw(&font, &paras, .{}, l);
-        var broken: u32 = 0;
-        for (out.hits.words[0..out.hits.word_count]) |w| {
-            const text = paras[w.para].text;
-            if (w.end < text.len and text[w.end] != ' ' and text[w.end - 1] != '-') broken += 1;
-        }
-        try std.testing.expect((broken > 0) == hyphenate);
-    }
 }
 
 test "a stop inside a page ends it exactly there, the lines above as they were" {

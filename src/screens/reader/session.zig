@@ -653,7 +653,7 @@ pub fn relayout(a: *app.App, s: *Session) !void {
     assert(a.pages_budget.region.?.kind == .bump);
     a.apply_settings() catch |err| {
         std.debug.print("settings failed: {s}\n", .{@errorName(err)});
-        a.reload_settings();
+        a.settings = app.load_settings(a.settings_path);
         return a.apply_settings();
     };
     a.save_settings();

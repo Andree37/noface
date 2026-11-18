@@ -296,7 +296,6 @@ pub fn assemble(p: Parts) !app.App {
     assert(pixels > 0);
     assert(p.files.settings.len > 0); // DataFiles.init ran
     const regions = try reserve_reading();
-    const profiles = app.load_settings(p.files.settings);
     const speeds = app.load_speed(p.files.speed);
     var slots: [3]app.Slot = undefined;
     for (&slots) |*s| s.* = .{ .buf = try p.alloc.alloc(u8, pixels) };
@@ -343,8 +342,7 @@ pub fn assemble(p: Parts) !app.App {
         .speed_path = p.files.speed,
         .journal_path = p.files.journal,
         .battery_path = p.files.battery,
-        .settings = profiles.own,
-        .held_layout = profiles.running,
+        .settings = app.load_settings(p.files.settings),
         .speed = speeds.speed,
         .running_pace = speeds.running_pace,
         .journal = app.load_journal(p.files.journal),

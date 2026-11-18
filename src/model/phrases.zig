@@ -14,7 +14,7 @@ pub const bytes_max = 32;
 /// A phrase's time is its words at the pace, longer after a clause, a sentence or a
 /// paragraph, and between these bounds: e-ink takes a moment to change, and a word
 /// can't be read faster than that.
-pub const phrase_us_min = 700 * std.time.us_per_ms;
+pub const phrase_us_min = std.time.us_per_s;
 pub const phrase_us_max = 6 * std.time.us_per_s;
 
 comptime {

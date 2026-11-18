@@ -192,7 +192,7 @@ const Outcome = struct {
     running_pace: ?f64, // Running's pace, once it has one
     speed_pages: u32, // Pages the reader's speed in the hand has counted
     settings: settings_model.Settings, // In use at the end
-    saved_settings: app.Profiles, // As the settings file has them
+    saved_settings: settings_model.Settings, // As the settings file has them
 };
 
 /// A page drawn, and its words where they were drawn.
@@ -674,7 +674,6 @@ fn play_on_start(
     a.pages_budget.peak = 0;
     a.pages_budget.limit = kindle.pages_bytes;
     a.settings = .{ .bold_starts = kindle.bold_starts };
-    a.held_layout = settings_model.running_default(a.settings);
     a.running = false;
     a.running_pace = null;
     a.speed = .{};
@@ -1440,19 +1439,16 @@ const scenarios = [_]Scenario{
                 const own: settings_model.Settings = .{};
                 const back_as_were = std.meta.eql(ran.settings, own);
                 try expect(back_as_were, "the reader's settings came back changed");
-                const saved_as_were = std.meta.eql(ran.saved_settings.own, own);
+                const saved_as_were = std.meta.eql(ran.saved_settings, own);
                 try expect(saved_as_were, "the reader's settings were saved changed");
-                const runs_own = settings_model.running_default(own);
-                const running_kept = std.meta.eql(ran.saved_settings.running, runs_own);
-                try expect(running_kept, "running's settings weren't kept");
                 // Pages turned at the running pace say nothing of the speed in the hand
                 try expect(ran.speed_pages == 0, "running taught the reader's speed");
                 try expect(ran.running_pace != null, "running had no pace");
                 // Leaving the book while running ends it too, the reader's own settings saved
                 const left = try play(&(start_running ++ [_]Step{wait(60_000)}));
                 try expect(!left.running, "running outlasted the book");
-                const left_own = std.meta.eql(left.saved_settings.own, own);
-                try expect(left_own, "leaving saved running's settings as the reader's");
+                const left_own = std.meta.eql(left.saved_settings, own);
+                try expect(left_own, "leaving running changed the reader's settings");
             }
         }.run,
     },

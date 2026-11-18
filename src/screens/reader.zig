@@ -1022,8 +1022,8 @@ pub const Reader = struct {
 
     // Running mode (reader/run.zig)
 
-    /// Running on: its settings lay the book out, the Kindle stays awake, and the page
-    /// turns on its own from the next tick.
+    /// Running on: the book a phrase at a time from the reader's place, at once, and
+    /// the Kindle kept awake.
     fn start_running(r: *Reader) !void {
         assert(r.run == null);
         const a = r.a;
@@ -1032,32 +1032,23 @@ pub const Reader = struct {
         r.run = .{ .started_us = now_us() };
         std.debug.print("running: on, {d:.0} words a minute\n", .{a.running_pace.?});
         lipc.hold_awake(true);
-        try r.to_running_page();
-        assert(r.reading()); // The page alone, its timer starting on the next tick
+        r.view = .page; // Before the input's modes, which follow the view
+        a.input.apply(r.setting(), false);
+        try r.run.?.show_all(a, r.s, r.s.anchor, now_us());
+        assert(r.reading());
     }
 
-    /// Running off: the reader's own settings back, at the same place.
+    /// Running off: the page holding the last phrase, as the reader left it.
     fn stop_running(r: *Reader) !void {
         assert(r.run != null);
         r.leave_running();
         assert(!r.a.running);
-        try r.to_running_page();
+        r.a.input.apply(r.setting(), false);
+        try r.to_page(r.s.current);
         assert(r.reading());
     }
 
-    /// The page alone, laid out again for the settings just swapped in.
-    fn to_running_page(r: *Reader) !void {
-        assert(r.a.running == (r.run != null));
-        try sess.relayout(r.a, r.s);
-        // At the same place: relayout keeps to the reader's anchor
-        assert(r.s.current < r.s.pages.len);
-        r.view = .page; // Before the input's modes, which follow the view
-        r.a.input.apply(r.setting(), false);
-        try r.to_page(r.s.current);
-    }
-
-    /// Running's state let go of: the pace saved, the Kindle free to sleep, and the
-    /// reader's own settings in use again, applied, with nothing laid out yet.
+    /// Running's state let go of: the pace saved, and the Kindle free to sleep.
     fn leave_running(r: *Reader) void {
         const a = r.a;
         assert(a.running);
@@ -1066,10 +1057,6 @@ pub const Reader = struct {
         lipc.hold_awake(false);
         app.save_speed(a);
         a.set_running(false);
-        a.save_settings();
-        a.apply_settings() catch |err| {
-            std.debug.print("settings failed: {s}\n", .{@errorName(err)});
-        };
         assert(!a.running);
     }
 
@@ -1078,7 +1065,10 @@ pub const Reader = struct {
         assert(r.reading());
         assert(r.a.running);
         const run = &r.run.?;
-        if (try run.tick(r.a, r.s, now_us())) |at| try r.follow_phrase(at);
+        if (try run.tick(r.a, r.s, now_us())) |at| {
+            try r.follow_phrase(at);
+            try run.show_map(r.a, r.s);
+        }
     }
 
     /// The reader's place at the phrase now on screen: the page that holds it becomes
@@ -1152,7 +1142,10 @@ pub const Reader = struct {
         };
         // Going on from the pause button's stop, the Kindle stays awake again
         if (was_stopped and !run.stopped()) lipc.hold_awake(true);
-        if (moved) |at| try r.follow_phrase(at);
+        if (moved) |at| {
+            try r.follow_phrase(at);
+            try run.show_map(a, r.s);
+        }
     }
 
     /// The pause card over the page: the page's timer stops, and the Kindle may sleep.

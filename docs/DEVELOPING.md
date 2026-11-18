@@ -56,7 +56,8 @@ tap and swipe, the toolbar, a bookmark, the quick panel, looking up and highligh
 locking, Home) with time budgets for each, and `tools/e2e/library.e2e` every control
 the library has (paging, the filter, each sort, stats, search typed on its keyboard, a
 book's actions, the quick panel), and `tools/e2e/running.e2e` running mode (turned on
-from Aa's Themes tab, its bar, its taps, the pause card and Stop). All play on `documents` holding
+from Aa's Themes tab, its dial, its taps, the pause card, and the dial's tap that stops
+it). All play on `documents` holding
 `src/testdata/scenario.epub` as `Scenario Book.epub` and 13 copies beside it
 (`Scenario Book 02.epub` to `14`), so the library has two pages. Copy the tool and the
 scripts into the test folder (on `/mnt/us`: a file made executable in `/tmp` can't be

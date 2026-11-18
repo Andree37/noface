@@ -462,14 +462,37 @@ pub const Session = struct {
             const t = std.fmt.bufPrint(&line, "{s} left in chapter", .{minutes}) catch "";
             try a.footer.draw(page, margin, y, t);
         };
-        // Like the Kindle, say so while the speed is still being learned rather than guess.
-        var t: []const u8 = "Learning reading speed";
-        if (left.book) |m| {
-            const minutes = stats.format_minutes(&minutes_buffer, m);
-            t = std.fmt.bufPrint(&line, "{s} left in book", .{minutes}) catch "";
-        }
+        const t = book_left_text(left.book, &minutes_buffer, &line);
         const right: f32 = @as(f32, @floatFromInt(a.screen.width)) - margin;
         try a.footer.draw(page, right - try a.footer.measure(t), y, t);
+    }
+
+    /// The footer's right side: the book's time left, or, like the Kindle, that the
+    /// speed is still being learned rather than a guess.
+    fn book_left_text(book_minutes: ?u64, minutes_buffer: []u8, line: []u8) []const u8 {
+        assert(minutes_buffer.len > 0);
+        const m = book_minutes orelse return "Learning reading speed";
+        const minutes = stats.format_minutes(minutes_buffer, m);
+        return std.fmt.bufPrint(line, "{s} left in book", .{minutes}) catch "";
+    }
+
+    /// Where running's dial goes on page `index` (reader/run.zig): in the footer, its
+    /// right edge `gap` left of the book's time left, or at the margin without it.
+    pub fn footer_right_start(s: *const Session, index: u32, gap: f32) !struct { x: f32, y: i32 } {
+        assert(index < s.pages.len);
+        assert(gap > 0);
+        const a = s.app;
+        const margin: f32 = @floatFromInt(a.layout.margin_x);
+        var x = @as(f32, @floatFromInt(a.screen.width)) - margin;
+        if (a.settings.time_left) {
+            var minutes_buffer: [48]u8 = undefined;
+            var line: [64]u8 = undefined;
+            const t = book_left_text(s.time_left(index).book, &minutes_buffer, &line);
+            x -= try a.footer.measure(t) + gap;
+        }
+        const y: i32 = @intCast(a.screen.height - footer_baseline_above_bottom_px);
+        assert(x > margin);
+        return .{ .x = x, .y = y };
     }
 
     /// Get a rendered page, reusing a cached one when possible.

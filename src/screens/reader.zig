@@ -513,8 +513,8 @@ pub const Reader = struct {
     /// first open is still laid out in idle moments, else for the clock.
     pub fn setting(r: *const Reader) input_mod.Input.Scope {
         var tick_us: u64 = clock_check_us;
-        // Running's bar fills, and its page turns, on ticks
-        if (r.run != null and r.reading()) tick_us = run_mode.bar_step_us;
+        // Running's dial sweeps, and its page turns, on ticks
+        if (r.run != null and r.reading()) tick_us = run_mode.dial_step_us;
         if (r.s.layout_pending()) tick_us = layout_tick_us;
         // The Back button counts, where a resting thumb otherwise wouldn't
         const exempt = if (r.reading()) r.s.back_zone() else null;
@@ -1097,15 +1097,20 @@ pub const Reader = struct {
         try run.begin_page(r.a, r.s, now_us());
     }
 
-    /// A tap while running, wherever it lands: the top band pauses, the left third goes
-    /// back a page and holds there, and the rest turns on now. Turning early says the
-    /// pace is slow; going back, that it's fast.
+    /// A tap while running, wherever it lands: the dial stops running, the top band
+    /// pauses, the left third goes back a page and holds there, and the rest turns on
+    /// now. Turning early says the pace is slow; going back, that it's fast.
     fn tap_running(r: *Reader, x: i32, y: i32, us: u64) !void {
         assert(r.reading());
         const a = r.a;
         assert(a.running);
         const run = &r.run.?;
         if (!run.takes_touch(now_us())) return;
+        // The dial in the footer stops running, wherever else that tap would land
+        if (run.on_dial(x, y)) {
+            std.debug.print("running: tap dial\n", .{});
+            return r.stop_running();
+        }
         const zone = running_model.zone(x, y, a.screen.width, run_mode.pause_band_px);
         std.debug.print("running: tap {s}\n", .{@tagName(zone)});
         switch (zone) {

@@ -1,6 +1,6 @@
 # Running mode on the test book (tools/e2e.zig plays it): turned on from Aa's Themes
-# tab, its bar filling, its taps, the pause card, and Stop. Start from a fresh test
-# folder: noface on its library, the book not opened before.
+# tab, its dial sweeping, its taps, the pause card, and the dial's tap that stops it.
+# Start from a fresh test folder: noface on its library, the book not opened before.
 
 # Opening the book from the library's hero
 tap 200 300
@@ -25,7 +25,7 @@ log running: page 1
 still
 shot running
 
-# The bar fills as the page's time goes by
+# The dial sweeps round as the page's time goes by
 wait 4000
 shot filling
 
@@ -44,7 +44,9 @@ tap 1100 900
 log running: page 2
 still
 
-# The pause card from the top band, Resume, then the card again and Stop
+# The pause card from the top band, and Resume; then a tap on the dial beside the
+# footer's time left, which stops running (the pause card's Stop does too: the
+# scenarios play that)
 wait 1000
 tap 636 150
 log screen: Card opened
@@ -54,11 +56,8 @@ tap 636 1376
 log running: resume_running
 still
 wait 1000
-tap 636 150
-log screen: Card opened
-still
-tap 636 1600
-log running: stop
+tap 939 1625
+log running: tap dial
 log running: off
 still
 shot stopped

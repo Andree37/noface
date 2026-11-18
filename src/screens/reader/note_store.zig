@@ -1,7 +1,8 @@
 //! Where an open book's highlights and bookmarks are kept, chosen once as it opens:
 //! the Kindle's own database for a book Amazon syncs (stock's sync then sends them on),
 //! a file of noface's beside the book's state for one it doesn't (an EPUB copied over
-//! the cable), or nowhere while device tests switch writes off.
+//! the cable), or nowhere while device tests switch writes off. A file that's there but
+//! can't be read switches notes off for that opening, so it's never written over.
 //!
 //! The file has a line per note: "<highlight|bookmark> <id> <start> <end>", with
 //! character positions like Amazon's.
@@ -17,6 +18,8 @@ const file = @import("../../sys/file.zig");
 const os = @import("../../sys/os.zig");
 const files = @import("../../library/files.zig");
 const calls = @import("../../sys/calls.zig");
+/// Lines for noface's log, which the tests keep quiet (main.zig's `std_options`).
+const log = std.log.scoped(.notes);
 
 pub const Note = @import("../../model/highlights.zig").Note;
 
@@ -27,6 +30,10 @@ pub const NoteStore = union(enum) {
     own_file: [:0]const u8,
     /// Nowhere: writes are switched off (annotation_db.dry_run), and nothing is read.
     off,
+    /// The own file is there but couldn't be read (a drive failing a read): the book
+    /// opens without notes, and none is saved or removed, as a file written now would
+    /// lose the notes it holds.
+    unreadable,
 
     /// The store for `entry`, whose state file is at `state_path`.
     pub fn choose(
@@ -44,17 +51,22 @@ pub const NoteStore = union(enum) {
     }
 
     /// The notes of one kind, their ids in `alloc`. `stored` holds the database's answer.
+    /// An own file that can't be read makes the store `.unreadable`, with no notes.
     pub fn read(
-        store: NoteStore,
+        store: *NoteStore,
         alloc: std.mem.Allocator,
         kind: annotations.Kind,
         stored: []u8,
     ) ![]const Note {
         assert(stored.len > 0);
-        const notes = switch (store) {
+        const notes = switch (store.*) {
             .amazon => |entry| try annotation_db.read_notes(alloc, entry.key, kind, stored),
-            .own_file => |path| try read_file(alloc, path, kind),
-            .off => &.{},
+            .own_file => |path| try read_file(alloc, path, kind) orelse unreadable: {
+                log.info("notes can't be read: off till the book opens again", .{});
+                store.* = .unreadable;
+                break :unreadable &.{};
+            },
+            .off, .unreadable => &.{},
         };
         for (notes) |note| assert(note.id.len > 0); // Both readers keep none without one
         return notes;
@@ -78,6 +90,7 @@ pub const NoteStore = union(enum) {
                 .end = end.short,
             }),
             .off => true,
+            .unreadable => false,
         };
     }
 
@@ -89,6 +102,7 @@ pub const NoteStore = union(enum) {
             .amazon => |entry| remove_amazon(entry, kind, id),
             .own_file => |path| rewrite(path, id, null),
             .off => true,
+            .unreadable => false,
         };
     }
 
@@ -96,7 +110,7 @@ pub const NoteStore = union(enum) {
     pub fn sync(store: NoteStore) void {
         switch (store) {
             .amazon => lipc.sync_now(),
-            .own_file, .off => {},
+            .own_file, .off, .unreadable => {},
         }
     }
 };
@@ -139,19 +153,18 @@ fn remove_amazon(entry: *const catalog.Entry, kind: annotations.Kind, id: []cons
 /// A note as the file keeps it.
 const Line = struct { kind: annotations.Kind, start: u32, end: u32 };
 
-/// The file's notes of `kind`. An error when the file is there but can't be read: taken
-/// for none, the book would open without them, and the next note saved could take one's
-/// id and write over it.
+/// The file's notes of `kind`. Null when the file is there but can't be read: taken for
+/// none, the next note saved would write the file over and lose them.
 fn read_file(
     alloc: std.mem.Allocator,
     path: [*:0]const u8,
     kind: annotations.Kind,
-) ![]const Note {
+) !?[]const Note {
     assert(path[0] == '/');
     const data = file.map(path) catch |err| switch (err) {
         // None written yet, or every one removed (which leaves the file empty)
         error.NotFound, error.EmptyFile => return &.{},
-        error.OpenFailed, error.SeekFailed, error.MmapFailed => return err,
+        error.OpenFailed, error.SeekFailed, error.MmapFailed => return null,
     };
     defer file.unmap(data);
     var out: std.ArrayList(Note) = .empty;
@@ -166,7 +179,7 @@ fn read_file(
         try out.append(alloc, .{ .id = try alloc.dupe(u8, id), .start = start, .end = end });
     }
     assert(out.items.len <= data.len); // A note takes a line, and a line some bytes
-    return out.toOwnedSlice(alloc);
+    return try out.toOwnedSlice(alloc);
 }
 
 /// Writes every note but `id`'s, then `line` if any, into "<path>.new" and renames it
@@ -243,7 +256,7 @@ test "notes come back by kind, put replaces by id, and remove keeps the others" 
     defer arena.deinit();
     const alloc = arena.allocator();
     var buffer: [128]u8 = undefined;
-    const store = try test_store(&buffer, "kinds");
+    var store = try test_store(&buffer, "kinds");
     defer files.remove(store.own_file);
     var stored: [16]u8 = undefined;
     // None yet: no file
@@ -266,7 +279,7 @@ test "many notes are kept, however many there are" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     var buffer: [128]u8 = undefined;
-    const store = try test_store(&buffer, "many");
+    var store = try test_store(&buffer, "many");
     defer files.remove(store.own_file);
     var id_buffer: [16]u8 = undefined;
     for (0..2000) |i| {
@@ -279,27 +292,33 @@ test "many notes are kept, however many there are" {
     try std.testing.expectEqual(@as(usize, 2000), notes.len);
 }
 
-test "notes that are there but can't be read are never written over" {
+test "notes that are there but can't be read open as none, and are never written over" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     var buffer: [128]u8 = undefined;
-    const store = try test_store(&buffer, "unreadable");
-    defer files.remove(store.own_file);
+    var store = try test_store(&buffer, "unreadable");
+    const path = store.own_file;
+    defer files.remove(path);
     try std.testing.expect(store.put(.highlight, "h1", point(10), point(20)));
     try std.testing.expect(store.put(.highlight, "h2", point(30), point(40)));
     // A link to itself is there but can't be opened, as on a drive that fails a read
-    files.remove(store.own_file);
-    const linked = calls.symlink(store.own_file, store.own_file);
+    files.remove(path);
+    const linked = calls.symlink(path, path);
     try std.testing.expect(!os.failed(linked));
+    // Asked before the book is read, the file still refuses to be written over
     try std.testing.expect(!store.put(.highlight, "h3", point(50), point(60)));
     try std.testing.expect(!store.remove(.highlight, "h1"));
+    // The book opens without notes, and the store keeps none from then on
     var stored: [16]u8 = undefined;
-    const read = store.read(arena.allocator(), .highlight, &stored);
-    try std.testing.expectError(error.OpenFailed, read);
+    try std.testing.expectEqual(0, (try store.read(arena.allocator(), .highlight, &stored)).len);
+    try std.testing.expect(store == .unreadable);
+    try std.testing.expectEqual(0, (try store.read(arena.allocator(), .bookmark, &stored)).len);
+    try std.testing.expect(!store.put(.bookmark, "b1", point(5), point(5)));
+    try std.testing.expect(!store.remove(.highlight, "h1"));
     // Still the link: nothing was renamed over it
-    try std.testing.expectError(error.OpenFailed, file.map(store.own_file));
+    try std.testing.expectError(error.OpenFailed, file.map(path));
     var fresh_buffer: [160]u8 = undefined;
-    const fresh = try std.fmt.bufPrintSentinel(&fresh_buffer, "{s}.new", .{store.own_file}, 0);
+    const fresh = try std.fmt.bufPrintSentinel(&fresh_buffer, "{s}.new", .{path}, 0);
     try std.testing.expect(!file.exists(fresh));
 }
 
@@ -307,7 +326,7 @@ test "the last note removed leaves an empty file, which takes the next" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     var buffer: [128]u8 = undefined;
-    const store = try test_store(&buffer, "emptied");
+    var store = try test_store(&buffer, "emptied");
     defer files.remove(store.own_file);
     try std.testing.expect(store.put(.bookmark, "b1", point(5), point(5)));
     try std.testing.expect(store.remove(.bookmark, "b1"));
@@ -320,7 +339,7 @@ test "the last note removed leaves an empty file, which takes the next" {
 }
 
 test "a store that's off keeps nothing and reads nothing" {
-    const store: NoteStore = .off;
+    var store: NoteStore = .off;
     try std.testing.expect(store.put(.highlight, "h1", point(1), point(2)));
     var stored: [16]u8 = undefined;
     const notes = try store.read(std.testing.allocator, .highlight, &stored);

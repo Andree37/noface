@@ -36,6 +36,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # What this release is, written for it (docs/releases/<version>.md: a release
+          # without one isn't published), then how to install it, the same each time
+          cat "docs/releases/${GITHUB_REF_NAME#v}.md" docs/RELEASE_NOTES.md > notes.md
           gh release create "$GITHUB_REF_NAME" "zig-out/noface-${GITHUB_REF_NAME#v}.zip" \
             zig-out/SHA256SUMS \
-            --title "noface ${GITHUB_REF_NAME#v}" --notes-file docs/RELEASE_NOTES.md
+            --title "noface ${GITHUB_REF_NAME#v}" --notes-file notes.md

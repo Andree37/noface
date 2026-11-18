@@ -51,6 +51,19 @@ pub fn build(b: *std.Build) void {
     build_package(b, app);
     build_scenarios(b, target);
     build_tests(b);
+    build_clean(b);
+}
+
+/// `zig build clean`: empties the build cache. Zig keeps every version of everything
+/// it has built there and never gives one up, so it grows by gigabytes as the code
+/// changes; all of it is built again as it's next needed.
+fn build_clean(b: *std.Build) void {
+    const remove = b.addSystemCommand(&.{ "rm", "-rf" });
+    // Zig's own idea of where its cache is, so nothing else can be named here
+    remove.addDirectoryArg(.cache_root);
+    remove.has_side_effects = true; // Runs every time it's asked for
+    const clean_step = b.step("clean", "Empty the build cache, which grows with every change");
+    clean_step.dependOn(&remove.step);
 }
 
 /// The app, its launcher, and the picture helper it runs.

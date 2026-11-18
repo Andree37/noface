@@ -19,6 +19,9 @@ Needs [Zig](https://ziglang.org) 0.17.
   ([TIGER_STYLE.md](TIGER_STYLE.md#how-its-kept)).
 - `zig build scenarios`: scripted runs of the real app (see Tests).
 - `zig build tools`: development tools, also for the Kindle.
+- `zig build clean`: empties the build cache (`.zig-cache`). Zig keeps every version
+  it has built and never removes one, so it grows by gigabytes as the code changes;
+  everything is rebuilt as it's next needed.
 - `zig build host-tools`: the tools that run on this computer, in `zig-out/bin`: the
   dictionary builder, the snapshot converter and the packer.
 - `zig build package -Dversion=1.2.3`: the release zip (see Packaging).

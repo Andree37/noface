@@ -53,7 +53,7 @@ fn run(
             geometry,
             paragraphs,
             position,
-            layout,
+            &layout,
             null,
         );
         // A page that fits nothing would repeat forever; layout always places something.

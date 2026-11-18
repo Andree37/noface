@@ -195,7 +195,13 @@ fn is_letter(cp: u21) bool {
 
 /// The bold face for a word's start with bold word starts on, or null: off, or the
 /// word is bold already, or it's the rest of a word broken at the line before.
-fn start_face(l: *const Layout, base: *Font, p: Paragraph, wf: *Font, word_start: u32) !?*Font {
+fn start_face(
+    l: *const Layout,
+    base: *Font,
+    p: *const Paragraph,
+    wf: *Font,
+    word_start: u32,
+) !?*Font {
     assert(word_start < p.text.len);
     assert(p.image == null); // Only text has faces
     if (!l.bold_starts) return null;
@@ -228,7 +234,7 @@ fn draw_word(p: Page, wf: *Font, start: ?*Font, x: f32, y: i32, word: []const u8
 }
 
 /// Bold and italic for a word: its paragraph's, plus any run it starts in.
-fn word_face(l: *const Layout, base: *Font, p: Paragraph, word_start: u32) !*Font {
+fn word_face(l: *const Layout, base: *Font, p: *const Paragraph, word_start: u32) !*Font {
     assert(word_start < p.text.len);
     assert(p.image == null); // Only text has faces
     var bold = p.look.bold;
@@ -284,11 +290,11 @@ pub fn layout_page(
     geometry: Page,
     paras: []const Paragraph,
     start: book_model.Pos,
-    l: Layout,
+    l: *const Layout,
     hits: ?*Hits,
 ) !book_model.Pos {
     if (maybe_page) |p| @memset(p.buf, 0xff);
-    const next = try layout_page_paragraphs(font, maybe_page, geometry, paras, start, &l, hits);
+    const next = try layout_page_paragraphs(font, maybe_page, geometry, paras, start, l, hits);
     // A page never ends before it starts
     assert(next.para >= start.para);
     if (next.para == start.para) assert(next.byte >= start.byte);
@@ -319,7 +325,7 @@ fn layout_page_paragraphs(
         pos.byte = 0;
     }) {
         if (at_stop(l, @intCast(pos.para), @intCast(pos.byte))) return pos;
-        const para = paras[pos.para];
+        const para = &paras[pos.para];
         if (para.note) continue; // Notes open in a panel, not in the text
         if (para.image) |img| {
             const size = image_size(img, line_width, @floatFromInt(bottom - l.margin_top));
@@ -366,7 +372,7 @@ const Lines = struct {
 /// when all of it fit; else the byte the next page starts at.
 fn layout_page_lines(lines: *const Lines, top: *i32) !?u32 {
     const l = lines.l;
-    const para = lines.paras[lines.para_index];
+    const para = &lines.paras[lines.para_index];
     assert(para.image == null);
     assert(!para.note);
     const look = para.look;
@@ -474,7 +480,7 @@ fn fill_line_to_stop(
     plain: bool,
     space: f32,
 ) !Line {
-    const para = lines.paras[lines.para_index];
+    const para = &lines.paras[lines.para_index];
     const line = try fill_line(l, font, para, i, @intCast(para.text.len), avail, plain, space);
     const st = l.stop orelse return line;
     // A stop before this line would have ended the page before it
@@ -529,7 +535,7 @@ const Line = struct {
 fn fill_line(
     l: *const Layout,
     font: *Font,
-    para: Paragraph,
+    para: *const Paragraph,
     i: u32,
     limit: u32,
     avail: f32,
@@ -648,7 +654,7 @@ fn draw_line(
 ) !void {
     assert(para_index < paras.len);
     assert(line.n > 0);
-    const para = paras[para_index];
+    const para = &paras[para_index];
     const pf = place.pf;
     var x = place.left;
     for (0..line.n) |k| {
@@ -780,7 +786,7 @@ pub fn render_page(
 ) !book_model.Pos {
     assert(page.buf.len > 0); // Drawn into, unlike a page only measured
     assert(page.width <= page.stride);
-    return layout_page(font, page, page, paras, start, l, hits);
+    return layout_page(font, page, page, paras, start, &l, hits);
 }
 
 /// Hard black and white, for waveforms that cannot show gray.

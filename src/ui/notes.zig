@@ -56,17 +56,17 @@ pub fn fit(
     if (fixed) |h| assert(is_panel_height(h));
     if (fixed) |h| {
         const shape = geometry(width, h, stride);
-        const next = try text.layout_page(font, null, shape, parts, start, layout, null);
+        const next = try text.layout_page(font, null, shape, parts, start, &layout, null);
         return .{ .height = h, .next = if (next.para >= parts.len) null else next };
     }
     for (heights) |h| {
         const shape = geometry(width, h, stride);
-        const next = try text.layout_page(font, null, shape, parts, start, layout, null);
+        const next = try text.layout_page(font, null, shape, parts, start, &layout, null);
         if (next.para >= parts.len) return .{ .height = h, .next = null };
     }
     const tallest = heights[heights.len - 1];
     const shape = geometry(width, tallest, stride);
-    const next = try text.layout_page(font, null, shape, parts, start, layout, null);
+    const next = try text.layout_page(font, null, shape, parts, start, &layout, null);
     return .{ .height = tallest, .next = next };
 }
 

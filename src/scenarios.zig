@@ -52,6 +52,8 @@ const height = 1696;
 
 /// Where the toolbar's buttons are tapped, down from the top of the screen.
 const toolbar_button_y = 118;
+/// Where the page scrubber is touched, on its bar.
+const scrubber_y = 1610;
 
 /// Row `i` of a card of `rows`.
 fn card_row(rows: u32, i: u32) Step {
@@ -113,6 +115,9 @@ comptime {
     // `top` opens the toolbar; the middle of the page is outside it, and closes it
     assert(top.act.tap.y < toolbar.top_height);
     assert(toolbar_button_y < toolbar.top_height);
+    // The scrubber takes touches along its whole bar
+    assert(toolbar.hit(400, scrubber_y, null) == .scrub);
+    assert(toolbar.hit(1100, scrubber_y, null) == .scrub);
     assert(page_middle.act.tap.y > toolbar.top_height);
     assert(page_middle.act.tap.y < toolbar.bottom_top);
     // A word is held in the page's text, clear of the toolbar's two parts
@@ -1270,6 +1275,18 @@ const scenarios = [_]Scenario{
             }
         }.run,
     },
+    .{ .name = "a scrub cut short by the lock leaves the place where it was", .run = struct {
+        fn run() !void {
+            const along: Step = .{ .act = .{ .drag = .{ .x = 1100, .y = scrubber_y } } };
+            const plain = try play(&.{forward});
+            const lifted = try play(&.{ forward, top, tap(400, scrubber_y), along, lift });
+            try expect(!same_place(plain.saved, lifted.saved), "the scrubber didn't jump");
+            const locked = try play(&.{
+                forward, top, tap(400, scrubber_y), along, lock_it, wait(3_000), wake,
+            });
+            try expect(same_place(plain.saved, locked.saved), "the lock jumped the book");
+        }
+    }.run },
     .{ .name = "the app has the Kindle's memory and no more", .run = struct {
         fn run() !void {
             const alloc = (try app_memory()).allocator();

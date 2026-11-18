@@ -315,13 +315,6 @@ fn play_on(kindle: Kindle, steps: []const Step) !Outcome {
     var harness_arena = std.heap.ArenaAllocator.init(std.heap.smp_allocator);
     defer harness_arena.deinit();
     const harness = harness_arena.allocator();
-    const app_budget = try app_memory();
-    var app_arena = std.heap.ArenaAllocator.init(app_budget.allocator());
-    defer {
-        app_arena.deinit();
-        assert(app_budget.live == 0); // The next scenario's app starts with all of it
-    }
-    const alloc = app_arena.allocator();
 
     var dir_buf: [96]u8 = undefined;
     const dir = try play_on_dir(&dir_buf);
@@ -351,9 +344,12 @@ fn play_on(kindle: Kindle, steps: []const Step) !Outcome {
     defer decoder_memory.stop_using(decoders_budget);
     try setup.use_glyph_cache();
 
-    const kept = try play_on_kept(alloc, dir);
+    const kept = try play_on_kept(harness, dir);
+    const app_budget = try app_memory();
+    // What an earlier scenario's app kept, which that scenario reported
+    const live_before = app_budget.live;
     var a = try setup.assemble(.{
-        .alloc = alloc,
+        .alloc = app_budget.allocator(),
         .app_budget = app_budget,
         .decoders_budget = decoders_budget,
         .screen = devices.screen,
@@ -363,39 +359,41 @@ fn play_on(kindle: Kindle, steps: []const Step) !Outcome {
         .files = kept.files,
         .library_path = library_path,
     });
-    try play_on_start(&a, kindle, dir, &book_paths);
-    const ms = try play_on_sealed(&a, kindle, book_paths[0]);
-    // Every step was played: the steps ran out and noface was told to stop, or the
-    // last one left noface itself
-    try expect(devices.script.at == steps.len, "noface left before the script ended");
-    return play_on_outcome(&a, kindle, &book_paths, .{
-        .alloc = harness,
-        .fake = &fake,
-        .last_screen = devices.last_screen,
-        .ms = ms,
-    });
+    const outcome = outcome: {
+        defer a.release();
+        try play_on_start(&a, kindle, dir, &book_paths);
+        const ms = try play_on_sealed(&a, kindle, book_paths[0]);
+        // Every step was played: the steps ran out and noface was told to stop, or the
+        // last one left noface itself
+        try expect(devices.script.at == steps.len, "noface left before the script ended");
+        break :outcome try play_on_outcome(&a, kindle, &book_paths, .{
+            .alloc = harness,
+            .fake = &fake,
+            .last_screen = devices.last_screen,
+            .ms = ms,
+        });
+    };
+    try expect(app_budget.live == live_before, "the app kept memory after it ended");
+    return outcome;
 }
 
-/// The app's region in the scenarios, reserved by the first and kept for good. Twice
-/// the Kindle's, the most a heap region holds: each scenario's app takes its memory
-/// through an arena, emptied whole when it ends, and an arena keeps what's freed.
+/// The app's region in the scenarios, reserved by the first and kept for good: the
+/// Kindle's size and limit, with no arena over it, so an app that needs more than the
+/// Kindle gives it fails here too. Each scenario's app gives all of it back as it ends
+/// (`App.release`), for the next.
 var app_region: memory.Region = undefined;
 var app_budget_kept: memory.Budget = undefined;
 var app_reserved = false;
 
-comptime {
-    assert(2 * setup.region_bytes.app <= 128 << 20); // What a heap region holds at most
-}
-
 fn app_memory() !*memory.Budget {
     if (!app_reserved) {
-        const size = 2 * setup.region_bytes.app;
+        const size = setup.region_bytes.app;
         app_region = try .reserve("app", .heap, size);
         app_budget_kept = .{ .name = "app", .region = &app_region, .limit = size };
         app_reserved = true;
     }
     assert(app_budget_kept.region == &app_region);
-    assert(app_budget_kept.live == 0); // The last scenario's app gave all of it back
+    assert(app_budget_kept.limit == setup.region_bytes.app); // As main.zig gives it
     return &app_budget_kept;
 }
 
@@ -484,7 +482,7 @@ fn play_on_devices(alloc: std.mem.Allocator, steps: []const Step) !Devices {
 const Kept = struct { kit: *setup.Kit, files: *setup.DataFiles };
 
 /// The test fonts and a scenario's data file paths, kept in `alloc`, which outlives
-/// the App.
+/// the App: the harness's, as main.zig keeps them outside the App's budget too.
 fn play_on_kept(alloc: std.mem.Allocator, dir: [:0]const u8) !Kept {
     assert(dir.len > 0);
     const kit = try alloc.create(setup.Kit);
@@ -1125,6 +1123,16 @@ const scenarios = [_]Scenario{
             }
         }.run,
     },
+    .{ .name = "the app has the Kindle's memory and no more", .run = struct {
+        fn run() !void {
+            const alloc = (try app_memory()).allocator();
+            const refused = if (alloc.alloc(u8, setup.region_bytes.app + 1)) |got| refused: {
+                alloc.free(got);
+                break :refused false;
+            } else |err| err == error.OutOfMemory;
+            try expect(refused, "the app was given more than the Kindle gives it");
+        }
+    }.run },
 };
 
 comptime {

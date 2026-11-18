@@ -5,9 +5,10 @@
 //! refresh, the text standing still between: e-ink can't move text smoothly, each
 //! frame taking a tenth of a second and more. The end of the phrase before is above
 //! it and the start of the one after below, small, and a small map of the page in the
-//! corner marks where it is on it. Under them, a pause button with the pace beside
+//! corner marks where it is on it. Under them, the pause button with the pace beside
 //! it, and a dial filling over the phrase's time beside the minutes left in the
-//! chapter; a tap on the dial stops running. The reader (screens/reader.zig) routes
+//! chapter, an arrow in it when the pace has just gone up or down. The reader
+//! (screens/reader.zig) routes
 //! taps and ticks here while it's on, and moves its place along as the phrases do.
 const std = @import("std");
 const assert = std.debug.assert;
@@ -49,13 +50,14 @@ const after_above_footer_px = 60;
 const footer_height_px = 140;
 const footer_baseline_above_bottom_px = 60;
 const footer_margin_px = 80;
-/// The dial: a ring with a wedge sweeping round inside it like a clock's hand, from
-/// empty as a phrase comes up to full as the next one comes. Pure black and white,
-/// drawn without smoothing, as is the pause button: the quick waveform changes both
-/// cleanly, with no blink.
-const dial_radius_px = 17;
-const ring_px = 3;
-const wedge_gap_px = 2; // Between the ring and the wedge, so each reads on its own
+/// The dial: a thin ring thickening round from twelve o'clock like a clock's hand, from
+/// a phrase coming up to the next one coming, with an arrow in its middle while the
+/// pace has just gone up or down. Pure black and white, drawn without smoothing, as is
+/// the pause button: the quick waveform changes both cleanly, with no blink.
+const dial_radius_px = 22;
+const ring_px = 2;
+const sweep_px = 7; // How thick the ring is where it has swept
+const arrow_half_px = 7; // The arrow's half width, and its height
 const dial_gap_px = 22; // From the dial to the minutes left beside it
 /// The dial's and the button's centre, up from the footer's baseline to its text's middle.
 const icons_above_baseline_px = 11;
@@ -65,7 +67,7 @@ const dial_steps = 12;
 const pace_gap_px = 20;
 const pause_radius_px = 24;
 const pause_x = footer_margin_px + pause_radius_px;
-/// A tap this near the dial's or the button's centre is on it: a fingertip around it.
+/// A tap this near the button's centre is on it: a fingertip around it.
 const icon_reach_px = 60;
 /// Earlier phrases kept, for going back to.
 const history_max = 32;
@@ -76,7 +78,8 @@ pub const tick_us = 100 * std.time.us_per_ms;
 pub const pause_band_px = 300;
 
 comptime {
-    assert(ring_px + wedge_gap_px < dial_radius_px);
+    assert(ring_px < sweep_px);
+    assert(sweep_px + arrow_half_px < dial_radius_px);
     assert(2 * icon_reach_px >= 100); // A fingertip
     assert(icon_reach_px > pause_radius_px);
     // The phrase at its most lines lies between the lines before and after it
@@ -106,6 +109,11 @@ pub const Run = struct {
     history_len: u32 = 0,
     dial_x: i32 = 0, // The dial's centre, which follows the minutes left beside it
     dial_step: u32 = 0, // How far the dial has swept over the phrase's time
+    /// Which way the reader's tap just moved the pace: shown in the dial while the
+    /// phrase that tap brought up is on screen.
+    pace_moved: ?Pace = null,
+
+    pub const Pace = enum { up, down };
 
     /// What a move did: the place of the phrase now on screen, or null when none
     /// changed.
@@ -157,12 +165,15 @@ pub const Run = struct {
         assert(run.phrase != null);
         assert(run.phrase_us >= phrases.phrase_us_min);
         const elapsed = now -| shown;
-        if (elapsed >= run.phrase_us) return try run.forward(a, s, now);
+        if (elapsed >= run.phrase_us) {
+            run.pace_moved = null; // Moving on by itself: the pace stays
+            return try run.forward(a, s, now);
+        }
         const step: u32 = @intCast(elapsed * dial_steps / run.phrase_us);
         assert(step < dial_steps);
         if (step != run.dial_step) {
             run.dial_step = step;
-            try show_dial(a, run.dial_x, step);
+            try show_dial(a, run.dial_x, step, run.pace_moved);
         }
         return null;
     }
@@ -239,14 +250,6 @@ pub const Run = struct {
 
     pub fn stopped(run: *const Run) bool {
         return run.stopped_at != null;
-    }
-
-    /// Whether a tap at (`x`, `y`) is on the dial, which stops running.
-    pub fn on_dial(run: *const Run, a: *const app.App, x: i32, y: i32) bool {
-        // Placed as the footer is first drawn: until then there's no dial to tap
-        if (run.dial_x == 0) return false;
-        const cy = icons_y(a);
-        return @abs(x - run.dial_x) <= icon_reach_px and @abs(y - cy) <= icon_reach_px;
     }
 
     /// Whether a touch now acts: not when it comes right after one that did, which a
@@ -343,7 +346,7 @@ pub const Run = struct {
         run.dial_x = @as(i32, @intFromFloat(text_x)) - dial_gap_px - dial_radius_px;
         // The dial stays clear of the pause button, whatever the minutes' width
         assert(run.dial_x - icon_reach_px > pause_x + icon_reach_px);
-        draw_dial(a, run.dial_x, cy, run.dial_step);
+        draw_dial(a, run.dial_x, cy, run.dial_step, run.pace_moved);
     }
 };
 
@@ -524,9 +527,9 @@ fn shrink(length: i32, scale: f32) u32 {
 }
 
 /// The dial swept to `step`, refreshed alone.
-fn show_dial(a: *app.App, cx: i32, step: u32) !void {
+fn show_dial(a: *app.App, cx: i32, step: u32, arrow: ?Run.Pace) !void {
     const cy = icons_y(a);
-    draw_dial(a, cx, cy, step);
+    draw_dial(a, cx, cy, step, arrow);
     const r = dial_radius_px;
     const side: u32 = 2 * r + 1;
     const marker = try a.screen.show_region(@intCast(cx - r), @intCast(cy - r), side, side, .quick);
@@ -599,9 +602,10 @@ fn draw_pause_button(a: *app.App, cx: i32, cy: i32, stopped: bool) void {
     };
 }
 
-/// The dial centred on (`cx`, `cy`), swept `step` sixtieths of the way round. Drawn
-/// into the screen, not shown.
-fn draw_dial(a: *app.App, cx: i32, cy: i32, step: u32) void {
+/// The dial centred on (`cx`, `cy`), swept `step` twelfths of the way round, with
+/// `arrow` in its middle, up or down, when there is one. Drawn into the screen, not
+/// shown.
+fn draw_dial(a: *app.App, cx: i32, cy: i32, step: u32, arrow: ?Run.Pace) void {
     assert(step < dial_steps);
     const r = dial_radius_px;
     assert(cx - r >= 0);
@@ -610,19 +614,29 @@ fn draw_dial(a: *app.App, cx: i32, cy: i32, step: u32) void {
     const left: u32 = @intCast(cx - r);
     const top: u32 = @intCast(cy - r);
     const side: u32 = 2 * r + 1;
-    const ring_inner = r - ring_px;
-    const wedge_outer = ring_inner - wedge_gap_px;
+    const thin = r - ring_px;
+    const thick = r - sweep_px;
     const swept = @as(f32, @floatFromInt(step)) / dial_steps * std.math.tau;
     for (0..side) |row| for (0..side) |column| {
-        const dx = @as(f32, @floatFromInt(column)) - r;
-        const dy = @as(f32, @floatFromInt(row)) - r;
+        const dx: i32 = @as(i32, @intCast(column)) - r;
+        const dy: i32 = @as(i32, @intCast(row)) - r;
         const d2 = dx * dx + dy * dy;
-        var black = d2 <= r * r and d2 >= ring_inner * ring_inner;
-        if (d2 <= wedge_outer * wedge_outer and step > 0) {
+        var black = d2 <= r * r and d2 >= thin * thin;
+        if (d2 <= r * r and d2 >= thick * thick and step > 0) {
             // Clockwise from twelve o'clock
-            var angle = std.math.atan2(dx, -dy);
+            var angle = std.math.atan2(@as(f32, @floatFromInt(dx)), @as(f32, @floatFromInt(-dy)));
             if (angle < 0) angle += std.math.tau;
-            black = angle < swept;
+            if (angle < swept) black = true;
+        }
+        if (arrow) |way| {
+            // A triangle, its point up for a quicker pace, down for a slower
+            const h = arrow_half_px;
+            const from_point = switch (way) {
+                .up => dy + h / 2,
+                .down => h / 2 - dy,
+            };
+            const in_arrow = from_point >= 0 and from_point <= h and @abs(dx) <= from_point;
+            if (in_arrow) black = true;
         }
         page.buf[(top + row) * page.stride + left + column] = if (black) 0x00 else 0xff;
     };

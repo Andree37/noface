@@ -1485,8 +1485,8 @@ const scenarios = [_]Scenario{
         }.run,
     },
     .{
-        .name = "the pause card and the pause button stop the phrase's timer, and each " ++
-            "carries on",
+        .name = "the card, the pause button and the middle column stop the phrase's " ++
+            "timer, and each carries on",
         .run = struct {
             fn run() !void {
                 // Paused long enough to have gone through many phrases: the place stays
@@ -1509,6 +1509,13 @@ const scenarios = [_]Scenario{
                 const button_resumed = try play(&(start_running ++ stopped ++ going));
                 const went_on = !same_place(button_resumed.saved, still.saved);
                 try expect(went_on, "the pause button didn't carry on");
+                // The middle column, the screen's height, pauses as the button does
+                const middle = [_]Step{ wait(2_000), page_middle, wait(300_000) };
+                const middle_held = try play(&(start_running ++ middle));
+                const tapped_middle = [_]Step{ wait(2_000), page_middle };
+                const middle_tapped = try play(&(start_running ++ tapped_middle));
+                const middle_there = same_place(middle_held.saved, middle_tapped.saved);
+                try expect(middle_there, "the place moved on when paused from the middle");
             }
         }.run,
     },

@@ -65,15 +65,18 @@ pub fn minutes_for(wpm: f64, words: u64) u64 {
     return @intFromFloat(@max(minutes, 0));
 }
 
-/// Where a tap lands while running: the top band pauses, the left third goes back a
-/// phrase, and the rest, most of the screen, goes on. Big, so a hand mid-stride finds it.
-pub const Zone = enum { pause, back, next };
+/// Where a tap lands while running: the top band opens the card (text settings, stop),
+/// and below it three columns, each the screen's height, so a hand mid-stride finds
+/// them: the left goes back a phrase, the middle pauses or carries on, the right goes on.
+pub const Zone = enum { card, back, toggle, next };
 
 pub fn zone(x: i32, y: i32, width: u32, top_band: u32) Zone {
     assert(width > 0);
     assert(top_band > 0);
-    if (y < top_band) return .pause;
-    if (x * 3 < @as(i32, @intCast(width))) return .back;
+    if (y < top_band) return .card;
+    const w: i32 = @intCast(width);
+    if (x * 3 < w) return .back;
+    if (x * 3 < 2 * w) return .toggle;
     return .next;
 }
 
@@ -126,11 +129,13 @@ test "the first pace is slower than in the hand, and taps move it each way withi
     try std.testing.expectEqual(@as(f64, pace_wpm_max), high);
 }
 
-test "taps land in the pause band, the back third, or the rest" {
-    try std.testing.expectEqual(Zone.pause, zone(900, 50, 1272, 200));
+test "taps land in the card's band, or in one of three columns below it" {
+    try std.testing.expectEqual(Zone.card, zone(900, 50, 1272, 200));
     try std.testing.expectEqual(Zone.back, zone(100, 900, 1272, 200));
-    try std.testing.expectEqual(Zone.back, zone(423, 900, 1272, 200));
-    try std.testing.expectEqual(Zone.next, zone(424, 900, 1272, 200));
+    try std.testing.expectEqual(Zone.back, zone(423, 1695, 1272, 200));
+    try std.testing.expectEqual(Zone.toggle, zone(424, 900, 1272, 200));
+    try std.testing.expectEqual(Zone.toggle, zone(847, 200, 1272, 200));
+    try std.testing.expectEqual(Zone.next, zone(848, 900, 1272, 200));
     try std.testing.expectEqual(Zone.next, zone(1271, 1695, 1272, 200));
 }
 

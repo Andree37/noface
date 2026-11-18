@@ -1093,11 +1093,11 @@ pub const Reader = struct {
         assert(r.since_save < save_every);
     }
 
-    /// A tap while running, wherever it lands: the dial stops running, the pause button
-    /// stops or carries on, the top band opens the pause card, the left third shows the
-    /// phrase before again, and the rest the next one now. Going on early says the pace
-    /// is slow; going back, that it's fast. `held_us` is how long the finger stayed;
-    /// null for a hold or a swipe, down long already.
+    /// A tap while running, wherever it lands: the top band opens the card, the left
+    /// column shows the phrase before again, the middle one (and the pause button)
+    /// stops or carries on, and the right one shows the next phrase now. Going on early
+    /// says the pace is slow; going back, that it's fast. `held_us` is how long the
+    /// finger stayed; null for a hold or a swipe, down long already.
     fn tap_running(r: *Reader, x: i32, y: i32, held_us: ?u64) !void {
         assert(r.reading());
         const a = r.a;
@@ -1114,30 +1114,36 @@ pub const Reader = struct {
         if (!run.takes_touch(now)) return;
         // Until the screen is shown, there's nothing on it to tap
         if (run.shown_us == null) return;
-        if (run.on_dial(a, x, y)) {
-            std.debug.print("running: tap dial\n", .{});
-            return r.stop_running();
-        }
-        if (run_mode.on_pause_button(a, x, y)) {
-            try run.pause_or_resume(a, r.s, now);
-            const stopped = run.stopped();
-            std.debug.print("running: {s}\n", .{if (stopped) "paused" else "resumed"});
-            // Stopped, the Kindle may sleep as it would; going on, it stays awake
-            lipc.hold_awake(!stopped);
-            return;
-        }
-        const zone = running_model.zone(x, y, a.screen.width, run_mode.pause_band_px);
+        // The button showing whether it's paused takes taps too, in the left column
+        const zone: running_model.Zone = if (run_mode.on_pause_button(a, x, y))
+            .toggle
+        else
+            running_model.zone(x, y, a.screen.width, run_mode.pause_band_px);
         std.debug.print("running: tap {s}\n", .{@tagName(zone)});
         const was_stopped = run.stopped();
         const moved = switch (zone) {
-            .pause => return r.pause_running(),
+            .card => return r.pause_running(),
+            .toggle => {
+                try run.pause_or_resume(a, r.s, now);
+                const stopped = run.stopped();
+                std.debug.print("running: {s}\n", .{if (stopped) "paused" else "resumed"});
+                // Stopped, the Kindle may sleep as it would; going on, it stays awake
+                lipc.hold_awake(!stopped);
+                return;
+            },
             .next => moved: {
                 // Read before its time was up; not from one stopped, read already
-                if (!was_stopped) a.running_pace = running_model.faster(a.running_pace.?);
+                if (!was_stopped) {
+                    a.running_pace = running_model.faster(a.running_pace.?);
+                    run.pace_moved = .up;
+                }
                 break :moved try run.forward(a, r.s, now);
             },
             .back => moved: {
-                if (!was_stopped) a.running_pace = running_model.slower(a.running_pace.?);
+                if (!was_stopped) {
+                    a.running_pace = running_model.slower(a.running_pace.?);
+                    run.pace_moved = .down;
+                }
                 break :moved try run.back(a, r.s, now);
             },
         };

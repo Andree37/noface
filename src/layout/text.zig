@@ -10,15 +10,19 @@ const hyphen = @import("hyphen.zig");
 /// Where a note reference landed on a page.
 pub const Hit = struct { x: i32, y: i32, w: i32, h: i32, target: u32 };
 
-const mark_shade = 0xe4; // Very faint, so highlighted text reads like any other
+/// A highlight is a black line under its words, not a gray band: on this panel every
+/// refresh that turns grays blinks a gray black as it comes or goes, where black and
+/// white change cleanly with the page.
+const mark_line_px = 5;
+/// From the foot of the line's height to the mark's line: under the descenders.
+const mark_line_above_foot_px = 10;
 
 /// The most words on one line.
 const max_words = 96;
 
 comptime {
-    // Pure black and white turns a highlight's shading white, not into a black band
-    assert(mark_shade >= 128);
-    assert(mark_shade < 0xff); // Yet still a shade on white paper
+    // The line sits within its line's height, above the next line's words
+    assert(mark_line_above_foot_px > mark_line_px);
     assert(max_words > 1);
 }
 
@@ -650,7 +654,7 @@ const LinePlace = struct {
     hits: ?*Hits,
 };
 
-/// Draws a line's words from `left`, `gap` apart: a highlight's shading under them,
+/// Draws a line's words from `left`, `gap` apart: a highlight's line under them,
 /// their tap areas, note marks raised and small, and the hyphen of a broken word.
 fn draw_line(
     p: Page,
@@ -674,13 +678,14 @@ fn draw_line(
         const line_top = place.baseline - pf.ascent;
         if (is_marked(l.marks, para_index, word_start, word_end)) {
             // Reaches into the gap only when the next word is marked too, so a marked
-            // phrase reads as one band and nothing past its last word is shaded
+            // phrase reads as one line and nothing past its last word is underlined
             const joined = k + 1 < line.n and
                 word_marked(l.marks, para.text, para_index, line.words[k + 1]);
-            const band_width: u32 = @intFromFloat(if (joined) w + place.gap else w);
-            const band_height: u32 = @intCast(pf.line_height - 8);
-            const band_top: u32 = @intCast(line_top + 4);
-            p.fill_rect(@intFromFloat(x), band_top, band_width, band_height, mark_shade);
+            const mark_width: u32 = @intFromFloat(if (joined) w + place.gap else w);
+            // Fonts are set at 26 px and up, lines taller than the mark's place
+            assert(pf.line_height > mark_line_above_foot_px);
+            const mark_top: u32 = @intCast(line_top + pf.line_height - mark_line_above_foot_px);
+            p.fill_rect(@intFromFloat(x), mark_top, mark_width, mark_line_px, 0x00);
         }
         if (place.hits) |h| h.add_word(.{
             .x = @intFromFloat(x),
@@ -951,14 +956,14 @@ test "a stop inside a page ends it exactly there, the lines above as they were" 
     }
 }
 
-test "a highlight's shading spans the gap between its words, and none after its last" {
+test "a highlight's line spans the gap between its words, and none after its last" {
     var font = try Font.init(@embedFile("../testdata/fonts/Go-Regular.ttf"), 30, 1.2);
     const paras = [_]Paragraph{.{ .text = test_text }};
     const out = try std.testing.allocator.create(TestPage);
     defer std.testing.allocator.destroy(out);
     out.* = .{};
     // "Notwithstanding the": its first word alone, then both
-    for ([_]u32{ 15, 19 }, [_]u8{ 0xff, mark_shade }) |mark_end, in_gap| {
+    for ([_]u32{ 15, 19 }, [_]u8{ 0xff, 0x00 }) |mark_end, in_gap| {
         const marks = [_]book_model.Mark{.{ .para = 0, .start = 0, .end = mark_end }};
         const l = Layout{
             .margin_x = 40,
@@ -972,7 +977,7 @@ test "a highlight's shading spans the gap between its words, and none after its 
         const second = out.hits.words[1];
         try std.testing.expectEqual(@as(u32, 15), first.end);
         try std.testing.expect(second.x > first.x + first.w + 4); // A gap to look into
-        const y: u32 = @intCast(first.y + @divTrunc(first.h, 2));
+        const y: u32 = @intCast(first.y + first.h - mark_line_above_foot_px + 2);
         const x: u32 = @intCast(first.x + first.w + 2);
         try std.testing.expectEqual(in_gap, out.pixels[y * TestPage.test_width + x]);
     }

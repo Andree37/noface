@@ -22,10 +22,9 @@ pub const UpdateMode = enum(u32) { partial = 0, full = 1 };
 /// What a screen asks the panel for. Which waveform does it is the panel's business:
 /// this table is MediaTek's, on the Paperwhite 12; another panel maps them its way.
 pub const Refresh = enum {
-    page, // A new page of text: sharp, quick, no flash
-    /// A page of text with gray on it, or that had some (a highlight's band): no flash,
-    /// where the text waveform blinks a gray area black as it changes
-    shaded_page,
+    /// A new page of text: sharp, quick, no flash. Only black and white change cleanly:
+    /// a gray coming or going blinks black first, with this or any other waveform
+    page,
     screen, // A whole new screen in all its grays, like the library or a cover
     flash, // The same, with the flash that clears any ghost of what was there
     quick, // Following a finger: fast, and only black and white settle cleanly
@@ -38,7 +37,6 @@ pub const Refresh = enum {
     pub fn on_this_panel(r: Refresh) How {
         const how: How = switch (r) {
             .page, .clean => .{ .waveform = .reagl, .mode = .partial },
-            .shaded_page => .{ .waveform = .gl16, .mode = .partial },
             .screen => .{ .waveform = .gc16, .mode = .partial },
             .flash => .{ .waveform = .gc16, .mode = .full },
             // DU is a little slower than A2 but leaves no ghost of where things were

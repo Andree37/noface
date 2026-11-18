@@ -148,6 +148,30 @@ pub const App = struct {
     // Mapped the first time a word in that language is looked up, then kept
     dictionaries: [languages_count]?dictionary.Dictionary = @splat(null),
 
+    /// Lets go of everything the App holds for its whole life: the buffers
+    /// `setup.assemble` made, the hyphenation and pictures in `alloc`, and the font and
+    /// dictionary files mapped. On the Kindle noface exits instead; the scenarios
+    /// assemble an App for each, in turn, on the Kindle's own budget, so each gives
+    /// all of it back for the next. Its book and library are closed by then.
+    pub fn release(a: *App) void {
+        assert(a.book_region.empty()); // The book let go of its own first
+        a.typefaces.release();
+        for (std.enums.values(hyphen.Lang)) |lang| a.forget_dictionary(lang);
+        for (&a.hyphenators) |*slot| {
+            if (slot.*) |*hyphenator| hyphenator.deinit();
+            slot.* = null;
+        }
+        a.pictures.clear(a.alloc);
+        for (&a.slots) |*slot| {
+            assert(slot.buf.len == a.screen.pixels.len); // As assembled
+            a.alloc.free(slot.buf);
+        }
+        a.alloc.free(a.overlay);
+        a.alloc.free(a.lock_kept.saved);
+        a.alloc.free(a.lock_kept.cover);
+        a.* = undefined;
+    }
+
     /// Forgets a language's dictionary, so the next lookup maps the file again: after
     /// one has just been downloaded.
     pub fn forget_dictionary(a: *App, lang: hyphen.Lang) void {

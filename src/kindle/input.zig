@@ -92,8 +92,14 @@ pub const Script = struct {
     /// Called once, when the steps run out and before noface is told to stop: the
     /// screen as the script left it, for a test to keep.
     at_end: ?struct { ctx: *anyopaque, call: *const fn (ctx: *anyopaque) void } = null,
-    ended: bool = false,
+    stops_given: u32 = 0, // Since the steps ran out
     touched_us: u64 = 0, // When the finger touched for the last action played
+
+    /// How many times noface is told to stop before the script gives up on it. One stop
+    /// ends every screen; a screen that took it and stayed would turn the event loop
+    /// (`// Unbounded:`) forever on the test clock, with no FAIL line and no way back
+    /// for the harness: a panic, which says why, is that line.
+    const stops_given_max = 8;
 
     fn next(script: *Script, in: *Input) Action {
         assert(script.at <= script.steps.len);
@@ -105,10 +111,13 @@ pub const Script = struct {
             }
             assert(script.waiting_us == 0);
             if (script.at >= script.steps.len) {
-                if (!script.ended) {
+                if (script.stops_given == 0) {
                     if (script.at_end) |at_end| at_end.call(at_end.ctx);
                 }
-                script.ended = true;
+                if (script.stops_given == stops_given_max) {
+                    @panic("noface didn't stop when told: a screen took .stop and stayed");
+                }
+                script.stops_given += 1;
                 return .stop;
             }
             const step = script.steps[script.at];

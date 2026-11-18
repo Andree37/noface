@@ -147,8 +147,10 @@ pub const Pager = struct {
     reach: ?u32 = null, // Taps count down to here, past `bottom`; else to `bottom`
 
     const button = 200;
-    pub const prev_left = 340;
-    pub const next_left = 732;
+    /// Each arrow's middle, this far either side of the screen's middle.
+    const arrow_offset = 196;
+    pub const prev_left = style.screen_width / 2 - arrow_offset - button / 2;
+    pub const next_left = style.screen_width / 2 + arrow_offset - button / 2;
 
     pub const Hit = enum { prev, next };
 
@@ -186,7 +188,14 @@ pub const Pager = struct {
 
 /// Where every list's pager sits: near the bottom, taking taps right to the edge,
 /// so a thumb reaching low still turns the page.
-pub const bottom_pager = Pager{ .top = 1530, .bottom = 1650, .reach = style.screen_height };
+pub const bottom_pager = Pager{
+    .top = style.screen_height - pager_above_bottom,
+    .bottom = style.screen_height - pager_bottom_above_bottom,
+    .reach = style.screen_height,
+};
+/// The pager's band, its top and its foot up from the screen's.
+const pager_above_bottom = 166;
+const pager_bottom_above_bottom = 46;
 
 comptime {
     // The arrows' tap areas don't overlap, and both sit on the screen.

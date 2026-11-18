@@ -15,31 +15,83 @@ const Fonts = @import("fonts.zig").Fonts;
 const covers = @import("covers.zig");
 
 const margin = style.margin;
+const screen_width = style.screen_width;
 const gutter = 40;
-const columns = 4;
 const cell_step = cover.width + gutter;
+/// As many covers as fit across between the margins.
+const columns = (screen_width - 2 * margin + gutter) / cell_step;
 const row_height = 410;
 const cell_title_below = 34; // From the bar under a cover to its title's baseline
+/// A grid cell's parts: the bar's gap under its cover and its drop and thickness, the
+/// title's line step, and the corner icons' middles in from the cover's corners.
+const cell = struct {
+    const bar_gap = 8;
+    const bar_drop = 2;
+    const bar_thick = 10;
+    const title_step = 30;
+    const cloud_inset = 38;
+    const tick_inset = 32;
+};
 pub const status_height = style.status_height;
 
-// Page one always leads with the current book, on every tab and sort.
-const hero_top = 112;
-const hero_bottom = 500;
-const hero_tabs_top = 516;
-const hero_grid_top = 622;
-const plain_tabs_top = 100;
-const plain_grid_top = 206;
+// Page one always leads with the current book, on every tab and sort: under the status
+// strip, the hero's place, then the tabs row, then the grid; later pages start with the
+// tabs row. The grid takes as many rows as fit above the notice over the pager.
+const hero_gap = 16; // Above the hero, and between its place and the tabs row
+const hero_pad_below = 31; // Under the hero's cover, inside its place
+const hero_top = status_height + hero_gap;
+const hero_bottom = hero_top + cover.hero_height + hero_pad_below;
+const hero_tabs_top = hero_bottom + hero_gap;
+const plain_tabs_gap = 4; // Above the tabs row on later pages
+const plain_tabs_top = status_height + plain_tabs_gap;
 const tabs_height = 84;
-const hero_rows = 2;
-const plain_rows = 3;
+const grid_gap = 22; // Between the tabs row and the grid
+const hero_grid_top = hero_tabs_top + tabs_height + grid_gap;
+const plain_grid_top = plain_tabs_top + tabs_height + grid_gap;
+const hero_rows = (message_baseline - hero_grid_top) / row_height;
+const plain_rows = (message_baseline - plain_grid_top) / row_height;
 /// The most books a page shows: a page without the hero, whole.
 pub const page_books_max: u32 = plain_rows * columns;
 const hero_title_lines = 3;
 const hero_title_step = 66;
-const hero_dots_left = 1100; // The hero's dots take taps right of here, near its top
-const hero_dots_bottom = hero_top + 90; // From the status strip down to here
-const message_baseline = 1500; // A notice, between the grid and the pager
+/// The column of text beside the hero's cover, down from the hero's top unless said:
+/// its gap from the cover, the "Continue reading" line and its tint (stopping short of
+/// the dots), the dots, the title, the author's rise above the title's next line, the
+/// line under the author, and the progress bar's rise from the cover's foot, its
+/// clearance and the percent under it.
+const hero_text = struct {
+    const gap = 48;
+    const kicker_drop = 34;
+    const kicker_tint_drop = 8;
+    const kicker_tint_height = 36;
+    const kicker_clear = 40;
+    const dots_inset = 8;
+    const dots_drop = 24;
+    const title_drop = 104;
+    const author_rise = 12;
+    const byline_tint_rise = 30;
+    const byline_tint_height = 44;
+    const line_step = 56;
+    const caption_tint_rise = 26;
+    const caption_tint_height = 34;
+    const bar_rise = 40;
+    const bar_clear = 22;
+    const bar_thick = 12;
+    const percent_drop = 42;
+    const percent_tint_drop = 16;
+};
+/// The hero's dots take a fingertip's taps in from the right margin, near its top: down
+/// to this far under the hero's top.
+const hero_dots_left = screen_width - margin - style.fingertip;
+const hero_dots_reach_below = 90;
+const hero_dots_bottom = hero_top + hero_dots_reach_below;
+/// A notice's baseline, between the grid and the pager.
+const message_above_pager = 30;
+const empty_drop = 60; // "No books here yet.", under the grid's top
+const message_baseline = footer.top - message_above_pager;
 const menu_right = 220; // The menu takes taps left of here, in the status strip
+const status_text_drop = 9; // The strip's text's baseline under its middle
+const status_menu_rise = 14; // The menu's lines' top over it
 const battery_reach = 300; // And the battery this far from the right edge
 
 /// A filter's tab: `left` and `right` bound its taps, and its label starts at `label_left`.
@@ -50,27 +102,72 @@ const Tab = struct {
     label_left: i32,
     right: i32,
 };
-// Inside one rounded button that starts with a funnel, each at least a fingertip (about
-// 100 px) wide. The first takes the funnel's taps too, as it's drawn as part of it.
-const tabs = [_]Tab{
-    .{ .filter = .all, .label = "All", .left = margin, .label_left = 172, .right = 260 },
-    .{ .filter = .unread, .label = "Unread", .left = 260, .label_left = 276, .right = 432 },
-    .{ .filter = .read, .label = "Read", .left = 432, .label_left = 448, .right = 564 },
+/// The funnel's part of the first tab, before its label, and a label's room in from its
+/// tab's left otherwise.
+const funnel_width = 100;
+const tab_label_pad = 16;
+// Inside one rounded button that starts with a funnel, side by side from the margin,
+// each at least a fingertip wide, as wide as its label needs. The first takes the
+// funnel's taps too, as it's drawn as part of it.
+const tabs = tabs: {
+    const Each = struct { filter: catalog.Filter, label: []const u8, width: i32 };
+    const each = [_]Each{
+        .{ .filter = .all, .label = "All", .width = 188 },
+        .{ .filter = .unread, .label = "Unread", .width = 172 },
+        .{ .filter = .read, .label = "Read", .width = 132 },
+    };
+    var placed: [each.len]Tab = undefined;
+    var left: i32 = margin;
+    for (each, 0..) |t, i| {
+        const label_in: i32 = if (i == 0) funnel_width else tab_label_pad;
+        placed[i] = .{
+            .filter = t.filter,
+            .label = t.label,
+            .left = left,
+            .label_left = left + label_in,
+            .right = left + t.width,
+        };
+        left += t.width;
+    }
+    break :tabs placed;
 };
 
 // Filter, search and sort buttons fill the tabs row: a fingertip tall
 const button_top = 0;
 const button_height = tabs_height;
 const icon_inset = 46; // From a button's rounded end to its icon's centre
+const button_label_drop = 55; // A button's label's baseline under its top
+/// The tabs row's labels: their baseline and the line under the chosen one, down from
+/// the row's top; the band the others' tint covers, and the room kept at their right.
+const tab_baseline = 54;
+const tab_underline = 62;
+const tab_tint_drop = 22;
+const tab_tint_height = 44;
+const tab_tint_clear = 4;
+/// The sort button's room: right of its label, its arrows' width and their gaps.
+const sort_label_pad = 32;
+const sort_arrows_width = 18;
+const sort_arrows_gap = 14;
+/// While searching, in the hero's place, down from its top: the query, the count, and
+/// the button that clears it, its label's room either side.
+const search_head = struct {
+    const query_drop = 120;
+    const count_drop = 190;
+    const button_drop = 236;
+    const button_pad = 30;
+};
 
 const footer = draw.bottom_pager;
-const sort_left = 860;
 
 // A cover set in type, for a book with no picture: its title from the top down, a short
 // rule under it, and the author along the bottom.
 const type_title_top = 72; // From the cover's top to the title's first baseline
 const type_title_step = 44;
 const type_rule_height = 3;
+const type_rule_width = 48;
+const type_inset = 28; // The title and author in from the cover's sides
+const type_edge = 2; // Its outline
+const type_paper = 0xf0; // A shade off white, so the cover reads as one
 const type_author_above = 34; // From the cover's bottom up to the author's baseline
 /// How high the author's letters reach above their baseline, at most: the size of the
 /// caption font it's set in (26 px, setup.zig), which none of its letters outgrows.
@@ -97,10 +194,14 @@ pub const Hit = union(enum) {
 };
 
 // The round search button, a clear gap right of the filter button
-const search_cx = 564 + 36 + button_height / 2;
+const search_gap = 36;
+const search_cx = tabs[tabs.len - 1].right + search_gap + button_height / 2;
 const search_reach = 56; // Taps this far either side of its centre: a fingertip and more
 // The round stats button, beside search, their taps just short of meeting
 const stats_cx = search_cx + 2 * search_reach + 4;
+/// The sort button takes taps from a gap right of the stats button's.
+const sort_gap = 46;
+const sort_left = stats_cx + search_reach + sort_gap;
 
 comptime {
     // The grid's four columns between the margins
@@ -121,19 +222,19 @@ comptime {
     assert(footer.bottom <= style.screen_height);
     // The filter's tabs side by side, each a fingertip, then search, stats and sort apart
     for (tabs[0 .. tabs.len - 1], tabs[1..]) |left, right| assert(left.right == right.left);
-    for (tabs) |t| assert(t.right - t.left >= 100);
-    assert(2 * search_reach >= 100);
+    for (tabs) |t| assert(t.right - t.left >= style.fingertip);
+    assert(2 * search_reach >= style.fingertip);
     assert(tabs[tabs.len - 1].right < search_cx - search_reach);
     assert(search_cx + search_reach < stats_cx - search_reach);
     assert(stats_cx + search_reach < sort_left);
     // The hero's dots are drawn where they take taps, a fingertip tall
-    assert(style.screen_width - margin - 8 >= hero_dots_left);
-    assert(hero_top + 24 < hero_dots_bottom);
-    assert(hero_dots_bottom - status_height >= 100);
+    assert(style.screen_width - margin - hero_text.dots_inset >= hero_dots_left);
+    assert(hero_top + hero_text.dots_drop < hero_dots_bottom);
+    assert(hero_dots_bottom - status_height >= style.fingertip);
     assert(margin < menu_right);
     // The tabs row takes taps a fingertip tall and more, across the gaps around it
-    assert(hero_grid_top - hero_bottom >= 100);
-    assert(plain_grid_top - status_height >= 100);
+    assert(hero_grid_top - hero_bottom >= style.fingertip);
+    assert(plain_grid_top - status_height >= style.fingertip);
     // The filter's taps cover its whole button, funnel and all, each label inside its tab
     assert(tabs[0].left == margin);
     assert(margin + icon_inset < tabs[0].label_left);
@@ -309,14 +410,30 @@ fn percent_badge(font: *Font, page: Page, x: u32, y: u32, percent: u32) !void {
     assert(y >= plain_grid_top + cover.height);
     var label: [8]u8 = undefined;
     const s = std.fmt.bufPrint(&label, "{d}%", .{@min(percent, 100)}) catch return;
-    const r: f32 = 19;
-    const left: f32 = @floatFromInt(x + 12);
-    const cy: f32 = @as(f32, @floatFromInt(y)) - 12 - r;
-    const w = try font.measure(s) + 26;
+    const r: f32 = badge.radius;
+    const cy: f32 = @as(f32, @floatFromInt(y)) - badge.inset - r;
+    try draw_badge(font, page, x, cy, s);
+}
+
+/// A corner badge's pill: its radius, in from its cover's corner, and its label's room
+/// either side and drop from its middle to its baseline.
+const badge = struct {
+    const radius = 19;
+    const inset = 12;
+    const label_pad = 13;
+    const label_drop = 9;
+};
+
+/// `s` in a small white pill, its middle at `cy`, in from the cover's left at `x`.
+fn draw_badge(font: *Font, page: Page, x: u32, cy: f32, s: []const u8) !void {
+    assert(s.len > 0);
+    const r: f32 = badge.radius;
+    const left: f32 = @floatFromInt(x + badge.inset);
+    const w = try font.measure(s) + 2 * badge.label_pad;
     const ends = [2]f32{ left + r, left + @max(w - r, r) };
     page.pill(ends[0], ends[1], cy, r, 0x00);
     page.pill(ends[0], ends[1], cy, r - 2, 0xff);
-    try font.draw(page, left + 13, @intFromFloat(cy + 9), s);
+    try font.draw(page, left + badge.label_pad, @intFromFloat(cy + badge.label_drop), s);
 }
 
 /// "#2" in a small white pill over a cover's top left corner, for a book in a series.
@@ -331,14 +448,8 @@ fn series_badge(font: *Font, page: Page, x: u32, y: u32, index: f32) !void {
     } else {
         s = std.fmt.bufPrint(&label, "#{d:.1}", .{index}) catch return;
     }
-    const r: f32 = 19;
-    const left: f32 = @floatFromInt(x + 12);
-    const cy: f32 = @as(f32, @floatFromInt(y)) + 12 + r;
-    const w = try font.measure(s) + 26;
-    const ends = [2]f32{ left + r, left + @max(w - r, r) };
-    page.pill(ends[0], ends[1], cy, r, 0x00);
-    page.pill(ends[0], ends[1], cy, r - 2, 0xff);
-    try font.draw(page, left + 13, @intFromFloat(cy + 9), s);
+    const cy: f32 = @as(f32, @floatFromInt(y)) + badge.inset + badge.radius;
+    try draw_badge(font, page, x, cy, s);
 }
 
 /// A rounded outline around a control, so it reads as something to press.
@@ -362,22 +473,22 @@ fn type_cover(
     e: *const catalog.Entry,
 ) !void {
     // Room inside for the title, its rule and the author
-    assert(w > 56);
-    assert(h > 72 + 34);
-    page.fill_rect(x, y, w, h, 0xf0);
-    page.fill_rect(x, y, w, 2, 0x00);
-    page.fill_rect(x, y + h - 2, w, 2, 0x00);
-    page.fill_rect(x, y, 2, h, 0x00);
-    page.fill_rect(x + w - 2, y, 2, h, 0x00);
-    const left: f32 = @floatFromInt(x + 28);
-    const avail: f32 = @floatFromInt(w - 56);
+    assert(w > 2 * type_inset);
+    assert(h > type_title_top + type_author_above);
+    page.fill_rect(x, y, w, h, type_paper);
+    page.fill_rect(x, y, w, type_edge, 0x00);
+    page.fill_rect(x, y + h - type_edge, w, type_edge, 0x00);
+    page.fill_rect(x, y, type_edge, h, 0x00);
+    page.fill_rect(x + w - type_edge, y, type_edge, h, 0x00);
+    const left: f32 = @floatFromInt(x + type_inset);
+    const avail: f32 = @floatFromInt(w - 2 * type_inset);
     const top: i32 = @intCast(y + type_title_top);
     const step = type_title_step;
     const lines = type_title_lines(h);
     const used = try draw.wrapped(fonts.cover, page, left, top, step, e.title, avail, lines);
     assert(used <= lines);
     const rule_y = y + type_title_top + used * type_title_step;
-    page.fill_rect(x + 28, rule_y, 48, type_rule_height, 0x00);
+    page.fill_rect(x + type_inset, rule_y, type_rule_width, type_rule_height, 0x00);
     const author_y: i32 = @intCast(y + h - type_author_above);
     try draw.clipped(fonts.caption, page, left, author_y, e.author, avail);
 }
@@ -416,39 +527,44 @@ fn draw_hero(
         try type_cover(fonts, page, margin, hero_top, cover.hero_width, h, e);
     }
 
-    const left_px: u32 = margin + cover.hero_width + 48;
+    const left_px: u32 = margin + cover.hero_width + hero_text.gap;
     const left: f32 = @floatFromInt(left_px);
     const avail: f32 = @floatFromInt(page.width - left_px - margin);
-    try fonts.caption.draw(page, left, hero_top + 34, "Continue reading");
-    icons.dots(page, @floatFromInt(page.width - margin - 8), hero_top + 24);
-    page.tint(left_px, hero_top + 8, @intFromFloat(avail - 40), 36, style.quiet);
+    try fonts.caption.draw(page, left, hero_top + hero_text.kicker_drop, "Continue reading");
+    const dots_x: f32 = @floatFromInt(page.width - margin - hero_text.dots_inset);
+    icons.dots(page, dots_x, hero_top + hero_text.dots_drop);
+    const kicker_width: u32 = @intFromFloat(avail - hero_text.kicker_clear);
+    const kicker_top = hero_top + hero_text.kicker_tint_drop;
+    page.tint(left_px, kicker_top, kicker_width, hero_text.kicker_tint_height, style.quiet);
 
-    const title_y = hero_top + 104;
+    const title_y = hero_top + hero_text.title_drop;
     const step = hero_title_step;
     const lines = hero_title_lines;
     const used = try draw.wrapped(fonts.hero, page, left, title_y, step, e.title, avail, lines);
     assert(used <= hero_title_lines);
-    const author_y: i32 = title_y + @as(i32, @intCast(used)) * hero_title_step - 12;
+    const below_title: i32 = @as(i32, @intCast(used)) * hero_title_step - hero_text.author_rise;
+    const author_y: i32 = title_y + below_title;
     const has_byline = try draw_hero_byline(fonts, page, e, left_px, author_y, avail);
-    const bar_y = hero_top + cover.hero_height - 40;
+    const bar_y = hero_top + cover.hero_height - hero_text.bar_rise;
     // The author, even under the longest title, is clear of the bar
     assert(author_y < bar_y);
     // Under the author (or the title, when there's no author): when it was last read,
     // and how long in noface, so the card says more than the cover does. Only for a
     // book really opened, as stock also dates downloads, and only clear of the bar.
-    const line_y = if (has_byline) author_y + 56 else author_y;
-    if (e.was_opened() and line_y < bar_y - 22) {
+    const line_y = if (has_byline) author_y + hero_text.line_step else author_y;
+    if (e.was_opened() and line_y < bar_y - hero_text.bar_clear) {
         var when_buf: [24]u8 = undefined;
         if (stats.ago(&when_buf, e.last, now.unix, now.utc_offset)) |when| {
             try draw_hero_last_read(fonts, page, e, when, left_px, line_y, avail);
         }
     }
 
-    progress_bar(page, left_px, bar_y, @intFromFloat(avail), e.percent, 12);
+    progress_bar(page, left_px, bar_y, @intFromFloat(avail), e.percent, hero_text.bar_thick);
     var label: [24]u8 = undefined;
     const pct = std.fmt.bufPrint(&label, "{d}% read", .{e.percent}) catch "";
-    try fonts.caption.draw(page, left, bar_y + 42, pct);
-    page.tint(left_px, bar_y + 16, @intFromFloat(avail), 34, style.faded);
+    try fonts.caption.draw(page, left, bar_y + hero_text.percent_drop, pct);
+    const pct_top = bar_y + hero_text.percent_tint_drop;
+    page.tint(left_px, pct_top, @intFromFloat(avail), hero_text.caption_tint_height, style.faded);
 }
 
 /// The author, and the series when there is one: "Liu, Cixin  ·  Three-Body #2".
@@ -476,7 +592,8 @@ fn draw_hero_byline(
     }
     const left: f32 = @floatFromInt(left_px);
     try draw.clipped(fonts.small, page, left, author_y, byline, avail);
-    page.tint(left_px, @intCast(author_y - 30), @intFromFloat(avail), 44, style.faded);
+    const tint_top: u32 = @intCast(author_y - hero_text.byline_tint_rise);
+    page.tint(left_px, tint_top, @intFromFloat(avail), hero_text.byline_tint_height, style.faded);
     return byline.len > 0;
 }
 
@@ -504,7 +621,8 @@ fn draw_hero_last_read(
     const left: f32 = @floatFromInt(left_px);
     try draw.clipped(fonts.caption, page, left, line_y, line, avail);
     // Gray, like the author
-    page.tint(left_px, @intCast(line_y - 26), @intFromFloat(avail), 34, style.faded);
+    const tint_top: u32 = @intCast(line_y - hero_text.caption_tint_rise);
+    page.tint(left_px, tint_top, @intFromFloat(avail), hero_text.caption_tint_height, style.faded);
 }
 
 fn draw_cell(
@@ -518,37 +636,41 @@ fn draw_cell(
     assert(x >= margin);
     assert(y >= plain_grid_top);
     try draw_cover(pool, fonts, page, e, x, y);
-    const bar_y = y + cover.height + 8;
+    const bar_y = y + cover.height + cell.bar_gap;
     const title_y: i32 = @intCast(bar_y + cell_title_below);
     const title_width: f32 = cover.width;
     const left: f32 = @floatFromInt(x);
     if (!e.is_local()) {
         page.tint(x, y, cover.width, cover.height, style.finished_cover);
-        const cloud_x: f32 = @floatFromInt(x + cover.width - 38);
-        icons.cloud(page, cloud_x, @floatFromInt(y + cover.height - 38));
+        const cloud_x: f32 = @floatFromInt(x + cover.width - cell.cloud_inset);
+        icons.cloud(page, cloud_x, @floatFromInt(y + cover.height - cell.cloud_inset));
         const label = if (e.availability == .downloading) "Downloading" else e.title;
-        _ = try draw.wrapped(fonts.caption, page, left, title_y, 30, label, title_width, 1);
+        const step = cell.title_step;
+        _ = try draw.wrapped(fonts.caption, page, left, title_y, step, label, title_width, 1);
         return;
     }
     if (e.in_progress()) {
-        progress_bar(page, x, bar_y + 2, cover.width, e.percent, 10);
+        progress_bar(page, x, bar_y + cell.bar_drop, cover.width, e.percent, cell.bar_thick);
         try percent_badge(fonts.caption, page, x, y + cover.height, e.percent);
     }
     if (e.is_read()) {
-        icons.check(page, @floatFromInt(x + cover.width - 32), @floatFromInt(y + 32));
+        const tick = cell.tick_inset;
+        icons.check(page, @floatFromInt(x + cover.width - tick), @floatFromInt(y + tick));
     }
     if (e.series) |s| try series_badge(fonts.caption, page, x, y, s.index);
-    _ = try draw.wrapped(fonts.caption, page, left, title_y, 30, e.title, title_width, 1);
+    const step = cell.title_step;
+    _ = try draw.wrapped(fonts.caption, page, left, title_y, step, e.title, title_width, 1);
 }
 
 fn draw_status(fonts: Fonts, page: Page, quick: *const quick_model.Quick) !void {
     const w: f32 = @floatFromInt(page.width);
-    // One centre line for everything in the strip.
-    const centre = 48;
-    const baseline = centre + 9;
+    // One centre line for everything in the strip: the text's baseline a little under
+    // it, the menu's lines from a little over it
+    const centre = status_height / 2;
+    const baseline = centre + status_text_drop;
     comptime assert(baseline < status_height);
-    comptime assert(centre - 14 > 0);
-    icons.menu(page, margin, centre - 14);
+    comptime assert(centre > status_menu_rise);
+    icons.menu(page, margin, centre - status_menu_rise);
     const clock = quick.clock_text();
     const time = clock[0 .. std.mem.indexOfScalar(u8, clock, ' ') orelse clock.len];
     try draw.centered(fonts.caption, page, w / 2, baseline, time);
@@ -561,22 +683,24 @@ fn draw_search_header(fonts: Fonts, page: Page, query: []const u8, found: u32) !
     assert(query.len > 0);
     const left: f32 = margin;
     const avail: f32 = @floatFromInt(page.width - 2 * margin);
-    try fonts.caption.draw(page, left, hero_top + 34, "Search results");
-    page.tint(margin, hero_top + 8, @intFromFloat(avail), 36, style.quiet);
+    try fonts.caption.draw(page, left, hero_top + hero_text.kicker_drop, "Search results");
+    const kicker_top = hero_top + hero_text.kicker_tint_drop;
+    page.tint(margin, kicker_top, @intFromFloat(avail), hero_text.kicker_tint_height, style.quiet);
     var quoted: [80]u8 = undefined;
     const shown = std.fmt.bufPrint(&quoted, "\u{201c}{s}\u{201d}", .{query}) catch query;
-    try draw.clipped(fonts.hero, page, left, hero_top + 120, shown, avail);
+    try draw.clipped(fonts.hero, page, left, hero_top + search_head.query_drop, shown, avail);
     var count: [32]u8 = undefined;
     const plural = if (found == 1) "" else "s";
     const books = std.fmt.bufPrint(&count, "{d} book{s}", .{ found, plural }) catch "";
-    try fonts.small.draw(page, left, hero_top + 190, books);
+    try fonts.small.draw(page, left, hero_top + search_head.count_drop, books);
     const label = "Clear search";
     const w = try fonts.small.measure(label);
-    const top: i32 = hero_top + 236 - button_top;
+    const top: i32 = hero_top + search_head.button_drop - button_top;
     // The button stays inside the hero's place, where its taps go
-    comptime assert(hero_top + 236 + button_height <= hero_bottom);
-    button_outline(page, left, left + w + 60, top);
-    try fonts.small.draw(page, left + 30, top + 55, label);
+    comptime assert(hero_top + search_head.button_drop + button_height <= hero_bottom);
+    const pad = search_head.button_pad;
+    button_outline(page, left, left + w + 2 * pad, top);
+    try fonts.small.draw(page, left + pad, top + button_label_drop, label);
 }
 
 fn draw_tabs(
@@ -588,7 +712,7 @@ fn draw_tabs(
     searching: bool,
 ) !void {
     assert(top == hero_tabs_top or top == plain_tabs_top);
-    const y = top + 54;
+    const y = top + tab_baseline;
     const cy: f32 = @floatFromInt(top + button_top + button_height / 2);
     const r: f32 = button_height / 2;
     if (searching) {
@@ -609,9 +733,10 @@ fn draw_tabs(
         const left: u32 = @intCast(t.label_left);
         const active = t.filter == filter;
         const x: f32 = @floatFromInt(left);
-        try draw.choice(fonts, page, x, .left, y, t.label, active, @intCast(top + 62));
-        const width: u32 = @intCast(t.right - t.label_left - 4);
-        if (!active) page.tint(left, @intCast(top + 22), width, 44, style.faded);
+        try draw.choice(fonts, page, x, .left, y, t.label, active, @intCast(top + tab_underline));
+        const width: u32 = @intCast(t.right - t.label_left - tab_tint_clear);
+        const tint_top: u32 = @intCast(top + tab_tint_drop);
+        if (!active) page.tint(left, tint_top, width, tab_tint_height, style.faded);
     }
     try draw_tabs_sort(fonts, page, top, order);
 }
@@ -620,7 +745,7 @@ fn draw_tabs(
 fn draw_tabs_sort(fonts: Fonts, page: Page, top: i32, order: catalog.Order) !void {
     assert(top == hero_tabs_top or top == plain_tabs_top);
     assert(order.label().len > 0);
-    const y = top + 54;
+    const y = top + tab_baseline;
     const cy: f32 = @floatFromInt(top + button_top + button_height / 2);
     const right: f32 = @floatFromInt(page.width - margin);
     // One width for every order, sized to the longest label, so the button stays put
@@ -629,12 +754,13 @@ fn draw_tabs_sort(fonts: Fonts, page: Page, top: i32, order: catalog.Order) !voi
     for (std.enums.values(catalog.Order)) |o| {
         widest = @max(widest, try fonts.small.measure(o.label()));
     }
-    const button_left = right - 32 - widest - 18 - icon_inset - 14;
+    const arrows = sort_arrows_width + sort_arrows_gap;
+    const button_left = right - sort_label_pad - widest - arrows - icon_inset;
     button_outline(page, button_left, right, top);
     icons.sort_arrows(page, button_left + icon_inset, cy);
-    const label_left = button_left + icon_inset + 18 + 14;
+    const label_left = button_left + icon_inset + arrows;
     const label_w = try fonts.small.measure(order.label());
-    const label_x = label_left + (right - 32 - label_left - label_w) / 2;
+    const label_x = label_left + (right - sort_label_pad - label_left - label_w) / 2;
     try fonts.small.draw(page, label_x, y, order.label());
 }
 
@@ -684,84 +810,135 @@ pub fn render(
     // Nothing at all shown: the hero, when there is one, is a book here too
     if (books.count == 0 and !hero_drawn) {
         const empty = if (query.len > 0) "No books match." else "No books here yet.";
-        try fonts.small.draw(page, margin, @intCast(top + 60), empty);
+        try fonts.small.draw(page, margin, @intCast(top + empty_drop), empty);
     }
     try footer.render(fonts, page, index, page_count(books.count));
     if (message.len > 0) try fonts.caption.draw(page, margin, message_baseline, message);
 }
 
+/// Where tests tap: the middle of the `slot`th cover on a page, of a filter's tab, of the
+/// tabs row, of each pager arrow, and inside the hero's place clear of its dots.
+fn test_book(slot: u32, hero: bool) [2]i32 {
+    const at = cell_origin(slot, hero);
+    return .{ @intCast(at.x + cover.width / 2), @intCast(at.y + cover.height / 2) };
+}
+fn test_tab_x(t: Tab) i32 {
+    return @divTrunc(t.label_left + t.right, 2);
+}
+fn test_tabs_y(hero: bool) i32 {
+    return tabs_top(hero) + tabs_height / 2;
+}
+const test_pager_y = (footer.top + footer.bottom) / 2;
+const test_prev_x = draw.Pager.prev_left + 1;
+const test_next_x = draw.Pager.next_left + 1;
+const test_hero_x = margin + cover.hero_width;
+const test_hero_y = (hero_top + hero_bottom) / 2;
+const test_dots_x = screen_width - margin - 1;
+const test_books = 79; // More than fill page one
+
 test "the current book stays on page one of every view" {
-    try std.testing.expectEqual(Hit.hero, hit(300, 200, 0, 79, false));
-    try std.testing.expectEqual(Hit{ .book = 0 }, hit(100, 700, 0, 79, false));
-    try std.testing.expectEqual(Hit{ .book = 3 }, hit(1000, 700, 0, 79, false));
-    try std.testing.expectEqual(Hit{ .book = 4 }, hit(100, 1100, 0, 79, false));
+    try std.testing.expectEqual(Hit.hero, hit(test_hero_x, test_hero_y, 0, test_books, false));
+    for ([_]u32{ 0, columns - 1, columns }) |slot| {
+        const at = test_book(slot, true);
+        try std.testing.expectEqual(Hit{ .book = slot }, hit(at[0], at[1], 0, test_books, false));
+    }
 }
 
-test "later pages are four by three" {
-    try std.testing.expectEqual(Hit{ .book = 8 }, hit(100, 300, 1, 79, false));
-    try std.testing.expectEqual(Hit{ .book = 19 }, hit(1000, 1100, 1, 79, false));
+test "later pages lead on from page one's last book" {
+    const first = test_book(0, false);
+    const first_index = grid_size(true);
+    const expected: Hit = .{ .book = first_index };
+    try std.testing.expectEqual(expected, hit(first[0], first[1], 1, test_books, false));
+    const last_slot = grid_size(false) - 1;
+    const last = test_book(last_slot, false);
+    const last_hit: Hit = .{ .book = first_index + last_slot };
+    try std.testing.expectEqual(last_hit, hit(last[0], last[1], 1, test_books, false));
 }
 
 test "header and footer controls" {
-    try std.testing.expectEqual(Hit.menu, hit(100, 50, 0, 79, false));
-    try std.testing.expectEqual(Hit{ .tab = .all }, hit(200, 560, 0, 79, false));
-    try std.testing.expectEqual(Hit{ .tab = .unread }, hit(340, 560, 0, 79, false));
-    try std.testing.expectEqual(Hit{ .tab = .read }, hit(500, 560, 0, 79, false));
-    try std.testing.expectEqual(Hit.none, hit(840, 560, 0, 79, false)); // Between stats and sort
-    try std.testing.expectEqual(Hit.sort, hit(1100, 560, 0, 79, false));
-    try std.testing.expectEqual(Hit.prev, hit(400, 1600, 0, 79, false));
-    try std.testing.expectEqual(Hit.next, hit(800, 1600, 0, 79, false));
+    try std.testing.expectEqual(Hit.menu, hit(margin, status_height / 2, 0, test_books, false));
+    const y = test_tabs_y(true);
+    for (tabs) |t| {
+        const expected: Hit = .{ .tab = t.filter };
+        try std.testing.expectEqual(expected, hit(test_tab_x(t), y, 0, test_books, false));
+    }
+    // Between stats and sort
+    const gap_x = stats_cx + search_reach + 1;
+    try std.testing.expectEqual(Hit.none, hit(gap_x, y, 0, test_books, false));
+    try std.testing.expectEqual(Hit.sort, hit(sort_left, y, 0, test_books, false));
+    try std.testing.expectEqual(Hit.prev, hit(test_prev_x, test_pager_y, 0, test_books, false));
+    try std.testing.expectEqual(Hit.next, hit(test_next_x, test_pager_y, 0, test_books, false));
 }
 
 test "tapping past the last book does nothing" {
-    try std.testing.expectEqual(Hit.none, hit(1000, 1100, 0, 3, false));
+    const fourth = test_book(3, true);
+    try std.testing.expectEqual(Hit.none, hit(fourth[0], fourth[1], 0, 3, false));
 }
 
 test "page count follows the layout" {
+    const one = grid_size(true);
+    const later = grid_size(false);
     try std.testing.expectEqual(@as(u32, 1), page_count(0));
-    try std.testing.expectEqual(@as(u32, 1), page_count(8));
-    try std.testing.expectEqual(@as(u32, 2), page_count(9));
-    try std.testing.expectEqual(@as(u32, 7), page_count(78));
+    try std.testing.expectEqual(@as(u32, 1), page_count(one));
+    try std.testing.expectEqual(@as(u32, 2), page_count(one + 1));
+    try std.testing.expectEqual(@as(u32, 2), page_count(one + later));
+    try std.testing.expectEqual(@as(u32, 3), page_count(one + later + 1));
 }
 
 test "search button sits beside the filter, and the search takes the hero's place" {
-    try std.testing.expectEqual(Hit.search, hit(search_cx, 560, 0, 79, false));
-    try std.testing.expectEqual(Hit.none, hit(570, 560, 0, 79, false)); // The gap between them
-    try std.testing.expectEqual(Hit.stats, hit(stats_cx, 560, 0, 79, false));
-    try std.testing.expectEqual(Hit.search, hit(search_cx + search_reach, 560, 0, 79, false));
-    try std.testing.expectEqual(Hit.stats, hit(search_cx + search_reach + 4, 560, 0, 79, false));
-    try std.testing.expectEqual(Hit.search, hit(search_cx, 140, 1, 79, false));
-    for (tabs) |t| try std.testing.expect(t.right - t.left >= 100);
-    try std.testing.expect(2 * search_reach >= 100);
-    try std.testing.expectEqual(Hit.clear_search, hit(300, 300, 0, 79, true));
-    try std.testing.expectEqual(Hit.hero, hit(300, 300, 0, 79, false));
+    const y = test_tabs_y(true);
+    try std.testing.expectEqual(Hit.search, hit(search_cx, y, 0, test_books, false));
+    // The gap between the filter and search
+    const gap_x = tabs[tabs.len - 1].right + 1;
+    try std.testing.expectEqual(Hit.none, hit(gap_x, y, 0, test_books, false));
+    try std.testing.expectEqual(Hit.stats, hit(stats_cx, y, 0, test_books, false));
+    const search_edge = search_cx + search_reach;
+    try std.testing.expectEqual(Hit.search, hit(search_edge, y, 0, test_books, false));
+    try std.testing.expectEqual(Hit.stats, hit(stats_cx - search_reach, y, 0, test_books, false));
+    const later_y = test_tabs_y(false);
+    try std.testing.expectEqual(Hit.search, hit(search_cx, later_y, 1, test_books, false));
+    for (tabs) |t| try std.testing.expect(t.right - t.left >= style.fingertip);
+    try std.testing.expect(2 * search_reach >= style.fingertip);
+    const cleared = hit(test_hero_x, test_hero_y, 0, test_books, true);
+    try std.testing.expectEqual(Hit.clear_search, cleared);
 }
 
 test "a book's title is part of the book, and the hero keeps its dots" {
-    try std.testing.expectEqual(Hit{ .book = 0 }, hit(300, 975, 0, 79, false));
-    try std.testing.expectEqual(Hit{ .book = 0 }, hit(120, 975, 0, 79, false));
-    try std.testing.expectEqual(Hit.hero_dots, hit(1180, 130, 0, 79, false));
+    const at = cell_origin(0, true);
+    const title_y: i32 = @intCast(at.y + cover.height + cell.bar_gap + cell_title_below);
+    const left_x: i32 = @intCast(at.x);
+    try std.testing.expectEqual(Hit{ .book = 0 }, hit(left_x, title_y, 0, test_books, false));
+    const dots_y = hero_top + hero_text.dots_drop;
+    try std.testing.expectEqual(Hit.hero_dots, hit(test_dots_x, dots_y, 0, test_books, false));
     // A fingertip tall: from just under the status strip to well under the dots
-    try std.testing.expectEqual(Hit.hero_dots, hit(1180, status_height, 0, 79, false));
-    try std.testing.expectEqual(Hit.hero_dots, hit(1180, hero_dots_bottom - 1, 0, 79, false));
-    try std.testing.expectEqual(Hit.hero, hit(1180, hero_dots_bottom, 0, 79, false));
+    const top_hit = hit(test_dots_x, status_height, 0, test_books, false);
+    try std.testing.expectEqual(Hit.hero_dots, top_hit);
+    const foot_hit = hit(test_dots_x, hero_dots_bottom - 1, 0, test_books, false);
+    try std.testing.expectEqual(Hit.hero_dots, foot_hit);
+    const under = hit(test_dots_x, hero_dots_bottom, 0, test_books, false);
+    try std.testing.expectEqual(Hit.hero, under);
 }
 
 test "the tabs row takes taps just off its pills, and the filter's from its funnel" {
-    // Page one: 10 px above and below the pills drawn
+    // Page one: from the hero's place down to the grid
     const all: Hit = .{ .tab = .all };
-    try std.testing.expectEqual(all, hit(200, hero_tabs_top - 10, 0, 79, false));
-    try std.testing.expectEqual(all, hit(200, hero_tabs_top + tabs_height + 10, 0, 79, false));
-    try std.testing.expectEqual(Hit.sort, hit(1100, hero_grid_top - 1, 0, 79, false));
-    try std.testing.expectEqual(Hit{ .book = 0 }, hit(100, hero_grid_top, 0, 79, false));
-    // Later pages: from the status strip, just above the pills, to 10 px below them
-    try std.testing.expectEqual(all, hit(200, status_height, 1, 79, false));
-    try std.testing.expectEqual(all, hit(200, plain_tabs_top + tabs_height + 10, 1, 79, false));
-    try std.testing.expectEqual(Hit.menu, hit(200, status_height - 1, 1, 79, false));
+    const x = test_tab_x(tabs[0]);
+    try std.testing.expectEqual(all, hit(x, hero_bottom, 0, test_books, false));
+    try std.testing.expectEqual(all, hit(x, hero_grid_top - 1, 0, test_books, false));
+    try std.testing.expectEqual(Hit.sort, hit(sort_left, hero_grid_top - 1, 0, test_books, false));
+    const first = cell_origin(0, true);
+    const first_x: i32 = @intCast(first.x);
+    const grid_hit = hit(first_x, hero_grid_top, 0, test_books, false);
+    try std.testing.expectEqual(Hit{ .book = 0 }, grid_hit);
+    // Later pages: from the status strip down to the grid
+    try std.testing.expectEqual(all, hit(x, status_height, 1, test_books, false));
+    try std.testing.expectEqual(all, hit(x, plain_grid_top - 1, 1, test_books, false));
+    try std.testing.expectEqual(Hit.menu, hit(margin, status_height - 1, 1, test_books, false));
     // The funnel, at the button's rounded end, is part of the first tab
-    try std.testing.expectEqual(all, hit(margin + icon_inset, 558, 0, 79, false));
-    try std.testing.expectEqual(all, hit(margin, 558, 0, 79, false));
-    try std.testing.expectEqual(Hit.none, hit(margin - 1, 558, 0, 79, false));
+    const y = test_tabs_y(true);
+    try std.testing.expectEqual(all, hit(margin + icon_inset, y, 0, test_books, false));
+    try std.testing.expectEqual(all, hit(margin, y, 0, test_books, false));
+    try std.testing.expectEqual(Hit.none, hit(margin - 1, y, 0, test_books, false));
 }
 
 test "a cover set in type has room for its title's lines above the author" {

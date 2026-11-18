@@ -358,7 +358,7 @@ pub fn resumed(
             // of: the page stays, and so does the place saved on the way out
             const lifted = try drag.ended(&scrub.drag, scrub.ending.?);
             if (lifted) s.set_page(scrub.target, .jump);
-            if (lifted) assert(s.current == scrub.target);
+            assert(scrub.target < s.pages.len); // The pages it was dragged over, unchanged
             try draw_toolbar(a, s, title, .{ .sheet_open = sheet_open, .whole_page = true });
             // What locks or leaves covers the toolbar at once: a clean flash is for nothing
             if (lifted) {

@@ -893,11 +893,11 @@ pub const Reader = struct {
         // Running: a press held long, a swipe, a pull, is a hand mid-stride, not a gesture
         if (r.run != null) {
             switch (action) {
-                .tap => |t| try r.tap_running(t.x, t.y, t.us),
+                .tap => |t| try r.tap_running(t.x, t.y, t.held_us),
                 .hold => |h| try r.tap_running(h.x, h.y, null),
                 .swipe => |swipe| {
                     const x: i32 = if (swipe.direction > 0) @intCast(r.a.screen.width - 1) else 0;
-                    try r.tap_running(x, @intCast(r.a.screen.height / 2), swipe.us);
+                    try r.tap_running(x, @intCast(r.a.screen.height / 2), null);
                 },
                 .pull => {},
                 .drag, .drag_end, .tick, .charger, .lock, .unlock, .power, .computer, .stop => {
@@ -1096,18 +1096,19 @@ pub const Reader = struct {
     /// A tap while running, wherever it lands: the dial stops running, the pause button
     /// stops or carries on, the top band opens the pause card, the left third shows the
     /// phrase before again, and the rest the next one now. Going on early says the pace
-    /// is slow; going back, that it's fast. `touched_us` is when the finger came down;
-    /// null for a hold, down long already.
-    fn tap_running(r: *Reader, x: i32, y: i32, touched_us: ?u64) !void {
+    /// is slow; going back, that it's fast. `held_us` is how long the finger stayed;
+    /// null for a hold or a swipe, down long already.
+    fn tap_running(r: *Reader, x: i32, y: i32, held_us: ?u64) !void {
         assert(r.reading());
         const a = r.a;
         assert(a.running);
         const run = &r.run.?;
         const now = now_us();
         // A contact too short for a finger: a drop of sweat, a brush. Let go before it
-        // counts as a touch, so it never holds off the tap that follows
-        if (touched_us) |t| if (now -| t < running_model.contact_us_min) {
-            std.debug.print("running: too short a touch, {d} ms\n", .{(now -| t) / 1000});
+        // counts as a touch, so it never holds off the tap that follows. Timed by the
+        // panel, as the finger lifted: noface may read it later, mid-slide
+        if (held_us) |held| if (held < running_model.contact_us_min) {
+            std.debug.print("running: too short a touch, {d} ms\n", .{held / 1000});
             return;
         };
         if (!run.takes_touch(now)) return;

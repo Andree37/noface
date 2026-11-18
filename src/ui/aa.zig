@@ -500,7 +500,7 @@ fn draw_running(fonts: Fonts, page: Page, running: bool) !void {
     const note = if (running)
         "Back to your own settings"
     else
-        "A few big words at a time, at your pace, for a treadmill";
+        "A sentence at a time, large and still, at your pace, for a treadmill";
     try fonts.title.draw(page, margin + 32, running_top + 50, label);
     try fonts.caption.draw(page, margin + 32, running_top + 90, note);
 }

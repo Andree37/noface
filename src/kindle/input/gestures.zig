@@ -89,7 +89,7 @@ pub fn on_axis(in: *Input, event: InputEvent) ?Action {
         abs_mt_x => in.xs[in.slot] = event.value,
         abs_mt_y => in.ys[in.slot] = event.value,
         abs_mt_tracking => {
-            if (event.value < 0) return finger_up(in);
+            if (event.value < 0) return finger_up(in, @as(u64, event.sec) * 1_000_000 + event.usec);
             in.pending = in.slot; // Down: where is known at the packet's end
             in.down_us = @as(u64, event.sec) * 1_000_000 + event.usec;
         },
@@ -99,7 +99,8 @@ pub fn on_axis(in: *Input, event: InputEvent) ?Action {
     return null;
 }
 
-pub fn finger_up(in: *Input) ?Action {
+/// A finger lifting, at `up_us` by the panel's clock.
+pub fn finger_up(in: *Input, up_us: u64) ?Action {
     assert(in.slot < slots_count);
     if (in.drag_slot == in.slot) {
         in.drag_slot = null;
@@ -108,14 +109,14 @@ pub fn finger_up(in: *Input) ?Action {
     const down = in.top orelse return null;
     if (down.slot != in.slot) return null; // Another finger, not watched
     in.top = null;
-    return lifted(in, down);
+    return lifted(in, down, up_us);
 }
 
 /// A finger lifted that nothing was following: a sideways stroke is a swipe, and a
 /// finger that stayed put or only rolled a little a tap where it began. A real
 /// stroke some other way is neither: turning a page by where an arc began would be
 /// a guess, often the wrong way.
-pub fn lifted(in: *Input, down: Press) ?Action {
+pub fn lifted(in: *Input, down: Press, up_us: u64) ?Action {
     assert(down.slot == in.slot); // The finger that lifted
     const point = screen_point(in, in.slot);
     if (down.moved) {
@@ -126,7 +127,9 @@ pub fn lifted(in: *Input, down: Press) ?Action {
         }
         if (touch_zones.is_stroke(down.x, down.y, point.x, point.y)) return null;
     }
-    return .{ .tap = .{ .x = down.x, .y = down.y, .us = down.us } };
+    // Both times from the panel's events, however late they're read
+    const held_us = up_us -| down.us;
+    return .{ .tap = .{ .x = down.x, .y = down.y, .us = down.us, .held_us = held_us } };
 }
 
 /// The end of a packet: a followed finger moved, a pressed one moved or pulled

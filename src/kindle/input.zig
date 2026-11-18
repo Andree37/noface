@@ -27,9 +27,6 @@ const InputEvent = evdev.InputEvent;
 /// The longest a wait for input lasts before looking again, so ticks and a stop
 /// request are seen within a second.
 const wait_ms_max = 1000;
-/// How long a scripted touch stays on the glass: as long as a finger's tap, which
-/// running mode tells from a drop of sweat's (model/running.zig).
-const touch_us = 80 * std.time.us_per_ms;
 /// How often a press is looked at while it may yet become a hold.
 const hold_poll_ms = 30;
 
@@ -51,8 +48,10 @@ pub fn install_signals() void {
     }
 }
 
-/// A tap: where, and when the finger touched (microseconds on the monotonic clock).
-pub const Tap = struct { x: i32, y: i32, us: u64 };
+/// A tap: where, when the finger touched (microseconds on the monotonic clock), and,
+/// for one that waited for the finger to lift, how long it stayed on the glass, by the
+/// panel's own clock: null for a tap taken as it touched.
+pub const Tap = struct { x: i32, y: i32, us: u64, held_us: ?u64 = null };
 
 /// A sideways stroke that lifted: `direction` 1 is on (leftwards), -1 back. `us` is
 /// when the finger landed, as a tap's, so a turn by swipe is timed as one by tap.
@@ -144,7 +143,7 @@ pub const Script = struct {
     fn touch(script: *Script, in: *Input, action: Action, touched_us: u64) ?Action {
         assert(touched_us <= now_us());
         script.touched_us = touched_us;
-        os.fake_us = now_us() + touch_us; // A touch takes as long as a finger's tap
+        os.fake_us = now_us() + 1000; // A touch takes a moment
         var touched = action;
         switch (touched) {
             .tap => |*tap| {

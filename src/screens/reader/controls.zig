@@ -49,10 +49,10 @@ pub fn draw_toolbar(a: *app.App, s: *sess.Session, title: []const u8, drawn: Dra
     );
     @memcpy(a.screen.pixels, a.overlay);
     if (drawn.whole_page) {
-        try a.show_band(0, a.screen.height);
+        try a.screen.wait_complete(try s.show_band(0, a.screen.height));
         return;
     }
-    try show_bars(a, drawn.sheet_open);
+    try show_bars(a, s, drawn.sheet_open);
 }
 
 pub fn close_toolbar(a: *app.App, s: *sess.Session, sheet_open: bool) !void {
@@ -60,18 +60,19 @@ pub fn close_toolbar(a: *app.App, s: *sess.Session, sheet_open: bool) !void {
     @memcpy(a.screen.pixels, try s.ensure(s.current, s.current));
     // The page under the bars is all that changed
     assert(a.screen.pixels.len > 0);
-    try show_bars(a, sheet_open);
+    try show_bars(a, s, sheet_open);
 }
 
 /// Shows the screen where the toolbar's bars are, or were: the top bar (or the
 /// tallest sheet's reach, as switching from More to a shorter tab uncovers the
 /// page) and the bottom bar.
-fn show_bars(a: *app.App, sheet_open: bool) !void {
+fn show_bars(a: *app.App, s: *const sess.Session, sheet_open: bool) !void {
     const top: u32 = if (sheet_open) aa.max_height else toolbar.top_height;
     assert(top < a.screen.height);
     assert(toolbar.bottom_top < a.screen.height);
-    const first = try a.screen.show_region(0, 0, a.screen.width, top, .page);
-    try a.show_band(toolbar.bottom_top, a.screen.height - toolbar.bottom_top);
+    const first = try s.show_band(0, top);
+    const bottom_height = a.screen.height - toolbar.bottom_top;
+    try a.screen.wait_complete(try s.show_band(toolbar.bottom_top, bottom_height));
     try a.screen.wait_complete(first);
 }
 

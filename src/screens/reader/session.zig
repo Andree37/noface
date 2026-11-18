@@ -304,6 +304,18 @@ pub const Session = struct {
         return shaded_in(s.pages, s.highlights.items, index);
     }
 
+    /// Starts showing a full-width band of the screen where the page on screen is put
+    /// back or covered (the toolbar's bars, a note's panel), and returns the update.
+    /// A page with a highlight's gray takes the refresh that keeps it gray, as `show`
+    /// does: the text waveform blinks a gray band black as it comes or goes.
+    pub fn show_band(s: *const Session, top: u32, height: u32) !u32 {
+        const a = s.app;
+        assert(height > 0);
+        assert(top + height <= a.screen.height);
+        const refresh: hwtcon.Refresh = if (s.shaded(s.current)) .shaded_page else .page;
+        return a.screen.show_region(0, top, a.screen.width, height, refresh);
+    }
+
     /// Every move to another page comes through here, so reading time stays right.
     pub fn set_page(s: *Session, index: u32, move: Move) void {
         check.thatf(index < s.pages.len, "page {d} of {d}", .{ index, s.pages.len });

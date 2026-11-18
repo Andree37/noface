@@ -28,7 +28,7 @@ pub fn show_note(a: *app.App, s: *sess.Session, start: book_model.Pos, fixed: ?u
     };
     try notes.render(font, a.ui, panel, parts, start, fitted.next != null);
     @memcpy(a.screen.pixels, a.overlay);
-    try a.show_band(top, fitted.height);
+    try a.screen.wait_complete(try s.show_band(top, fitted.height));
     s.note_top = top;
     s.note_next = fitted.next;
     std.debug.print(
@@ -58,5 +58,5 @@ pub fn close_note(a: *app.App, s: *sess.Session) !void {
     assert(s.current < s.pages.len);
     std.debug.print("note closed\n", .{});
     @memcpy(a.screen.pixels, try s.ensure(s.current, s.current));
-    try a.show_band(s.note_top, a.screen.height - s.note_top);
+    try a.screen.wait_complete(try s.show_band(s.note_top, a.screen.height - s.note_top));
 }

@@ -1145,3 +1145,23 @@ pub const Reader = struct {
         return null;
     }
 };
+
+test "the charger, the quick panel, and taps on a note or a highlight never wait for layout" {
+    // A first open still being laid out: none of these reads the session's app or layout
+    var progress: paginate.Progressive = undefined;
+    const pages = [_]book_model.Pos{.{}};
+    const s = sess.Session{
+        .app = undefined,
+        .paragraphs = &.{},
+        .pages = &pages,
+        .current = 0,
+        .anchor = .{},
+        .progress = &progress,
+    };
+    try std.testing.expect(!needs_all_pages(.charger, .page, null, &s));
+    try std.testing.expect(!needs_all_pages(.pull, .page, null, &s));
+    const tap: input_mod.Action = .{ .tap = .{ .x = 600, .y = 800, .us = 0 } };
+    try std.testing.expect(!needs_all_pages(tap, .note, null, &s));
+    const highlight: View = .{ .highlight = .{ .id = "h1" } };
+    try std.testing.expect(!needs_all_pages(tap, highlight, null, &s));
+}

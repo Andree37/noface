@@ -100,4 +100,5 @@ test {
     _ = @import("sys/service.zig");
     _ = @import("library/files.zig");
     _ = @import("library/index.zig");
+    _ = @import("screens/reader.zig");
 }

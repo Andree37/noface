@@ -122,6 +122,8 @@ const themes_tab = tap(150, 274);
 const running_button = tap(636, 790);
 const start_running = [_]Step{ top, text_settings_button, themes_tab, running_button };
 const pause_tap = tap(636, 150);
+/// The pause button, in the margin left of the footer, at running's Wide margins.
+const pause_button = tap(75, 1625);
 const pause_resume = card_row(3, 0);
 const pause_stop = card_row(3, 2);
 
@@ -1487,18 +1489,30 @@ const scenarios = [_]Scenario{
         }.run,
     },
     .{
-        .name = "the pause card stops the page's timer, and Resume carries on",
+        .name = "the pause card and the pause button stop the page's timer, and each " ++
+            "carries on",
         .run = struct {
             fn run() !void {
                 // Paused for long enough to have turned many pages: none turn
                 const paused = [_]Step{ wait(1_000), pause_tap, wait(300_000) };
                 const held = try play(&(start_running ++ paused));
                 const still = try play(&(start_running ++ [_]Step{wait(1_000)}));
-                try expect(same_place(held.saved, still.saved), "a page turned while paused");
+                try expect(same_place(held.saved, still.saved), "the place moved on while paused");
                 const resumed = try play(&(start_running ++ [_]Step{
                     wait(1_000), pause_tap, pause_resume, wait(240_000),
                 }));
                 try expect(!same_place(resumed.saved, still.saved), "Resume didn't carry on");
+                // The pause button stops the phrase where it is, and again carries on
+                const tapped = [_]Step{ wait(2_000), pause_button };
+                const just_paused = try play(&(start_running ++ tapped));
+                const stopped = tapped ++ [_]Step{wait(300_000)};
+                const button_held = try play(&(start_running ++ stopped));
+                const held_there = same_place(button_held.saved, just_paused.saved);
+                try expect(held_there, "the place moved on when paused");
+                const going = [_]Step{ wait(1_000), pause_button, wait(240_000) };
+                const button_resumed = try play(&(start_running ++ stopped ++ going));
+                const went_on = !same_place(button_resumed.saved, still.saved);
+                try expect(went_on, "the pause button didn't carry on");
             }
         }.run,
     },

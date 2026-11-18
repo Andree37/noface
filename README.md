@@ -28,9 +28,9 @@ Things the stock Kindle doesn't do:
   and finishing one offers the next.
 - **Bold word starts.** An option that sets the first half of each word in bold, to
   lead the eye along the line.
-- **Running mode.** For a treadmill: big bold text that turns its own pages at your
-  running pace, with a small dial showing the next turn and taps big enough to hit
-  mid-stride.
+- **Running mode.** For a treadmill: the book a few big words at a time, at one spot
+  that a bouncing head can't lose its line in, moving on at your running pace, with
+  taps big enough to hit mid-stride.
 
 ## And everything you'd expect
 

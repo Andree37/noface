@@ -513,8 +513,8 @@ pub const Reader = struct {
     /// first open is still laid out in idle moments, else for the clock.
     pub fn setting(r: *const Reader) input_mod.Input.Scope {
         var tick_us: u64 = clock_check_us;
-        // Running's dial sweeps, and its page turns, on ticks
-        if (r.run != null and r.reading()) tick_us = run_mode.dial_step_us;
+        // Running's phrases change, and its dial sweeps, on ticks
+        if (r.run != null and r.reading()) tick_us = run_mode.tick_us;
         if (r.s.layout_pending()) tick_us = layout_tick_us;
         // The Back button counts, where a resting thumb otherwise wouldn't
         const exempt = if (r.reading()) r.s.back_zone() else null;
@@ -659,7 +659,7 @@ pub const Reader = struct {
         if (r.s.layout_pending() and needs_all_pages(action, r.view, r.sheet(), r.s)) {
             try r.s.finish_layout();
             // The page's footer gains its count; anything else is about to be redrawn
-            if (r.reading()) try r.s.show_footer();
+            if (r.reading() and r.run == null) try r.s.show_footer();
         }
         switch (action) {
             .lock => return r.on_lock(),
@@ -808,7 +808,8 @@ pub const Reader = struct {
         assert(r.s.progress == null);
         assert(r.s.current < r.s.pages.len);
         switch (r.view) {
-            .page => try r.s.show_footer(),
+            // Running shows phrases, not the page and its footer
+            .page => if (r.run == null) try r.s.show_footer(),
             .toolbar => try r.draw_toolbar(false),
             .note, .highlight => {},
         }
@@ -836,8 +837,8 @@ pub const Reader = struct {
     /// The lock screen over the book, the place saved first.
     fn on_lock(r: *Reader) screen.Step(Outcome) {
         r.s.pause_clock(); // Asleep isn't reading
-        // Running's page starts over once it's unlocked
-        if (r.run) |*run| run.page_started_us = null;
+        // Running shows its screen whole again once it's unlocked
+        if (r.run) |*run| run.shown_us = null;
         r.save(); // A lock is a natural stop, and anything after it may end noface
         assert(r.since_save == 0);
         r.open_child(.{ .lock = .{ .screen = lock.make(r.a, r.entry, .{}) } });
@@ -1072,35 +1073,41 @@ pub const Reader = struct {
         assert(!a.running);
     }
 
-    /// The page's timer: the bar filled further, or the next page.
+    /// The phrase's timer: the next phrase when it's up, the reader's place following.
     fn tick_running(r: *Reader) !void {
         assert(r.reading());
         assert(r.a.running);
         const run = &r.run.?;
-        switch (try run.tick(r.a, r.s, now_us())) {
-            .wait => {},
-            .turn => try r.turn_running(),
-        }
+        if (try run.tick(r.a, r.s, now_us())) |at| try r.follow_phrase(at);
     }
 
-    /// The next page, its timer started; at the book's end, held there.
-    fn turn_running(r: *Reader) !void {
-        assert(r.reading());
-        const run = &r.run.?;
-        const before = r.s.current;
-        try r.turn_by(1, null);
-        assert(r.s.current >= before); // Forward, or at the end
-        if (r.s.current == before) {
-            run.holding = true;
-            return;
+    /// The reader's place at the phrase now on screen: the page that holds it becomes
+    /// the current one, page by page, so the reading time and the journal count as
+    /// they do turning; and the place saved, every few pages, is the phrase's own.
+    fn follow_phrase(r: *Reader, at: book_model.Pos) !void {
+        const s = r.s;
+        // On a first open, the pages ahead may not be laid out yet
+        if (s.layout_pending()) try s.layout_until(s.current + 2);
+        // Each turn moves a page: bounded by the pages
+        for (0..s.pages.len) |_| {
+            if (s.current + 1 < s.pages.len and !at.is_before(s.pages[s.current + 1])) {
+                s.set_page(s.current + 1, .turn);
+                r.since_save += 1;
+            } else if (s.current > 0 and at.is_before(s.pages[s.current])) {
+                s.set_page(s.current - 1, .turn);
+            } else break;
         }
-        try run.begin_page(r.a, r.s, now_us());
+        assert(!at.is_before(s.pages[s.current]) or s.current == 0);
+        s.anchor = at; // The phrase, more exactly than its page's start
+        if (r.since_save >= save_every) r.save();
+        assert(r.since_save < save_every);
     }
 
-    /// A tap while running, wherever it lands: the dial stops running, the top band
-    /// pauses, the left third goes back a page and holds there, and the rest turns on
-    /// now. Turning early says the pace is slow; going back, that it's fast.
-    /// `touched_us` is when the finger came down; null for a hold, down long already.
+    /// A tap while running, wherever it lands: the dial stops running, the pause button
+    /// stops or carries on, the top band opens the pause card, the left third shows the
+    /// phrase before again, and the rest the next one now. Going on early says the pace
+    /// is slow; going back, that it's fast. `touched_us` is when the finger came down;
+    /// null for a hold, down long already.
     fn tap_running(r: *Reader, x: i32, y: i32, touched_us: ?u64) !void {
         assert(r.reading());
         const a = r.a;
@@ -1114,41 +1121,45 @@ pub const Reader = struct {
             return;
         };
         if (!run.takes_touch(now)) return;
-        const us = touched_us;
-        // The dial in the footer stops running, wherever else that tap would land
-        if (run.on_dial(x, y)) {
+        // Until the screen is shown, there's nothing on it to tap
+        if (run.shown_us == null) return;
+        if (run.on_dial(a, x, y)) {
             std.debug.print("running: tap dial\n", .{});
             return r.stop_running();
         }
+        if (run_mode.Run.on_pause_button(a, x, y)) {
+            try run.pause_or_resume(a, r.s, now);
+            const stopped = run.stopped();
+            std.debug.print("running: {s}\n", .{if (stopped) "paused" else "resumed"});
+            // Stopped, the Kindle may sleep as it would; going on, it stays awake
+            lipc.hold_awake(!stopped);
+            return;
+        }
         const zone = running_model.zone(x, y, a.screen.width, run_mode.pause_band_px);
         std.debug.print("running: tap {s}\n", .{@tagName(zone)});
-        switch (zone) {
+        const was_stopped = run.stopped();
+        const moved = switch (zone) {
             .pause => return r.pause_running(),
-            .next => {
-                // Read on before the page was due; not from one held, already read
-                if (!run.holding and run.page_started_us != null) {
-                    a.running_pace = running_model.faster(a.running_pace.?);
-                }
-                run.holding = false;
-                const before = r.s.current;
-                try r.turn_by(1, us);
-                run.holding = r.s.current == before; // The book's end
-                try run.begin_page(a, r.s, now_us());
+            .next => moved: {
+                // Read before its time was up; not from one stopped, read already
+                if (!was_stopped) a.running_pace = running_model.faster(a.running_pace.?);
+                break :moved try run.forward(a, r.s, now);
             },
-            .back => {
-                if (!run.holding) a.running_pace = running_model.slower(a.running_pace.?);
-                try r.turn_by(-1, us);
-                run.holding = true;
-                run.page_started_us = null;
+            .back => moved: {
+                if (!was_stopped) a.running_pace = running_model.slower(a.running_pace.?);
+                break :moved try run.back(a, r.s, now);
             },
-        }
+        };
+        // Going on from the pause button's stop, the Kindle stays awake again
+        if (was_stopped and !run.stopped()) lipc.hold_awake(true);
+        if (moved) |at| try r.follow_phrase(at);
     }
 
     /// The pause card over the page: the page's timer stops, and the Kindle may sleep.
     fn pause_running(r: *Reader) !void {
         assert(r.reading());
         const run = &r.run.?;
-        run.page_started_us = null;
+        run.shown_us = null; // Shown whole again once the card closes
         lipc.hold_awake(false);
         const minutes = run.minutes(now_us());
         const note = std.fmt.bufPrint(&r.pause_note, "Running for {d} min", .{minutes}) catch "";

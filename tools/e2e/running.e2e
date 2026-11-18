@@ -1,6 +1,6 @@
 # Running mode on the test book (tools/e2e.zig plays it): turned on from Aa's Themes
-# tab, its dial and line arrow, its taps, a drip let go, the pause card, and the
-# dial's tap that stops it.
+# tab: its phrases, its taps, a drip let go, the pause button, the pause card, and
+# the dial's tap that stops it.
 # Start from a fresh test folder: noface on its library, the book not opened before.
 
 # Opening the book from the library's hero
@@ -22,49 +22,55 @@ still
 shot themes
 tap 636 790
 log running: on
-log running: page 1
+log running: phrases from
 still
 shot running
 
-# The dial sweeps round, and the arrow in the margin moves down the lines, as the
-# page's time goes by
+# The phrases change on their own at the pace
 wait 4000
-shot filling
+shot later
 
-# A contact too short for a finger, as a drop of sweat makes, turns nothing
+# A contact too short for a finger, as a drop of sweat makes, moves nothing
 hold 1100 900 30
 log running: too short a touch
 wait 1000
 
-# A tap on the right turns at once; on the left goes back a page and holds it there;
-# on the right again reads on from it
+# A tap on the right shows the next phrase now; on the left, the one before again
 tap 1100 900
 log running: tap next
-log running: page 2
 still
 wait 1000
 tap 150 900
 log running: tap back
 still
+
+# The pause button stops the phrases, and again carries on
 wait 1000
-tap 1100 900
-log running: page 2
+tap 104 1625
+log running: paused
+still
+shot stopped
+wait 1000
+tap 104 1625
+log running: resumed
 still
 
-# The pause card from the top band, and Resume; then a tap on the dial beside the
-# footer's time left, which stops running (the pause card's Stop does too: the
-# scenarios play that)
+# The pause card from the top band, and Resume, which shows the whole screen again
 wait 1000
 tap 636 150
 log screen: Card opened
 still
-shot paused
+shot card
 tap 636 1376
 log running: resume_running
+log running: phrases from
 still
+
+# A tap on the dial beside the minutes left stops running (the pause card's Stop does
+# too: the scenarios play that)
 wait 1000
-tap 939 1625
+tap 932 1626
 log running: tap dial
 log running: off
 still
-shot stopped
+shot back

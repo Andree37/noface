@@ -21,6 +21,7 @@ test {
     _ = @import("gfx/decoder_memory.zig");
     _ = @import("model/settings.zig");
     _ = @import("model/running.zig");
+    _ = @import("model/phrases.zig");
     _ = @import("screens/reader/run.zig");
     _ = @import("kindle/fonts.zig");
     _ = @import("gfx/page.zig");

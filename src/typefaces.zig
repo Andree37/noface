@@ -17,9 +17,9 @@ pub const faces_kept = 32;
 /// Fonts kept to show the typefaces' names in themselves: more than the Aa sheet shows
 /// at once.
 pub const samples_kept = 12;
-/// Files kept: one for each font kept, at most, and one more, so there's always one to
-/// give up when another is needed.
-const files_kept = faces_kept + samples_kept + 1;
+/// Files kept: one for each font kept, at most (running's phrase font too), and one
+/// more, so there's always one to give up when another is needed.
+const files_kept = faces_kept + samples_kept + 1 + 1;
 /// The size a typeface's name is shown in, on the Aa sheet.
 const sample_px = 36;
 
@@ -27,7 +27,7 @@ comptime {
     // Four faces at every book size, the most one page can set text in
     assert(faces_kept > 4 * 5);
     assert(samples_kept >= 6);
-    assert(files_kept > faces_kept + samples_kept);
+    assert(files_kept > faces_kept + samples_kept + 1);
 }
 
 /// Which of a family's four files: bit 0 bold, bit 1 italic.
@@ -52,11 +52,14 @@ const FileSlot = struct {
 
 const FaceSlot = struct { key: FaceKey, font: Font, file: u32, used: u64 };
 const SampleSlot = struct { family: u32, font: Font, file: u32, used: u64 };
+const PhraseSlot = struct { family: u32, which: Which, px: f32, font: Font, file: u32 };
 
 pub const Typefaces = struct {
     files: [files_kept]?FileSlot = @splat(null),
     faces: [faces_kept]?FaceSlot = @splat(null),
     samples: [samples_kept]?SampleSlot = @splat(null),
+    /// Running mode's phrases' font, at a size of its own (screens/reader/run.zig).
+    phrase: ?PhraseSlot = null,
     /// Counts every use, to tell which was used least lately.
     clock: u64 = 0,
     /// Every family's four files, for the tests, which have none of
@@ -104,6 +107,25 @@ pub const Typefaces = struct {
         assert(t.samples[at].?.family == family);
         assert(t.files[file_at].?.fonts > 0);
         return &t.samples[at].?.font;
+    }
+
+    /// The font running mode sets its phrases in: `family`'s `which` at `px`, made now
+    /// unless it's the one kept.
+    pub fn phrase_face(t: *Typefaces, family: u32, which: Which, px: f32) !*Font {
+        assert(px > 0);
+        t.clock += 1;
+        if (t.phrase) |*kept| {
+            if (kept.family == family and kept.which == which and kept.px == px) {
+                return &kept.font;
+            }
+        }
+        const file_at = try t.file_for(family, which);
+        const font = try Font.init(t.files[file_at].?.data, px, 1);
+        if (t.phrase) |old| t.give_up_file(old.file);
+        t.files[file_at].?.fonts += 1;
+        t.phrase = .{ .family = family, .which = which, .px = px, .font = font, .file = file_at };
+        assert(t.files[file_at].?.fonts > 0);
+        return &t.phrase.?.font;
     }
 
     /// The place of a family's file in the table: kept, or mapped now into a free
@@ -170,6 +192,7 @@ pub const Typefaces = struct {
         }
         t.faces = @splat(null);
         t.samples = @splat(null);
+        t.phrase = null;
         assert(t.files[0] == null);
         assert(t.faces[0] == null);
     }

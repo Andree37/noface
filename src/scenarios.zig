@@ -41,6 +41,7 @@ const paths = @import("kindle/paths.zig");
 const setup = @import("setup.zig");
 const linux = @import("sys/calls.zig");
 const book_model = @import("model/book.zig");
+const goto_ui = @import("ui/goto.zig");
 
 const go_regular = @embedFile("testdata/fonts/Go-Regular.ttf");
 const go_bold = @embedFile("testdata/fonts/Go-Bold.ttf");
@@ -98,6 +99,9 @@ const wake: Step = .{ .act = .unlock };
 /// The quick panel pulled down from the top, and its Kindle button, which leaves noface.
 const pull_down: Step = .{ .act = .pull };
 const panel_kindle = tap(795, 430);
+/// The series lists' second row, "Not in a series", and "Library" along their top.
+const not_in_a_series = tap(636, goto_ui.list_top + 150);
+const list_back_to_library = tap(636, 100);
 const forward = tap(1000, 900);
 const back = tap(150, 900);
 const top = tap(636, 60);
@@ -127,6 +131,11 @@ comptime {
     assert(above_sheet.act.tap.y < card.top(2));
     // The panel's Kindle button is where the scenarios tap it
     assert(menu_ui.hit(panel_kindle.act.tap.x, panel_kindle.act.tap.y) == .kindle);
+    // The series lists' rows and their way back are where the scenarios tap them
+    const none = not_in_a_series.act.tap;
+    assert(goto_ui.hit(none.x, none.y, 0, 2).row == 1);
+    const back_to_library = list_back_to_library.act.tap;
+    assert(goto_ui.hit(back_to_library.x, back_to_library.y, 0, 2) == .close);
 }
 
 /// What a run left behind, for the checks.
@@ -1287,6 +1296,34 @@ const scenarios = [_]Scenario{
             try expect(same_place(plain.saved, locked.saved), "the lock jumped the book");
         }
     }.run },
+    .{
+        .name = "a reading journal that's there but can't be read is never written over",
+        .run = struct {
+            fn run() !void {
+                const unreadable: Kindle = .{ .unreadable = &.{paths.data.journal} };
+                const r = try play_on(unreadable, &.{ wait(60_000), forward });
+                try expect(r.unreadable_kept, "the journal was written over");
+                try expect(r.saved.seconds > 0, "the reading wasn't saved");
+            }
+        }.run,
+    },
+    .{
+        .name = "a series that can't be saved leaves its file as it was, and noface running",
+        .run = struct {
+            fn run() !void {
+                const series_rows = 3; // Remove, Mark as read, Series
+                const r = try play_on(.{ .library = true, .unreadable = &.{"series"} }, &.{
+                    hold_in(library_ui.hero_rect(width)),
+                    lift,
+                    card_row(series_rows, series_rows - 1),
+                    not_in_a_series,
+                    // Still on the list, which a tap along its top leaves
+                    list_back_to_library,
+                });
+                try expect(r.unreadable_kept, "the series file was written over");
+            }
+        }.run,
+    },
     .{ .name = "the app has the Kindle's memory and no more", .run = struct {
         fn run() !void {
             const alloc = (try app_memory()).allocator();
@@ -1343,6 +1380,13 @@ fn tap_in(r: library_ui.Rect) Step {
     assert(r.w > 0);
     assert(r.h > 0);
     return tap(@intCast(r.x + r.w / 2), @intCast(r.y + r.h / 2));
+}
+
+/// A hold in the middle of `r`.
+fn hold_in(r: library_ui.Rect) Step {
+    assert(r.w > 0);
+    assert(r.h > 0);
+    return hold(@intCast(r.x + r.w / 2), @intCast(r.y + r.h / 2));
 }
 
 fn expect(ok: bool, why: []const u8) !void {

@@ -19,7 +19,7 @@ const magic = "NFPG";
 
 /// Raised by hand when the layout breaks pages differently, so saved breaks are laid
 /// out again; the scenario that checks `breaks_digest` says when.
-const layout_version: u64 = 2;
+const layout_version: u64 = 3;
 
 /// Where the test book's pages break today (scenarios.zig's `breaks_digest`).
 pub const breaks_digest: u64 = 0xd0b0973931a2e843;

@@ -193,44 +193,52 @@ fn is_letter(cp: u21) bool {
     return cp > 0xbf and !(cp >= 0x2000 and cp <= 0x206f);
 }
 
-/// The bold face for a word's start with bold word starts on, or null: off, or the
-/// word is bold already, or it's the rest of a word broken at the line before.
+/// A word's bold start: the face, and how many of the word's bytes it sets.
+const BoldStart = struct { face: *Font, bytes: u32 };
+
+/// The bold start of the word, or rest of a broken word, at `word_start`, or null: off,
+/// or the word is bold already, or its bold start all went on the line before. Counted
+/// from the whole word, so a word broken across lines is as bold as it is unbroken.
 fn start_face(
     l: *const Layout,
     base: *Font,
     p: *const Paragraph,
     wf: *Font,
     word_start: u32,
-) !?*Font {
+) !?BoldStart {
     assert(word_start < p.text.len);
     assert(p.image == null); // Only text has faces
     if (!l.bold_starts) return null;
     const text = p.text;
-    if (word_start > 0 and text[word_start - 1] != ' ' and text[word_start - 1] != '\n') {
-        return null;
-    }
+    var begin = word_start; // Where the whole word begins: before it on a broken word
+    while (begin > 0 and text[begin - 1] != ' ' and text[begin - 1] != '\n') begin -= 1;
+    const end = fill_line_word_end(text, word_start, @intCast(text.len));
+    const bold_bytes = bold_start(text[begin..end]);
+    const before = word_start - begin; // On the lines before
+    if (bold_bytes <= before) return null;
     var italic = p.look.italic;
     for (p.runs) |r| {
         if (word_start >= r.start and word_start < r.end) italic = italic or r.italic;
     }
     const bold = try face(l, base, true, italic, p.look.size);
-    return if (bold == wf) null else bold;
+    if (bold == wf) return null;
+    assert(bold_bytes - before <= end - word_start);
+    return .{ .face = bold, .bytes = bold_bytes - before };
 }
 
-/// A word's width, its start in `start` when given.
-fn word_width(wf: *Font, start: ?*Font, word: []const u8) !f32 {
+/// A word's width, its bold start in `start` when given. A word's first part, broken
+/// at the line's end, is bold as far as it goes.
+fn word_width(wf: *Font, start: ?BoldStart, word: []const u8) !f32 {
     const b = start orelse return wf.measure(word);
-    const k = bold_start(word);
-    assert(k <= word.len);
-    return try b.measure(word[0..k]) + try wf.measure(word[k..]);
+    const k = @min(b.bytes, word.len);
+    return try b.face.measure(word[0..k]) + try wf.measure(word[k..]);
 }
 
-fn draw_word(p: Page, wf: *Font, start: ?*Font, x: f32, y: i32, word: []const u8) !void {
+fn draw_word(p: Page, wf: *Font, start: ?BoldStart, x: f32, y: i32, word: []const u8) !void {
     const b = start orelse return wf.draw(p, x, y, word);
-    const k = bold_start(word);
-    assert(k <= word.len);
-    try b.draw(p, x, y, word[0..k]);
-    try wf.draw(p, x + try b.measure(word[0..k]), y, word[k..]);
+    const k = @min(b.bytes, word.len);
+    try b.face.draw(p, x, y, word[0..k]);
+    try wf.draw(p, x + try b.face.measure(word[0..k]), y, word[k..]);
 }
 
 /// Bold and italic for a word: its paragraph's, plus any run it starts in.
@@ -496,13 +504,13 @@ const Line = struct {
     words: [max_words][]const u8 = undefined,
     widths: [max_words]f32 = undefined,
     fonts: [max_words]*Font = undefined,
-    starts: [max_words]?*Font = undefined, // Bold word starts' face, per word
+    starts: [max_words]?BoldStart = undefined, // Per word
     n: u32 = 0,
     next: u32 = 0, // Where the next line starts, in the paragraph's text
     ends_para: bool = false, // Set like a paragraph's last line: not spread
     hyphen_end: bool = false, // The last word is the first part of a broken word
 
-    fn add(line: *Line, word: []const u8, w: f32, wf: *Font, sf: ?*Font) void {
+    fn add(line: *Line, word: []const u8, w: f32, wf: *Font, sf: ?BoldStart) void {
         assert(line.n < max_words);
         assert(!line.hyphen_end); // A broken word ends its line
         line.words[line.n] = word;
@@ -614,7 +622,7 @@ fn fill_line_word_end(text: []const u8, start: u32, limit: u32) u32 {
 fn hyphenated(
     l: *const Layout,
     wf: *Font,
-    sf: ?*Font,
+    sf: ?BoldStart,
     word: []const u8,
     room: f32,
 ) !?struct { at: u32, hyphen: bool, width: f32 } {
@@ -967,5 +975,43 @@ test "a highlight's shading spans the gap between its words, and none after its 
         const y: u32 = @intCast(first.y + @divTrunc(first.h, 2));
         const x: u32 = @intCast(first.x + first.w + 2);
         try std.testing.expectEqual(in_gap, out.pixels[y * TestPage.test_width + x]);
+    }
+}
+
+test "a word broken across lines is as bold as it is whole" {
+    var regular = try Font.init(@embedFile("../testdata/fonts/Go-Regular.ttf"), 30, 1.2);
+    var bold = try Font.init(@embedFile("../testdata/fonts/Go-Bold.ttf"), 30, 1.2);
+    const TestFaces = struct {
+        regular: *Font,
+        bold: *Font,
+
+        fn pick(ctx: *anyopaque, is_bold: bool, italic: bool, size: u8) anyerror!*Font {
+            const faces: *@This() = @ptrCast(@alignCast(ctx));
+            assert(!italic);
+            assert(size == book_model.normal_size);
+            return if (is_bold) faces.bold else faces.regular;
+        }
+    };
+    var faces = TestFaces{ .regular = &regular, .bold = &bold };
+    const l = Layout{
+        .faces = .{ .ctx = &faces, .pick = TestFaces.pick },
+        .margin_x = 40,
+        .margin_top = 30,
+        .margin_bottom = 30,
+        .indent = 0,
+        .bold_starts = true,
+    };
+    const p = Paragraph{ .text = "we acknowledged it" };
+    const begin = 3;
+    const whole = bold_start("acknowledged");
+    const unbroken = (try start_face(&l, &regular, &p, &regular, begin)).?;
+    try std.testing.expectEqual(whole, unbroken.bytes);
+    try std.testing.expectEqual(&bold, unbroken.face);
+    // Broken after each of its letters: the first part is bold as far as it goes (the
+    // whole word's count, cut at the part's end), and the rest carries what's left
+    for (1.."acknowledged".len) |at| {
+        const first = @min(whole, at);
+        const rest = try start_face(&l, &regular, &p, &regular, @intCast(begin + at));
+        try std.testing.expectEqual(whole, first + if (rest) |r| r.bytes else 0);
     }
 }

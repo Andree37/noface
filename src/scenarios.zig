@@ -1324,6 +1324,24 @@ const scenarios = [_]Scenario{
             }
         }.run,
     },
+    .{
+        .name = "an error in a screen over the library fails its run, and the next starts clean",
+        .run = struct {
+            fn run() !void {
+                const series = [_]Step{
+                    hold_in(library_ui.hero_rect(width)), lift, card_row(3, 2), // Its series
+                };
+                // No room left in the app's budget: the series lists can't be made
+                const broken = play_on(.{ .library = true, .app_bytes_spare = 0 }, &series);
+                const failed = if (broken) |_| false else |err| err == error.OutOfMemory;
+                try expect(failed, "the series lists opened with no memory for them");
+                // The book's, the library's and the action's regions were let go of
+                const left = series ++ .{list_back_to_library};
+                const after = try play_on(.{ .library = true }, &left);
+                try expect(after.updates > 0, "the next run drew nothing");
+            }
+        }.run,
+    },
     .{ .name = "the app has the Kindle's memory and no more", .run = struct {
         fn run() !void {
             const alloc = (try app_memory()).allocator();

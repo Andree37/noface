@@ -203,6 +203,8 @@ const Kindle = struct {
     real_book: ?RealBook = null,
     /// Wi-Fi's on/off goes unanswered right after it's set.
     radio_slow: bool = false,
+    /// The reader has bold word starts on, which lay words out at other widths.
+    bold_starts: bool = false,
     /// Compares the screen at the end with the reference image of this name.
     snapshot: ?Snapshot = null,
 };
@@ -643,7 +645,7 @@ fn play_on_start(
     a.book_region.end_peak = 0;
     a.pages_budget.peak = 0;
     a.pages_budget.limit = kindle.pages_bytes;
-    a.settings = .{};
+    a.settings = .{ .bold_starts = kindle.bold_starts };
     a.speed = .{};
     a.journal = .{};
     // Every typeface the settings could pick is the test font: no Kindle fonts needed.
@@ -868,6 +870,13 @@ const scenarios = [_]Scenario{
                 }
                 try expect(laid_out.breaks != 0, "no page breaks were saved");
                 try expect(laid_out.breaks == page_store.breaks_digest, "page breaks moved");
+                // Bold word starts lay words out at their own widths, and break there
+                const bold = try play_on(.{ .bold_starts = true }, &.{wait(3000)});
+                if (bold.breaks != page_store.breaks_digest_bold_starts) {
+                    std.debug.print("bold-starts page breaks moved: digest {x}\n", .{bold.breaks});
+                }
+                const bold_same = bold.breaks == page_store.breaks_digest_bold_starts;
+                try expect(bold_same, "page breaks with bold word starts moved");
             }
         }.run,
     },

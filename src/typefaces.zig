@@ -9,13 +9,14 @@ const assert = std.debug.assert;
 const Font = @import("gfx/font.zig").Font;
 const fonts_db = @import("kindle/fonts.zig");
 const file = @import("sys/file.zig");
+const aa = @import("ui/aa.zig");
 
 /// Fonts kept for the reading face: more than one page can use, so a page never gives
 /// up a font it set text in (four faces at each of five book sizes, in one family and
 /// reader size).
 pub const faces_kept = 32;
-/// Fonts kept to show the typefaces' names in themselves: more than the Aa sheet shows
-/// at once.
+/// Fonts kept to show the typefaces' names in themselves: at least a page of the Aa
+/// sheet's typeface grid, so loading one page's samples never gives up another of them.
 pub const samples_kept = 12;
 /// Running's phrase fonts: the phrase's own, bold, and the regular one around it.
 const phrase_faces_kept = 2;
@@ -28,7 +29,7 @@ const sample_px = 36;
 comptime {
     // Four faces at every book size, the most one page can set text in
     assert(faces_kept > 4 * 5);
-    assert(samples_kept >= 6);
+    assert(samples_kept >= aa.family_cells_max);
     assert(files_kept > faces_kept + samples_kept + phrase_faces_kept);
 }
 

@@ -10,6 +10,8 @@ test {
     _ = @import("screens/reader/page_store.zig");
     _ = @import("screens/reader/records.zig");
     _ = @import("screens/reader/session.zig");
+    _ = @import("screens/reader/back_button.zig");
+    _ = @import("screens/reader/reading_clock.zig");
     _ = @import("library/view.zig");
     _ = @import("gfx/raster.zig");
     _ = @import("screens/reader/controls.zig");

@@ -221,11 +221,10 @@ fn open_book(r: *Reader) !void {
         .current = opened.start,
         .anchor = opened.pages[opened.start],
         .chapters = book.chapters,
-        .seconds_read = opened.seconds_read,
+        .clock = .{ .seconds_read = opened.seconds_read },
         .pages_path = opened.pages_path,
         .book_bytes = r.data.len,
-        .back = opened.back,
-        .turns_since_jump = opened.back_turns,
+        .back = .{ .place = opened.back, .turns_since_jump = opened.back_turns },
     };
     if (r.progress) |*p| r.session.progress = p;
     r.s = &r.session;
@@ -381,7 +380,7 @@ fn read_book_start(
     return switch (from) {
         .first_laid_out => 0,
         .kindle_percent => @intCast(@min(pages.len * entry.kindle_percent / 100, pages.len - 1)),
-        .saved_place => @intCast(sess.page_containing(
+        .saved_place => @intCast(book_model.page_containing(
             pages,
             book_model.from_text_index(paragraphs, saved.para),
             saved.byte,
@@ -781,7 +780,7 @@ pub const Reader = struct {
         assert(r.s.current < r.s.pages.len);
         sess.save_progress(r.entry, r.state_path, r.s, r.s.percent());
         r.since_save = 0;
-        assert(r.s.shown_us == null); // Saving stops the reading clock; the loop starts it
+        assert(r.s.clock.stopped()); // Saving stops the reading clock; the loop starts it
     }
 
     fn on_touch(r: *Reader, action: input_mod.Action) !?Outcome {

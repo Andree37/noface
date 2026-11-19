@@ -8,6 +8,7 @@ const search_sheet = @import("../../ui/search_sheet.zig");
 const style = @import("../../ui/style.zig");
 const toolbar = @import("../../ui/toolbar.zig");
 const search = @import("../../model/search.zig");
+const book_model = @import("../../model/book.zig");
 const Page = @import("../../gfx/page.zig").Page;
 const app = @import("../../app.zig");
 const sess = @import("session.zig");
@@ -142,7 +143,7 @@ fn find(alloc: std.mem.Allocator, s: *const sess.Session, query: []const u8) ![]
     const rows = try alloc.alloc(goto.Row, matches.len);
     for (matches, rows) |m, *r| r.* = .{
         .label = search.snippet(s.paragraphs[m.para].text, m.byte, snippet_bytes),
-        .page = sess.page_containing(s.pages, m.para, m.byte),
+        .page = book_model.page_containing(s.pages, m.para, m.byte),
     };
     return rows;
 }

@@ -20,28 +20,14 @@ const text = @import("../../layout/text.zig");
 const now_us = os.now_us;
 const unix_time = os.unix_time;
 const app = @import("../../app.zig");
-const draw = @import("../../ui/draw.zig");
 const style = @import("../../ui/style.zig");
 const Zone = @import("../../kindle/input.zig").Zone;
+const back_button = @import("back_button.zig");
+const reading_clock = @import("reading_clock.zig");
 const hwtcon = @import("../../kindle/hwtcon.zig");
 
 pub const Query = @import("../../model/search.zig").Query;
 
-/// Turns from a jump after which the Back button goes: the reader is reading there.
-const back_turns = 10;
-/// The Back button, at the bottom left over the footer.
-const back_x_px = 40;
-const back_width_px = 330;
-const back_height_px = 84;
-const back_above_bottom_px = 112; // From the button's top to the screen's bottom
-/// A fingertip's margin around the Back button, where a touch still counts.
-const back_reach_px = 12;
-/// Inside the back button: its arrow's middle and its label's left, in from its left.
-const back_arrow_inset_px = 44;
-const back_label_inset_px = 80;
-/// The footer cleared round it: from this far over it, to this far right of it.
-const back_clear_above_px = 8;
-const back_clear_right_px = 24;
 /// The page counter in the footer's middle: its left, this far left of the middle.
 const counter_left_of_middle_px = 50;
 /// The footer: the page number and time left, repainted alone when the count arrives.
@@ -49,17 +35,14 @@ const footer_height_px = 110;
 const footer_baseline_above_bottom_px = 60;
 
 comptime {
-    assert(back_turns > 0);
-    // The button and its fingertip margin stay on the screen, inside the footer
-    assert(back_x_px >= back_reach_px);
-    assert(back_above_bottom_px > back_height_px);
-    assert(back_above_bottom_px <= footer_height_px + 8);
     assert(footer_baseline_above_bottom_px < footer_height_px);
+    // The Back button sits in the footer, its clearing over the footer's top at most
+    assert(back_button.above_bottom_px <= footer_height_px + back_button.clear_above_px);
+    assert(counter_left_of_middle_px < style.screen.width_px / 2);
 }
 
-/// How the reader got to a page: reading on, a page at a time, or a jump (Go To, a
-/// search, a chapter, the slider, Back), which the Back button remembers.
-pub const Move = enum { turn, jump };
+/// How the reader got to a page (back_button.zig).
+pub const Move = back_button.Move;
 
 pub const Session = struct {
     app: *app.App,
@@ -91,15 +74,10 @@ pub const Session = struct {
     query: Query = .{}, // The last search, kept while the book is open
     chapters: []const book_model.Chapter = &.{},
     words_before: []const u64 = &.{}, // Words before each paragraph, for time left
-    shown_us: ?u64 = null, // When the clock last started on this page; null while paused
-    /// Where the reader was before jumping elsewhere (Go To, search, a chapter, the
-    /// slider, a link): a Back button on the page returns there. The first place is
-    /// kept through several jumps, and let go after `back_turns` turns from the jump.
-    back: ?book_model.Pos = null,
-    turns_since_jump: u32 = 0,
+    clock: reading_clock.Clock = .{},
+    /// Where the reader was before jumping elsewhere, for the Back button.
+    back: back_button.Back = .{},
     turns: u32 = 0, // Pages shown, for a clean refresh every 20 when asked for
-    page_us: u64 = 0, // Time on the current page before that
-    seconds_read: u64 = 0, // Time spent in this book, saved with the position
 
     /// How many pages there are so far: a page per break, which a book's paragraphs bound.
     pub fn page_count(s: *const Session) u32 {
@@ -220,27 +198,14 @@ pub const Session = struct {
         return end - here;
     }
 
-    /// Adds the time since the clock last started to the current page's reading time.
-    fn tick(s: *Session) void {
-        const shown = s.shown_us orelse return; // Paused: nothing to add
-        const page_us_before = s.page_us;
-        const now = now_us();
-        s.page_us += now -| shown;
-        s.shown_us = now;
-        assert(s.page_us >= page_us_before);
-    }
-
-    /// The page being left: its time goes to the book, and a page read forward teaches
-    /// the reading speed. Time on it adds up across footnotes, menus and sleep, so a
-    /// page read in two sittings counts as one page read in the time of both.
+    /// The page being left: its time goes to the book and the day's journal, and a
+    /// page read forward teaches the reading speed.
     fn leave_page(s: *Session, to: u32) void {
         assert(to < s.pages.len);
         assert(s.current < s.pages.len);
-        s.tick();
-        const us = s.page_us;
-        s.page_us = 0;
-        const counted = stats.counted_seconds(us / 1_000_000);
-        s.seconds_read += counted;
+        const left_page = s.clock.leave_page(now_us());
+        const us = left_page.us;
+        const counted = left_page.counted_seconds;
         // The day's journal: the time, and the page when it was read on to the next
         const read_on = to == s.current + 1 and counted > 0;
         const journal_seconds: u32 = @intCast(@min(counted, std.math.maxInt(u32)));
@@ -273,23 +238,20 @@ pub const Session = struct {
 
     /// Reading time so far, with the page in front of the reader.
     pub fn seconds_read_total(s: *Session) u64 {
-        s.tick();
-        const total = s.seconds_read + stats.counted_seconds(s.page_us / 1_000_000);
-        assert(total >= s.seconds_read);
-        return total;
+        assert(s.current < s.pages.len);
+        return s.clock.seconds_total(now_us());
     }
 
     /// Stops the reading clock while something covers the page, or the Kindle sleeps.
     pub fn pause_clock(s: *Session) void {
         assert(s.current < s.pages.len);
-        s.tick();
-        s.shown_us = null;
+        s.clock.stop(now_us());
     }
 
     /// Starts the clock again when the page is back in front of the reader.
     pub fn resume_clock(s: *Session) void {
         assert(s.current < s.pages.len);
-        if (s.shown_us == null) s.shown_us = now_us();
+        s.clock.start(now_us());
     }
 
     /// How far into the book the reader's page is, in percent, or null while a first
@@ -361,11 +323,12 @@ pub const Session = struct {
     /// Every move to another page comes through here, so reading time stays right.
     pub fn set_page(s: *Session, index: u32, move: Move) void {
         check.thatf(index < s.pages.len, "page {d} of {d}", .{ index, s.pages.len });
-        s.note_jump(index, move);
+        const settled = s.progress == null;
+        // Pages are kept drawn with the button on or off: draw them again
+        if (s.back.note_move(s.pages, s.current, index, move, settled)) s.app.forget_pages();
         s.leave_page(index);
         s.current = index;
         s.anchor = s.pages[index];
-        if (s.shown_us != null) s.shown_us = now_us();
         assert(s.current == index);
     }
 
@@ -388,107 +351,21 @@ pub const Session = struct {
         return slot.hits.find(x, y);
     }
 
-    /// Keeps the Back button's place up to date for a move to page `index`: a jump
-    /// remembers where the reader was (unless an earlier jump's place is still kept),
-    /// arriving back there lets go of it, and so does reading on a while.
-    fn note_jump(s: *Session, index: u32, move: Move) void {
-        assert(index < s.pages.len);
-        assert(s.current < s.pages.len);
-        const turning = move == .turn;
-        const before = s.back;
-        // Page numbers are only final once the whole book is laid out: until then an
-        // earlier place would look like page 0, so nothing is let go of
-        const settled = s.progress == null;
-        if (s.back) |b| {
-            if (settled and page_containing(s.pages, b.para, b.byte) == index) {
-                s.back = null; // Back where they were, however they got there
-            } else if (index == s.current) {
-                // Drawn again in place: nothing moved
-            } else if (turning) {
-                s.turns_since_jump += 1;
-                if (s.turns_since_jump >= back_turns) s.back = null; // Reading here now
-            } else {
-                s.turns_since_jump = 0; // Another jump: the count starts again from here
-            }
-        } else if (!turning and index != s.current) {
-            s.back = s.pages[s.current];
-            s.turns_since_jump = 0;
-        }
-        // Pages are kept drawn with the button on or off: draw them again
-        if ((before == null) != (s.back == null)) s.app.forget_pages();
-    }
-
-    /// The Back button's place on the page: the bottom left, over the footer.
-    pub fn back_rect(s: *const Session) struct { x: u32, y: u32, width: u32, height: u32 } {
-        assert(s.app.screen.height > back_above_bottom_px);
-        assert(s.app.screen.width > back_x_px + back_width_px);
-        return .{
-            .x = back_x_px,
-            .y = s.app.screen.height - back_above_bottom_px,
-            .width = back_width_px,
-            .height = back_height_px,
-        };
-    }
-
-    /// Where touches count as the Back button although the thumb filter is on there:
-    /// its rectangle and a fingertip around it. Null with no button.
+    /// Where touches count as the Back button although the thumb filter is on there.
     pub fn back_zone(s: *const Session) ?Zone {
-        if (s.back == null) return null;
-        const r = s.back_rect();
-        assert(r.x >= back_reach_px);
-        assert(r.y >= back_reach_px);
-        return .{
-            .x = @as(i32, @intCast(r.x)) - back_reach_px,
-            .y = @as(i32, @intCast(r.y)) - back_reach_px,
-            .w = @intCast(r.width + 2 * back_reach_px),
-            .h = @intCast(r.height + 2 * back_reach_px),
-        };
+        assert(s.current < s.pages.len);
+        return s.back.zone(s.app.screen.height);
     }
 
     pub fn on_back(s: *const Session, x: i32, y: i32) bool {
-        if (s.back == null) return false;
-        const r = s.back_rect();
-        assert(r.width > 0);
-        assert(r.height > 0);
-        // A fingertip's margin around it
-        const left = @as(i32, @intCast(r.x)) - back_reach_px;
-        const right = @as(i32, @intCast(r.x + r.width)) + back_reach_px;
-        const top = @as(i32, @intCast(r.y)) - back_reach_px;
-        const bottom = @as(i32, @intCast(r.y + r.height)) + back_reach_px;
-        return x >= left and x < right and y >= top and y < bottom;
+        assert(s.current < s.pages.len);
+        return s.back.hit(s.app.screen.height, x, y);
     }
 
     /// The page the Back button returns to.
     pub fn back_page(s: *const Session) ?u32 {
-        const b = s.back orelse return null;
-        const index = page_containing(s.pages, b.para, b.byte);
-        assert(index < s.pages.len);
-        return index;
-    }
-
-    fn draw_back(s: *const Session, page: Page) !void {
-        // Drawn only while there's somewhere to go back to
-        assert(s.back != null);
-        const a = s.app;
-        const r = s.back_rect();
-        assert(r.y >= back_clear_above_px);
-        // Over the footer's text there
-        const clear_top = r.y - back_clear_above_px;
-        const clear_width = r.x + r.width + back_clear_right_px;
-        page.fill_rect(0, clear_top, clear_width, a.screen.height - clear_top, style.white);
-        draw.box(page, r.x, r.y, r.width, r.height);
-        var label_buffer: [32]u8 = undefined;
-        // The page number only once the whole book is laid out
-        const back_number = (s.back_page() orelse 0) + 1;
-        var label: []const u8 = "Back";
-        if (s.progress == null) {
-            label = std.fmt.bufPrint(&label_buffer, "Back to p. {d}", .{back_number}) catch "Back";
-        }
-        const center_y: f32 = @floatFromInt(r.y + r.height / 2);
-        icons.back(page, @floatFromInt(r.x + back_arrow_inset_px), center_y);
-        const label_x: f32 = @floatFromInt(r.x + back_label_inset_px);
-        const baseline: i32 = @intFromFloat(center_y + draw.back_link.label_drop);
-        try a.ui.small.draw(page, label_x, baseline, label);
+        assert(s.current < s.pages.len);
+        return s.back.page(s.pages);
     }
 
     /// "12 min left in chapter" on the left of the footer, the book's on the right.
@@ -502,7 +379,7 @@ pub const Session = struct {
         var minutes_buffer: [48]u8 = undefined;
         var line: [64]u8 = undefined;
         // The Back button takes the left side while it's there
-        if (left.chapter) |m| if (s.back == null) {
+        if (left.chapter) |m| if (s.back.place == null) {
             const minutes = stats.format_minutes(&minutes_buffer, m);
             const t = std.fmt.bufPrint(&line, "{s} left in chapter", .{minutes}) catch "";
             try a.footer.draw(page, margin, y, t);
@@ -548,7 +425,9 @@ pub const Session = struct {
         try a.footer.draw(page, x, y, counter);
         if (s.is_bookmarked(index)) icons.ribbon(page, a.screen.width);
         if (a.settings.time_left) try s.draw_time_left(page, index);
-        if (s.back != null) try s.draw_back(page);
+        if (s.back.place != null) {
+            try s.back.draw_on(page, a.ui.small, s.pages, s.progress == null);
+        }
 
         a.slots[victim].page = index;
         // Pixels lent from this slot before now are another page's
@@ -622,37 +501,16 @@ pub fn save_progress(
     saved.opened = now;
     saved.seconds = seconds;
     saved.finished = entry.finished;
-    saved.back_para = if (s.back) |b| book_model.text_index(s.paragraphs, b.para) else null;
-    saved.back_byte = if (s.back) |b| b.byte else 0;
-    saved.back_turns = s.turns_since_jump;
+    const back = s.back.place;
+    saved.back_para = if (back) |b| book_model.text_index(s.paragraphs, b.para) else null;
+    saved.back_byte = if (back) |b| b.byte else 0;
+    saved.back_turns = s.back.turns_since_jump;
     state.save(path, saved);
     app.save_speed(s.app);
     app.save_journal(s.app);
     entry.percent = percent;
     entry.last = now;
     entry.seconds_read = seconds;
-}
-
-/// The last page starting at or before a place, or the first page for a place before
-/// them all (pages laid out from the reader's place, while a first open runs).
-/// Called for every bookmark as a page is drawn, so it halves rather than walks: pages
-/// only move forward, as pagination and saved breaks check where they're made.
-pub fn page_containing(pages: []const book_model.Pos, para: u32, byte: u32) u32 {
-    assert(pages.len > 0);
-    assert(pages.len <= std.math.maxInt(u32));
-    const at = book_model.Pos{ .para = para, .byte = byte };
-    var low: u32 = 0; // Pages before `low` start at or before the place
-    var high: u32 = @intCast(pages.len); // Pages from `high` on start after it
-    while (low < high) {
-        const middle = low + (high - low) / 2;
-        if (at.is_before(pages[middle])) high = middle else low = middle + 1;
-    }
-    const found = low -| 1;
-    assert(found < pages.len);
-    // The page found starts at or before the place, and the next one after it
-    if (low > 0) assert(!at.is_before(pages[found]));
-    if (found + 1 < pages.len) assert(at.is_before(pages[found + 1]));
-    return found;
 }
 
 /// Where a session's pages point while a layout that failed partway had let go of the
@@ -683,7 +541,7 @@ pub fn relayout(a: *app.App, s: *Session) !void {
     const stored = page_store.load(alloc, s.pages_path, pages_key, s.paragraphs);
     if (stored) |pages| {
         s.pages = pages;
-        s.current = page_containing(s.pages, s.anchor.para, s.anchor.byte);
+        s.current = book_model.page_containing(s.pages, s.anchor.para, s.anchor.byte);
     } else {
         // The reader's page at once, laid out from its first word with the new
         // settings; the rest follows in idle moments, as on a first open
@@ -706,43 +564,4 @@ pub fn relayout(a: *app.App, s: *Session) !void {
         s.anchor.para,
         s.anchor.byte,
     });
-}
-
-test "the page holding a place is the one a walk over every page finds" {
-    // The walk it replaced, kept as what the halving must agree with
-    const Walk = struct {
-        fn find(pages: []const book_model.Pos, at: book_model.Pos) u32 {
-            var found: u32 = 0;
-            for (pages, 0..) |p, i| {
-                if (!at.is_before(p)) found = @intCast(i);
-            }
-            return found;
-        }
-    };
-    var prng = std.Random.DefaultPrng.init(0x5eed);
-    const random = prng.random();
-    var pages: [64]book_model.Pos = undefined;
-    for (0..200) |_| {
-        // Strictly increasing breaks, from the book's start or from a place later on
-        const count = random.intRangeAtMost(u32, 1, pages.len);
-        var at = book_model.Pos{ .para = random.uintLessThan(u32, 3), .byte = 0 };
-        for (pages[0..count]) |*p| {
-            p.* = at;
-            if (random.boolean()) {
-                at.para += 1 + random.uintLessThan(u32, 2);
-                at.byte = random.uintLessThan(u32, 4);
-            } else {
-                at.byte += 1 + random.uintLessThan(u32, 40);
-            }
-        }
-        for (0..50) |_| {
-            const place = book_model.Pos{
-                .para = random.uintLessThan(u32, at.para + 2),
-                .byte = random.uintLessThan(u32, 200),
-            };
-            const want = Walk.find(pages[0..count], place);
-            const got = page_containing(pages[0..count], place.para, place.byte);
-            try std.testing.expectEqual(want, got);
-        }
-    }
 }

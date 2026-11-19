@@ -108,7 +108,7 @@ fn contents_rows(
     assert(s.pages.len > 0);
     const out = try alloc.alloc(goto.Row, chapters.len);
     for (chapters, out) |c, *r| {
-        const page = sess.page_containing(s.pages, c.para, 0);
+        const page = book_model.page_containing(s.pages, c.para, 0);
         assert(page < s.pages.len);
         r.* = .{ .label = c.title, .page = page, .depth = c.depth };
     }
@@ -128,7 +128,7 @@ fn notes_rows(alloc: std.mem.Allocator, s: *const sess.Session) ![]goto.Row {
     var placed: std.ArrayList(Placed) = .empty;
     for (s.bookmarks.items) |b| {
         const words = highlights.excerpt(s.paragraphs[b.para].text[b.byte..], excerpt_bytes);
-        const page = sess.page_containing(s.pages, b.para, b.byte);
+        const page = book_model.page_containing(s.pages, b.para, b.byte);
         try placed.append(alloc, .{
             .para = b.para,
             .byte = b.byte,
@@ -145,7 +145,7 @@ fn notes_rows(alloc: std.mem.Allocator, s: *const sess.Session) ![]goto.Row {
         const start = @min(span.first_byte, end); // A damaged record can end before it starts
         assert(start <= end);
         const words = highlights.excerpt(para[start..end], excerpt_bytes);
-        const page = sess.page_containing(s.pages, span.first_para, span.first_byte);
+        const page = book_model.page_containing(s.pages, span.first_para, span.first_byte);
         try placed.append(alloc, .{
             .para = span.first_para,
             .byte = span.first_byte,

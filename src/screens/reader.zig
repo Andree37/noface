@@ -905,13 +905,13 @@ pub const Reader = struct {
         if (r.run != null) {
             switch (action) {
                 .tap => |t| {
-                    const touch: RunningTouch = .{ .touched_us = t.us, .held_us = t.held_us };
+                    const touch: run_mode.Touch = .{ .touched_us = t.us, .held_us = t.held_us };
                     try r.tap_running(t.x, t.y, touch);
                 },
                 .hold => |h| try r.tap_running(h.x, h.y, .{ .touched_us = now_us() }),
                 .swipe => |swipe| {
                     const x: i32 = if (swipe.direction > 0) @intCast(r.a.screen.width - 1) else 0;
-                    const touch: RunningTouch = .{ .touched_us = swipe.us };
+                    const touch: run_mode.Touch = .{ .touched_us = swipe.us };
                     try r.tap_running(x, @intCast(r.a.screen.height / 2), touch);
                 },
                 .pull => {},
@@ -1051,7 +1051,7 @@ pub const Reader = struct {
         r.view = .page; // Before the input's modes, which follow the view
         a.input.apply(r.setting(), false);
         try r.run.?.show_all(a, r.s, r.s.anchor, now_us());
-        r.keep_awake();
+        r.run.?.sync_awake();
         assert(r.reading());
     }
 
@@ -1069,7 +1069,7 @@ pub const Reader = struct {
     fn leave_running(r: *Reader) void {
         const a = r.a;
         assert(!r.s.learns_speed); // Stopped as running began
-        if (r.run.?.awake) lipc.hold_awake(false);
+        r.run.?.release_awake();
         r.run = null;
         r.s.learns_speed = true;
         std.debug.print("running: off\n", .{});
@@ -1085,24 +1085,9 @@ pub const Reader = struct {
             try r.follow_phrase(at);
             try run.show_moved(r.a, r.s);
         }
-        r.keep_awake(); // Shown whole again, or at the book's end, stopped
+        r.run.?.sync_awake(); // Shown whole again, or at the book's end, stopped
     }
 
-    /// The Kindle kept awake while the phrases go on by themselves, and let sleep when
-    /// they stop: paused, or at the book's end. Asked only when that changes, as each
-    /// ask starts a program.
-    fn keep_awake(r: *Reader) void {
-        const run = &r.run.?;
-        const wanted = !run.stopped();
-        if (wanted == run.awake) return;
-        lipc.hold_awake(wanted);
-        run.awake = wanted;
-        assert(run.awake == !run.stopped());
-    }
-
-    /// A touch while running: when the panel says it came down, and how long it stayed
-    /// (null for a hold or a swipe, down long already).
-    const RunningTouch = struct { touched_us: u64, held_us: ?u64 = null };
     /// The reader's place at the phrase now on screen (Session.follow), saved every
     /// few pages, as turning saves it.
     fn follow_phrase(r: *Reader, at: book_model.Pos) !void {
@@ -1111,66 +1096,20 @@ pub const Reader = struct {
         assert(r.since_save < save_every);
     }
 
-    /// A tap while running, wherever it lands: the top band opens the card, the left
-    /// column shows the phrase before again, the middle one (and the pause button)
-    /// stops or carries on, and the right one shows the next phrase now. Going on early
-    /// says the pace is slow; going back, that it's fast. `held_us` is how long the
-    /// finger stayed; null for a hold or a swipe, down long already.
-    fn tap_running(r: *Reader, x: i32, y: i32, touch: RunningTouch) !void {
+    /// A tap while running (run_mode.Run.tap): the card it asked for opened, or the
+    /// reader's place following the phrase it brought up.
+    fn tap_running(r: *Reader, x: i32, y: i32, touch: run_mode.Touch) !void {
         assert(r.reading());
-        const a = r.a;
         const run = &r.run.?;
-        const now = now_us();
-        // A contact too short for a finger: a drop of sweat, a brush. Let go before it
-        // counts as a touch, so it never holds off the tap that follows. Timed by the
-        // panel, as the finger lifted: noface may read it later
-        if (touch.held_us) |held| if (held < running_model.contact_us_min) {
-            std.debug.print("running: too short a touch, {d} ms\n", .{held / 1000});
-            return;
-        };
-        // Until the screen is shown, there's nothing on it to tap
-        if (run.shown_us == null) return;
-        // Timed by when it touched, not when it's read, as a slow change may hold it up
-        if (!run.takes_touch(touch.touched_us)) return;
-        // The button showing whether it's paused takes taps too, in the left column
-        const zone: running_model.Zone = if (run_mode.on_pause_button(a, x, y))
-            .toggle
-        else
-            running_model.zone(x, y, a.screen.width, run_mode.pause_band_px);
-        std.debug.print("running: tap {s}\n", .{@tagName(zone)});
-        const was_stopped = run.stopped();
-        // The dial shows only what this tap does to the pace
-        run.pace_moved = null;
-        const moved = switch (zone) {
+        switch (try run.tap(r.a, r.s, x, y, touch, now_us())) {
+            .nothing => {},
             .card => return r.pause_running(),
-            .toggle => {
-                try run.pause_or_resume(a, r.s, now);
-                std.debug.print("running: {s}\n", .{if (run.stopped()) "paused" else "resumed"});
-                return r.keep_awake();
+            .moved => |at| {
+                try r.follow_phrase(at);
+                try run.show_moved(r.a, r.s);
             },
-            .next => moved: {
-                // Read before its time was up: not from one stopped, read already, nor
-                // at the book's end, where nothing comes next
-                if (!was_stopped and run.can_go_on()) {
-                    a.running_pace = running_model.faster(a.running_pace.?);
-                    run.pace_moved = .up;
-                }
-                break :moved try run.forward(a, r.s, now);
-            },
-            .back => moved: {
-                // Only when there's a phrase to go back to
-                if (!was_stopped and run.can_go_back()) {
-                    a.running_pace = running_model.slower(a.running_pace.?);
-                    run.pace_moved = .down;
-                }
-                break :moved try run.back(a, r.s, now);
-            },
-        };
-        if (moved) |at| {
-            try r.follow_phrase(at);
-            try run.show_moved(a, r.s);
         }
-        r.keep_awake();
+        run.sync_awake();
     }
 
     /// The pause card over the page: the phrase's timer stops, and the Kindle may sleep.
@@ -1181,7 +1120,7 @@ pub const Reader = struct {
         // Stopped while the card is up, as by the pause button, its footer saying so
         // under the card; Resume carries on from there
         if (!run.stopped()) try run.pause_or_resume(a, r.s, now_us());
-        r.keep_awake(); // The card may stay up a while: the Kindle may sleep meanwhile
+        r.run.?.sync_awake(); // The card may stay up a while: the Kindle may sleep meanwhile
         const minutes = run.minutes(now_us());
         const note = std.fmt.bufPrint(&r.pause_note, "Running for {d} min", .{minutes}) catch "";
         // The phrase screen as it is, kept in running's own buffer to show under the
@@ -1210,7 +1149,7 @@ pub const Reader = struct {
         switch (choice) {
             .resume_running => {
                 if (run.stopped()) try run.pause_or_resume(a, r.s, now_us());
-                r.keep_awake();
+                r.run.?.sync_awake();
             },
             .text_settings => {
                 // Shown whole again by the tick after the toolbar closes, going on

@@ -87,13 +87,13 @@ comptime {
 pub fn show_whole(run: *const Run, a: *app.App, s: *sess.Session) !i32 {
     assert(run.place != null); // Its phrase set, or the book's end
     assert(a.running_pace != null); // The footer shows it
-    const page = a.page(a.screen.pixels);
-    page.fill_rect(0, 0, a.screen.width, a.screen.height, style.white);
+    const page = a.display.on_screen();
+    page.fill_rect(0, 0, a.display.screen.width, a.display.screen.height, style.white);
     a.stamp_clock();
     try draw_phrases(run, a, s);
     const dial_x = try draw_footer(run, a, s);
     try draw_map(a, s, run.phrase);
-    try a.screen.wait_complete(try a.screen.show(.flash));
+    try a.display.screen.wait_complete(try a.display.screen.show(.flash));
     return dial_x;
 }
 
@@ -106,9 +106,10 @@ pub fn show_moved(run: *const Run, a: *app.App, s: *sess.Session) !i32 {
     try draw_phrases(run, a, s);
     const dial_x = try draw_footer(run, a, s);
     try draw_map(a, s, run.phrase);
-    const height = a.screen.height - map_top;
-    const marker = try a.screen.show_region(0, map_top, a.screen.width, height, .page);
-    try a.screen.wait_complete(marker);
+    const height = a.display.screen.height - map_top;
+    const screen = a.display.screen;
+    const marker = try screen.show_region(0, map_top, screen.width, height, .page);
+    try a.display.screen.wait_complete(marker);
     return dial_x;
 }
 
@@ -116,15 +117,15 @@ pub fn show_moved(run: *const Run, a: *app.App, s: *sess.Session) !i32 {
 /// the one before it above and the start of the one after below, small; at the
 /// book's end, saying so. Drawn into the screen, not shown.
 fn draw_phrases(run: *const Run, a: *app.App, s: *sess.Session) !void {
-    assert(a.screen.height > text_top + footer_height_px);
+    assert(a.display.screen.height > text_top + footer_height_px);
     assert(run.history_len <= run.history.len);
-    const page = a.page(a.screen.pixels);
-    const band = a.screen.height - footer_height_px - text_top;
-    page.fill_rect(0, text_top, a.screen.width, band, 0xff);
+    const page = a.display.on_screen();
+    const band = a.display.screen.height - footer_height_px - text_top;
+    page.fill_rect(0, text_top, a.display.screen.width, band, 0xff);
     const family = a.settings.family_index();
     const big = try a.typefaces.phrase_face(family, true, phrase_px);
     const small = try a.typefaces.phrase_face(family, false, context_px);
-    const width: f32 = @floatFromInt(a.screen.width - 2 * phrase_margin_px);
+    const width: f32 = @floatFromInt(a.display.screen.width - 2 * phrase_margin_px);
     if (run.history_len > 0) {
         if (try phrase_at(a, s, run.history[run.history_len - 1])) |before| {
             const tail = try ends_within(small, phrase_text(s, before), width, .tail);
@@ -136,7 +137,7 @@ fn draw_phrases(run: *const Run, a: *app.App, s: *sess.Session) !void {
         try draw_text(a, big, phrase_px, phrase_text(s, p), phrase_middle_y);
         if (try phrase_at(a, s, p.after())) |after| {
             const head = try ends_within(small, phrase_text(s, after), width, .head);
-            const footer_top = a.screen.height - footer_height_px;
+            const footer_top = a.display.screen.height - footer_height_px;
             const baseline: i32 = @intCast(footer_top - after_above_footer_px);
             try draw_line(a, small, head.text, baseline, .{ .after = head.cut });
         }
@@ -148,9 +149,10 @@ fn draw_phrases(run: *const Run, a: *app.App, s: *sess.Session) !void {
 /// The footer drawn again and shown alone; where the dial went.
 pub fn show_footer(run: *const Run, a: *app.App, s: *sess.Session) !i32 {
     const dial_x = try draw_footer(run, a, s);
-    const top = a.screen.height - footer_height_px;
-    const marker = try a.screen.show_region(0, top, a.screen.width, footer_height_px, .page);
-    try a.screen.wait_complete(marker);
+    const top = a.display.screen.height - footer_height_px;
+    const screen = a.display.screen;
+    const marker = try screen.show_region(0, top, screen.width, footer_height_px, .page);
+    try a.display.screen.wait_complete(marker);
     return dial_x;
 }
 
@@ -159,12 +161,12 @@ pub fn show_footer(run: *const Run, a: *app.App, s: *sess.Session) !i32 {
 /// Drawn into the screen, not shown; gives back where the dial's centre went, which
 /// follows the minutes' width.
 fn draw_footer(run: *const Run, a: *app.App, s: *sess.Session) !i32 {
-    const page = a.page(a.screen.pixels);
-    const top = a.screen.height - footer_height_px;
-    page.fill_rect(0, top, a.screen.width, footer_height_px, 0xff);
+    const page = a.display.on_screen();
+    const top = a.display.screen.height - footer_height_px;
+    page.fill_rect(0, top, a.display.screen.width, footer_height_px, 0xff);
     const cy = icons_y(a);
     draw_pause_button(a, pause_x, cy, run.stopped_at != null);
-    const baseline: i32 = @intCast(a.screen.height - footer_baseline_above_bottom_px);
+    const baseline: i32 = @intCast(a.display.screen.height - footer_baseline_above_bottom_px);
     // Paused, the footer says so, white on a black bar seen from a stride away; going
     // on, it shows the pace, so a reader can see it follow their taps
     const paused = run.stopped_at != null and run.phrase != null;
@@ -187,7 +189,7 @@ fn draw_footer(run: *const Run, a: *app.App, s: *sess.Session) !i32 {
         const left = stats.format_minutes(&minutes_buffer, chapter_minutes);
         text = std.fmt.bufPrint(&line, "{s} left in chapter", .{left}) catch "";
     }
-    const right: f32 = @floatFromInt(a.screen.width - footer_margin_px);
+    const right: f32 = @floatFromInt(a.display.screen.width - footer_margin_px);
     const text_x = right - try a.footer.measure(text);
     try a.footer.draw(page, text_x, baseline, text);
     const dial_x = @as(i32, @intFromFloat(text_x)) - dial_gap_px - dial_radius_px;
@@ -207,7 +209,7 @@ pub fn on_pause_button(a: *const app.App, x: i32, y: i32) bool {
 /// phrase's size (model/phrases.zig).
 pub fn phrase_at(a: *app.App, s: *const sess.Session, at: book_model.Pos) !?phrases.Phrase {
     const font = try a.typefaces.phrase_face(a.settings.family_index(), true, phrase_px);
-    const width: f32 = @floatFromInt(a.screen.width - 2 * phrase_margin_px);
+    const width: f32 = @floatFromInt(a.display.screen.width - 2 * phrase_margin_px);
     const room: Room = .{ .font = font, .width = width };
     return phrases.at(s.paragraphs, at, .{ .ctx = &room, .call = Room.fits });
 }
@@ -295,8 +297,8 @@ fn draw_line(
         .before => |b| if (b) with_ellipsis(&buffer, "\u{2026} ", text, "") else text,
         .after => |b| if (b) with_ellipsis(&buffer, "", text, " \u{2026}") else text,
     };
-    const centre: f32 = @floatFromInt(a.screen.width / 2);
-    try font.draw(a.page(a.screen.pixels), centre - try font.measure(line) / 2, baseline, line);
+    const centre: f32 = @floatFromInt(a.display.screen.width / 2);
+    try font.draw(a.display.on_screen(), centre - try font.measure(line) / 2, baseline, line);
 }
 
 fn with_ellipsis(buffer: []u8, before: []const u8, text: []const u8, after: []const u8) []const u8 {
@@ -313,16 +315,16 @@ fn phrase_text(s: *const sess.Session, p: phrases.Phrase) []const u8 {
 /// `text` in `font`, its lines centred across the screen and, as a block, about `middle`.
 fn draw_text(a: *app.App, font: *Font, px: i32, text: []const u8, middle: i32) !void {
     assert(px > 0);
-    const page = a.page(a.screen.pixels);
+    const page = a.display.on_screen();
     var lines: [lines_max][]const u8 = undefined;
-    const width: f32 = @floatFromInt(a.screen.width - 2 * phrase_margin_px);
+    const width: f32 = @floatFromInt(a.display.screen.width - 2 * phrase_margin_px);
     const count = try wrap(font, text, width, &lines);
     assert(count > 0); // A phrase has a word at least
     const line_px: i32 = @intFromFloat(@as(f32, @floatFromInt(px)) * phrase_line_spacing);
     // Each line's text's middle sits a third of its size above its baseline
     const block = @as(i32, @intCast(count)) * line_px;
     var baseline = middle - @divTrunc(block, 2) + @divTrunc(line_px, 2) + @divTrunc(px, 3);
-    const centre: f32 = @floatFromInt(a.screen.width / 2);
+    const centre: f32 = @floatFromInt(a.display.screen.width / 2);
     for (lines[0..count]) |line| {
         const x = centre - try font.measure(line) / 2;
         try font.draw(page, x, baseline, line);
@@ -334,12 +336,12 @@ fn draw_text(a: *app.App, font: *Font, px: i32, text: []const u8, middle: i32) !
 /// it, shrunk to the corner, its words thin bars and `phrase`'s thick. Drawn into the
 /// screen, not shown.
 fn draw_map(a: *app.App, s: *sess.Session, phrase: ?phrases.Phrase) !void {
-    assert(a.screen.width > map_margin_px + map_width_px);
+    assert(a.display.screen.width > map_margin_px + map_width_px);
     assert(map_top + map_height_px < text_top);
     const height = map_height_px;
     const edge = map_edge_px;
-    const left = a.screen.width - map_margin_px - map_width_px;
-    const page = a.page(a.screen.pixels);
+    const left = a.display.screen.width - map_margin_px - map_width_px;
+    const page = a.display.on_screen();
     page.fill_rect(left, map_top, map_width_px, height, style.white);
     // Its edge
     page.fill_rect(left, map_top, map_width_px, edge, style.black);
@@ -349,7 +351,8 @@ fn draw_map(a: *app.App, s: *sess.Session, phrase: ?phrases.Phrase) !void {
     // The page as drawn, for where its words are
     _ = try s.ensure(s.current, s.current);
     const words = s.page_words();
-    const scale = @as(f32, @floatFromInt(map_width_px)) / @as(f32, @floatFromInt(a.screen.width));
+    const screen_width: f32 = @floatFromInt(a.display.screen.width);
+    const scale = @as(f32, @floatFromInt(map_width_px)) / screen_width;
     for (words) |w| {
         const in_phrase = if (phrase) |p|
             w.para == p.para and w.start >= p.start and w.end <= p.end
@@ -382,12 +385,13 @@ pub fn show_dial(a: *app.App, cx: i32, step: u32, arrow: ?Run.Pace) !void {
     draw_dial(a, cx, cy, step, arrow);
     const r = dial_radius_px;
     const side: u32 = 2 * r + 1;
-    const marker = try a.screen.show_region(@intCast(cx - r), @intCast(cy - r), side, side, .page);
-    try a.screen.wait_complete(marker);
+    const screen = a.display.screen;
+    const marker = try screen.show_region(@intCast(cx - r), @intCast(cy - r), side, side, .page);
+    try a.display.screen.wait_complete(marker);
 }
 
 fn icons_y(a: *const app.App) i32 {
-    const bottom: i32 = @intCast(a.screen.height);
+    const bottom: i32 = @intCast(a.display.screen.height);
     return bottom - footer_baseline_above_bottom_px - icons_above_baseline_px;
 }
 
@@ -521,10 +525,10 @@ const DialShape = struct {
 fn draw_pause_button(a: *app.App, cx: i32, cy: i32, stopped: bool) void {
     const r = pause_radius_px;
     assert(cx - r >= 0);
-    assert(cy + r < a.screen.height);
+    assert(cy + r < a.display.screen.height);
     const left: u32 = @intCast(cx - r);
     const top: u32 = @intCast(cy - r);
-    paint(a.page(a.screen.pixels), left, top, 2 * r + 1, PauseShape{ .stopped = stopped });
+    paint(a.display.on_screen(), left, top, 2 * r + 1, PauseShape{ .stopped = stopped });
 }
 
 /// The dial centred on (`cx`, `cy`), swept `step` twelfths of the way round, with
@@ -534,10 +538,10 @@ fn draw_dial(a: *app.App, cx: i32, cy: i32, step: u32, arrow: ?Run.Pace) void {
     assert(step < dial_steps);
     const r = dial_radius_px;
     assert(cx - r >= 0);
-    assert(cy + r < a.screen.height);
+    assert(cy + r < a.display.screen.height);
     const left: u32 = @intCast(cx - r);
     const top: u32 = @intCast(cy - r);
     const swept = @as(f32, @floatFromInt(step)) / dial_steps * std.math.tau;
     const shape: DialShape = .{ .swept = swept, .arrow = arrow };
-    paint(a.page(a.screen.pixels), left, top, 2 * r + 1, shape);
+    paint(a.display.on_screen(), left, top, 2 * r + 1, shape);
 }

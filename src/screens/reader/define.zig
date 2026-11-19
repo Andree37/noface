@@ -8,6 +8,7 @@ const dictionary = @import("../../model/dictionary.zig");
 const book_model = @import("../../model/book.zig");
 const hyphen = @import("../../layout/hyphen.zig");
 const app = @import("../../app.zig");
+const display = @import("../../display.zig");
 const sess = @import("session.zig");
 const dict_get = @import("dict_get.zig");
 const screen = @import("../screen.zig");
@@ -31,14 +32,14 @@ const Sheet = struct {
 
     pub fn draw(sh: *Sheet, _: screen.Part) !void {
         const a = sh.a;
-        assert(sh.page_copy.len == a.screen.pixels.len);
-        @memcpy(a.screen.pixels, sh.page_copy); // Not over a card that was just answered
-        try definition.render(a.ui, a.page(a.screen.pixels), sh.found);
-        try a.show_band(0, a.screen.height);
+        assert(sh.page_copy.len == a.display.screen.pixels.len);
+        @memcpy(a.display.screen.pixels, sh.page_copy); // Not over a card that was just answered
+        try definition.render(a.ui, a.display.on_screen(), sh.found);
+        try a.display.show_band(0, a.display.screen.height);
     }
 
     pub fn on_tap(sh: *Sheet, t: screen.Tap) !screen.Step(Choice) {
-        assert(sh.page_copy.len == sh.a.screen.pixels.len);
+        assert(sh.page_copy.len == sh.a.display.screen.pixels.len);
         assert(sh.word.para < sh.s.paragraphs.len);
         return switch (definition.hit(t.x, t.y)) {
             .close => .close,
@@ -58,7 +59,7 @@ const Sheet = struct {
 
     /// The download's cards were over it: drawn again, with the definition if it came.
     pub fn on_resume(sh: *Sheet) !screen.Step(Choice) {
-        assert(sh.page_copy.len == sh.a.screen.pixels.len);
+        assert(sh.page_copy.len == sh.a.display.screen.pixels.len);
         assert(sh.lang != null); // Only a book's known language is downloaded
         const ready = switch (sh.getting_ending.?) {
             .done => |ready| ready,
@@ -108,7 +109,7 @@ pub fn begin(
     std.debug.print("lookup: {s}\n", .{@tagName(found.looked_up)});
     // The page as it was: what the sheet and any card about getting a dictionary sit
     // over, while they're open
-    const page_copy = try a.alloc.dupe(u8, a.screen.pixels);
+    const page_copy = try a.alloc.dupe(u8, a.display.screen.pixels);
     d.* = .{ .a = a, .s = s, .word = word, .lang = lang, .page_copy = page_copy, .found = found };
     assert(d.phase == .asking);
 }
@@ -131,7 +132,7 @@ pub const Define = struct {
     sheet_ending: ?screen.Ending(Choice) = null,
 
     /// The page as it was, its own copy, for the cards over it.
-    fn under(d: *const Define) app.Backdrop {
+    fn under(d: *const Define) display.Backdrop {
         return .{ .pixels = d.page_copy };
     }
 
@@ -150,7 +151,7 @@ pub const Define = struct {
     /// the sheet offers it instead.
     pub fn on_open(d: *Define) !screen.Step(Choice) {
         assert(d.phase == .asking);
-        assert(d.page_copy.len == d.a.screen.pixels.len);
+        assert(d.page_copy.len == d.a.display.screen.pixels.len);
         if (definition.gettable(d.found)) |g| {
             if (d.a.settings.offer_dictionary) {
                 d.ask_card = dict_get.ask(d.a, d.under(), g.lang, &d.asking);
@@ -161,7 +162,7 @@ pub const Define = struct {
     }
 
     pub fn on_resume(d: *Define) !screen.Step(Choice) {
-        assert(d.page_copy.len == d.a.screen.pixels.len);
+        assert(d.page_copy.len == d.a.display.screen.pixels.len);
         switch (d.phase) {
             .asking => {
                 const answer = try dict_get.asked(d.a, d.under(), d.ask_ending.?);
@@ -192,7 +193,7 @@ pub const Define = struct {
 
     fn show_sheet(d: *Define) screen.Step(Choice) {
         assert(d.phase != .sheet);
-        assert(d.page_copy.len == d.a.screen.pixels.len);
+        assert(d.page_copy.len == d.a.display.screen.pixels.len);
         d.phase = .sheet;
         d.sheet = .{
             .a = d.a,

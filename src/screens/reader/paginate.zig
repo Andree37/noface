@@ -40,7 +40,7 @@ fn run(
 ) !?book_model.Pos {
     assert(pages_max > 0);
     assert(from.para <= paragraphs.len);
-    const geometry = a.page(&.{});
+    const geometry = a.display.page(&.{});
     var layout = a.layout;
     layout.stop = stop;
     var position = from;

@@ -17,6 +17,7 @@ const text = @import("../../layout/text.zig");
 const now_us = os.now_us;
 const unix_time = os.unix_time;
 const app = @import("../../app.zig");
+const display = @import("../../display.zig");
 const user_data = @import("../../user_data.zig");
 const style = @import("../../ui/style.zig");
 const Zone = @import("../../kindle/input.zig").Zone;
@@ -103,7 +104,7 @@ pub const Session = struct {
             "laid out in the background: {d} pages, {d} before the reader's place\n",
             .{ s.pages.len, whole.before },
         );
-        s.app.forget_pages(); // Indexes moved, so pages drawn so far are stale
+        s.app.display.forget_pages(); // Indexes moved, so pages drawn so far are stale
         _ = try s.ensure(s.current, s.current);
         return true;
     }
@@ -112,10 +113,10 @@ pub const Session = struct {
     /// changes, so only it repaints.
     pub fn show_footer(s: *Session) !void {
         assert(s.current < s.pages.len);
-        @memcpy(s.app.screen.pixels, try s.ensure(s.current, s.current));
-        const footer_top = s.app.screen.height - footer_height_px;
-        assert(footer_top < s.app.screen.height);
-        try s.app.show_band(footer_top, s.app.screen.height - footer_top);
+        @memcpy(s.app.display.screen.pixels, try s.ensure(s.current, s.current));
+        const footer_top = s.app.display.screen.height - footer_height_px;
+        assert(footer_top < s.app.display.screen.height);
+        try s.app.display.show_band(footer_top, s.app.display.screen.height - footer_top);
     }
 
     /// Lays out until page `index` exists, or the book ends, for turning on.
@@ -209,7 +210,7 @@ pub const Session = struct {
         const was_known = speed.known();
         speed.record(s.words_on_page(left), us);
         // Pages already drawn have no time left on them yet.
-        if (!was_known and speed.known()) s.app.forget_pages();
+        if (!was_known and speed.known()) s.app.display.forget_pages();
     }
 
     fn page_has_picture(s: *const Session, index: u32) bool {
@@ -265,7 +266,7 @@ pub const Session = struct {
     /// none while it isn't drawn.
     pub fn page_words(s: *const Session) []const book_model.Word {
         assert(s.current < s.pages.len);
-        const slot = s.app.slot_for(s.current) orelse return &.{};
+        const slot = s.app.display.slot_for(s.current) orelse return &.{};
         assert(slot.hits.word_count <= slot.hits.words.len);
         return slot.hits.words[0..slot.hits.word_count];
     }
@@ -304,8 +305,8 @@ pub const Session = struct {
     pub fn show_band(s: *const Session, top: u32, height: u32) !u32 {
         const a = s.app;
         assert(height > 0);
-        assert(top + height <= a.screen.height);
-        return a.screen.show_region(0, top, a.screen.width, height, .page);
+        assert(top + height <= a.display.screen.height);
+        return a.display.screen.show_region(0, top, a.display.screen.width, height, .page);
     }
 
     /// Every move to another page comes through here, so reading time stays right.
@@ -313,7 +314,8 @@ pub const Session = struct {
         check.thatf(index < s.pages.len, "page {d} of {d}", .{ index, s.pages.len });
         const settled = s.progress == null;
         // Pages are kept drawn with the button on or off: draw them again
-        if (s.back.note_move(s.pages, s.current, index, move, settled)) s.app.forget_pages();
+        const back_changed = s.back.note_move(s.pages, s.current, index, move, settled);
+        if (back_changed) s.app.display.forget_pages();
         s.leave_page(index);
         s.current = index;
         s.anchor = s.pages[index];
@@ -324,7 +326,7 @@ pub const Session = struct {
     /// first if its drawing was dropped (a finished layout forgets them all).
     pub fn picture_at(s: *Session, x: i32, y: i32) !?book_model.Image {
         _ = try s.ensure(s.current, s.current);
-        const slot = s.app.slot_for(s.current) orelse return null;
+        const slot = s.app.display.slot_for(s.current) orelse return null;
         // Just drawn: the slot holds the page on screen
         assert(slot.page.? == s.current); // Found by its page
         const para = slot.hits.picture_at(x, y) orelse return null;
@@ -334,7 +336,7 @@ pub const Session = struct {
 
     pub fn reference_at(s: *Session, x: i32, y: i32) ?u32 {
         assert(s.current < s.pages.len);
-        const slot = s.app.slot_for(s.current) orelse return null;
+        const slot = s.app.display.slot_for(s.current) orelse return null;
         assert(slot.page.? == s.current); // Found by its page
         return slot.hits.find(x, y);
     }
@@ -342,12 +344,12 @@ pub const Session = struct {
     /// Where touches count as the Back button although the thumb filter is on there.
     pub fn back_zone(s: *const Session) ?Zone {
         assert(s.current < s.pages.len);
-        return s.back.zone(s.app.screen.height);
+        return s.back.zone(s.app.display.screen.height);
     }
 
     pub fn on_back(s: *const Session, x: i32, y: i32) bool {
         assert(s.current < s.pages.len);
-        return s.back.hit(s.app.screen.height, x, y);
+        return s.back.hit(s.app.display.screen.height, x, y);
     }
 
     /// The page the Back button returns to.
@@ -362,7 +364,7 @@ pub const Session = struct {
         assert(s.app.settings.time_left); // Only drawn when asked for
         const a = s.app;
         const left = s.time_left(index);
-        const y: i32 = @intCast(a.screen.height - footer_baseline_above_bottom_px);
+        const y: i32 = @intCast(a.display.screen.height - footer_baseline_above_bottom_px);
         const margin: f32 = @floatFromInt(a.layout.margin_x);
         var minutes_buffer: [48]u8 = undefined;
         var line: [64]u8 = undefined;
@@ -378,7 +380,7 @@ pub const Session = struct {
             const minutes = stats.format_minutes(&minutes_buffer, m);
             t = std.fmt.bufPrint(&line, "{s} left in book", .{minutes}) catch "";
         }
-        const right: f32 = @as(f32, @floatFromInt(a.screen.width)) - margin;
+        const right: f32 = @as(f32, @floatFromInt(a.display.screen.width)) - margin;
         try a.footer.draw(page, right - try a.footer.measure(t), y, t);
     }
 
@@ -387,15 +389,15 @@ pub const Session = struct {
         check.thatf(index < s.pages.len, "page {d} of {d}", .{ index, s.pages.len });
         check.thatf(center < s.pages.len, "page {d} of {d}", .{ center, s.pages.len });
         const a = s.app;
-        if (a.slot_for(index)) |slot| return slot.buf;
+        if (a.display.slot_for(index)) |slot| return slot.buf;
         var cached: [3]?u32 = undefined;
-        for (&a.slots, &cached) |*slot, *c| c.* = slot.page;
+        for (&a.display.slots, &cached) |*slot, *c| c.* = slot.page;
         const victim = cache.victim(cached, center);
-        assert(victim < a.slots.len);
-        const buf = a.slots[victim].buf;
-        const page = a.page(buf);
-        a.slots[victim].hits.clear();
-        const hits = &a.slots[victim].hits;
+        assert(victim < a.display.slots.len);
+        const buf = a.display.slots[victim].buf;
+        const page = a.display.page(buf);
+        a.display.slots[victim].hits.clear();
+        const hits = &a.display.slots[victim].hits;
         // Drawn to end where the next page starts, as it was laid out: the page before
         // the reader's place was cut short there, and would otherwise run on into it
         var layout = a.layout;
@@ -408,29 +410,29 @@ pub const Session = struct {
         if (s.progress == null) {
             counter = std.fmt.bufPrint(&label, "{d} / {d}", .{ index + 1, s.pages.len }) catch "";
         }
-        const x = @as(f32, @floatFromInt(a.screen.width / 2 - counter_left_of_middle_px));
-        const y: i32 = @intCast(a.screen.height - footer_baseline_above_bottom_px);
+        const x = @as(f32, @floatFromInt(a.display.screen.width / 2 - counter_left_of_middle_px));
+        const y: i32 = @intCast(a.display.screen.height - footer_baseline_above_bottom_px);
         try a.footer.draw(page, x, y, counter);
-        if (s.is_bookmarked(index)) icons.ribbon(page, a.screen.width);
+        if (s.is_bookmarked(index)) icons.ribbon(page, a.display.screen.width);
         if (a.settings.time_left) try s.draw_time_left(page, index);
         if (s.back.place != null) {
             try s.back.draw_on(page, a.ui.small, s.pages, s.progress == null);
         }
 
-        a.slots[victim].page = index;
+        a.display.slots[victim].page = index;
         // Pixels lent from this slot before now are another page's
-        a.slots[victim].drawn +%= 1;
-        assert(a.slot_for(index).? == &a.slots[victim]);
+        a.display.slots[victim].drawn +%= 1;
+        assert(a.display.slot_for(index).? == &a.display.slots[victim]);
         return buf;
     }
 
     /// The page the reader is on, drawn, lent from the page cache to a sheet drawn over
     /// it. It stays that page while the sheet is open, as nothing under a sheet draws
     /// another page there; if something did, the sheet's next use of it stops on it.
-    pub fn lend_current(s: *Session) !app.Backdrop {
+    pub fn lend_current(s: *Session) !display.Backdrop {
         const pixels = try s.ensure(s.current, s.current);
         const a = s.app;
-        for (&a.slots, 0..) |*slot, i| {
+        for (&a.display.slots, 0..) |*slot, i| {
             if (slot.buf.ptr != pixels.ptr) continue;
             assert(slot.page == s.current);
             return .{ .pixels = pixels, .lent = .{ .slot = @intCast(i), .drawn = slot.drawn } };
@@ -443,14 +445,14 @@ pub const Session = struct {
         s.set_page(index, move);
         assert(s.current == index);
         const buf = try s.ensure(index, index);
-        @memcpy(a.screen.pixels, buf);
+        @memcpy(a.display.screen.pixels, buf);
         a.stamp_clock();
         s.turns += 1;
         const clean = force_clean or (a.settings.refresh and s.turns % 20 == 0);
         const refresh: hwtcon.Refresh = if (clean) .flash else .page;
-        const marker = try a.screen.show(refresh);
+        const marker = try a.display.screen.show(refresh);
         const queued = now_us();
-        try a.screen.wait_complete(marker);
+        try a.display.screen.wait_complete(marker);
         const done = now_us();
         if (touched_us) |t| {
             std.debug.print("turn to {d}: touch to queued {d} us, touch to done {d} ms{s}\n", .{
@@ -518,7 +520,7 @@ pub fn relayout(a: *app.App, s: *Session) !void {
         return a.apply_settings();
     };
     a.save_settings();
-    a.forget_pages();
+    a.display.forget_pages();
     const t0 = now_us();
     const pages_key = page_store.key(a, s.book_bytes);
     s.progress = null; // A layout still running was for the old settings

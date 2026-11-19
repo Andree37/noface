@@ -46,8 +46,8 @@ pub const Options = struct { restore: bool = true };
 /// A screen update that fails is logged, never fatal: the Kindle is asleep, and the
 /// reader shouldn't wake to an error.
 pub fn make(a: *app.App, entry: ?*const catalog.Entry, options: Options) Lock {
-    assert(a.lock_kept.saved.len == a.screen.pixels.len);
-    assert(a.lock_kept.cover.len == a.screen.pixels.len);
+    assert(a.lock_kept.saved.len == a.display.screen.pixels.len);
+    assert(a.lock_kept.cover.len == a.display.screen.pixels.len);
     // Touches are taken as they were, though none counts while it's up
     return .{ .a = a, .entry = entry, .options = options, .modes = a.input.modes() };
 }
@@ -73,10 +73,10 @@ pub const Lock = struct {
     fn show(l: *Lock) void {
         assert(l.redraws == 0);
         const a = l.a;
-        @memcpy(a.lock_kept.saved, a.screen.pixels);
+        @memcpy(a.lock_kept.saved, a.display.screen.pixels);
         draw_target(a, l.entry);
         assert(a.lock_kept.shown != null); // Drawn now, or kept from the last lock
-        a.present(a.lock_kept.cover, .flash) catch |err| {
+        a.display.present(a.lock_kept.cover, .flash) catch |err| {
             std.debug.print("lock screen not shown: {s}\n", .{@errorName(err)});
         };
     }
@@ -102,9 +102,9 @@ pub const Lock = struct {
         l.redraws += 1;
         const a = l.a;
         // Only when stock painted over it, and only the pixels it changed.
-        if (!std.mem.eql(u8, a.screen.pixels, a.lock_kept.cover)) {
+        if (!std.mem.eql(u8, a.display.screen.pixels, a.lock_kept.cover)) {
             std.debug.print("lock cover repainted\n", .{});
-            a.present(a.lock_kept.cover, .screen) catch |err| {
+            a.display.present(a.lock_kept.cover, .screen) catch |err| {
                 std.debug.print("lock cover not repainted: {s}\n", .{@errorName(err)});
             };
         }
@@ -124,7 +124,7 @@ pub const Lock = struct {
         assert(l.a.input.locked);
         l.a.input.last_input = now_us();
         if (l.options.restore) {
-            l.a.present(l.a.lock_kept.saved, .flash) catch |err| {
+            l.a.display.present(l.a.lock_kept.saved, .flash) catch |err| {
                 std.debug.print("screen not put back: {s}\n", .{@errorName(err)});
             };
         }
@@ -178,14 +178,15 @@ fn lock_screen_draw(
     book: app.LockShown,
 ) void {
     assert(book != .picture);
-    assert(a.lock_kept.cover.len == a.screen.pixels.len);
+    assert(a.lock_kept.cover.len == a.display.screen.pixels.len);
     const target = a.lock_kept.cover;
     // What's kept is what was really drawn: a picture that won't decode leaves the
     // book's cover, which mustn't be kept as if it were the picture
     var drew: ?u64 = null; // The picture drawn, by its key
     if (own_picture) |p| {
-        const w = a.screen.width;
-        if (cover.fill_screen(a.alloc, p.data, target, w, a.screen.height, a.screen.stride)) {
+        const w = a.display.screen.width;
+        const eink = a.display.screen;
+        if (cover.fill_screen(a.alloc, p.data, target, w, eink.height, eink.stride)) {
             drew = p.key;
         } else {
             a.lock_kept.picture_bad = p.key;
@@ -240,14 +241,14 @@ fn key_for(e: *const catalog.Entry) u64 {
 /// shows; a Kindle book's own first picture is sharper, so it's used instead when it
 /// has the thumbnail's shape, and so is the cover rather than a map or picture inside.
 fn draw_cover(a: *app.App, e: *const catalog.Entry, target: []u8) bool {
-    assert(target.len == a.screen.pixels.len);
-    assert(a.screen.stride >= a.screen.width);
+    assert(target.len == a.display.screen.pixels.len);
+    assert(a.display.screen.stride >= a.display.screen.width);
     var thumbnail: ?[]const u8 = null;
     if (e.thumbnail) |t| thumbnail = file.map(t) catch null;
     defer if (thumbnail) |t| file.unmap(t);
-    const width = a.screen.width;
-    const height = a.screen.height;
-    const stride = a.screen.stride;
+    const width = a.display.screen.width;
+    const height = a.display.screen.height;
+    const stride = a.display.screen.stride;
     if (e.is_local() and !e.is_epub()) {
         // A book that can't be read has no cover of its own to give: its thumbnail's
         // is tried next
@@ -280,12 +281,12 @@ pub fn same_shape(x: []const u8, y: []const u8) bool {
 
 /// No cover: the title, wrapped, and the author under it, on white.
 fn draw_title(a: *app.App, entry: ?*const catalog.Entry, target: []u8) void {
-    assert(target.len == a.screen.pixels.len);
-    assert(a.screen.width > 2 * title_side);
+    assert(target.len == a.display.screen.pixels.len);
+    assert(a.display.screen.width > 2 * title_side);
     @memset(target, 0xff);
     const e = entry orelse return;
-    const page = a.page(target);
-    const width_available: f32 = @floatFromInt(a.screen.width - 2 * title_side);
+    const page = a.display.page(target);
+    const width_available: f32 = @floatFromInt(a.display.screen.width - 2 * title_side);
     const step = a.ui.hero.line_height;
     const font = a.ui.hero;
     const lines = draw.wrapped(

@@ -59,7 +59,7 @@ const Choices = struct {
         assert(c.heading.len > 0);
         assert(c.rows.len > 0);
         const a = c.a;
-        const page = a.page(a.screen.pixels);
+        const page = a.display.on_screen();
         page.fill_rect(0, 0, page.width, page.height, style.white);
         // Back to the library along the top, as the stats screen has it, then what's
         // being chosen and the book it's for, over the list
@@ -73,7 +73,7 @@ const Choices = struct {
         const tint_width = page.width - 2 * style.margin;
         page.tint(style.margin, tint_top, tint_width, header.about_tint_height, style.faded);
         try goto_ui.render_list(a.ui, page, c.rows, null, c.pages.page, "");
-        try a.show_band(0, a.screen.height);
+        try a.display.show_band(0, a.display.screen.height);
     }
 
     pub fn on_tap(c: *Choices, t: screen.Tap) !screen.Step(u32) {
@@ -100,14 +100,14 @@ const NameEntry = struct {
     pub fn draw(e: *NameEntry, part: screen.Part) !void {
         assert(e.name.len <= e.name.buf.len);
         const a = e.a;
-        const page = a.page(a.screen.pixels);
+        const page = a.display.on_screen();
         if (part == .all) {
             // Not over the list it came from
             page.fill_rect(0, 0, page.width, page.height, style.white);
         }
         try search_sheet.render_bar(a.ui, page, 0, e.name.slice(), "Series name", .none);
         if (part == .all) try keyboard.render(a.ui, page);
-        try a.show_band(0, if (part == .all) a.screen.height else keyboard.top);
+        try a.display.show_band(0, if (part == .all) a.display.screen.height else keyboard.top);
     }
 
     pub fn on_tap(e: *NameEntry, t: screen.Tap) !screen.Step([]const u8) {

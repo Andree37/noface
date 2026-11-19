@@ -277,7 +277,7 @@ pub const Run = struct {
         const zone: running_model.Zone = if (view.on_pause_button(a, x, y))
             .toggle
         else
-            running_model.zone(x, y, a.screen.width, pause_band_px);
+            running_model.zone(x, y, a.display.screen.width, pause_band_px);
         std.debug.print("running: tap {s}\n", .{@tagName(zone)});
         const was_stopped = run.stopped();
         // The dial shows only what this tap does to the pace

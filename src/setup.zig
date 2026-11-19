@@ -5,6 +5,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const app = @import("app.zig");
+const display = @import("display.zig");
 const user_data = @import("user_data.zig");
 const paths = @import("kindle/paths.zig");
 const memory = @import("base/memory.zig");
@@ -305,8 +306,6 @@ pub fn assemble(p: Parts) !app.App {
     assert(p.files.settings.len > 0); // DataFiles.init ran
     const regions = try reserve_reading();
     const speeds = user_data.load_speed(p.files.speed);
-    var slots: [3]app.Slot = undefined;
-    for (&slots) |*s| s.* = .{ .buf = try p.alloc.alloc(u8, pixels) };
     const ui = Fonts{
         .title = &k.title,
         .small = &k.small,
@@ -332,14 +331,12 @@ pub fn assemble(p: Parts) !app.App {
         .book_region = &regions.book,
         .pages_budget = &regions.pages_budget,
         .scratch_region = &regions.scratch,
-        .screen = p.screen,
+        .display = try display.Display.init(p.alloc, p.screen),
         .input = p.input,
         .body = &k.body,
         .note_font = &k.note_font,
         .footer = &k.footer,
         .ui = ui,
-        .slots = slots,
-        .overlay = try p.alloc.alloc(u8, pixels),
         .lock_kept = .{
             .saved = try p.alloc.alloc(u8, pixels),
             .cover = try p.alloc.alloc(u8, pixels),

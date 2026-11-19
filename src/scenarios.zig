@@ -684,8 +684,8 @@ fn play_on_start(
     dir: [:0]const u8,
     book_paths: *const [books_max][:0]const u8,
 ) !void {
-    assert(a.screen.width == width);
-    assert(a.screen.height == height);
+    assert(a.display.screen.width == width);
+    assert(a.display.screen.height == height);
     a.documents = dir;
     // Each run starts as a new reader: nothing read before, every setting as shipped,
     // and the regions' peaks its own
@@ -772,7 +772,7 @@ fn play_on_outcome(
 ) !Outcome {
     assert(ran.last_screen.len == width * height);
     // Something was drawn, at least the first screen
-    try expect(a.screen.updates > 0, "nothing was drawn");
+    try expect(a.display.screen.updates > 0, "nothing was drawn");
     var state_buf: [320]u8 = undefined;
     var note_buf: [8]u8 = undefined;
     const state_path = try a.state_path(&state_buf, book_paths[0]);
@@ -805,7 +805,7 @@ fn play_on_outcome(
         .notes = notes_digest(state_path),
         .unreadable_kept = try unreadable_kept(ran.alloc, kindle, ran.dir),
         .shown = if (kindle.pages_into) |into| try pages_shown(into, a) else @splat(null),
-        .updates = a.screen.updates,
+        .updates = a.display.screen.updates,
         .running_pace = a.running_pace,
         .awake_at_end = ran.awake_at_end,
         .speed_pages = a.speed.pages,
@@ -862,8 +862,8 @@ fn notes_digest(state_path: []const u8) u64 {
 /// stay as last drawn after the book closes.
 fn pages_shown(alloc: std.mem.Allocator, a: *const app.App) ![3]?Shown {
     var shown: [3]?Shown = @splat(null);
-    comptime assert(shown.len == a.slots.len);
-    for (a.slots, &shown) |slot, *out| {
+    comptime assert(shown.len == a.display.slots.len);
+    for (a.display.slots, &shown) |slot, *out| {
         const page = slot.page orelse continue;
         assert(slot.hits.word_count <= slot.hits.words.len);
         const words = slot.hits.words[0..slot.hits.word_count];

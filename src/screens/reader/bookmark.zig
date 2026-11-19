@@ -14,7 +14,7 @@ pub fn toggle(
     alloc: std.mem.Allocator,
 ) !void {
     assert(s.current < s.pages.len);
-    defer a.forget_pages(); // The ribbon is drawn into the page
+    defer a.display.forget_pages(); // The ribbon is drawn into the page
     const from = s.pages[s.current];
     const to = s.page_end(s.current);
     if (s.is_bookmarked(s.current)) {

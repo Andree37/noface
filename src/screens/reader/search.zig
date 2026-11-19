@@ -50,8 +50,8 @@ pub const Search = struct {
     /// The bar always; under it the keyboard or the results when all is drawn.
     pub fn draw(se: *Search, part: screen.Part) !void {
         const a = se.a;
-        assert(a.screen.height > search_sheet.content_top);
-        const page = a.page(a.screen.pixels);
+        assert(a.display.screen.height > search_sheet.content_top);
+        const page = a.display.on_screen();
         const top = toolbar.status_row;
         const query = se.s.query.slice();
         try search_sheet.render_bar(a.ui, page, top, query, "Search this book", .search);
@@ -63,8 +63,8 @@ pub const Search = struct {
             },
             .results => |r| try se.draw_results(page, r.rows, r.pages),
         };
-        const bottom: u32 = if (part == .all) a.screen.height else search_sheet.content_top;
-        try a.show_band(top, bottom - top);
+        const bottom: u32 = if (part == .all) a.display.screen.height else search_sheet.content_top;
+        try a.display.show_band(top, bottom - top);
     }
 
     fn draw_results(se: *Search, page: Page, rows: []const goto.Row, pages: goto.Pages) !void {

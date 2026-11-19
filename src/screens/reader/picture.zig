@@ -133,24 +133,25 @@ fn draw_view(a: *app.App, v: *const View, settled: bool) !u32 {
     assert(v.step < steps.len);
     // Drawn in ordinary memory, then copied: the screen's own memory is slow to read
     // back, and dithering reads every pixel it writes
-    const page = a.compose_whole();
+    const page = a.display.compose_whole();
     const t0 = os.now_us();
     const zoom = v.zoom();
-    const width = a.screen.width;
-    const height = a.screen.height;
+    const width = a.display.screen.width;
+    const height = a.display.screen.height;
     image.zoomed(v.picture, v.center_x, v.center_y, zoom, page, width, height, settled);
     if (settled) {
-        const pixels = page.buf[0 .. a.screen.stride * a.screen.height];
-        image.dither(a.alloc, pixels, a.screen.stride) catch {}; // Ignored: grays still show.
+        const stride = a.display.screen.stride;
+        const pixels = page.buf[0 .. stride * a.display.screen.height];
+        image.dither(a.alloc, pixels, stride) catch {}; // Ignored: grays still show.
     } else {
-        page.threshold(0, a.screen.height);
+        page.threshold(0, a.display.screen.height);
     }
     draw_view_close_button(page);
     // How it works, at the bottom, until the first zoom
     if (v.step == 0 and settled) try draw_view_hint(a, page);
-    a.put_composed();
+    a.display.put_composed();
     std.debug.print("picture drawn in {d} ms\n", .{(os.now_us() - t0) / 1000});
-    return a.screen.show(if (settled) .screen else .quick);
+    return a.display.screen.show(if (settled) .screen else .quick);
 }
 
 /// The close button: a white disc with a ring and a cross.
@@ -170,18 +171,18 @@ fn draw_view_hint(a: *app.App, page: Page) !void {
     const hint = "Tap to zoom in  \u{b7}  double-tap to zoom out" ++
         "  \u{b7}  drag to move";
     const width: u32 = @intFromFloat(try a.ui.caption.measure(hint) + 2 * hint_pad);
-    assert(width <= a.screen.width);
-    const top = a.screen.height - hint_rise;
-    assert(top < a.screen.height);
-    draw.box(page, (a.screen.width - width) / 2, top, width, hint_height);
-    const center_x: f32 = @floatFromInt(a.screen.width / 2);
+    assert(width <= a.display.screen.width);
+    const top = a.display.screen.height - hint_rise;
+    assert(top < a.display.screen.height);
+    draw.box(page, (a.display.screen.width - width) / 2, top, width, hint_height);
+    const center_x: f32 = @floatFromInt(a.display.screen.width / 2);
     try draw.centered(a.ui.caption, page, center_x, @intCast(top + hint_baseline_drop), hint);
 }
 
 fn render(a: *app.App, v: *const View) !void {
     assert(v.picture.width > 0);
     assert(v.picture.height > 0);
-    try a.screen.wait_complete(try draw_view(a, v, true));
+    try a.display.screen.wait_complete(try draw_view(a, v, true));
 }
 
 /// Follows one finger from touching to lifting: past the slop it pans a zoomed view.
@@ -234,11 +235,11 @@ pub fn begin(viewer: *Viewer, a: *app.App, img: book_model.Image) !?screen.Frame
     viewer.start = viewer.budget.mark();
     errdefer viewer.release();
     const alloc = viewer.budget.allocator();
-    viewer.saved = try alloc.dupe(u8, a.screen.pixels);
+    viewer.saved = try alloc.dupe(u8, a.display.screen.pixels);
     const picture = decode(alloc, img) orelse {
         try app.show_notice(a, "This picture can't be shown larger.");
         // The notice was drawn over the page: put the page back
-        try a.present(viewer.saved, .page);
+        try a.display.present(viewer.saved, .page);
         viewer.release();
         return null;
     };
@@ -261,9 +262,9 @@ pub fn begin(viewer: *Viewer, a: *app.App, img: book_model.Image) !?screen.Frame
 /// The viewer closed: the page back as it was, and its memory let go of.
 pub fn ended(viewer: *Viewer) !void {
     assert(viewer.ending != null);
-    assert(viewer.saved.len == viewer.a.screen.pixels.len);
+    assert(viewer.saved.len == viewer.a.display.screen.pixels.len);
     defer viewer.release();
-    try viewer.a.present(viewer.saved, .flash);
+    try viewer.a.display.present(viewer.saved, .flash);
 }
 
 /// The picture, full screen, until it's closed. Touches come at once, so a drag can
@@ -310,7 +311,7 @@ pub const Viewer = struct {
 
     pub fn on_tap(viewer: *Viewer, t: screen.Tap) !screen.Step(void) {
         assert(viewer.v.step < steps.len);
-        assert(viewer.saved.len == viewer.a.screen.pixels.len);
+        assert(viewer.saved.len == viewer.a.display.screen.pixels.len);
         return switch (viewer.phase) {
             .idle => viewer.touched(t),
             // Another finger while one is followed: as before, the viewer closes
@@ -339,7 +340,7 @@ pub const Viewer = struct {
             .following => |*f| switch (action) {
                 .drag => |dragged| {
                     const a = viewer.a;
-                    if (f.marker) |m| try a.screen.wait_complete(m);
+                    if (f.marker) |m| try a.display.screen.wait_complete(m);
                     const at = a.input.latest_drag() orelse dragged;
                     f.marker = try f.follow.moved(at.x, at.y);
                     return .stay;
@@ -396,7 +397,7 @@ pub const Viewer = struct {
         const f = viewer.phase.following;
         assert(f.follow.v == &viewer.v); // It moves this viewer's picture
         const a = viewer.a;
-        if (f.marker) |m| try a.screen.wait_complete(m);
+        if (f.marker) |m| try a.display.screen.wait_complete(m);
         viewer.phase = .idle;
         // Its grays back
         if (f.follow.panned) return if (viewer.v.step > 0) .{ .redraw = .all } else .stay;

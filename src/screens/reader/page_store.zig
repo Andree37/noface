@@ -28,15 +28,15 @@ pub const breaks_digest_bold_starts: u64 = 0x589ad40798b38fc5;
 
 /// Everything the breaks depend on.
 pub fn key(a: *const app.App, book_bytes: u64) u64 {
-    assert(a.screen.width > 0);
-    assert(a.screen.height > 0);
+    assert(a.display.screen.width > 0);
+    assert(a.display.screen.height > 0);
     var h = std.hash.Wyhash.init(layout_version);
     const s = a.settings;
     const l = a.layout;
     const parts = [_]u64{
         book_bytes,
-        a.screen.width,
-        a.screen.height,
+        a.display.screen.width,
+        a.display.screen.height,
         @bitCast(@as(i64, l.margin_top)),
         @bitCast(@as(i64, l.margin_bottom)),
         @as(u32, @bitCast(l.indent)),

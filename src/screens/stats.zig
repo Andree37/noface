@@ -69,9 +69,9 @@ pub const Stats = struct {
 
     pub fn draw(s: *Stats, _: screen.Part) !void {
         assert(s.summary.finished + s.summary.in_progress <= s.summary.books);
-        assert(s.a.screen.height > stats_ui_top);
-        try stats_ui.render(s.a.ui, s.a.page(s.a.screen.pixels), s.summary);
-        try s.a.show_band(stats_ui_top, s.a.screen.height - stats_ui_top);
+        assert(s.a.display.screen.height > stats_ui_top);
+        try stats_ui.render(s.a.ui, s.a.display.on_screen(), s.summary);
+        try s.a.display.show_band(stats_ui_top, s.a.display.screen.height - stats_ui_top);
     }
 
     pub fn on_tap(_: *Stats, _: screen.Tap) !screen.Step(void) {

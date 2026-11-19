@@ -9,6 +9,7 @@ const draw_ui = @import("../ui/draw.zig");
 const screen = @import("screen.zig");
 const style = @import("../ui/style.zig");
 const app = @import("../app.zig");
+const display = @import("../display.zig");
 const input_mod = @import("../kindle/input.zig");
 
 const width = 640;
@@ -94,10 +95,10 @@ pub fn open(a: *app.App, bubble: *Bubble) void {
 }
 
 /// The library as it was under the bubble, `under`, back on the screen.
-pub fn put_back(a: *app.App, under: app.Backdrop) !void {
-    assert(left + width <= a.screen.width);
-    a.put_back(under);
-    try a.show_rect(left, top, width, height);
+pub fn put_back(a: *app.App, under: display.Backdrop) !void {
+    assert(left + width <= a.display.screen.width);
+    a.display.put_back(under);
+    try a.display.show_rect(left, top, width, height);
 }
 
 /// The estimate, in a bubble by the battery. Any tap closes it.
@@ -114,7 +115,7 @@ pub const Bubble = struct {
         assert(b.said.title.len > 0);
         assert(b.said.detail.len > 0);
         const a = b.a;
-        const page = a.page(a.screen.pixels);
+        const page = a.display.on_screen();
         draw_ui.box(page, left, top, width, height);
         const x: f32 = left + text_inset;
         const width_available: f32 = width - 2 * text_inset;
@@ -125,7 +126,7 @@ pub const Bubble = struct {
         const tint_top = top + detail_tint_drop;
         const tint_width = width - 2 * text_inset;
         page.tint(left + text_inset, tint_top, tint_width, detail_tint_height, style.faded);
-        try a.show_rect(left, top, width, height);
+        try a.display.show_rect(left, top, width, height);
     }
 
     pub fn on_tap(_: *Bubble, _: screen.Tap) !screen.Step(void) {

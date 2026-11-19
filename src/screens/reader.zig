@@ -180,7 +180,7 @@ pub fn open(r: *Reader, a: *app.App, entry: *catalog.Entry) !void {
     r.scratch = r.scratch_budget.allocator();
     errdefer r.release();
     // The page under a selection: memory only once a word is first held
-    const pixels: u32 = @intCast(a.screen.pixels.len);
+    const pixels: u32 = @intCast(a.display.screen.pixels.len);
     r.selecting.clean = try r.book_budget.untouched(u8, pixels);
     try open_book(r);
     assert(r.start < r.s.pages.len);
@@ -895,9 +895,10 @@ pub const Reader = struct {
                 },
                 .hold => |h| try r.tap_running(h.x, h.y, .{ .touched_us = now_us() }),
                 .swipe => |swipe| {
-                    const x: i32 = if (swipe.direction > 0) @intCast(r.a.screen.width - 1) else 0;
+                    const right: i32 = @intCast(r.a.display.screen.width - 1);
+                    const x: i32 = if (swipe.direction > 0) right else 0;
                     const touch: run_mode.Touch = .{ .touched_us = swipe.us };
-                    try r.tap_running(x, @intCast(r.a.screen.height / 2), touch);
+                    try r.tap_running(x, @intCast(r.a.display.screen.height / 2), touch);
                 },
                 .pull => {},
                 .drag, .drag_end, .tick, .charger, .lock, .unlock, .power, .computer, .stop => {
@@ -1110,8 +1111,9 @@ pub const Reader = struct {
         const note = std.fmt.bufPrint(&r.pause_note, "Running for {d} min", .{minutes}) catch "";
         // The phrase screen as it is, kept in running's own buffer to show under the
         // card and put back after
-        if (r.run_screen.len == 0) r.run_screen = try r.alloc.alloc(u8, a.screen.pixels.len);
-        @memcpy(r.run_screen, a.screen.pixels);
+        const pixels = a.display.screen.pixels.len;
+        if (r.run_screen.len == 0) r.run_screen = try r.alloc.alloc(u8, pixels);
+        @memcpy(r.run_screen, a.display.screen.pixels);
         const rows = &run_mode.pause_rows;
         const c = card_screen.over(a, .{ .pixels = r.run_screen }, "Paused", note, rows, null);
         r.open_child(.{ .pause = .{ .screen = c } });

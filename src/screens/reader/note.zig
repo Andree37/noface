@@ -40,20 +40,20 @@ pub const Footnote = struct {
     /// in a panel the same height, and is true; false when the tap closes the note.
     pub fn tap(f: *Footnote, a: *app.App, s: *sess.Session, y: i32) !bool {
         assert(f.len > 0);
-        assert(f.top <= a.screen.height);
+        assert(f.top <= a.display.screen.height);
         if (y < f.top) return false;
         const next = f.next orelse return false;
-        try f.show(a, s, next, a.screen.height - f.top);
+        try f.show(a, s, next, a.display.screen.height - f.top);
         return true;
     }
 
     /// Puts the page back where the panel was.
     pub fn close(f: *Footnote, a: *app.App, s: *sess.Session) !void {
-        assert(f.top <= a.screen.height);
+        assert(f.top <= a.display.screen.height);
         assert(s.current < s.pages.len);
         std.debug.print("note closed\n", .{});
-        @memcpy(a.screen.pixels, try s.ensure(s.current, s.current));
-        try a.screen.wait_complete(try s.show_band(f.top, a.screen.height - f.top));
+        @memcpy(a.display.screen.pixels, try s.ensure(s.current, s.current));
+        try a.display.screen.wait_complete(try s.show_band(f.top, a.display.screen.height - f.top));
         f.* = .{};
     }
 
@@ -67,23 +67,23 @@ pub const Footnote = struct {
     ) !void {
         assert(f.len > 0);
         assert(f.len <= f.parts.len);
-        if (fixed) |height| assert(height <= a.screen.height);
+        if (fixed) |height| assert(height <= a.display.screen.height);
         const font = a.note_font;
         const parts = f.parts[0..f.len];
-        const whole = a.compose(try s.lend_current());
-        const stride = a.screen.stride;
-        const fitted = try notes.fit(font, parts, start, a.screen.width, stride, fixed);
-        assert(fitted.height <= a.screen.height);
-        const top = a.screen.height - fitted.height;
+        const whole = a.display.compose(try s.lend_current());
+        const stride = a.display.screen.stride;
+        const fitted = try notes.fit(font, parts, start, a.display.screen.width, stride, fixed);
+        assert(fitted.height <= a.display.screen.height);
+        const top = a.display.screen.height - fitted.height;
         const panel = Page{
             .buf = whole.buf[top * stride ..],
-            .width = a.screen.width,
+            .width = a.display.screen.width,
             .height = fitted.height,
             .stride = stride,
         };
         try notes.render(font, a.ui, panel, parts, start, fitted.next != null);
-        a.put_composed();
-        try a.screen.wait_complete(try s.show_band(top, fitted.height));
+        a.display.put_composed();
+        try a.display.screen.wait_complete(try s.show_band(top, fitted.height));
         f.top = top;
         f.next = fitted.next;
         std.debug.print(

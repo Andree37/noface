@@ -9,6 +9,7 @@ const book_actions = @import("../ui/book_actions.zig");
 const state = @import("../sys/state.zig");
 const store = @import("../kindle/store.zig");
 const app = @import("../app.zig");
+const display = @import("../display.zig");
 const series_screen = @import("series.zig");
 const books = @import("books.zig");
 const memory = @import("../base/memory.zig");
@@ -82,9 +83,9 @@ pub fn begin_sheet(
     a: *app.App,
     e: *catalog.Entry,
     lib: *books.Library,
-    background: app.Backdrop,
+    background: display.Backdrop,
 ) void {
-    assert(background.holds(a));
+    assert(background.holds(&a.display));
     s.* = .{ .a = a, .e = e, .lib = lib, .background = background };
     assert(s.round == 0);
     assert(s.phase == .card);
@@ -98,7 +99,7 @@ pub const Sheet = struct {
     a: *app.App,
     e: *catalog.Entry,
     lib: *books.Library,
-    background: app.Backdrop,
+    background: display.Backdrop,
     /// The books on this Kindle, listed for the series screens in the library's
     /// scratch region, emptied when they end.
     scratch: memory.Budget = undefined,
@@ -147,7 +148,7 @@ pub const Sheet = struct {
     }
 
     pub fn on_resume(s: *Sheet) !screen.Step(Change) {
-        assert(s.background.holds(s.a)); // What its cards sit over
+        assert(s.background.holds(&s.a.display)); // What its cards sit over
         switch (s.phase) {
             .card => {
                 try card_screen.closed(s.a, s.background);
@@ -237,8 +238,8 @@ pub fn up_next(
         "Up next";
     std.debug.print("up next: {s}\n", .{next.title});
     // Over the page just left, not whatever the reader last kept in this buffer
-    assert(background.len == a.screen.pixels.len);
-    @memcpy(background, a.screen.pixels);
+    assert(background.len == a.display.screen.pixels.len);
+    @memcpy(background, a.display.screen.pixels);
     // Its cover beside the title, half the grid's size, when it has one
     const cover_width = cover_image.width / 2;
     const cover_height = cover_image.height / 2;
@@ -252,16 +253,16 @@ pub fn up_next(
         book_cover = .{ .pixels = pixels, .width = cover_width, .height = cover_height };
     }
     const rows = &up_next_rows;
-    const under: app.Backdrop = .{ .pixels = background };
+    const under: display.Backdrop = .{ .pixels = background };
     offer.card = card_screen.over(a, under, next.title, offer.subtitle, rows, book_cover);
     return screen.open(&offer.card, &offer.ending);
 }
 
 /// Once the up-next card has ended: whether to read the book now.
-pub fn up_next_closed(a: *app.App, background: app.Backdrop, offer: *UpNext) !bool {
+pub fn up_next_closed(a: *app.App, background: display.Backdrop, offer: *UpNext) !bool {
     if (offer.small) |pixels| a.alloc.free(pixels);
     offer.small = null;
-    assert(background.holds(a));
+    assert(background.holds(&a.display));
     try card_screen.closed(a, background);
     switch (offer.ending.?) {
         .done => |row| {

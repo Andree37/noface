@@ -9,6 +9,7 @@ const catalog_db = @import("../kindle/catalog.zig");
 const lipc = @import("../kindle/lipc.zig");
 const now_us = os.now_us;
 const app = @import("../app.zig");
+const display = @import("../display.zig");
 const hwtcon = @import("../kindle/hwtcon.zig");
 const battery_screen = @import("battery.zig");
 const panel = @import("panel.zig");
@@ -98,12 +99,12 @@ const LibrarySearch = struct {
             more = found.more;
         }
         assert(ls.matches.len <= search_sheet.max_rows);
-        const page = a.page(a.screen.pixels);
+        const page = a.display.on_screen();
         const listed = rows[0..ls.matches.len];
         try search_sheet.render(a.ui, page, words, ls.matches, listed, more);
         // The keyboard never changes, so after the first time only the part above it does
-        const bottom: u32 = if (part == .all) a.screen.height else keyboard.top;
-        try a.show_band(search_sheet.top, bottom - search_sheet.top);
+        const bottom: u32 = if (part == .all) a.display.screen.height else keyboard.top;
+        try a.display.show_band(search_sheet.top, bottom - search_sheet.top);
     }
 
     pub fn on_tap(ls: *LibrarySearch, t: screen.Tap) !screen.Step(SearchEnd) {
@@ -140,13 +141,13 @@ fn show_with_covers(
     refresh: hwtcon.Refresh,
     page_index: u32,
 ) !void {
-    assert(buffer.len == a.screen.pixels.len);
+    assert(buffer.len == a.display.screen.pixels.len);
     assert(page_index < library.page_count(lib.count()));
-    @memcpy(a.screen.pixels, buffer);
-    const marker = try a.screen.show(refresh);
+    @memcpy(a.display.screen.pixels, buffer);
+    const marker = try a.display.screen.show(refresh);
     lib.prepare_covers(a.covers, page_index + 1);
     if (page_index > 0) lib.prepare_covers(a.covers, page_index - 1);
-    try a.screen.wait_complete(marker);
+    try a.display.screen.wait_complete(marker);
 }
 
 /// What the library does after an action: nothing, draw the page again (a new filter,
@@ -156,12 +157,12 @@ const Next = union(enum) { nothing, page, everything, leave, open: screen.Frame 
 
 pub fn run_library(a: *app.App) !void {
     // The library as last drawn, its own: memory once it's first drawn
-    const pixels: u32 = @intCast(a.screen.pixels.len);
+    const pixels: u32 = @intCast(a.display.screen.pixels.len);
     const buf = try a.library_budget.untouched(u8, pixels);
     defer a.library_budget.allocator().free(buf);
     var b = Browser{ .a = a, .lib = try load_library(a), .buf = buf };
     defer b.lib.deinit();
-    assert(b.buf.len == a.screen.pixels.len);
+    assert(b.buf.len == a.display.screen.pixels.len);
     // Started while the Kindle is locked: the "going to lock" event has passed, so
     // show the lock screen now, as if it had just arrived. Otherwise the library
     // would sit under a locked Kindle with touch switched off.
@@ -226,8 +227,8 @@ const Browser = struct {
     /// or the page alone (a new filter, a page turn, a notice).
     /// The library as last drawn, for a sheet over it: its own, kept still while the
     /// sheet is open.
-    fn under(b: *const Browser) app.Backdrop {
-        assert(b.buf.len == b.a.screen.pixels.len);
+    fn under(b: *const Browser) display.Backdrop {
+        assert(b.buf.len == b.a.display.screen.pixels.len);
         return .{ .pixels = b.buf };
     }
 
@@ -276,7 +277,7 @@ const Browser = struct {
     }
 
     pub fn on_action(b: *Browser, action: input_mod.Action) !screen.Step(void) {
-        assert(b.buf.len == b.a.screen.pixels.len);
+        assert(b.buf.len == b.a.display.screen.pixels.len);
         assert(b.count == b.lib.count());
         const next: Next = switch (action) {
             .tap, .tick => unreachable, // `on_tap` and `on_tick` take those
@@ -362,7 +363,7 @@ const Browser = struct {
     /// The quick panel, pulled down or from the menu button.
     fn open_panel(b: *Browser) Next {
         assert(b.over == .none);
-        assert(b.buf.len == b.a.screen.pixels.len);
+        assert(b.buf.len == b.a.display.screen.pixels.len);
         b.over = .{ .panel = .{ .screen = panel.open(b.a, b.under()) } };
         return .{ .open = b.over.panel.frame() };
     }
@@ -383,7 +384,7 @@ const Browser = struct {
     fn render(b: *Browser) !void {
         const a = b.a;
         assert(b.count == b.lib.count());
-        assert(b.buf.len == a.screen.pixels.len);
+        assert(b.buf.len == a.display.screen.pixels.len);
         const books_shown: library.Books = .{
             .shown = b.lib.page(b.index),
             .hero = b.lib.hero(),
@@ -392,7 +393,7 @@ const Browser = struct {
         try library.render(
             a.covers,
             a.ui,
-            a.page(b.buf),
+            a.display.page(b.buf),
             books_shown,
             b.index,
             b.filter,
@@ -453,15 +454,16 @@ const Browser = struct {
         a.quick = fresh;
         try b.render();
         switch (area) {
-            .screen => try a.present(b.buf, .screen),
+            .screen => try a.display.present(b.buf, .screen),
             .strip => {
-                const band = library.status_height * a.screen.stride;
-                assert(library.status_height <= a.screen.height);
+                const band = library.status_height * a.display.screen.stride;
+                assert(library.status_height <= a.display.screen.height);
                 assert(band <= b.buf.len);
-                @memcpy(a.screen.pixels[0..band], b.buf[0..band]);
+                @memcpy(a.display.screen.pixels[0..band], b.buf[0..band]);
                 const strip_height = library.status_height;
-                const marker = try a.screen.show_region(0, 0, a.screen.width, strip_height, .clock);
-                try a.screen.wait_complete(marker);
+                const eink = a.display.screen;
+                const marker = try eink.show_region(0, 0, eink.width, strip_height, .clock);
+                try a.display.screen.wait_complete(marker);
             },
         }
     }
@@ -469,7 +471,7 @@ const Browser = struct {
     /// The library read again from the Kindle's catalog (after `export`, which has the
     /// Kindle write it out afresh) and the EPUBs, in place of what was shown.
     fn reload(b: *Browser, how: enum { export_first, as_is }) void {
-        assert(b.buf.len == b.a.screen.pixels.len);
+        assert(b.buf.len == b.a.display.screen.pixels.len);
         if (how == .export_first) catalog_db.export_library();
         b.lib.reload();
     }
@@ -515,14 +517,14 @@ const Browser = struct {
             },
             .hero => {
                 const h = b.lib.hero() orelse return .nothing;
-                a.flash(library.hero_rect(a.screen.width));
+                a.display.flash(library.hero_rect(a.display.screen.width));
                 return b.open_book(h);
             },
             .hero_dots => return b.act_on(b.lib.hero() orelse return .nothing),
             .book => |i| {
                 const entry = b.lib.book(i - library.page_range(b.index, b.count).first);
                 if (entry.is_local()) {
-                    a.flash(library.book_rect(i, b.index));
+                    a.display.flash(library.book_rect(i, b.index));
                     return b.open_book(entry);
                 }
                 if (entry.availability == .downloading) {
@@ -584,7 +586,7 @@ const Browser = struct {
         switch (end) {
             .cancel => {
                 b.query = kept.*;
-                try b.a.present(b.buf, .screen); // What was there before the sheet
+                try b.a.display.present(b.buf, .screen); // What was there before the sheet
                 return .nothing;
             },
             .search => {
@@ -659,7 +661,7 @@ const Browser = struct {
 
     /// A book's actions sheet, and the library read again if they changed it.
     fn act_on(b: *Browser, entry: *catalog.Entry) Next {
-        assert(b.buf.len == b.a.screen.pixels.len);
+        assert(b.buf.len == b.a.display.screen.pixels.len);
         assert(b.over == .none);
         b.over = .{ .sheet = .{ .screen = undefined } };
         actions.begin_sheet(&b.over.sheet.screen, b.a, entry, &b.lib, b.under());
@@ -668,7 +670,7 @@ const Browser = struct {
 
     /// The book's actions ended, having changed `change`.
     fn acted(b: *Browser, change: actions.Change) Next {
-        assert(b.buf.len == b.a.screen.pixels.len);
+        assert(b.buf.len == b.a.display.screen.pixels.len);
         switch (change) {
             .none => return .nothing,
             .redraw => return .everything,

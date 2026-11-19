@@ -7,6 +7,7 @@ const wifi_saver = @import("../kindle/wifi_saver.zig");
 const lipc = @import("../kindle/lipc.zig");
 const quick_model = @import("../model/quick.zig");
 const app = @import("../app.zig");
+const display = @import("../display.zig");
 const screen = @import("screen.zig");
 const input_mod = @import("../kindle/input.zig");
 
@@ -23,7 +24,7 @@ comptime {
 
 /// Reads the status again (about a quarter second of lipc calls), and redraws the
 /// panel only if something changed.
-fn refresh_status(a: *app.App, background: app.Backdrop) !void {
+fn refresh_status(a: *app.App, background: display.Backdrop) !void {
     const fresh = lipc.read(a.quick);
     if (fresh.same(&a.quick)) return;
     a.quick = fresh;
@@ -32,18 +33,18 @@ fn refresh_status(a: *app.App, background: app.Backdrop) !void {
 }
 
 /// Draws the quick panel over `background` and shows it.
-fn draw_menu(a: *app.App, background: app.Backdrop) !void {
-    assert(background.holds(a));
-    assert(menu.height <= a.screen.height);
-    try menu.render(a.ui, a.compose(background), &a.quick);
-    a.put_composed();
-    try a.show_band(0, menu.height);
+fn draw_menu(a: *app.App, background: display.Backdrop) !void {
+    assert(background.holds(&a.display));
+    assert(menu.height <= a.display.screen.height);
+    try menu.render(a.ui, a.display.compose(background), &a.quick);
+    a.display.put_composed();
+    try a.display.show_band(0, menu.height);
 }
 
-fn close_menu(a: *app.App, background: app.Backdrop) !void {
-    assert(menu.height <= a.screen.height);
-    a.put_back(background);
-    try a.show_band(0, menu.height);
+fn close_menu(a: *app.App, background: display.Backdrop) !void {
+    assert(menu.height <= a.display.screen.height);
+    a.display.put_back(background);
+    try a.display.show_band(0, menu.height);
 }
 
 fn row_value(a: *app.App, row: menu.Row) u32 {
@@ -72,8 +73,8 @@ fn set_row_value(a: *app.App, row: menu.Row, level: u32) void {
 fn show_row(a: *app.App, row: menu.Row, level: u32) !void {
     assert(row.y == menu.warmth_row.y or row.y == menu.brightness_row.y);
     assert(menu.band_top(row) + menu.band_height <= menu.height);
-    try menu.draw_slider(a.ui, a.page(a.screen.pixels), row, level, false);
-    try a.show_band(menu.band_top(row), menu.band_height);
+    try menu.draw_slider(a.ui, a.display.on_screen(), row, level, false);
+    try a.display.show_band(menu.band_top(row), menu.band_height);
 }
 
 /// Following a finger along a panel slider from where it landed until it lifts, kept
@@ -100,7 +101,7 @@ const SliderFollow = struct {
         if (knob == f.knob.*) return null;
         const level = menu.level_at(f.row, x);
         assert(level <= f.row.max);
-        const page = f.a.page(f.a.screen.pixels);
+        const page = f.a.display.on_screen();
         try menu.draw_slider_at(f.a.ui, page, f.row, level, knob, true);
         const span = menu.knob_span(f.knob.*, knob);
         f.knob.* = knob;
@@ -108,7 +109,7 @@ const SliderFollow = struct {
         assert(f.path[0] <= knob);
         assert(knob <= f.path[1]);
         const top = menu.band_top(f.row);
-        const marker = try f.a.screen.show_region(
+        const marker = try f.a.display.screen.show_region(
             span.left,
             top,
             span.width,
@@ -140,9 +141,9 @@ fn slider_ended(a: *app.App, sd: *SliderDrag) !void {
     _ = try drag.ended(&sd.drag, sd.ending.?);
     const row = sd.row;
     assert(sd.path[0] <= sd.path[1]);
-    try menu.draw_slider(a.ui, a.page(a.screen.pixels), row, row_value(a, row), false);
+    try menu.draw_slider(a.ui, a.display.on_screen(), row, row_value(a, row), false);
     const crossed = menu.knob_span(sd.path[0], sd.path[1]);
-    try app.clean_rect(a, crossed.left, menu.band_top(row), crossed.width, menu.band_height);
+    try a.display.clean_rect(crossed.left, menu.band_top(row), crossed.width, menu.band_height);
 }
 
 /// What a tap on the panel did: nothing (it wasn't on a control), ran a control, or
@@ -154,7 +155,7 @@ const Control = union(enum) { not_one, ran, drag: screen.Frame };
 /// `slider`, opened over the panel.
 fn panel_control(
     a: *app.App,
-    background: app.Backdrop,
+    background: display.Backdrop,
     choice: menu.Hit,
     x: i32,
     slider: *SliderDrag,
@@ -206,8 +207,8 @@ fn panel_control_shortcut(a: *app.App, choice: menu.Hit) !void {
     }
     const box = menu.shortcut_box(choice).?;
     assert(box.y + box.h <= menu.height);
-    try menu.draw_shortcut(a.ui, a.page(a.screen.pixels), choice, &a.quick);
-    const marker = try a.screen.show_region(
+    try menu.draw_shortcut(a.ui, a.display.on_screen(), choice, &a.quick);
+    const marker = try a.display.screen.show_region(
         box.x,
         box.y,
         box.w,
@@ -241,26 +242,26 @@ fn panel_control_shortcut(a: *app.App, choice: menu.Hit) !void {
         .kindle,
         => unreachable, // Not a shortcut, as above
     }
-    try a.screen.wait_complete(marker);
+    try a.display.screen.wait_complete(marker);
     if (choice == .sync and a.quick.airplane and wifi_saver.airplane() == .off) {
         // The airplane tile said on: show it off now
         a.quick.airplane = false;
         const plane = menu.shortcut_box(.airplane).?;
-        try menu.draw_shortcut(a.ui, a.page(a.screen.pixels), .airplane, &a.quick);
-        try a.show_rect(plane.x, plane.y, plane.w, plane.h);
+        try menu.draw_shortcut(a.ui, a.display.on_screen(), .airplane, &a.quick);
+        try a.display.show_rect(plane.x, plane.y, plane.w, plane.h);
     }
 }
 
 /// The quick panel, to open over the library or a book drawn in `background`.
-pub fn open(a: *app.App, background: app.Backdrop) Panel {
-    assert(background.holds(a));
+pub fn open(a: *app.App, background: display.Backdrop) Panel {
+    assert(background.holds(&a.display));
     return .{ .a = a, .background = background };
 }
 
 /// Once the panel has ended: true to go to the Kindle's own screens.
 pub fn ended(
     a: *app.App,
-    background: app.Backdrop,
+    background: display.Backdrop,
     ending: screen.Ending(void),
 ) !bool {
     switch (ending) {
@@ -282,7 +283,7 @@ pub fn ended(
 pub const Panel = struct {
     pub const Result = void;
     a: *app.App,
-    background: app.Backdrop,
+    background: display.Backdrop,
     slider: SliderDrag = .{}, // A slider followed, over it
     /// The status read again since it opened. It's drawn at once with the last one
     /// read, and read on its first tick: a screen counts as shown once it's drawn, and

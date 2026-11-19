@@ -49,13 +49,13 @@ pub fn refresh_marks(a: *app.App, s: *sess.Session, alloc: std.mem.Allocator) !v
     a.layout.marks = try s.notes.rebuild_marks(alloc);
     // Layout reads the session's list itself, so the two can't drift apart
     assert(a.layout.marks.ptr == s.notes.marks.items.ptr);
-    a.forget_pages();
+    a.display.forget_pages();
 }
 
 /// Shows the page, with handles on a highlight when one is active.
 pub fn show_page(a: *app.App, s: *sess.Session, active: ?[]const u8) !?u32 {
     assert(s.current < s.pages.len);
-    @memcpy(a.screen.pixels, try s.ensure(s.current, s.current));
+    @memcpy(a.display.screen.pixels, try s.ensure(s.current, s.current));
     a.stamp_clock();
     var delete_top: ?u32 = null;
     if (active) |id| {
@@ -63,15 +63,15 @@ pub fn show_page(a: *app.App, s: *sess.Session, active: ?[]const u8) !?u32 {
         if (highlights.word_range(words, s.notes.highlights.items, id)) |range| {
             assert(range.lo <= range.hi);
             assert(range.hi < words.len);
-            const screen_page = a.page(a.screen.pixels);
+            const screen_page = a.display.on_screen();
             const chosen = words[range.lo .. range.hi + 1];
             selection.draw(screen_page, chosen);
             const band = selection.band(chosen);
             delete_top = try draw_delete_bubble(a, band, words);
         }
     }
-    try a.screen.wait_complete(try a.screen.show(.page));
-    if (delete_top) |top| assert(top < a.screen.height);
+    try a.display.screen.wait_complete(try a.display.screen.show(.page));
+    if (delete_top) |top| assert(top < a.display.screen.height);
     return delete_top;
 }
 
@@ -90,12 +90,12 @@ pub fn draw_delete_bubble(
     band: selection.Band,
     words: []const book_model.Word,
 ) !u32 {
-    assert(a.screen.width >= bubble_width + 2 * bubble_border);
+    assert(a.display.screen.width >= bubble_width + 2 * bubble_border);
     assert(band.height > 0);
-    const screen_page = a.page(a.screen.pixels);
-    const top = bubble_top(band, words, a.screen.height);
-    assert(top + bubble_height <= a.screen.height);
-    const left = (a.screen.width - bubble_width) / 2;
+    const screen_page = a.display.on_screen();
+    const top = bubble_top(band, words, a.display.screen.height);
+    assert(top + bubble_height <= a.display.screen.height);
+    const left = (a.display.screen.width - bubble_width) / 2;
     const border_width = bubble_width + 2 * bubble_border;
     const border_height = bubble_height + 2 * bubble_border;
     // Saturating: a highlight from the page's first line to near its last puts the
@@ -119,7 +119,7 @@ pub fn draw_delete_bubble(
     }
     screen_page.fill_rect(clear.left, clear.top, clear.width, clear.height, 0xff);
     draw.box(screen_page, left, top, bubble_width, bubble_height);
-    const center_x: f32 = @floatFromInt(a.screen.width / 2);
+    const center_x: f32 = @floatFromInt(a.display.screen.width / 2);
     const label_y: i32 = @intCast(top + bubble_label_baseline);
     try draw.centered(a.ui.small, screen_page, center_x, label_y, "Delete");
     return top;
@@ -178,9 +178,9 @@ const Box = struct {
 
 pub fn in_delete_bubble(a: *app.App, top: u32, x: i32, y: i32) bool {
     // Where draw_delete_bubble put it: across the middle, inside the screen
-    assert(a.screen.width >= bubble_width);
-    assert(top + bubble_height <= a.screen.height);
-    const left: i32 = @intCast((a.screen.width - bubble_width) / 2);
+    assert(a.display.screen.width >= bubble_width);
+    assert(top + bubble_height <= a.display.screen.height);
+    const left: i32 = @intCast((a.display.screen.width - bubble_width) / 2);
     const t: i32 = @intCast(top);
     return x >= left and x < left + bubble_width and y >= t and y < t + bubble_height;
 }
@@ -217,7 +217,7 @@ const SelectionFollow = struct {
         if (next == f.head.*) return null;
         f.head.* = next;
         f.previous.* = try paint_selection(f.a, f.clean, f.words, f.fixed, f.head.*, f.previous.*);
-        return f.a.screen.next_marker - 1;
+        return f.a.display.screen.next_marker - 1;
     }
 };
 
@@ -236,9 +236,9 @@ fn drag_selection(
     sel.fixed = fixed;
     sel.moving = moving;
     sel.head = moving;
-    assert(sel.clean.len == a.screen.pixels.len); // The book's, taken as it opened
-    @memcpy(sel.clean, a.screen.pixels);
-    a.page(sel.clean).threshold(0, a.screen.height); // Pure black and white for A2
+    assert(sel.clean.len == a.display.screen.pixels.len); // The book's, taken as it opened
+    @memcpy(sel.clean, a.display.screen.pixels);
+    a.display.page(sel.clean).threshold(0, a.display.screen.height); // Pure black and white for A2
     const none = selection.Band{ .top = 0, .height = 0 };
     sel.previous = try paint_selection(a, sel.clean, words, fixed, sel.head, none);
     const follow = SelectionFollow{
@@ -249,7 +249,7 @@ fn drag_selection(
         .head = &sel.head,
         .previous = &sel.previous,
     };
-    sel.drag = .{ .a = a, .follow = follow, .marker = a.screen.next_marker - 1 };
+    sel.drag = .{ .a = a, .follow = follow, .marker = a.display.screen.next_marker - 1 };
     return screen.open(&sel.drag, &sel.ending);
 }
 
@@ -275,15 +275,15 @@ fn paint_selection(
     const chosen = words[@min(first, last) .. @max(first, last) + 1];
     const now = selection.band(chosen);
     const top = if (old.height == 0) now.top else @min(old.top, now.top);
-    const bottom = @min(@max(old.top + old.height, now.top + now.height), a.screen.height);
+    const bottom = @min(@max(old.top + old.height, now.top + now.height), a.display.screen.height);
     assert(top <= bottom);
-    const stride = a.screen.stride;
+    const stride = a.display.screen.stride;
     const band_start = top * stride;
     const band_end = bottom * stride;
-    assert(clean.len == a.screen.pixels.len);
-    @memcpy(a.screen.pixels[band_start..band_end], clean[band_start..band_end]);
-    selection.draw(a.page(a.screen.pixels), chosen);
-    _ = try a.screen.show_region(0, top, a.screen.width, bottom - top, .quick);
+    assert(clean.len == a.display.screen.pixels.len);
+    @memcpy(a.display.screen.pixels[band_start..band_end], clean[band_start..band_end]);
+    selection.draw(a.display.on_screen(), chosen);
+    _ = try a.display.screen.show_region(0, top, a.display.screen.width, bottom - top, .quick);
     return now;
 }
 

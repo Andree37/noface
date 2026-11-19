@@ -25,19 +25,19 @@ pub fn Drag(comptime Follow: type) type {
         /// The finger of the touch that opened it is the one followed from now on.
         pub fn on_open(d: *D) !screen.Step(void) {
             d.a.input.begin_drag();
-            if (d.marker) |m| assert(m < d.a.screen.next_marker);
+            if (d.marker) |m| assert(m < d.a.display.screen.next_marker);
             return .stay;
         }
 
         /// Where it began is drawn as it begins.
         pub fn draw(d: *D, part: screen.Part) !void {
             assert(part == .all);
-            if (d.marker) |m| assert(m < d.a.screen.next_marker);
+            if (d.marker) |m| assert(m < d.a.display.screen.next_marker);
         }
 
         /// A tap while a finger is followed: nothing to do.
         pub fn on_tap(d: *D, _: screen.Tap) !screen.Step(void) {
-            if (d.marker) |m| assert(m < d.a.screen.next_marker);
+            if (d.marker) |m| assert(m < d.a.display.screen.next_marker);
             assert(d.a.input.tick_us == null); // It never ticks
             return .stay;
         }
@@ -46,10 +46,10 @@ pub fn Drag(comptime Follow: type) type {
             assert(d.a.input.tick_us == null); // It never ticks
             switch (action) {
                 .drag => |first| {
-                    if (d.marker) |m| try d.a.screen.wait_complete(m);
+                    if (d.marker) |m| try d.a.display.screen.wait_complete(m);
                     const at = d.a.input.latest_drag() orelse first;
                     d.marker = try d.follow.moved(at.x, at.y);
-                    if (d.marker) |m| assert(m < d.a.screen.next_marker);
+                    if (d.marker) |m| assert(m < d.a.display.screen.next_marker);
                     return .stay;
                 },
                 .drag_end => return .{ .done = {} },
@@ -67,8 +67,8 @@ pub fn Drag(comptime Follow: type) type {
 /// false when the drag was cut short (the Kindle locking, say).
 pub fn ended(d: anytype, ending: screen.Ending(void)) !bool {
     if (d.marker) |m| {
-        assert(m < d.a.screen.next_marker);
-        try d.a.screen.wait_complete(m);
+        assert(m < d.a.display.screen.next_marker);
+        try d.a.display.screen.wait_complete(m);
     }
     d.marker = null;
     // A drag ends when the finger lifts, or the Kindle locks or noface leaves

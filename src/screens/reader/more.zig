@@ -7,6 +7,7 @@ const card = @import("../../ui/card.zig");
 const catalog = @import("../../model/catalog.zig");
 const stats = @import("../../model/stats.zig");
 const app = @import("../../app.zig");
+const display = @import("../../display.zig");
 const book_actions = @import("../book_actions.zig");
 const page_number = @import("page_number.zig");
 const sess = @import("session.zig");
@@ -59,7 +60,7 @@ pub const More = struct {
     a: *app.App,
     s: *sess.Session,
     entry: *catalog.Entry,
-    background: app.Backdrop, // The page under it
+    background: display.Backdrop, // The page under it
     phase: enum { menu, page_number, details } = .menu,
     list: [5]Option = undefined,
     rows: [5]card.Row = undefined,

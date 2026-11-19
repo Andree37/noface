@@ -9,6 +9,7 @@ const aa = @import("../../ui/aa.zig");
 const settings_model = @import("../../model/settings.zig");
 const toolbar = @import("../../ui/toolbar.zig");
 const app = @import("../../app.zig");
+const display = @import("../../display.zig");
 const sess = @import("session.zig");
 const lock = @import("../lock.zig");
 const screen = @import("../screen.zig");
@@ -32,7 +33,7 @@ pub const Drawn = struct { sheet_open: bool, whole_page: bool };
 /// Draws the toolbar over the current page.
 pub fn draw_toolbar(a: *app.App, s: *sess.Session, book: Book, drawn: Drawn) !void {
     assert(s.current < s.pages.len);
-    const page = a.compose(try s.lend_current());
+    const page = a.display.compose(try s.lend_current());
     // No page count until the pages are known
     const at: ?toolbar.Position =
         if (s.layout_pending()) null else .{ .index = s.current, .total = s.page_count() };
@@ -52,9 +53,9 @@ pub fn draw_toolbar(a: *app.App, s: *sess.Session, book: Book, drawn: Drawn) !vo
         book.running,
         s.is_bookmarked(s.current),
     );
-    a.put_composed();
+    a.display.put_composed();
     if (drawn.whole_page) {
-        try a.screen.wait_complete(try s.show_band(0, a.screen.height));
+        try a.display.screen.wait_complete(try s.show_band(0, a.display.screen.height));
         return;
     }
     try show_bars(a, s, drawn.sheet_open);
@@ -62,9 +63,9 @@ pub fn draw_toolbar(a: *app.App, s: *sess.Session, book: Book, drawn: Drawn) !vo
 
 pub fn close_toolbar(a: *app.App, s: *sess.Session, sheet_open: bool) !void {
     assert(s.current < s.pages.len);
-    @memcpy(a.screen.pixels, try s.ensure(s.current, s.current));
+    @memcpy(a.display.screen.pixels, try s.ensure(s.current, s.current));
     // The page under the bars is all that changed
-    assert(a.screen.pixels.len > 0);
+    assert(a.display.screen.pixels.len > 0);
     try show_bars(a, s, sheet_open);
 }
 
@@ -73,12 +74,12 @@ pub fn close_toolbar(a: *app.App, s: *sess.Session, sheet_open: bool) !void {
 /// page) and the bottom bar.
 fn show_bars(a: *app.App, s: *const sess.Session, sheet_open: bool) !void {
     const top: u32 = if (sheet_open) aa.max_height else toolbar.top_height;
-    assert(top < a.screen.height);
-    assert(toolbar.bottom_top < a.screen.height);
+    assert(top < a.display.screen.height);
+    assert(toolbar.bottom_top < a.display.screen.height);
     const first = try s.show_band(0, top);
-    const bottom_height = a.screen.height - toolbar.bottom_top;
-    try a.screen.wait_complete(try s.show_band(toolbar.bottom_top, bottom_height));
-    try a.screen.wait_complete(first);
+    const bottom_height = a.display.screen.height - toolbar.bottom_top;
+    try a.display.screen.wait_complete(try s.show_band(toolbar.bottom_top, bottom_height));
+    try a.display.screen.wait_complete(first);
 }
 
 /// What the toolbar's controls opened over the book, kept while it's open: the page
@@ -112,7 +113,7 @@ pub const Pending = union(enum) {
     /// A card asking about turning switch `toggle` on, over the page.
     const Ask = struct {
         toggle: u32,
-        background: app.Backdrop, // The page under the card
+        background: display.Backdrop, // The page under the card
         card: card_screen.Card = undefined,
         ending: ?screen.Ending(u32) = null,
     };
@@ -129,7 +130,7 @@ const ScrubFollow = struct {
         assert(next < f.page_count);
         if (next == f.target.*) return null;
         f.target.* = next;
-        const pixels = f.a.page(f.a.screen.pixels);
+        const pixels = f.a.display.on_screen();
         try toolbar.draw_scrub(f.a.ui, pixels, .{ .index = next, .total = f.page_count }, true);
         return try show_scrub(f.a);
     }
@@ -137,9 +138,9 @@ const ScrubFollow = struct {
 
 /// Shows the scrubber's band, following a finger, and returns the update.
 fn show_scrub(a: *app.App) !u32 {
-    assert(toolbar.scrub_top < a.screen.height);
-    const band = a.screen.height - toolbar.scrub_top;
-    return a.screen.show_region(0, toolbar.scrub_top, a.screen.width, band, .quick);
+    assert(toolbar.scrub_top < a.display.screen.height);
+    const band = a.display.screen.height - toolbar.scrub_top;
+    return a.display.screen.show_region(0, toolbar.scrub_top, a.display.screen.width, band, .quick);
 }
 
 /// Follows a finger along the page scrubber, then jumps there: the screen to open
@@ -155,7 +156,7 @@ pub fn drag_scrub(p: *Pending, a: *app.App, s: *sess.Session, first_x: i32) !scr
     const scrub = &p.scrub;
     assert(scrub.target < page_count);
     const at: toolbar.Position = .{ .index = scrub.target, .total = page_count };
-    try toolbar.draw_scrub(a.ui, a.page(a.screen.pixels), at, true);
+    try toolbar.draw_scrub(a.ui, a.display.on_screen(), at, true);
     const first = try show_scrub(a);
     const follow = ScrubFollow{ .a = a, .page_count = page_count, .target = &scrub.target };
     scrub.drag = .{ .a = a, .follow = follow, .marker = first };
@@ -197,9 +198,9 @@ const SettingFollow = struct {
         assert(next < f.row.steps);
         if (next == f.value.*) return null;
         f.value.* = next;
-        try aa.draw_row(f.a.ui, f.a.page(f.a.screen.pixels), f.row, next, true);
-        const width = f.a.screen.width;
-        return try f.a.screen.show_region(0, f.row.top, width, aa.row_height, .quick);
+        try aa.draw_row(f.a.ui, f.a.display.on_screen(), f.row, next, true);
+        const width = f.a.display.screen.width;
+        return try f.a.display.screen.show_region(0, f.row.top, width, aa.row_height, .quick);
     }
 };
 
@@ -214,8 +215,9 @@ fn drag_setting(p: *Pending, a: *app.App, row: aa.Row, first_x: i32) !screen.Fra
     } };
     const setting = &p.setting;
     assert(setting.value < row.steps);
-    try aa.draw_row(a.ui, a.page(a.screen.pixels), row, setting.value, true);
-    const first = try a.screen.show_region(0, row.top, a.screen.width, aa.row_height, .quick);
+    try aa.draw_row(a.ui, a.display.on_screen(), row, setting.value, true);
+    const eink = a.display.screen;
+    const first = try eink.show_region(0, row.top, eink.width, aa.row_height, .quick);
     const follow = SettingFollow{ .a = a, .row = row, .value = &setting.value };
     setting.drag = .{ .a = a, .follow = follow, .marker = first };
     return screen.open(&setting.drag, &setting.ending);
@@ -301,7 +303,7 @@ fn flip(
         .footer, .nothing => {
             a.save_settings();
             // The footer is drawn into each page
-            if (switch_hit.effect == .footer) a.forget_pages();
+            if (switch_hit.effect == .footer) a.display.forget_pages();
             try draw_toolbar(a, s, book, .{ .sheet_open = true, .whole_page = false });
         },
     }
@@ -372,7 +374,8 @@ pub fn resumed(
             try draw_toolbar(a, s, book, .{ .sheet_open = sheet_open, .whole_page = true });
             // What locks or leaves covers the toolbar at once: a clean flash is for nothing
             if (lifted) {
-                try app.clean_band(a, toolbar.scrub_top, a.screen.height - toolbar.scrub_top);
+                const scrub_height = a.display.screen.height - toolbar.scrub_top;
+                try a.display.clean_band(toolbar.scrub_top, scrub_height);
             }
         },
         .setting => |*setting| {
@@ -383,7 +386,7 @@ pub fn resumed(
                 try sess.relayout(a, s);
             }
             try draw_toolbar(a, s, book, .{ .sheet_open = true, .whole_page = true });
-            if (lifted) try app.clean_band(a, setting.row.top, aa.row_height);
+            if (lifted) try a.display.clean_band(setting.row.top, aa.row_height);
         },
         .autostart => |ask| {
             try card_screen.closed(a, ask.background);

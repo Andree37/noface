@@ -13,14 +13,15 @@ const stats = @import("model/stats.zig");
 const cover = @import("gfx/image.zig");
 const picture_cache = @import("gfx/picture_cache.zig");
 const draw = @import("ui/draw.zig");
+const style = @import("ui/style.zig");
 const state = @import("sys/state.zig");
 const user_data = @import("user_data.zig");
 const Fonts = @import("ui/fonts.zig").Fonts;
 const input_mod = @import("kindle/input.zig");
 const aa = @import("ui/aa.zig");
 const file = @import("sys/file.zig");
-const hwtcon = @import("kindle/hwtcon.zig");
-const library = @import("ui/library.zig");
+const display_mod = @import("display.zig");
+const Display = display_mod.Display;
 const covers_ui = @import("ui/covers.zig");
 const library_view = @import("library/view.zig");
 const clock = @import("sys/clock.zig");
@@ -49,6 +50,12 @@ pub const clock_width_px = 160;
 const clock_baseline_px = 38;
 
 pub const notice_ms = 1800;
+/// The notice's box over the page: its size, its top from the screen's bottom, and
+/// its text's baseline down from its top.
+const notice_width_px = 760;
+const notice_height_px = 100;
+const notice_above_bottom_px = 260;
+const notice_baseline_px = 62;
 
 /// How many languages noface hyphenates and has dictionaries for.
 const languages_count = @typeInfo(hyphen.Lang).@"enum".field_names.len;
@@ -57,6 +64,9 @@ comptime {
     // The clock's text is drawn inside the band its partial refresh covers.
     assert(clock_baseline_px < clock_height_px);
     assert(clock_height_px < clock_width_px);
+    assert(notice_baseline_px < notice_height_px);
+    assert(notice_height_px < notice_above_bottom_px);
+    assert(notice_width_px < style.screen.width_px);
     // A face's book size and the reader's size each fit a byte of a font's key
     assert(book_model.size_scales.len <= std.math.maxInt(u8));
     assert(settings_model.sizes.len <= std.math.maxInt(u8));
@@ -67,40 +77,6 @@ comptime {
     // A face's book size starts at its normal step.
     assert(book_model.normal_size < book_model.size_scales.len);
 }
-
-/// A cached page: which it is (null: none), its pixels and where its words are, and how
-/// many times a page has been drawn into it, so pixels lent from it are known stale
-/// once another is (`Backdrop`).
-pub const Slot = struct { page: ?u32 = null, buf: []u8, hits: text.Hits = .{}, drawn: u32 = 0 };
-
-/// What a sheet is drawn over, and what comes back when it closes: a whole screen of
-/// pixels the sheet doesn't own, only borrows. Pixels lent from the page cache say which
-/// slot they're in and how many times it had been drawn into, and every use checks it
-/// hasn't been since: another page drawn there would show under the sheet instead.
-pub const Backdrop = struct {
-    pixels: []const u8,
-    lent: ?Lent = null, // Null: owned by whoever opened the sheet, and kept still for it
-
-    pub const Lent = struct { slot: u32, drawn: u32 };
-
-    /// Whether it's a whole screen kept apart from what's shown, and, if lent, still
-    /// the screen it was then: no other page drawn into its slot since.
-    pub fn holds(b: Backdrop, a: *const App) bool {
-        if (b.pixels.len != a.screen.pixels.len) return false;
-        if (b.pixels.ptr == a.screen.pixels.ptr) return false;
-        const l = b.lent orelse return true;
-        if (l.slot >= a.slots.len) return false;
-        const slot = &a.slots[l.slot];
-        return slot.buf.ptr == b.pixels.ptr and slot.drawn == l.drawn;
-    }
-
-    /// The pixels, checked still the screen they were when lent.
-    pub fn get(b: Backdrop, a: *const App) []const u8 {
-        assert(b.holds(a));
-        assert(b.pixels.len == a.screen.pixels.len);
-        return b.pixels;
-    }
-};
 
 /// What the Aa sheet keeps from one book to the next: only the reader's controls use
 /// it (screens/reader/controls.zig).
@@ -139,7 +115,8 @@ pub const App = struct {
     // An open book's pages after a settings change, emptied before each layout
     pages_budget: *memory.Budget,
     scratch_region: *memory.Region,
-    screen: *hwtcon.Screen,
+    /// The screen, the page cache and the overlay (display.zig).
+    display: Display,
     input: *Input,
     body: *Font,
     // The reading face's fonts by family, face (bold, italic), reader size and book
@@ -150,13 +127,6 @@ pub const App = struct {
     note_font: *Font,
     footer: *Font,
     ui: Fonts,
-    /// The open book's pages as last drawn, a page each (screens/reader/session.zig owns
-    /// what's in them: only it draws into them and reads their words).
-    slots: [3]Slot,
-    /// A whole screen of scratch, for composing one draw before it's copied to the
-    /// screen (`compose`, `put_composed`): a screen's while it draws, good for nothing
-    /// after, so nothing keeps anything in it.
-    overlay: []u8,
     lock_kept: LockKept,
     state_dir: []const u8,
     library_path: [*:0]const u8,
@@ -203,11 +173,7 @@ pub const App = struct {
             slot.* = null;
         }
         a.pictures.clear(a.alloc);
-        for (&a.slots) |*slot| {
-            assert(slot.buf.len == a.screen.pixels.len); // As assembled
-            a.alloc.free(slot.buf);
-        }
-        a.alloc.free(a.overlay);
+        a.display.release(a.alloc);
         a.alloc.free(a.lock_kept.saved);
         a.alloc.free(a.lock_kept.cover);
         a.* = undefined;
@@ -393,75 +359,17 @@ pub const App = struct {
         return a.face(bold, italic, size) catch a.face(false, false, size);
     }
 
-    /// The overlay, holding `under`, for a sheet to be drawn over it before
-    /// `put_composed` puts the whole on screen.
-    pub fn compose(a: *App, under: Backdrop) Page {
-        assert(a.overlay.len == a.screen.pixels.len);
-        @memcpy(a.overlay, under.get(a));
-        return a.page(a.overlay);
-    }
-
-    /// The overlay as it is, for a draw that sets every pixel itself before
-    /// `put_composed` puts it on screen.
-    pub fn compose_whole(a: *App) Page {
-        assert(a.overlay.len == a.screen.pixels.len);
-        return a.page(a.overlay);
-    }
-
-    /// What was composed in the overlay, onto the screen; shown by the caller, over
-    /// what it changed.
-    pub fn put_composed(a: *App) void {
-        assert(a.overlay.len == a.screen.pixels.len);
-        @memcpy(a.screen.pixels, a.overlay);
-    }
-
-    /// `under` back on the whole screen, as it was before a sheet went over it; shown by
-    /// the caller, over what the sheet covered.
-    pub fn put_back(a: *App, under: Backdrop) void {
-        @memcpy(a.screen.pixels, under.get(a));
-    }
-
-    pub fn page(a: *App, buf: []u8) Page {
-        // A row of the screen's memory holds at least a row of pixels
-        assert(a.screen.width > 0);
-        assert(a.screen.stride >= a.screen.width);
-        return .{
-            .buf = buf,
-            .width = a.screen.width,
-            .height = a.screen.height,
-            .stride = a.screen.stride,
-        };
-    }
-
-    /// Outlines a book at once, using the fastest waveform, and waits so it can't
-    /// collide with what's drawn next.
-    pub fn flash(a: *App, r: library.Rect) void {
-        const target = a.page(a.screen.pixels);
-        const t = 6;
-        // The outline's four bars lie inside the book, and the book on the screen
-        assert(r.w >= t);
-        assert(r.h >= t);
-        assert(r.x + r.w <= a.screen.width);
-        assert(r.y + r.h <= a.screen.height);
-        target.fill_rect(r.x, r.y, r.w, t, 0x00);
-        target.fill_rect(r.x, r.y + r.h - t, r.w, t, 0x00);
-        target.fill_rect(r.x, r.y, t, r.h, 0x00);
-        target.fill_rect(r.x + r.w - t, r.y, t, r.h, 0x00);
-        const marker = a.screen.show_region(r.x, r.y, r.w, r.h, .quick) catch return;
-        a.screen.wait_complete(marker) catch {}; // Ignored: the outline is shown either way.
-    }
-
     /// Writes the time into the page on screen, without refreshing the panel.
     pub fn stamp_clock(a: *App) void {
         if (!a.settings.clock) return;
-        assert(a.screen.width >= clock_width_px);
-        assert(a.screen.height >= clock_top_px + clock_height_px);
-        const target = a.page(a.screen.pixels);
-        const left = (a.screen.width - clock_width_px) / 2;
+        assert(a.display.screen.width >= clock_width_px);
+        assert(a.display.screen.height >= clock_top_px + clock_height_px);
+        const target = a.display.on_screen();
+        const left = (a.display.screen.width - clock_width_px) / 2;
         target.fill_rect(left, clock_top_px, clock_width_px, clock_height_px, 0xff);
         var buf: [8]u8 = undefined;
         const time = clock.format_clock(&buf, @intCast(unix_time()), a.utc_offset);
-        const center_x: f32 = @floatFromInt(a.screen.width / 2);
+        const center_x: f32 = @floatFromInt(a.display.screen.width / 2);
         const baseline_y = clock_top_px + clock_baseline_px;
         const font = a.ui.caption;
         draw.centered(font, target, center_x, baseline_y, time) catch {}; // Ignored: a blank clock.
@@ -477,52 +385,16 @@ pub const App = struct {
     pub fn update_clock(a: *App) !void {
         if (!a.settings.clock) return;
         a.stamp_clock();
-        const left = (a.screen.width - clock_width_px) / 2;
-        assert(left + clock_width_px <= a.screen.width);
-        const marker = try a.screen.show_region(
+        const left = (a.display.screen.width - clock_width_px) / 2;
+        assert(left + clock_width_px <= a.display.screen.width);
+        const marker = try a.display.screen.show_region(
             left,
             clock_top_px,
             clock_width_px,
             clock_height_px,
             .clock,
         );
-        try a.screen.wait_complete(marker);
-    }
-
-    /// Refreshes part of the screen with the page waveform, and waits for it.
-    pub fn show_rect(a: *App, left: u32, top: u32, width: u32, height: u32) !void {
-        // The same as the screen checks for every update, said where it's asked for
-        assert(width > 0);
-        assert(height > 0);
-        assert(left + width <= a.screen.width);
-        assert(top + height <= a.screen.height);
-        try a.screen.wait_complete(try a.screen.show_region(left, top, width, height, .page));
-    }
-
-    /// Refreshes a full-width band of the screen, and waits for it.
-    pub fn show_band(a: *App, top: u32, height: u32) !void {
-        assert(height > 0);
-        assert(top + height <= a.screen.height);
-        try a.show_rect(0, top, a.screen.width, height);
-    }
-
-    /// The cached page buffer holding `page`, if any.
-    pub fn slot_for(a: *App, page_index: u32) ?*Slot {
-        assert(a.slots.len > 0);
-        for (&a.slots) |*slot| {
-            assert(slot.buf.len == a.screen.pixels.len); // Each holds a whole screen
-            const held = slot.page orelse continue;
-            if (held == page_index) return slot;
-        }
-        return null;
-    }
-
-    /// Drops every cached page, after anything that changes how pages look.
-    pub fn forget_pages(a: *App) void {
-        for (&a.slots) |*slot| {
-            assert(slot.buf.len == a.screen.pixels.len); // Each holds a whole screen
-            slot.page = null;
-        }
+        try a.display.screen.wait_complete(marker);
     }
 
     /// Where a book's reading position is kept.
@@ -532,46 +404,21 @@ pub const App = struct {
         assert(path.len > a.state_dir.len);
         return path;
     }
-
-    pub fn present(a: *App, buf: []const u8, refresh: hwtcon.Refresh) !void {
-        assert(buf.len == a.screen.pixels.len); // A whole screen, drawn elsewhere
-        assert(buf.ptr != a.screen.pixels.ptr); // Not the screen itself
-        @memcpy(a.screen.pixels, buf);
-        try a.screen.wait_complete(try a.screen.show(refresh));
-    }
 };
 
 /// Says something went wrong, over the page, for a moment.
 pub fn show_notice(a: *App, message: []const u8) !void {
-    const screen_page = a.page(a.screen.pixels);
-    const width: u32 = 760;
-    const height: u32 = 100;
-    const bottom_gap: u32 = 260; // From the box's top to the screen's bottom
+    const d = &a.display;
+    const screen_page = d.page(d.screen.pixels);
     assert(message.len > 0);
-    assert(a.screen.width >= width);
-    assert(a.screen.height >= bottom_gap);
-    const left = (a.screen.width - width) / 2;
-    const top = a.screen.height - bottom_gap;
-    draw.box(screen_page, left, top, width, height);
-    const center_x: f32 = @floatFromInt(left + width / 2);
-    try draw.centered(a.ui.small, screen_page, center_x, @intCast(top + 62), message);
-    try a.show_rect(left, top, width, height);
+    assert(d.screen.width >= notice_width_px);
+    assert(d.screen.height >= notice_above_bottom_px);
+    const left = (d.screen.width - notice_width_px) / 2;
+    const top = d.screen.height - notice_above_bottom_px;
+    draw.box(screen_page, left, top, notice_width_px, notice_height_px);
+    const center_x: f32 = @floatFromInt(left + notice_width_px / 2);
+    const baseline: i32 = @intCast(top + notice_baseline_px);
+    try draw.centered(a.ui.small, screen_page, center_x, baseline, message);
+    try d.show_rect(left, top, notice_width_px, notice_height_px);
     os.sleep_ms(notice_ms);
-}
-
-/// Settles a band after a drag: its smooth edges come back, without a flash. Full mode
-/// would drive every pixel, but on this panel full mode always flashes.
-pub fn clean_band(a: *App, top: u32, height: u32) !void {
-    assert(height > 0);
-    assert(top + height <= a.screen.height);
-    try clean_rect(a, 0, top, a.screen.width, height);
-}
-
-pub fn clean_rect(a: *App, left: u32, top: u32, width: u32, height: u32) !void {
-    // The same as the screen checks for every update, said where it's asked for
-    assert(width > 0);
-    assert(height > 0);
-    assert(left + width <= a.screen.width);
-    assert(top + height <= a.screen.height);
-    try a.screen.wait_complete(try a.screen.show_region(left, top, width, height, .clean));
 }

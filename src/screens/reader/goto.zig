@@ -6,6 +6,7 @@ const book_model = @import("../../model/book.zig");
 const goto = @import("../../ui/goto.zig");
 const highlights = @import("../../model/highlights.zig");
 const app = @import("../../app.zig");
+const display = @import("../../display.zig");
 const sess = @import("session.zig");
 const screen = @import("../screen.zig");
 
@@ -38,7 +39,7 @@ pub fn make(
 pub const GoTo = struct {
     pub const Result = u32;
     a: *app.App,
-    background: app.Backdrop, // The page under it
+    background: display.Backdrop, // The page under it
     contents: []const goto.Row,
     notes: []const goto.Row,
     reading: ?u32, // The chapter being read, in the contents
@@ -52,11 +53,11 @@ pub const GoTo = struct {
 
     pub fn draw(go: *GoTo, _: screen.Part) !void {
         const a = go.a;
-        assert(goto.top < a.screen.height);
-        const page = a.compose(go.background);
+        assert(goto.top < a.display.screen.height);
+        const page = a.display.compose(go.background);
         // The toolbar stays drawn above, from what's on screen now
-        const toolbar_bytes = goto.top * a.screen.stride;
-        @memcpy(page.buf[0..toolbar_bytes], a.screen.pixels[0..toolbar_bytes]);
+        const toolbar_bytes = goto.top * a.display.screen.stride;
+        @memcpy(page.buf[0..toolbar_bytes], a.display.screen.pixels[0..toolbar_bytes]);
         // The chapter being read is marked in the contents only
         const marked = go.tab == .contents and go.reading != null;
         try goto.render(
@@ -67,8 +68,8 @@ pub const GoTo = struct {
             if (marked) go.reading.? else null,
             go.pages.page,
         );
-        a.put_composed();
-        try a.show_band(goto.top, a.screen.height - goto.top);
+        a.display.put_composed();
+        try a.display.show_band(goto.top, a.display.screen.height - goto.top);
     }
 
     pub fn on_tap(go: *GoTo, t: screen.Tap) !screen.Step(u32) {

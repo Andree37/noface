@@ -46,7 +46,7 @@ pub const PageEntry = struct {
     pub fn draw(e: *PageEntry, part: screen.Part) !void {
         assert(e.page_count > 0);
         const a = e.a;
-        const page = a.page(a.screen.pixels);
+        const page = a.display.on_screen();
         var placeholder_buffer: [48]u8 = undefined;
         const placeholder = std.fmt.bufPrint(
             &placeholder_buffer,
@@ -61,9 +61,9 @@ pub const PageEntry = struct {
             try a.ui.small.draw(page, style.margin, search_sheet.content_top + 56, e.note);
         }
         if (part == .all) try keyboard.render(a.ui, page);
-        const bottom: u32 = if (part == .all) a.screen.height else keyboard.top;
+        const bottom: u32 = if (part == .all) a.display.screen.height else keyboard.top;
         assert(bottom > top);
-        try a.show_band(top, bottom - top);
+        try a.display.show_band(top, bottom - top);
     }
 
     pub fn on_tap(e: *PageEntry, t: screen.Tap) !screen.Step(u32) {

@@ -35,7 +35,7 @@ const close_reach = close_radius + close_reach_extra;
 /// The cross in it: half each stroke's length across and down, and its thickness.
 const close_arm = 16;
 const close_stroke = 4;
-/// The hint along the bottom: its box's foot over the screen's, its height, its room
+/// The hint along the bottom: its box's top over the screen's foot, its height, its room
 /// either side of the words, and their baseline down from its top.
 const hint_rise = 120;
 const hint_height = 64;

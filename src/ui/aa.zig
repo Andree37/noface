@@ -13,7 +13,7 @@ const icons = @import("icons.zig");
 
 /// The sheet hangs under the toolbar: its tabs, then, a gap under them, its controls.
 const top = toolbar.top_height;
-const tabs_height = 92;
+const tabs_height = style.fingertip;
 const tabs_gap = 16;
 /// A tab's label, down from the tabs' top: its baseline, the line under the open one,
 /// and the band the others' tint covers, in from each side of its cell.
@@ -184,8 +184,9 @@ fn switches_top(tab: Tab) u32 {
 }
 
 const switch_step = style.fingertip; // A switch's taps, and so the next one's place
-/// Between the typefaces' grid and the switches under it, and above More's switches.
-const family_gap = 10;
+/// Between the typefaces' grid and the switches under it, the first switch's reach so
+/// the grid's taps end where the switch's begin; and above More's switches.
+const family_gap = toggle_reach;
 const more_gap = 8;
 
 /// Where switch `i` sits: a step under the switches before it on its tab.
@@ -234,13 +235,13 @@ const row_baseline = 48; // From a slider row's top to its label's baseline
 const row_bar = 92; // From a slider row's top to its bar
 
 const family_top = content_top;
-const family_height = 88;
-/// The first row's taps reach up this far toward the tabs, so both rows take a fingertip.
+const family_height = style.fingertip;
+/// The first row's taps reach up this far into the gap under the tabs.
 const family_reach_above = 12;
 /// A typeface's name, and the line under the chosen one, down from its cell's top; the
 /// room kept right of a name, so long ones stop short of the next cell.
-const family_baseline_drop = 56;
-const family_underline_drop = 70;
+const family_baseline_drop = 62;
+const family_underline_drop = 76;
 const family_name_gap = 24;
 /// The pager's arrow: in from the end of its label, and how big its two strokes are.
 const pager_arrow_gap = 36;
@@ -368,8 +369,13 @@ comptime {
     // A switch takes a fingertip, and the next one starts where its taps end
     assert(toggle_height + 2 * toggle_reach >= style.fingertip);
     assert(toggle_height + 2 * toggle_reach <= switch_step);
-    // Each tab's controls, top to bottom, end above its switches
-    assert(family_top + family_rows * family_height <= switches_top(.font));
+    // Every row of controls takes a fingertip's taps
+    assert(tabs_height >= style.fingertip);
+    assert(family_height >= style.fingertip);
+    // The typefaces' first row reaches up into the gap under the tabs, not into them
+    assert(family_reach_above <= tabs_gap);
+    // Each tab's controls, top to bottom, end above its switches' taps
+    assert(family_top + family_rows * family_height <= switches_top(.font) - toggle_reach);
     assert(spacing_row.top + row_height <= margin_row.top);
     assert(margin_row.top + row_height <= switches_top(.layout));
     // And everything ends inside the sheet
@@ -377,7 +383,8 @@ comptime {
     assert(theme_note_baseline < height_for(.themes));
     // The Running button is a fingertip and more, under the note, above the sheet's edge
     assert(running_height >= style.fingertip);
-    assert(theme_note_baseline < running_top);
+    // The note's gray band ends above the Running button
+    assert(theme_top + theme_height + theme_note_tint_drop + theme_note_tint_height <= running_top);
     assert(running_top + running_height + 4 <= height_for(.themes));
     for (switches, 0..) |sw, i| {
         assert(switch_top(i) + toggle_height + toggle_reach <= height_for(sw.tab));
@@ -842,13 +849,25 @@ test "sliders say what they're set to" {
     try std.testing.expectEqualStrings("3 of 6", value_label(&buf, size_row, 2));
 }
 
-test "switches stack a fingertip apart from the top of their tab's switches" {
-    const bold = switch_for("bold");
-    const bold_starts = switch_for("bold_starts");
-    try std.testing.expectEqual(switches_top(.font), switch_top(bold));
-    try std.testing.expectEqual(switch_top(bold) + switch_step, switch_top(bold_starts));
-    const left_align = switch_for("left_align");
-    try std.testing.expectEqual(switches_top(.layout), switch_top(left_align));
+test "every control on every tab takes a fingertip of taps, top to bottom" {
+    // Down the first column, where every row of every tab has a control, each run of
+    // taps landing on one control is a fingertip tall at least
+    const x: i32 = @intCast(margin + family_width() / 2);
+    for (std.enums.values(Tab)) |tab| {
+        var run_start: i32 = 0;
+        var run_hit: Hit = .none;
+        const foot: i32 = @intCast(height_for(tab));
+        var y: i32 = 0;
+        while (y <= foot) : (y += 1) {
+            const h = if (y < foot) hit(tab, x, y) else Hit.none;
+            if (std.meta.eql(h, run_hit)) continue;
+            if (run_hit != .none) {
+                try std.testing.expect(y - run_start >= style.fingertip);
+            }
+            run_start = y;
+            run_hit = h;
+        }
+    }
 }
 
 test "a switch keeps a fingertip's taps where a slider row is next to it" {

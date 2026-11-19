@@ -207,7 +207,7 @@ comptime {
     // The grid's four columns between the margins
     assert(margin + columns * cell_step - gutter <= style.screen_width - margin);
     // A cover, its progress bar and its title fit in a row
-    assert(cover.height + 8 + cell_title_below < row_height);
+    assert(cover.height + cell.bar_gap + cell_title_below < row_height);
     // The strips, top to bottom, with page one's hero above its tabs
     assert(status_height <= plain_tabs_top);
     assert(status_height <= hero_top);

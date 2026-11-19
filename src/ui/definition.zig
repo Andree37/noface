@@ -17,7 +17,8 @@ const line_step = 46;
 const word_drop = 104;
 const text_drop = 170;
 const text_top = top + text_drop;
-/// The text stops this far over the buttons' row's rule.
+/// The text stops where its next line's baseline would come within this of the buttons'
+/// row's top (under its rule).
 const text_clear = 16;
 /// A part of speech: the gap over it, its gray band's rise over its baseline and its
 /// height, and how much closer the next line follows it.

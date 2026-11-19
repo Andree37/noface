@@ -27,8 +27,10 @@ pub const top_height = tool_row + title_band;
 /// The tools' icons' middles, on Home's line, which sits under the status line as every
 /// back link sits under the strip above it.
 const tool_icon_y = status_row + draw.back_link.drop;
-/// Aa's text on the icons' line, as Home's sits beside its arrow.
+/// Home's label on the icons' line, as every back link has it; and Aa, set larger and
+/// bold, a little lower, so its letters' middle is on that line too.
 const tool_label_y = tool_icon_y + draw.back_link.label_drop;
+const aa_drop = 2;
 const tool_reach = 56; // Taps this far either side of a tool's centre
 /// The tools take taps this far into the title's band under them.
 const tool_taps_below = 12;
@@ -279,7 +281,7 @@ fn draw_tool(fonts: Fonts, page: Page, t: Tool, bookmarked: bool) !void {
         .text => {
             // Centred on the tool, to the whole pixel, as the icons beside it are
             const half = @floor(try fonts.title.measure("Aa") / 2);
-            try fonts.title.draw(page, x - half, tool_label_y + 2, "Aa");
+            try fonts.title.draw(page, x - half, tool_label_y + aa_drop, "Aa");
         },
         .goto => icons.lines(page, x, tool_icon_y),
         .bookmark => if (bookmarked) {

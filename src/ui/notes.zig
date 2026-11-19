@@ -6,6 +6,7 @@ const Page = @import("../gfx/page.zig").Page;
 const Font = @import("../gfx/font.zig").Font;
 const book_model = @import("../model/book.zig");
 const Fonts = @import("fonts.zig").Fonts;
+const settings_model = @import("../model/settings.zig");
 const text = @import("../layout/text.zig");
 
 pub const max_parts = 8;
@@ -31,7 +32,9 @@ const layout = text.Layout{
 comptime {
     // Panels grow in steps, and even the smallest has room for a line under its header.
     for (heights[1..], heights[0 .. heights.len - 1]) |taller, smaller| assert(taller > smaller);
-    assert(layout.margin_top + layout.margin_bottom + style.fingertip < heights[0]);
+    const line_most = settings_model.sizes[settings_model.sizes.len - 1] *
+        settings_model.spacings[settings_model.spacings.len - 1];
+    assert(layout.margin_top + layout.margin_bottom + line_most < heights[0]);
     assert(heights[heights.len - 1] < style.screen_height);
     assert(2 * margin < style.screen_width);
 }

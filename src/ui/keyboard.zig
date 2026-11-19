@@ -23,8 +23,6 @@ const tray_pad = 16;
 /// from `top` down is the keyboard's to draw.
 const keys_top = style.screen_height - row_count * row_step - tray_pad;
 pub const top = keys_top - tray_pad;
-/// A key's label's baseline, down from its top.
-const label_drop = 68;
 
 pub const Key = union(enum) { char: u8, backspace, space, enter };
 
@@ -138,7 +136,8 @@ fn key(fonts: Fonts, page: Page, x: i32, y: u32, w: u32, label: []const u8, face
     assert(label.len > 0);
     key_face(page, x, y, w, face);
     const center_x: f32 = @floatFromInt(x + @as(i32, @intCast(w / 2)));
-    try draw.centered(fonts.small, page, center_x, @intCast(y + label_drop), label);
+    const baseline = fonts.small.centred_baseline(@intCast(y), key_height);
+    try draw.centered(fonts.small, page, center_x, baseline, label);
 }
 
 /// Backspace: a tag pointing left with a cross in it.
@@ -183,7 +182,9 @@ pub fn render(fonts: Fonts, page: Page) !void {
             // Drawn on a tile the size of the key.
             assert(t.width == enter_width);
             assert(t.height == key_height);
-            try centered(l.fonts.title, t, cx, label_drop, "Search"); // As on the other keys
+            // Centred in the key, as the other keys' labels are
+            const baseline = l.fonts.title.centred_baseline(0, key_height);
+            try centered(l.fonts.title, t, cx, baseline, "Search");
         }
     };
     const enter_cx = enter_left + enter_width / 2;

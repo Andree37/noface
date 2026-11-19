@@ -15,7 +15,6 @@ const cover_top = 52; // From the sheet's top to a cover's
 const title_baseline = 92; // From the sheet's top, without a cover
 const subtitle_gap = 48; // From the title's baseline to the subtitle's
 const row_height = 112; // A fingertip and some
-const row_baseline = 70; // From a row's top to its label's baseline
 const bottom_pad = 40;
 /// The subtitle's gray band, down from the title's baseline, and a quiet row's, down
 /// from the row's top.
@@ -28,7 +27,6 @@ pub const rows_longest = 6;
 
 comptime {
     assert(row_height >= style.fingertip);
-    assert(row_baseline < row_height);
     assert(header < cover_header);
     assert(title_baseline + subtitle_gap < header);
     assert(cover_top < title_baseline);
@@ -174,7 +172,8 @@ pub fn render_with(
         const y = sheet_top + header_for(cover) + @as(u32, @intCast(i)) * row_height;
         page.fill_rect(style.margin, y, page.width - 2 * style.margin, 1, style.rule);
         const font = if (r.danger) fonts.title else fonts.small;
-        try draw.clipped(font, page, row_x, @intCast(y + row_baseline), r.label, row_avail);
+        const baseline = font.centred_baseline(@intCast(y), row_height);
+        try draw.clipped(font, page, row_x, baseline, r.label, row_avail);
         if (r.quiet) {
             const row_width: u32 = @intFromFloat(row_avail);
             const quiet_top = y + quiet_tint_drop;

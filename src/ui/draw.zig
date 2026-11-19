@@ -9,11 +9,10 @@ const icons = @import("icons.zig");
 
 /// A back arrow at the left margin with where it goes back to beside it: Home on the
 /// toolbar, Library on the screens over the library. Its arrow's middle and its label's
-/// left in from the margin, and the label's baseline under the arrow's middle.
+/// left in from the margin; the label is centred on the arrow's middle.
 pub const back_link = struct {
     pub const arrow_inset = 18;
     pub const label_inset = 56;
-    pub const label_drop = 12;
     /// Its arrow's middle under the strip above it: the reader's status line on the
     /// toolbar, the library's status strip on the screens over the library.
     pub const drop = 52;
@@ -24,7 +23,7 @@ pub fn draw_back_link(font: *Font, page: Page, centre_y: u32, label: []const u8)
     assert(label.len > 0);
     assert(centre_y > 0);
     icons.back(page, style.margin + back_link.arrow_inset, @floatFromInt(centre_y));
-    const baseline: i32 = @intCast(centre_y + back_link.label_drop);
+    const baseline = font.centred_on(@intCast(centre_y));
     try font.draw(page, style.margin + back_link.label_inset, baseline, label);
 }
 

@@ -21,7 +21,6 @@ pub const list_top = top + header_band;
 /// The rule over the list, this far over its first row.
 const list_rule_rise = 12;
 const row_height = style.fingertip;
-const row_baseline = 62; // From a row's top to its text's baseline
 /// As many rows as fit between the header and the pager.
 pub const rows = (pager.top - list_top) / row_height;
 /// "No bookmarks or highlights yet.", down from the list's top.
@@ -43,7 +42,6 @@ const pager = draw.bottom_pager;
 comptime {
     if (list_top + rows * row_height > pager.top) @compileError("the list runs into the pager");
     assert(rows > 0);
-    assert(row_baseline < row_height);
     assert(tabs_baseline < list_top);
     assert(pager.bottom <= style.screen_height);
     // The deepest row, marked, still leaves room for its text before the page number
@@ -254,7 +252,8 @@ pub fn render_list(
     const right: f32 = @floatFromInt(page.width - style.margin);
     for (list[first..end], first..) |r, i| {
         const y: u32 = list_top + @as(u32, @intCast(i - first)) * row_height;
-        const baseline: i32 = @intCast(y + row_baseline);
+        // The label and its page number on one line, centred in the row
+        const baseline = fonts.small.centred_baseline(@intCast(y), row_height);
         const here = if (reading) |reading_index| reading_index == i else false;
         const depth: u32 = @min(r.depth, depth_shown_max);
         var left: f32 = @floatFromInt(style.margin + depth * indent);

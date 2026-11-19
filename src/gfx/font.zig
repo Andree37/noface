@@ -45,6 +45,9 @@ pub const Font = struct {
     scale: f32,
     ascent: i32,
     line_height: i32,
+    /// How tall its capitals stand over the baseline, in pixels: an H's height. What a
+    /// label is centred by in its row, button or key (`centred_baseline`).
+    cap_height: i32,
     id: u32,
 
     /// Whether `ttf` is a font that can set text: it opens, and has letters. Any file
@@ -98,13 +101,46 @@ pub const Font = struct {
         const scale = truetype.scale_for_pixel_height(&info, px);
         assert(scale > 0);
         const ascent = truetype.vertical_metrics(&info).ascent;
-        return .{
+        const font: Font = .{
             .info = info,
             .scale = scale,
             .ascent = @intFromFloat(@as(f32, @floatFromInt(ascent)) * scale),
             .line_height = @intFromFloat(px * line_spacing),
+            .cap_height = cap_height_of(&info, scale),
             .id = glyph_cache.new_font_id(),
         };
+        assert(font.cap_height >= 0);
+        return font;
+    }
+
+    /// The H's height over the baseline at `scale`; the A's in a font without an H, and
+    /// none in one with neither (a symbol font, which sets no labels).
+    fn cap_height_of(info: *const truetype.Info, scale: f32) i32 {
+        assert(scale > 0);
+        var glyph = truetype.glyph_index(info, 'H');
+        if (glyph == 0) glyph = truetype.glyph_index(info, 'A');
+        if (glyph == 0) return 0;
+        const box = truetype.glyph_bitmap_box(info, scale, glyph);
+        // A capital stands on the baseline, so its box's top is over it
+        return @max(-box.y_offset, 0);
+    }
+
+    /// The baseline that centres a line's capitals in a band `height` tall from `top`:
+    /// a label in its row, button or key, worked out from the font, not measured by eye.
+    pub fn centred_baseline(f: *const Font, top: i32, height: i32) i32 {
+        assert(height > f.cap_height);
+        const baseline = top + @divTrunc(height + f.cap_height, 2);
+        assert(baseline > top);
+        return baseline;
+    }
+
+    /// The baseline that puts a line's capitals' middle at `middle`: a label beside an
+    /// icon, on the icon's middle.
+    pub fn centred_on(f: *const Font, middle: i32) i32 {
+        assert(f.cap_height >= 0);
+        const baseline = middle + @divTrunc(f.cap_height, 2);
+        assert(baseline >= middle);
+        return baseline;
     }
 
     /// Gives every font `ttf` to draw the characters it hasn't got: a book's Chinese
@@ -374,6 +410,7 @@ test "a glyph whose box lies past any page draws nothing, at the pen, never over
         .scale = 1e7,
         .ascent = 0,
         .line_height = 1,
+        .cap_height = 0,
         .id = glyph_cache.new_font_id(),
     };
     var pixels: [16 * 16]u8 = @splat(255);
@@ -522,4 +559,17 @@ fn test_draw_everything(info: *const truetype.Info) !void {
         const bitmap = try truetype.glyph_bitmap(info, allocator, scale, glyph);
         if (bitmap.pixels) |pixels| allocator.free(pixels);
     }
+}
+
+test "a label's capitals are centred in their band, an H standing as tall as the font says" {
+    const go = @embedFile("../testdata/fonts/Go-Regular.ttf");
+    const font = try Font.init(go, 40, 1);
+    // An H stands over half a font's height, its descenders' room and more under it
+    try std.testing.expect(font.cap_height * 2 > 40);
+    try std.testing.expect(font.cap_height < font.ascent);
+    const baseline = font.centred_baseline(100, 112);
+    // As much room over the capitals as under them, to a pixel
+    const over = baseline - font.cap_height - 100;
+    const under = 100 + 112 - baseline;
+    try std.testing.expect(@abs(over - under) <= 1);
 }

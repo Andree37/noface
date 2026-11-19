@@ -145,7 +145,7 @@ pub const Back = struct {
         const center_y: f32 = @floatFromInt(r.y + r.height / 2);
         icons.back(target, @floatFromInt(r.x + arrow_inset_px), center_y);
         const label_x: f32 = @floatFromInt(r.x + label_inset_px);
-        const baseline: i32 = @intFromFloat(center_y + draw.back_link.label_drop);
+        const baseline = font.centred_on(@intFromFloat(center_y));
         try font.draw(target, label_x, baseline, label);
     }
 };

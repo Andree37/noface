@@ -39,10 +39,6 @@ const button_width = 300;
 const button_drop = 4;
 const button_reach = 10;
 const row_taps_height = button_height + 2 * button_reach;
-/// The buttons' labels and the credit share one baseline, a little under the buttons'
-/// middle.
-const label_drop = 12;
-const actions_baseline = actions_top + button_drop + button_height / 2 + label_drop;
 /// The credit's gray band: its width in from the right margin, its rise and height.
 const credit_tint_width = 360;
 const credit_tint_rise = 28;
@@ -232,6 +228,8 @@ pub fn render(fonts: Fonts, page: Page, found: Found) !void {
     const button_top = actions_top + button_drop;
     draw.box(page, style.margin, button_top, button_width, button_height);
     const highlight_x = style.margin + button_width / 2;
+    // The buttons' labels centred in them, and the credit on their line
+    const actions_baseline = fonts.small.centred_baseline(button_top, button_height);
     try draw.centered(fonts.small, page, highlight_x, actions_baseline, "Highlight");
     if (gettable(found) != null) {
         draw.box(page, get_left, button_top, get_width, button_height);
@@ -243,7 +241,7 @@ pub fn render(fonts: Fonts, page: Page, found: Found) !void {
     const baseline = actions_baseline; // In line with "Highlight"
     try fonts.caption.draw(page, right - try fonts.caption.measure(credit), baseline, credit);
     const tint_left: u32 = @intFromFloat(right - credit_tint_width);
-    const tint_top = baseline - credit_tint_rise;
+    const tint_top: u32 = @intCast(baseline - credit_tint_rise);
     page.tint(tint_left, tint_top, credit_tint_width, credit_tint_height, style.faded);
 }
 

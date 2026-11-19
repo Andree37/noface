@@ -128,12 +128,19 @@ pub fn sheet(page: Page, top: u32) void {
     // Taller than the room left, so the bottom corners fall off the screen
     const tall = h + style.sheet_corner;
     page.round_rect(0, top, page.width, tall, style.sheet_corner, style.black);
-    page.round_rect(0, top + 2, page.width, tall, style.sheet_corner - 1, style.white);
+    const inner = style.sheet_corner - 1;
+    page.round_rect(0, top + sheet_edge, page.width, tall, inner, style.white);
     const grab_left = page.width / 2 - grab_bar_width / 2;
-    page.round_rect(grab_left, top + 18, grab_bar_width, 8, 4, style.rule); // Grab bar
+    const grab_top = top + grab_bar_drop;
+    const grab_corner = grab_bar_height / 2;
+    page.round_rect(grab_left, grab_top, grab_bar_width, grab_bar_height, grab_corner, style.rule);
 }
 
+/// A sheet's black edge along its top, and the grab bar in its middle, down from its top.
+const sheet_edge = 2;
 const grab_bar_width = 72;
+const grab_bar_height = 8;
+const grab_bar_drop = 18;
 
 pub const Align = enum { left, center };
 

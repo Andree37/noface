@@ -17,11 +17,17 @@ const subtitle_gap = 48; // From the title's baseline to the subtitle's
 const row_height = 112; // A fingertip and some
 const row_baseline = 70; // From a row's top to its label's baseline
 const bottom_pad = 40;
+/// The subtitle's gray band, down from the title's baseline, and a quiet row's, down
+/// from the row's top.
+const subtitle_tint_drop = 20;
+const subtitle_tint_height = 44;
+const quiet_tint_drop = 30;
+const quiet_tint_height = 54;
 /// The most rows a sheet is laid out for.
 const rows_longest = 6;
 
 comptime {
-    assert(row_height >= 100); // A fingertip
+    assert(row_height >= style.fingertip);
     assert(row_baseline < row_height);
     assert(header < cover_header);
     assert(title_baseline + subtitle_gap < header);
@@ -79,7 +85,8 @@ pub fn top(rows: u32) u32 {
 test "a row's middle is a tap on that row" {
     for (1..4) |rows| for (0..rows) |i| {
         const c = row_centre(@intCast(rows), @intCast(i));
-        try std.testing.expectEqual(@as(?u32, @intCast(i)), hit(600, @intCast(c), @intCast(rows)));
+        const x = style.screen_width / 2;
+        try std.testing.expectEqual(@as(?u32, @intCast(i)), hit(x, @intCast(c), @intCast(rows)));
     };
 }
 
@@ -143,7 +150,9 @@ pub fn render_with(
     const avail: f32 = @as(f32, @floatFromInt(page.width - style.margin)) - x;
     try draw.clipped(fonts.title, page, x, @intCast(title_y), title, avail);
     try draw.clipped(fonts.caption, page, x, @intCast(title_y + subtitle_gap), subtitle, avail);
-    page.tint(@intFromFloat(x), title_y + 20, @intFromFloat(avail), 44, style.faded);
+    const tint_top = title_y + subtitle_tint_drop;
+    const tint_width: u32 = @intFromFloat(avail);
+    page.tint(@intFromFloat(x), tint_top, tint_width, subtitle_tint_height, style.faded);
     const row_x: f32 = style.margin;
     const row_avail: f32 = @floatFromInt(page.width - 2 * style.margin);
     for (rows, 0..) |r, i| {
@@ -151,20 +160,26 @@ pub fn render_with(
         page.fill_rect(style.margin, y, page.width - 2 * style.margin, 1, style.rule);
         const font = if (r.danger) fonts.title else fonts.small;
         try draw.clipped(font, page, row_x, @intCast(y + row_baseline), r.label, row_avail);
-        if (r.quiet) page.tint(style.margin, y + 30, @intFromFloat(row_avail), 54, style.faded);
+        if (r.quiet) {
+            const row_width: u32 = @intFromFloat(row_avail);
+            const quiet_top = y + quiet_tint_drop;
+            page.tint(style.margin, quiet_top, row_width, quiet_tint_height, style.faded);
+        }
     }
 }
 
 test "taps map to rows, the header, or nothing above the sheet" {
-    const y0: i32 = @intCast(top(3) + header);
-    try std.testing.expectEqual(@as(u32, 0), hit(600, y0 + 10, 3).?);
-    try std.testing.expectEqual(@as(u32, 2), hit(600, y0 + 2 * row_height + 10, 3).?);
-    try std.testing.expectEqual(@as(u32, 3), hit(600, y0 - 20, 3).?);
+    const x = style.screen_width / 2;
+    const first: i32 = @intCast(top(3) + header);
+    const middle = row_height / 2;
+    try std.testing.expectEqual(@as(u32, 0), hit(x, first + middle, 3).?);
+    try std.testing.expectEqual(@as(u32, 2), hit(x, first + 2 * row_height + middle, 3).?);
+    try std.testing.expectEqual(@as(u32, 3), hit(x, first - 1, 3).?); // The header
     // The bottom padding
-    try std.testing.expectEqual(@as(u32, 3), hit(600, style.screen_height - 5, 3).?);
-    try std.testing.expect(hit(600, 40, 3) == null);
+    try std.testing.expectEqual(@as(u32, 3), hit(x, style.screen_height - 1, 3).?);
+    try std.testing.expect(hit(x, @as(i32, @intCast(top(3))) - 1, 3) == null);
 }
 
-test "the sheet fits on screen with the longest menu" {
-    try std.testing.expect(height(6) < style.screen_height / 2 + 300);
+test "the longest sheet leaves the top of the screen to tap away" {
+    try std.testing.expect(top(rows_longest) >= style.fingertip);
 }

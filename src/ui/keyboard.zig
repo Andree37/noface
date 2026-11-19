@@ -19,7 +19,10 @@ const row_count: u32 = rows.len + 1;
 /// The tray's edge round the keys: over the first row, under the last, and right of
 /// backspace.
 const tray_pad = 16;
-pub const top = style.screen_height - row_count * row_step - tray_pad;
+/// The keys' first row, and the keyboard's top: its tray's edge over them. Everything
+/// from `top` down is the keyboard's to draw.
+const keys_top = style.screen_height - row_count * row_step - tray_pad;
+pub const top = keys_top - tray_pad;
 /// A key's label's baseline, down from its top.
 const label_drop = 68;
 
@@ -47,8 +50,8 @@ const last_letters: u32 = rows.len - 1;
 
 comptime {
     // Every key is on the screen, below the status strip.
-    assert(top > style.status_height);
-    assert(top + row_count * row_step <= style.screen_height);
+    assert(keys_top > style.status_height);
+    assert(keys_top + row_count * row_step <= style.screen_height);
     assert(enter_left + enter_width <= style.screen_width);
     // Backspace sits clear of the last letter row.
     assert(row_left(last_letters) + rows[last_letters].len * (key_width + gap) < backspace_x);
@@ -58,8 +61,8 @@ comptime {
 }
 
 pub fn hit(x: i32, y: i32) ?Key {
-    if (y < top) return null;
-    const row: u32 = @intCast(@divTrunc(y - top, row_step));
+    if (y < keys_top) return null;
+    const row: u32 = @intCast(@divTrunc(y - keys_top, row_step));
     if (row < rows.len) {
         if (row == last_letters and x >= backspace_x) return .backspace;
         const left = row_left(row);
@@ -96,7 +99,7 @@ fn key_face(page: Page, x: i32, y: u32, w: u32, face: u8) void {
 }
 
 fn key(fonts: Fonts, page: Page, x: i32, y: u32, w: u32, label: []const u8, face: u8) !void {
-    assert(y >= top);
+    assert(y >= keys_top);
     assert(label.len > 0);
     key_face(page, x, y, w, face);
     const center_x: f32 = @floatFromInt(x + @as(i32, @intCast(w / 2)));
@@ -120,23 +123,22 @@ fn backspace_icon(page: Page, cx: f32, cy: f32) void {
 }
 
 pub fn render(fonts: Fonts, page: Page) !void {
-    assert(page.height > top);
+    assert(page.height > keys_top);
     assert(page.width >= enter_left + enter_width);
-    const tray_top = top - tray_pad;
-    page.fill_rect(0, tray_top, page.width, page.height - tray_top, tray);
+    page.fill_rect(0, top, page.width, page.height - top, tray);
     for (rows, 0..) |r, row_index| {
         const row: u32 = @intCast(row_index);
-        const y: u32 = top + row * row_step;
+        const y: u32 = keys_top + row * row_step;
         for (r, 0..) |c, column| {
             const x = row_left(row) + @as(i32, @intCast(column)) * (key_width + gap);
             try key(fonts, page, x, y, key_width, &.{c}, style.white);
         }
     }
-    const last: u32 = top + last_letters * row_step;
+    const last: u32 = keys_top + last_letters * row_step;
     key_face(page, backspace_x, last, backspace_width, special);
     const backspace_cx = backspace_x + backspace_width / 2;
     backspace_icon(page, backspace_cx, @floatFromInt(last + key_height / 2));
-    const bottom: u32 = top + rows.len * row_step;
+    const bottom: u32 = keys_top + rows.len * row_step;
     try key(fonts, page, space_left, bottom, space_width, "space", style.white);
     // The main key: black like a key that's on, shadow and all, its label in white
     key_face(page, enter_left, bottom, enter_width, style.black);
@@ -158,7 +160,7 @@ pub fn render(fonts: Fonts, page: Page) !void {
 /// The middle of key `column` on letter row `row`.
 fn test_key(row: u32, column: u32) [2]i32 {
     const x = row_left(row) + @as(i32, @intCast(column)) * (key_width + gap) + key_width / 2;
-    const y: i32 = @intCast(top + row * row_step + key_height / 2);
+    const y: i32 = @intCast(keys_top + row * row_step + key_height / 2);
     return .{ x, y };
 }
 
@@ -172,10 +174,10 @@ test "keys map to letters, and the special keys answer" {
     const last_y = test_key(last_letters, 0)[1];
     const backspace_mid = backspace_x + backspace_width / 2;
     try std.testing.expectEqual(Key.backspace, hit(backspace_mid, last_y).?);
-    const bottom_y: i32 = @intCast(top + rows.len * row_step + key_height / 2);
+    const bottom_y: i32 = @intCast(keys_top + rows.len * row_step + key_height / 2);
     try std.testing.expectEqual(Key.space, hit(space_left + space_width / 2, bottom_y).?);
     try std.testing.expectEqual(Key.enter, hit(enter_left + enter_width / 2, bottom_y).?);
-    try std.testing.expect(hit(style.screen_width / 2, top - 1) == null);
+    try std.testing.expect(hit(style.screen_width / 2, keys_top - 1) == null);
 }
 
 test "the bottom row is centred, as the letters are" {

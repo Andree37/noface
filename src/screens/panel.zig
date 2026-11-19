@@ -17,8 +17,8 @@ comptime {
     // A row is told apart from the other by its place alone
     assert(menu.warmth_row.y != menu.brightness_row.y);
     // Each slider's band, redrawn on its own, is inside the panel
-    assert(menu.brightness_row.y + menu.band_height <= menu.height);
-    assert(menu.warmth_row.y + menu.band_height <= menu.height);
+    assert(menu.band_top(menu.brightness_row) + menu.band_height <= menu.height);
+    assert(menu.band_top(menu.warmth_row) + menu.band_height <= menu.height);
 }
 
 /// Reads the status again (about a quarter second of lipc calls), and redraws the

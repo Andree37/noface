@@ -36,10 +36,12 @@ const rule_y = last_row_y + tile_box_below;
 const slider_inset = 160;
 const slider_left = slider_inset;
 const slider_right = screen_width - slider_inset;
-const step_mark_middle = 90; // In from the screen's side
+const step_mark_middle = slider_inset / 2; // In from the screen's side
 const step_mark_half = 20;
 const step_mark_thick = 4;
 const level_above = 40; // The level's baseline over the bar
+/// How high the level's digits reach over their baseline, smooth edges and all.
+const level_reach = 24;
 
 pub const Row = struct { label: []const u8, y: u32, max: u32 };
 /// The brightness's name sits under the rule, its bar under that; the warmth's a slider
@@ -172,7 +174,9 @@ const tile_box_below = 130;
 
 /// Half the widest level text, and more than the knob: what a knob's move redraws round it.
 const knob_reach = 60;
-const band_above = 60;
+/// A slider's band, redrawn alone as its knob moves: from over its level's digits to under
+/// its knob.
+const band_above = level_above + level_reach;
 const band_below = 50;
 pub const band_height = band_above + band_below;
 
@@ -201,6 +205,10 @@ comptime {
     assert(warmth_label_baseline - words_reach >= schedule_top);
     assert(warmth_label_baseline + words_below <= schedule_bottom);
     assert(warmth_label_baseline + words_below <= warmth_row.y - band_above);
+    // The brightness's name is clear of its band too, which would cut it
+    assert(brightness_label_baseline + words_below <= brightness_row.y - band_above);
+    // The marks sit outside the bar, a fingertip's taps of their own
+    assert(step_mark_middle + step_mark_half < slider_left);
     assert(warmth_row.y + row_reach < chevron_y);
     assert(chevron_y < height);
     assert(height < style.screen_height);
@@ -251,9 +259,9 @@ fn tile_center(i: u32) struct { x: i32, y: i32 } {
     const col = i % tiles_per_row;
     const in_row = @min(tiles_per_row, tiles.len - row * tiles_per_row);
     assert(col < in_row);
-    // Doubled to keep the half-step of an even row whole
+    // Doubled to keep the half-step of an even row whole, halved last
     const offset2: i32 = 2 * @as(i32, @intCast(col)) - @as(i32, @intCast(in_row - 1));
-    const x = style.screen_width / 2 + @divExact(offset2 * tile_step_x, 2);
+    const x = @divTrunc(style.screen_width + offset2 * tile_step_x, 2);
     const y = first_row_y + @as(i32, @intCast(row)) * row_step_y;
     assert(x - tile_reach_x >= 0);
     assert(x + tile_reach_x <= style.screen_width);

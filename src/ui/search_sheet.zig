@@ -46,8 +46,7 @@ const rows_top = bar_top + bar_height + rows_gap;
 /// Where what's under the bar starts: a note line, then a list.
 pub const content_top = rows_top;
 const row_height = 112;
-const rows_gap_below = 16; // Over the keyboard
-const rows_bottom = keyboard.top - rows_gap_below;
+const rows_bottom = keyboard.top; // Down to the keyboard's tray
 /// A row's title's and author's baselines, and the author's gray band, down from its top.
 const row_title_drop = 50;
 const row_author_drop = 88;
@@ -71,7 +70,7 @@ comptime {
     // The bar, the rows and the keyboard each have their own band, top to bottom.
     assert(bar_top + bar_height + bar_reach_below <= rows_top);
     assert(rows_top + max_rows * row_height <= rows_bottom);
-    assert(rows_bottom < keyboard.top);
+    assert(rows_bottom <= keyboard.top);
     assert(max_rows >= 5);
     assert(style.margin + 2 * bar_height < field_right); // The field is wider than its ends
     // Every tap target is a fingertip tall, or wide.

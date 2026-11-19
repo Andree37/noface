@@ -143,7 +143,7 @@ pub const Lock = struct {
 /// book's cover.
 fn draw_target(a: *app.App, entry: ?*const catalog.Entry) void {
     var picture_buffer: [320]u8 = undefined;
-    const own = if (a.settings.lock_picture) picture_path(a, &picture_buffer) else null;
+    const own = if (a.user.settings.lock_picture) picture_path(a, &picture_buffer) else null;
     const own_data: ?[]const u8 = if (own) |p| file.map(p) catch null else null;
     defer if (own_data) |d| file.unmap(d);
     const book: app.LockShown = if (entry) |e| .{ .book = key_for(e) } else .no_book;

@@ -195,14 +195,14 @@ fn main_reader_configure(
     init: std.process.Init.Minimal,
     files: *const setup.DataFiles,
 ) !void {
-    assert(shared.settings_path == files.settings.ptr); // Assembled from these files
+    assert(shared.user.files.settings == files.settings.ptr); // Assembled from these files
     // A different folder for EPUBs, for a demo or test run beside the real library
     shared.documents = if (init.environ.getPosix("NOFACE_DOCUMENTS")) |d| d else paths.documents;
     shared.dictionary_base = init.environ.getPosix("NOFACE_DICT_URL") orelse
         dict_download.default_base;
     shared.utc_offset = clock.utc_offset();
     shared.apply_settings() catch {
-        shared.settings = .{};
+        shared.user.settings = .{};
         try shared.apply_settings();
     };
     assert(shared.layout.faces != null); // Set by apply_settings
@@ -210,7 +210,7 @@ fn main_reader_configure(
     // On, but the system's startup file isn't the one this version ships (an update
     // changed it): put the current one back, as the reader agreed to when they turned
     // it on
-    if (shared.settings.autostart and autostart.outdated()) {
+    if (shared.user.settings.autostart and autostart.outdated()) {
         const installed = autostart.install();
         std.debug.print("autostart: startup file out of date, reinstalled: {}\n", .{installed});
     }

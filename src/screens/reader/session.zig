@@ -18,7 +18,6 @@ const now_us = os.now_us;
 const unix_time = os.unix_time;
 const app = @import("../../app.zig");
 const display = @import("../../display.zig");
-const user_data = @import("../../user_data.zig");
 const style = @import("../../ui/style.zig");
 const Zone = @import("../../kindle/input.zig").Zone;
 const back_button = @import("back_button.zig");
@@ -163,7 +162,7 @@ pub const Session = struct {
         assert(s.words_before.len == s.paragraphs.len + 1);
         const here = s.words_at(s.pages[index]);
         const total = s.words_before[s.words_before.len - 1];
-        const speed = s.app.speed;
+        const speed = s.app.user.speed;
         const book_minutes = speed.minutes_for(total -| here);
         // Past the last chapter's start, the chapter runs to the book's end
         const chapter_minutes: ?u64 = if (s.chapters.len == 0)
@@ -198,7 +197,7 @@ pub const Session = struct {
         // The day's journal: the time, and the page when it was read on to the next
         const read_on = to == s.current + 1 and counted > 0;
         const journal_seconds: u32 = @intCast(@min(counted, std.math.maxInt(u32)));
-        s.app.journal.add(s.app.today(), journal_seconds, if (read_on) 1 else 0);
+        s.app.user.journal.add(s.app.today(), journal_seconds, if (read_on) 1 else 0);
         if (to != s.current + 1 or us == 0) return;
         // Pages gone past by running mode take its pace's time, which says nothing of
         // the reader's speed in the hand
@@ -206,7 +205,7 @@ pub const Session = struct {
         const left = s.current;
         // Time on a picture isn't reading speed
         if (s.page_has_picture(left)) return;
-        const speed = &s.app.speed;
+        const speed = &s.app.user.speed;
         const was_known = speed.known();
         speed.record(s.words_on_page(left), us);
         // Pages already drawn have no time left on them yet.
@@ -361,7 +360,7 @@ pub const Session = struct {
     /// "12 min left in chapter" on the left of the footer, the book's on the right.
     fn draw_time_left(s: *const Session, page: Page, index: u32) !void {
         assert(index < s.pages.len);
-        assert(s.app.settings.time_left); // Only drawn when asked for
+        assert(s.app.user.settings.time_left); // Only drawn when asked for
         const a = s.app;
         const left = s.time_left(index);
         const y: i32 = @intCast(a.display.screen.height - footer_baseline_above_bottom_px);
@@ -414,7 +413,7 @@ pub const Session = struct {
         const y: i32 = @intCast(a.display.screen.height - footer_baseline_above_bottom_px);
         try a.footer.draw(page, x, y, counter);
         if (s.is_bookmarked(index)) icons.ribbon(page, a.display.screen.width);
-        if (a.settings.time_left) try s.draw_time_left(page, index);
+        if (a.user.settings.time_left) try s.draw_time_left(page, index);
         if (s.back.place != null) {
             try s.back.draw_on(page, a.ui.small, s.pages, s.progress == null);
         }
@@ -448,7 +447,7 @@ pub const Session = struct {
         @memcpy(a.display.screen.pixels, buf);
         a.stamp_clock();
         s.turns += 1;
-        const clean = force_clean or (a.settings.refresh and s.turns % 20 == 0);
+        const clean = force_clean or (a.user.settings.refresh and s.turns % 20 == 0);
         const refresh: hwtcon.Refresh = if (clean) .flash else .page;
         const marker = try a.display.screen.show(refresh);
         const queued = now_us();
@@ -496,8 +495,8 @@ pub fn save_progress(
     saved.back_byte = if (back) |b| b.byte else 0;
     saved.back_turns = s.back.turns_since_jump;
     state.save(path, saved);
-    s.app.save_speed();
-    s.app.save_journal();
+    s.app.user.save_speed();
+    s.app.user.save_journal();
     entry.percent = percent;
     entry.last = now;
     entry.seconds_read = seconds;
@@ -516,10 +515,10 @@ pub fn relayout(a: *app.App, s: *Session) !void {
     assert(a.pages_budget.region.?.kind == .bump);
     a.apply_settings() catch |err| {
         std.debug.print("settings failed: {s}\n", .{@errorName(err)});
-        a.settings = user_data.load_settings(a.settings_path);
+        a.user.settings = a.user.saved_settings();
         return a.apply_settings();
     };
-    a.save_settings();
+    a.user.save_settings();
     a.display.forget_pages();
     const t0 = now_us();
     const pages_key = page_store.key(a, s.book_bytes);

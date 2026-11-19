@@ -9,7 +9,6 @@ const settings_model = @import("model/settings.zig");
 const Page = @import("gfx/page.zig").Page;
 const Font = @import("gfx/font.zig").Font;
 const book_model = @import("model/book.zig");
-const stats = @import("model/stats.zig");
 const cover = @import("gfx/image.zig");
 const picture_cache = @import("gfx/picture_cache.zig");
 const draw = @import("ui/draw.zig");
@@ -130,9 +129,6 @@ pub const App = struct {
     lock_kept: LockKept,
     state_dir: []const u8,
     library_path: [*:0]const u8,
-    settings_path: [*:0]const u8,
-    speed_path: [*:0]const u8,
-    journal_path: [*:0]const u8,
     battery_path: [*:0]const u8,
     documents: []const u8 = paths.documents, // Where EPUBs copied over USB are found
     battery_last: ?battery_model.Sample = null, // Last level noted, so only changes are logged
@@ -143,13 +139,9 @@ pub const App = struct {
     /// that's settled: set as a book opens, and again by a dictionary's download that
     /// turned noface's pause back off.
     wifi_off_at: ?u64 = null,
-    journal: journal_model.Journal = .{}, // What was read each day, for the stats screen
-    speed: stats.Speed = .{}, // How fast this reader reads, across every book
-    /// The running pace (model/running.zig), once running mode has been used: words a
-    /// minute while reading on a treadmill, learned apart from `speed`.
-    running_pace: ?f64 = null,
     pictures: picture_cache.Pictures = .{}, // Pictures of the open book, ready to copy onto pages
-    settings: settings_model.Settings,
+    /// The reader's settings, speed and journal, and their files (user_data.zig).
+    user: user_data.UserData,
     quick: quick_model.Quick = .{},
     utc_offset: i64,
     clock_minute: u64 = 0,
@@ -239,31 +231,18 @@ pub const App = struct {
         return &slot.*.?;
     }
 
-    pub fn save_settings(a: *const App) void {
-        user_data.save_settings(a.settings_path, a.settings);
-    }
-
-    /// Saves the reading speed and the running pace, after reading teaches them.
-    pub fn save_speed(a: *const App) void {
-        user_data.save_speed(a.speed_path, .{ .speed = a.speed, .running_pace = a.running_pace });
-    }
-
-    pub fn save_journal(a: *const App) void {
-        user_data.save_journal(a.journal_path, &a.journal);
-    }
-
     /// Fonts are kept per size, so stepping through sizes doesn't reload them.
     pub fn apply_settings(a: *App) !void {
         // Parsing clamps every setting to its steps: one past them is a bug of ours
-        assert(a.settings.margin < settings_model.margins.len);
+        assert(a.user.settings.margin < settings_model.margins.len);
         a.body = try a.face(false, false, book_model.normal_size);
         a.layout.faces = .{ .ctx = a, .pick = pick_face };
         a.layout.images = .{ .ctx = a, .draw = draw_image };
-        a.layout.margin_x = settings_model.margins[a.settings.margin];
-        a.layout.justify = !a.settings.left_align;
-        a.layout.bold_starts = a.settings.bold_starts;
+        a.layout.margin_x = settings_model.margins[a.user.settings.margin];
+        a.layout.justify = !a.user.settings.left_align;
+        a.layout.bold_starts = a.user.settings.bold_starts;
         // The Aa sheet shows the page of typefaces with the one chosen
-        a.aa_kept.family_first = aa.family_page_of(a.settings.family_index());
+        a.aa_kept.family_first = aa.family_page_of(a.user.settings.family_index());
         assert(a.layout.margin_x > 0);
         assert(a.body.line_height > 0);
     }
@@ -287,20 +266,20 @@ pub const App = struct {
     pub fn face(a: *App, bold_text: bool, italic: bool, size: u8) !*Font {
         assert(size < book_model.size_scales.len);
         // Parsing clamps every setting to its steps: one past them is a bug of ours
-        assert(a.settings.size < settings_model.sizes.len);
-        const bold = bold_text or a.settings.bold;
+        assert(a.user.settings.size < settings_model.sizes.len);
+        const bold = bold_text or a.user.settings.bold;
         const which: u2 = @as(u2, @intFromBool(bold)) | @as(u2, @intFromBool(italic)) << 1;
         const scale = book_model.size_scales[size];
         const key: typefaces.FaceKey = .{
-            .family = a.settings.family_index(),
+            .family = a.user.settings.family_index(),
             .which = which,
-            .size = @intCast(a.settings.size),
+            .size = @intCast(a.user.settings.size),
             .scale = size,
         };
         // The body font is in use between pages too, so it's never the one given up
-        const font = try a.typefaces.face(key, a.settings.px() * scale, a.body);
+        const font = try a.typefaces.face(key, a.user.settings.px() * scale, a.body);
         // Spacing can change without the font changing, so set it every time.
-        const line_height_px: f32 = @floatFromInt(a.settings.line_height());
+        const line_height_px: f32 = @floatFromInt(a.user.settings.line_height());
         font.line_height = @intFromFloat(line_height_px * scale);
         assert(font.line_height > 0);
         return font;
@@ -361,7 +340,7 @@ pub const App = struct {
 
     /// Writes the time into the page on screen, without refreshing the panel.
     pub fn stamp_clock(a: *App) void {
-        if (!a.settings.clock) return;
+        if (!a.user.settings.clock) return;
         assert(a.display.screen.width >= clock_width_px);
         assert(a.display.screen.height >= clock_top_px + clock_height_px);
         const target = a.display.on_screen();
@@ -383,7 +362,7 @@ pub const App = struct {
 
     /// Redraws just the clock, which is too small to need a flash.
     pub fn update_clock(a: *App) !void {
-        if (!a.settings.clock) return;
+        if (!a.user.settings.clock) return;
         a.stamp_clock();
         const left = (a.display.screen.width - clock_width_px) / 2;
         assert(left + clock_width_px <= a.display.screen.width);

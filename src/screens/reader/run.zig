@@ -103,13 +103,13 @@ pub const Run = struct {
 
     /// The phrase on screen's timer started, or stopped at the book's end.
     fn start_timer(run: *Run, a: *const app.App, now: u64) void {
-        assert(a.running_pace != null); // Set as running began
+        assert(a.user.running_pace != null); // Set as running began
         run.shown_us = now;
         const p = run.phrase orelse {
             run.stopped_at = 0;
             return;
         };
-        run.phrase_us = phrases.phrase_us(a.running_pace.?, p);
+        run.phrase_us = phrases.phrase_us(a.user.running_pace.?, p);
         assert(run.phrase_us >= phrases.phrase_us_min);
     }
 
@@ -261,7 +261,7 @@ pub const Run = struct {
         touch: Touch,
         now: u64,
     ) !Tapped {
-        assert(a.running_pace != null); // Set as running began
+        assert(a.user.running_pace != null); // Set as running began
         // A contact too short for a finger: a drop of sweat, a brush. Let go before it
         // counts as a touch, so it never holds off the tap that follows. Timed by the
         // panel, as the finger lifted: noface may read it later
@@ -293,7 +293,7 @@ pub const Run = struct {
                 // Read before its time was up: not from one stopped, read already, nor
                 // at the book's end, where nothing comes next
                 if (!was_stopped and run.can_go_on()) {
-                    a.running_pace = running_model.faster(a.running_pace.?);
+                    a.user.running_pace = running_model.faster(a.user.running_pace.?);
                     run.pace_moved = .up;
                 }
                 break :moved try run.forward(a, s, now);
@@ -301,7 +301,7 @@ pub const Run = struct {
             .back => moved: {
                 // Only when there's a phrase to go back to
                 if (!was_stopped and run.can_go_back()) {
-                    a.running_pace = running_model.slower(a.running_pace.?);
+                    a.user.running_pace = running_model.slower(a.user.running_pace.?);
                     run.pace_moved = .down;
                 }
                 break :moved try run.back(a, s, now);

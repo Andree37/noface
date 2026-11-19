@@ -18,7 +18,7 @@ comptime {
 
 /// What the screen shows, from the journal, the reading speed and the library.
 pub fn summarize(a: *const app.App, library: *books.Library) stats_ui.Summary {
-    const j = &a.journal;
+    const j = &a.user.journal;
     const today = a.today();
     var s = stats_ui.Summary{
         .today = j.get(today).seconds,
@@ -35,7 +35,7 @@ pub fn summarize(a: *const app.App, library: *books.Library) stats_ui.Summary {
     const year = j.since(year_start, today);
     const year_day = (std.time.epoch.EpochDay{ .day = @intCast(today) }).calculateYearDay();
     s.year = @intCast(year_day.year);
-    if (a.speed.known()) s.wpm = @intFromFloat(@round(a.speed.wpm()));
+    if (a.user.speed.known()) s.wpm = @intFromFloat(@round(a.user.speed.wpm()));
     // The journal starts the day noface started keeping it, so the year also counts
     // what was known before: books marked read that were last opened this year (the
     // Kindle's own record), and each book's time read in noface. Whichever is more.

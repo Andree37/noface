@@ -86,7 +86,7 @@ pub fn open(a: *app.App, bubble: *Bubble) void {
     var samples: [2048]battery.Sample = undefined;
     const log = battery_log.load(a.battery_path, &samples);
     assert(log.len <= samples.len);
-    const per_day = a.journal.seconds_over(a.today(), usual_days) / usual_days;
+    const per_day = a.user.journal.seconds_over(a.today(), usual_days) / usual_days;
     bubble.a = a;
     bubble.said = lines(&bubble.buffer, log, battery_log.now(), per_day);
     assert(bubble.said.title.len > 0);

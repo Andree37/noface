@@ -31,7 +31,7 @@ pub fn key(a: *const app.App, book_bytes: u64) u64 {
     assert(a.display.screen.width > 0);
     assert(a.display.screen.height > 0);
     var h = std.hash.Wyhash.init(layout_version);
-    const s = a.settings;
+    const s = a.user.settings;
     const l = a.layout;
     const parts = [_]u64{
         book_bytes,

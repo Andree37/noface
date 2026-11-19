@@ -1030,10 +1030,11 @@ pub const Reader = struct {
         const a = r.a;
         assert(r.s.learns_speed); // Only running stops it
         // Running moves on at a pace: the first time, one from the reader's speed
-        if (a.running_pace == null) a.running_pace = running_model.first_pace(a.speed);
+        const user = &a.user;
+        if (user.running_pace == null) user.running_pace = running_model.first_pace(user.speed);
         r.run = .{ .started_us = now_us() };
         r.s.learns_speed = false;
-        std.debug.print("running: on, {d:.0} words a minute\n", .{a.running_pace.?});
+        std.debug.print("running: on, {d:.0} words a minute\n", .{a.user.running_pace.?});
         r.view = .page; // Before the input's modes, which follow the view
         a.input.apply(r.setting(), false);
         try r.run.?.show_all(a, r.s, r.s.anchor, now_us());
@@ -1059,7 +1060,7 @@ pub const Reader = struct {
         r.run = null;
         r.s.learns_speed = true;
         std.debug.print("running: off\n", .{});
-        a.save_speed();
+        a.user.save_speed();
         assert(r.run == null);
     }
 

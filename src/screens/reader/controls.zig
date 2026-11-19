@@ -49,7 +49,7 @@ pub fn draw_toolbar(a: *app.App, s: *sess.Session, book: Book, drawn: Drawn) !vo
         at,
         &a.quick,
         if (drawn.sheet_open) a.aa_kept.tab else null,
-        a.settings,
+        a.user.settings,
         book.running,
         s.is_bookmarked(s.current),
     );
@@ -167,9 +167,9 @@ pub fn drag_scrub(p: *Pending, a: *app.App, s: *sess.Session, first_x: i32) !scr
 fn row_value(a: *const app.App, row: aa.Row) u32 {
     assert(row.steps > 0);
     const value = switch (row.slider) {
-        .text_size => a.settings.size,
-        .spacing => a.settings.spacing,
-        .margins => a.settings.margin,
+        .text_size => a.user.settings.size,
+        .spacing => a.user.settings.spacing,
+        .margins => a.user.settings.margin,
     };
     // Settings are brought inside their steps as they're read
     assert(value < row.steps);
@@ -180,9 +180,9 @@ fn row_value_set(a: *app.App, row: aa.Row, value: u32) void {
     assert(row.steps > 0);
     assert(value < row.steps);
     switch (row.slider) {
-        .text_size => a.settings.size = value,
-        .spacing => a.settings.spacing = value,
-        .margins => a.settings.margin = value,
+        .text_size => a.user.settings.size = value,
+        .spacing => a.user.settings.spacing = value,
+        .margins => a.user.settings.margin = value,
     }
     assert(row_value(a, row) == value);
 }
@@ -252,15 +252,15 @@ pub fn tap_sheet(
         .theme => |index| {
             assert(index < aa.themes.len);
             const theme = aa.themes[index];
-            a.settings.size = theme.size;
-            a.settings.spacing = theme.spacing;
-            a.settings.margin = theme.margin;
+            a.user.settings.size = theme.size;
+            a.user.settings.spacing = theme.spacing;
+            a.user.settings.margin = theme.margin;
         },
         .family => |cell| {
             const family = a.aa_kept.family_first + cell;
             // The last page may have fewer typefaces than cells
             if (family >= settings_model.families.len) return .done;
-            a.settings.font = settings_model.Family.of(settings_model.families[family]).?;
+            a.user.settings.font = settings_model.Family.of(settings_model.families[family]).?;
         },
         .more_families => {
             a.aa_kept.family_first = aa.next_family_page(a.aa_kept.family_first);
@@ -269,7 +269,7 @@ pub fn tap_sheet(
         },
         .toggle => |index| {
             assert(index < aa.switches.len);
-            const turning_on = !aa.is_on(index, a.settings);
+            const turning_on = !aa.is_on(index, a.user.settings);
             if (turning_on) {
                 const guard = aa.switches[index].guard;
                 if (try ask_first(p, a, s, guard, index)) |f| return .{ .opened = f };
@@ -292,16 +292,16 @@ fn flip(
 ) !void {
     assert(index < aa.switches.len);
     const switch_hit = aa.switches[index];
-    const turning_on = !aa.is_on(index, a.settings);
-    aa.flip(index, &a.settings);
-    assert(aa.is_on(index, a.settings) == turning_on);
+    const turning_on = !aa.is_on(index, a.user.settings);
+    aa.flip(index, &a.user.settings);
+    assert(aa.is_on(index, a.user.settings) == turning_on);
     switch (switch_hit.effect) {
         .relayout => {
             try sess.relayout(a, s);
             try draw_toolbar(a, s, book, .{ .sheet_open = true, .whole_page = true });
         },
         .footer, .nothing => {
-            a.save_settings();
+            a.user.save_settings();
             // The footer is drawn into each page
             if (switch_hit.effect == .footer) a.display.forget_pages();
             try draw_toolbar(a, s, book, .{ .sheet_open = true, .whole_page = false });

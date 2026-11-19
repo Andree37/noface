@@ -14,7 +14,6 @@ const fonts_db = @import("kindle/fonts.zig");
 const process = @import("sys/process.zig");
 const image = @import("gfx/image.zig");
 const app = @import("app.zig");
-const user_data = @import("user_data.zig");
 const hwtcon = @import("kindle/hwtcon.zig");
 const input_mod = @import("kindle/input.zig");
 const Font = @import("gfx/font.zig").Font;
@@ -692,10 +691,10 @@ fn play_on_start(
     a.book_region.end_peak = 0;
     a.pages_budget.peak = 0;
     a.pages_budget.limit = kindle.pages_bytes;
-    a.settings = .{ .bold_starts = kindle.bold_starts };
-    a.running_pace = null;
-    a.speed = .{};
-    a.journal = .{};
+    a.user.settings = .{ .bold_starts = kindle.bold_starts };
+    a.user.running_pace = null;
+    a.user.speed = .{};
+    a.user.journal = .{};
     // Every typeface the settings could pick is the test font: no Kindle fonts needed.
     // A real book is set in the Kindle's own, found by the app as it always does.
     if (kindle.real_book == null) {
@@ -796,7 +795,7 @@ fn play_on_outcome(
         .finished = finished,
         .saved = state.load(state_path),
         .looked_up = a.dictionaries[0] != null or a.dictionaries[1] != null,
-        .offers_dictionary = a.settings.offer_dictionary,
+        .offers_dictionary = a.user.settings.offer_dictionary,
         .highlights = count_notes(state_path, "highlight"),
         .bookmarks = count_notes(state_path, "bookmark"),
         .book_peak = a.book_region.end_peak,
@@ -806,11 +805,11 @@ fn play_on_outcome(
         .unreadable_kept = try unreadable_kept(ran.alloc, kindle, ran.dir),
         .shown = if (kindle.pages_into) |into| try pages_shown(into, a) else @splat(null),
         .updates = a.display.screen.updates,
-        .running_pace = a.running_pace,
+        .running_pace = a.user.running_pace,
         .awake_at_end = ran.awake_at_end,
-        .speed_pages = a.speed.pages,
-        .settings = a.settings,
-        .saved_settings = user_data.load_settings(a.settings_path),
+        .speed_pages = a.user.speed.pages,
+        .settings = a.user.settings,
+        .saved_settings = a.user.saved_settings(),
         .airplane_asked_on = ran.fake.was_set(wifi_key ++ " 0"),
         .airplane_at_end = std.mem.eql(u8, ran.fake.get(wifi_key), "0"),
         .wifi_note_left = file.read_small(wifi_saver.note_path(), &note_buf).len > 0,

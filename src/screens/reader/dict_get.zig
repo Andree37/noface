@@ -83,8 +83,8 @@ pub fn asked(a: *app.App, background: display.Backdrop, ending: screen.Ending(u3
     assert(picked < ask_rows.len);
     if (picked == 0) return .download;
     // Only "Not now" itself stops the asking; a tap beside the card, or locking, doesn't
-    a.settings.offer_dictionary = false;
-    a.save_settings();
+    a.user.settings.offer_dictionary = false;
+    a.user.save_settings();
     return .not_now;
 }
 

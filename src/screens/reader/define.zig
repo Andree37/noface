@@ -153,7 +153,7 @@ pub const Define = struct {
         assert(d.phase == .asking);
         assert(d.page_copy.len == d.a.display.screen.pixels.len);
         if (definition.gettable(d.found)) |g| {
-            if (d.a.settings.offer_dictionary) {
+            if (d.a.user.settings.offer_dictionary) {
                 d.ask_card = dict_get.ask(d.a, d.under(), g.lang, &d.asking);
                 return .{ .push = screen.open(&d.ask_card, &d.ask_ending) };
             }

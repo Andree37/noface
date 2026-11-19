@@ -86,7 +86,7 @@ comptime {
 /// the map; where the dial went.
 pub fn show_whole(run: *const Run, a: *app.App, s: *sess.Session) !i32 {
     assert(run.place != null); // Its phrase set, or the book's end
-    assert(a.running_pace != null); // The footer shows it
+    assert(a.user.running_pace != null); // The footer shows it
     const page = a.display.on_screen();
     page.fill_rect(0, 0, a.display.screen.width, a.display.screen.height, style.white);
     a.stamp_clock();
@@ -102,7 +102,7 @@ pub fn show_whole(run: *const Run, a: *app.App, s: *sess.Session) !i32 {
 /// went.
 pub fn show_moved(run: *const Run, a: *app.App, s: *sess.Session) !i32 {
     assert(run.place != null);
-    assert(a.running_pace != null); // The footer shows it
+    assert(a.user.running_pace != null); // The footer shows it
     try draw_phrases(run, a, s);
     const dial_x = try draw_footer(run, a, s);
     try draw_map(a, s, run.phrase);
@@ -122,7 +122,7 @@ fn draw_phrases(run: *const Run, a: *app.App, s: *sess.Session) !void {
     const page = a.display.on_screen();
     const band = a.display.screen.height - footer_height_px - text_top;
     page.fill_rect(0, text_top, a.display.screen.width, band, 0xff);
-    const family = a.settings.family_index();
+    const family = a.user.settings.family_index();
     const big = try a.typefaces.phrase_face(family, true, phrase_px);
     const small = try a.typefaces.phrase_face(family, false, context_px);
     const width: f32 = @floatFromInt(a.display.screen.width - 2 * phrase_margin_px);
@@ -171,7 +171,7 @@ fn draw_footer(run: *const Run, a: *app.App, s: *sess.Session) !i32 {
     // on, it shows the pace, so a reader can see it follow their taps
     const paused = run.stopped_at != null and run.phrase != null;
     var pace_line: [32]u8 = undefined;
-    const wpm: u32 = @intFromFloat(@round(a.running_pace.?));
+    const wpm: u32 = @intFromFloat(@round(a.user.running_pace.?));
     const pace = if (paused)
         "Paused \u{00B7} tap the middle to carry on"
     else
@@ -185,7 +185,7 @@ fn draw_footer(run: *const Run, a: *app.App, s: *sess.Session) !i32 {
     if (run.phrase) |p| {
         const words_left = s.chapter_words_left(.{ .para = p.para, .byte = p.start });
         assert(words_left >= p.words); // The phrase's own, at least
-        const chapter_minutes = stats.minutes_at(a.running_pace.?, words_left);
+        const chapter_minutes = stats.minutes_at(a.user.running_pace.?, words_left);
         const left = stats.format_minutes(&minutes_buffer, chapter_minutes);
         text = std.fmt.bufPrint(&line, "{s} left in chapter", .{left}) catch "";
     }
@@ -208,7 +208,7 @@ pub fn on_pause_button(a: *const app.App, x: i32, y: i32) bool {
 /// The phrase at `at`, or the first after it, as long as fits the screen at the
 /// phrase's size (model/phrases.zig).
 pub fn phrase_at(a: *app.App, s: *const sess.Session, at: book_model.Pos) !?phrases.Phrase {
-    const font = try a.typefaces.phrase_face(a.settings.family_index(), true, phrase_px);
+    const font = try a.typefaces.phrase_face(a.user.settings.family_index(), true, phrase_px);
     const width: f32 = @floatFromInt(a.display.screen.width - 2 * phrase_margin_px);
     const room: Room = .{ .font = font, .width = width };
     return phrases.at(s.paragraphs, at, .{ .ctx = &room, .call = Room.fits });

@@ -50,7 +50,7 @@ comptime {
 pub fn logged_hit(x: i32, y: i32, page_index: u32, count: u32, searching: bool) library.Hit {
     assert(page_index < library.page_count(count));
     const h = library.hit(x, y, page_index, count, searching);
-    std.debug.print("library tap {d},{d}: {s}\n", .{ x, y, @tagName(h) });
+    std.debug.print("library tap {s} at {d},{d}\n", .{ @tagName(h), x, y });
     // A book tapped is one of those shown
     if (h == .book) assert(h.book < count);
     return h;

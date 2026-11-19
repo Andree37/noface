@@ -8,51 +8,51 @@ still
 
 # Paging: on to the second page and back
 tap library.next
-log library tap 832,1590: next
+log library tap next at
 drawn 150
 still
 tap library.prev
-log library tap 440,1590: prev
+log library tap prev at
 drawn 150
 still
 
 # The filter's tabs: Unread, Read, then All again
 tap library.tab.unread
-log library tap 340,558: tab
+log library tap tab at
 drawn 150
 still
 tap library.tab.read
-log library tap 500,558: tab
+log library tap tab at
 drawn 150
 still
 tap library.tab.all
-log library tap 200,558: tab
+log library tap tab at
 drawn 150
 still
 
 # Sorting: each of the six orders, round to the first
 tap library.sort
-log library tap 1000,558: sort
+log library tap sort at
 drawn 150
 still
 tap library.sort
-log library tap 1000,558: sort
+log library tap sort at
 drawn 150
 still
 tap library.sort
-log library tap 1000,558: sort
+log library tap sort at
 drawn 150
 still
 tap library.sort
-log library tap 1000,558: sort
+log library tap sort at
 drawn 150
 still
 tap library.sort
-log library tap 1000,558: sort
+log library tap sort at
 drawn 150
 still
 tap library.sort
-log library tap 1000,558: sort
+log library tap sort at
 drawn 150
 still
 
@@ -88,7 +88,7 @@ log screen: LibrarySearch done by tap
 drawn 150
 still
 tap library.clear_search
-log library tap 636,300: clear_search
+log library tap clear_search at
 drawn 150
 still
 

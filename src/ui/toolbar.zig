@@ -24,17 +24,14 @@ const title_band = 72;
 pub const status_row = status_band;
 const tool_row = status_row + tools_band;
 pub const top_height = tool_row + title_band;
-/// The tools' icons' middles, and Home's, down from the tools' row's top.
-const tool_icon_drop = 52;
-const tool_icon_y = status_row + tool_icon_drop;
-/// The text beside them, Home's and Aa's, a little lower, on the icons' line.
-const tool_label_y = tool_icon_y + 12;
+/// The tools' icons' middles, on Home's line, which sits under the status line as every
+/// back link sits under the strip above it.
+const tool_icon_y = status_row + draw.back_link.drop;
+/// Aa's text on the icons' line, as Home's sits beside its arrow.
+const tool_label_y = tool_icon_y + draw.back_link.label_drop;
 const tool_reach = 56; // Taps this far either side of a tool's centre
 /// The tools take taps this far into the title's band under them.
 const tool_taps_below = 12;
-/// Home: its arrow's middle and its label's left, in from the margin.
-const home_icon_x = margin + 18;
-const home_label_x = margin + 56;
 /// The clock's baseline and the status icons' middle, down from the screen's top.
 const status_text_y = 54;
 const status_icons_y = 45;
@@ -256,8 +253,7 @@ pub fn render(
     const status_y = status_icons_y;
     try icons.status_cluster(page, fonts.caption, right, status_y, status_text_y, quick, false);
 
-    icons.back(page, home_icon_x, tool_icon_y);
-    try fonts.small.draw(page, home_label_x, tool_label_y, "Home");
+    try draw.draw_back_link(fonts.small, page, tool_icon_y, "Home");
     // Each tool drawn where its entry says it takes taps
     for (tools) |t| try draw_tool(fonts, page, t, bookmarked);
 

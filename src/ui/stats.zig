@@ -5,7 +5,6 @@ const assert = std.debug.assert;
 const Page = @import("../gfx/page.zig").Page;
 const draw = @import("draw.zig");
 const style = @import("style.zig");
-const icons = @import("icons.zig");
 const stats_model = @import("../model/stats.zig");
 const Fonts = @import("fonts.zig").Fonts;
 
@@ -42,20 +41,43 @@ const row_count = 4;
 const rows_bottom = rows_top + row_count * row_height;
 
 const bar_width = 56; // Thin bars with air between, rounded at the top only
+const bar_least = 6; // The sliver that shows any reading at all
+const bar_label_rise = 14; // A bar's minutes' baseline over its top
+const bar_shade = 0x90; // Days before today, in gray
+const chart_rule_thick = 2;
+/// "No reading this week yet", in the middle of the bars' room: its gray band and its
+/// baseline under that band's top.
+const empty_tint_height = 50;
+const empty_baseline_drop = 40;
+const days_shown = @typeInfo(@FieldType(Summary, "last7")).array.len;
+
+/// A tile's label over its number: its baseline and the gray band behind it, down from
+/// the tiles' top.
+const tile_label_drop = 40;
+const tile_tint_drop = 12;
+const tile_tint_height = 36;
+/// A row's label and value baseline, down from its rule.
+const row_baseline_drop = 68;
+/// The note under the rows: its baseline and its gray band, down from the last rule;
+/// and the room kept under it.
+const note_drop = 56;
+const note_tint_drop = 26;
+const note_tint_height = 40;
+const note_room = 70;
 const bar_corner = style.bar_corner;
 
 const day_letters = [_][]const u8{ "M", "T", "W", "T", "F", "S", "S" };
 
 comptime {
     // Everything fits on the screen, top to bottom.
-    assert(rows_bottom + 70 <= style.screen_height);
-    assert(back_height >= 100); // Going back is a fingertip tall
-    // Seven bars, each with air either side, rounded no more than half their width.
-    assert(7 * bar_width < style.screen_width - 2 * style.margin);
+    assert(rows_bottom + note_room <= style.screen_height);
+    assert(back_height >= style.fingertip); // Going back is a fingertip tall
+    // A bar a day, each with air either side, rounded no more than half their width.
+    assert(days_shown * bar_width < style.screen_width - 2 * style.margin);
     assert(2 * bar_corner <= bar_width);
-    assert(bar_room >= 6); // The sliver that shows any reading at all
+    assert(bar_room >= bar_least);
     // A letter for every day the chart shows.
-    assert(day_letters.len == @typeInfo(@FieldType(Summary, "last7")).array.len);
+    assert(day_letters.len == days_shown);
     // The three tiles' labels sit side by side without overlapping.
     assert(3 * tile_label_width <= style.screen_width - 2 * style.margin);
 }
@@ -83,16 +105,17 @@ fn minutes_text(buffer: []u8, seconds: u64, none: []const u8) []const u8 {
 pub fn bar_height(seconds: u64, most: u64, room: u32) u32 {
     if (seconds == 0 or most == 0) return 0;
     assert(seconds <= most);
-    const height = @max(@as(u32, @intCast(seconds * room / most)), 6);
-    assert(height <= @max(room, 6));
+    const height = @max(@as(u32, @intCast(seconds * room / most)), bar_least);
+    assert(height <= @max(room, bar_least));
     return height;
 }
 
 fn tile(fonts: Fonts, page: Page, x: f32, label: []const u8, value: []const u8) !void {
     assert(x >= style.margin);
     assert(label.len > 0);
-    try fonts.caption.draw(page, x, tiles_top + 40, label);
-    page.tint(@intFromFloat(x), tiles_top + 12, tile_label_width, 36, style.faded);
+    try fonts.caption.draw(page, x, tiles_top + tile_label_drop, label);
+    const tint_top = tiles_top + tile_tint_drop;
+    page.tint(@intFromFloat(x), tint_top, tile_label_width, tile_tint_height, style.faded);
     try fonts.hero.draw(page, x, tile_value_y, value);
 }
 
@@ -101,17 +124,17 @@ fn row(fonts: Fonts, page: Page, index: u32, label: []const u8, value: []const u
     assert(label.len > 0);
     const y = rows_top + index * row_height;
     page.fill_rect(style.margin, y, page.width - 2 * style.margin, 1, style.rule);
-    try fonts.small.draw(page, style.margin, @intCast(y + 68), label);
+    const baseline: i32 = @intCast(y + row_baseline_drop);
+    try fonts.small.draw(page, style.margin, baseline, label);
     const right: f32 = @floatFromInt(page.width - style.margin);
-    try fonts.small.draw(page, right - try fonts.small.measure(value), @intCast(y + 68), value);
+    try fonts.small.draw(page, right - try fonts.small.measure(value), baseline, value);
 }
 
 pub fn render(fonts: Fonts, page: Page, s: Summary) !void {
     assert(page.height > rows_bottom);
     assert(page.width > 2 * style.margin);
     page.fill_rect(0, header_top, page.width, page.height - header_top, style.white);
-    icons.back(page, style.margin + 18, header_top + 52);
-    try fonts.small.draw(page, style.margin + 56, header_top + 64, "Library");
+    try draw.draw_back_link(fonts.small, page, header_top + draw.back_link.drop, "Library");
     try fonts.hero.draw(page, style.margin, title_y, "Reading");
     try render_tiles(fonts, page, &s);
     try render_chart(fonts, page, &s);
@@ -145,15 +168,16 @@ fn render_chart(fonts: Fonts, page: Page, s: *const Summary) !void {
     }
     assert(s.last7[busiest] == most);
     const width = page.width - 2 * style.margin;
-    const slot: u32 = width / 7;
-    page.fill_rect(style.margin, chart_baseline, width, 2, style.rule);
+    const slot: u32 = width / days_shown;
+    page.fill_rect(style.margin, chart_baseline, width, chart_rule_thick, style.rule);
     if (most == 0) {
         // An empty week says so, rather than leaving a blank that looks broken
         const middle: f32 = @floatFromInt(page.width / 2);
         const empty = "No reading this week yet";
-        const baseline: i32 = chart_top + bar_room / 2 + 40;
+        const tint_top = chart_top + bar_room / 2;
+        const baseline: i32 = tint_top + empty_baseline_drop;
         try draw.centered(fonts.small, page, middle, baseline, empty);
-        page.tint(style.margin, chart_top + bar_room / 2, width, 50, style.faded);
+        page.tint(style.margin, tint_top, width, empty_tint_height, style.faded);
     }
     for (s.last7, 0..) |seconds, day| {
         const center_x: u32 = style.margin + @as(u32, @intCast(day)) * slot + slot / 2;
@@ -169,7 +193,7 @@ fn render_chart(fonts: Fonts, page: Page, s: *const Summary) !void {
                 .labelled = today or day == busiest,
             });
         }
-        const letter = day_letters[(s.first_weekday + @as(u32, @intCast(day))) % 7];
+        const letter = day_letters[(s.first_weekday + @as(u32, @intCast(day))) % day_letters.len];
         const letter_font = if (today) fonts.title else fonts.caption;
         try draw.centered(letter_font, page, @floatFromInt(center_x), day_label_y, letter);
     }
@@ -187,7 +211,7 @@ const Bar = struct {
 fn render_chart_bar(fonts: Fonts, page: Page, bar: Bar) !void {
     assert(bar.height > 0);
     assert(bar.height <= bar_room);
-    const shade: u8 = if (bar.today) 0x00 else 0x90;
+    const shade: u8 = if (bar.today) style.black else bar_shade;
     const top = chart_baseline - bar.height;
     const left = bar.center_x - bar_width / 2;
     const corner = @min(bar_corner, @as(f32, @floatFromInt(bar.height)) / 2);
@@ -200,7 +224,7 @@ fn render_chart_bar(fonts: Fonts, page: Page, bar: Bar) !void {
         var buffer: [16]u8 = undefined;
         const label = std.fmt.bufPrint(&buffer, "{d}", .{nearest_minute(bar.seconds)}) catch "";
         const center_x: f32 = @floatFromInt(bar.center_x);
-        try draw.centered(fonts.caption, page, center_x, @intCast(top - 14), label);
+        try draw.centered(fonts.caption, page, center_x, @intCast(top - bar_label_rise), label);
     }
 }
 
@@ -238,8 +262,8 @@ fn render_rows(fonts: Fonts, page: Page, s: *const Summary) !void {
     const width = page.width - 2 * style.margin;
     page.fill_rect(style.margin, rows_bottom, width, 1, style.rule);
     const note = "Days and the streak count from when noface started its journal.";
-    try fonts.caption.draw(page, style.margin, @intCast(rows_bottom + 56), note);
-    page.tint(style.margin, rows_bottom + 26, width, 40, style.faded);
+    try fonts.caption.draw(page, style.margin, @intCast(rows_bottom + note_drop), note);
+    page.tint(style.margin, rows_bottom + note_tint_drop, width, note_tint_height, style.faded);
 }
 
 test "tiles and bars count minutes the same way" {
@@ -251,10 +275,10 @@ test "bars scale to the busiest day, and any reading shows" {
     try std.testing.expectEqual(@as(u32, 0), bar_height(0, 600, 250));
     try std.testing.expectEqual(@as(u32, 250), bar_height(600, 600, 250));
     try std.testing.expectEqual(@as(u32, 125), bar_height(300, 600, 250));
-    try std.testing.expectEqual(@as(u32, 6), bar_height(1, 6000, 250));
+    try std.testing.expectEqual(@as(u32, bar_least), bar_height(1, 6000, 250));
 }
 
 test "the screen fits, and going back is a fingertip tall" {
-    try std.testing.expect(rows_top + 4 * row_height + 70 <= style.screen_height);
-    try std.testing.expect(back_height >= 100);
+    try std.testing.expect(rows_bottom + note_room <= style.screen_height);
+    try std.testing.expect(back_height >= style.fingertip);
 }

@@ -12,7 +12,9 @@ const keyboard = @import("keyboard.zig");
 const catalog = @import("../model/catalog.zig");
 const Fonts = @import("fonts.zig").Fonts;
 
-/// Everything under the status strip is the sheet's.
+/// Where the bar's layout starts: under the library's status strip. A screen may draw
+/// the sheet from higher up (`render_bar`'s `from`); the band down to here is then
+/// the bar's too, so the same `from` goes to `bar_hit` and `hit`.
 pub const top = style.status_height;
 
 const bar_gap = 16; // Over the bar, under the status strip
@@ -81,15 +83,18 @@ comptime {
 
 pub const Hit = union(enum) { none, cancel, field, row: u32 };
 
-/// The bar's own taps, or null below it.
-pub fn bar_hit(x: i32, y: i32) ?Hit {
-    if (y < top or y >= bar_top + bar_height + bar_reach_below) return null;
+/// The bar's own taps, from `from` (where the sheet is drawn from, as given to
+/// `render_bar`) down to the bar's foot, or null outside them.
+pub fn bar_hit(from: u32, x: i32, y: i32) ?Hit {
+    assert(from <= top);
+    if (y < from or y >= bar_top + bar_height + bar_reach_below) return null;
     return if (x >= field_right) .cancel else .field;
 }
 
-pub fn hit(x: i32, y: i32, rows: u32) Hit {
+/// What a tap on a sheet drawn from `from` lands on, with `rows` rows listed.
+pub fn hit(from: u32, x: i32, y: i32, rows: u32) Hit {
     assert(rows <= max_rows);
-    if (bar_hit(x, y)) |h| return h;
+    if (bar_hit(from, x, y)) |h| return h;
     if (y >= rows_top and y < rows_bottom) {
         const row: u32 = @intCast(@divTrunc(y - rows_top, row_height));
         assert(row < max_rows + 1); // The band below the last whole row is a part row
@@ -100,8 +105,8 @@ pub fn hit(x: i32, y: i32, rows: u32) Hit {
 
 pub const Icon = enum { search, none };
 
-/// Clears from `from` (the bottom of the status strip above) down to `content_top`
-/// and draws the bar: a magnifier when searching, what's typed (or the
+/// Clears from `from` (the bottom of the status strip above, at most `top`) down to
+/// `content_top` and draws the bar: a magnifier when searching, what's typed (or the
 /// `placeholder`), a cursor, and Cancel.
 pub fn render_bar(
     fonts: Fonts,
@@ -111,7 +116,7 @@ pub fn render_bar(
     placeholder: []const u8,
     icon: Icon,
 ) !void {
-    assert(from <= content_top);
+    assert(from <= top);
     assert(placeholder.len > 0);
     page.fill_rect(0, from, page.width, content_top - from, style.white);
     const r: f32 = bar_height / 2;
@@ -126,6 +131,7 @@ pub fn render_bar(
     const text_x = left + inset;
     const baseline: i32 = @intFromFloat(cy + field.baseline_drop);
     const avail = right - r / 2 - text_x;
+    var typed: f32 = 0; // How wide what's typed is drawn: the cursor follows it
     if (query.len == 0) {
         try fonts.small.draw(page, text_x, baseline, placeholder);
         const avail_px: u32 = @intFromFloat(avail);
@@ -134,9 +140,9 @@ pub fn render_bar(
         const shade = field.placeholder_shade;
         page.tint(@intFromFloat(text_x), tint_top, avail_px, tint_height, shade);
     } else {
-        try draw.clipped(fonts.small, page, text_x, baseline, query, avail);
+        // Its end, where letters are being typed, stays in view.
+        typed = try draw.clipped_start(fonts.small, page, text_x, baseline, query, avail);
     }
-    const typed = @min(try fonts.small.measure(query), avail);
     const gap: f32 = if (query.len > 0) field.cursor_gap else 0;
     const cursor: u32 = @intFromFloat(text_x + typed + gap);
     const cursor_top = bar_top + field.cursor_inset;
@@ -201,13 +207,21 @@ pub fn render(
 test "bar, rows and keyboard each get their own taps" {
     const bar_y = bar_top + bar_height / 2;
     const cancel_x = field_right + cancel_width / 2;
-    try std.testing.expectEqual(Hit.cancel, hit(cancel_x, bar_y, 3));
-    try std.testing.expectEqual(Hit.field, hit(style.screen_width / 4, bar_y, 3));
+    try std.testing.expectEqual(Hit.cancel, hit(top, cancel_x, bar_y, 3));
+    try std.testing.expectEqual(Hit.field, hit(top, style.screen_width / 4, bar_y, 3));
     const x = style.screen_width / 4;
     const first_row = rows_top + row_height / 2;
-    try std.testing.expectEqual(Hit{ .row = 0 }, hit(x, first_row, 3));
-    try std.testing.expectEqual(Hit{ .row = 2 }, hit(x, first_row + 2 * row_height, 3));
-    try std.testing.expectEqual(Hit.none, hit(x, first_row + 3 * row_height, 3));
+    try std.testing.expectEqual(Hit{ .row = 0 }, hit(top, x, first_row, 3));
+    try std.testing.expectEqual(Hit{ .row = 2 }, hit(top, x, first_row + 2 * row_height, 3));
+    try std.testing.expectEqual(Hit.none, hit(top, x, first_row + 3 * row_height, 3));
+}
+
+test "a sheet drawn from higher up takes taps from where it's drawn" {
+    const x = style.screen_width / 4;
+    const from = top / 2;
+    try std.testing.expectEqual(@as(?Hit, null), bar_hit(top, x, from));
+    try std.testing.expectEqual(@as(?Hit, Hit.field), bar_hit(from, x, from));
+    try std.testing.expectEqual(@as(?Hit, null), bar_hit(from, x, from - 1));
 }
 
 test "rows fit above the keyboard and are a fingertip tall" {

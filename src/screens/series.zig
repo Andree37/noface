@@ -22,6 +22,9 @@ const typing = @import("typing.zig");
 const log = std.log.scoped(.series);
 
 const numbers = 30; // Places offered in a series: 1 to 30
+/// Naming a series covers the whole screen, so its sheet is drawn and hit-tested from
+/// the top.
+const sheet_top = 0;
 /// The rows above the library's series in the first list: a new one, and none.
 const rows_before_series = 2;
 
@@ -105,9 +108,10 @@ const NameEntry = struct {
             // Not over the list it came from
             page.fill_rect(0, 0, page.width, page.height, style.white);
         }
-        try search_sheet.render_bar(a.ui, page, 0, e.name.slice(), "Series name", .none);
+        try search_sheet.render_bar(a.ui, page, sheet_top, e.name.slice(), "Series name", .none);
         if (part == .all) try keyboard.render(a.ui, page);
-        try a.display.show_band(0, if (part == .all) a.display.screen.height else keyboard.top);
+        const bottom: u32 = if (part == .all) a.display.screen.height else keyboard.top;
+        try a.display.show_band(sheet_top, bottom - sheet_top);
     }
 
     pub fn on_tap(e: *NameEntry, t: screen.Tap) !screen.Step([]const u8) {
@@ -115,7 +119,7 @@ const NameEntry = struct {
         return switch (typing.key(&e.name, t, typing.anything)) {
             .changed => .{ .redraw = .changing },
             .enter => if (e.name.words().len > 0) .{ .done = e.name.slice() } else .stay,
-            .none => if (search_sheet.hit(t.x, t.y, 0) == .cancel) .close else .stay,
+            .none => if (search_sheet.hit(sheet_top, t.x, t.y, 0) == .cancel) .close else .stay,
         };
     }
 };

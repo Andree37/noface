@@ -50,6 +50,8 @@ const run_view = @import("screens/reader/run_view.zig");
 const back_button_ui = @import("screens/reader/back_button.zig");
 const more = @import("screens/reader/more.zig");
 const definition_ui = @import("ui/definition.zig");
+const keyboard = @import("ui/keyboard.zig");
+const search_sheet = @import("ui/search_sheet.zig");
 
 const go_regular = @embedFile("testdata/fonts/Go-Regular.ttf");
 const go_bold = @embedFile("testdata/fonts/Go-Bold.ttf");
@@ -1197,6 +1199,41 @@ const scenarios = [_]Scenario{
                 });
                 try expect(!r.looked_up, "a dictionary appeared from nowhere");
                 try expect(r.highlights == 1, "the word wasn't highlighted");
+            }
+        }.run,
+    },
+    .{
+        .name = "a book search jumps to its first result, and a tap on the sheet just " ++
+            "over its field keeps the sheet open",
+        .run = struct {
+            fn run() !void {
+                const search = tool(.search);
+                const enter = tap_on(keyboard.place(.enter));
+                const first_result = tap_on(goto_ui.place(.{ .row = 0 }));
+                // The reader's sheet starts at its status row, above the bar's own layout
+                const over_field = tap(width / 4, (toolbar.status_row + search_sheet.top) / 2);
+                assert(over_field.act.tap.y >= toolbar.status_row);
+                assert(over_field.act.tap.y < search_sheet.top);
+                const garden = [_]Step{
+                    key('g'), key('a'), key('r'), key('d'), key('e'), key('n'),
+                };
+                const read_on = try play(&.{ forward, forward, forward, forward, forward });
+                const searched = try play(&(.{ forward, forward, forward, forward, forward } ++
+                    .{ top, search } ++ garden ++ .{ enter, first_result }));
+                try expect(
+                    !same_place(read_on.saved, searched.saved),
+                    "the search's result didn't move the place",
+                );
+                const over = try play(&(.{ forward, forward, forward, forward, forward } ++
+                    .{ top, search, over_field } ++ garden ++ .{ enter, first_result }));
+                try expect(
+                    same_place(searched.saved, over.saved),
+                    "a tap just over the field closed the search",
+                );
+            }
+
+            fn key(char: u8) Step {
+                return tap_on(keyboard.place(.{ .char = char }));
             }
         }.run,
     },

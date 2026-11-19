@@ -17,35 +17,40 @@ const typing = @import("../typing.zig");
 
 const results_max = 500;
 const snippet_bytes = 160;
+/// The sheet starts under the reader's status row, so is drawn and hit-tested from there.
+const sheet_top = toolbar.status_row;
 
 comptime {
     // Top to bottom: the bar, then the keyboard or the count and the list of results
-    assert(toolbar.status_row < search_sheet.content_top);
+    assert(sheet_top <= search_sheet.top);
     assert(search_sheet.content_top < keyboard.top);
     assert(search_sheet.content_top < goto.list_top);
 }
 
 /// Searching the book, to open over the page (`screen.open`), its results in `alloc`:
-/// typing on the keyboard, then the results, a page of them at a time. Done with the
-/// page of the result tapped; closed when cancelled.
-/// A search of the open book, typing into `query`, the last search, which the reader
-/// keeps while the book is open.
+/// typing, starting from `last`, the last search, which the reader keeps while the book
+/// is open, then the results, a page of them at a time. Done with the page of the
+/// result tapped; closed when cancelled.
 pub fn make(
     a: *app.App,
     s: *sess.Session,
-    query: *search.Query,
+    last: *search.Query,
     alloc: std.mem.Allocator,
 ) Search {
     assert(s.pages.len > 0);
     assert(s.current < s.pages.len);
-    return .{ .a = a, .s = s, .query = query, .alloc = alloc };
+    return .{ .a = a, .s = s, .last = last, .typed = last.*, .alloc = alloc };
 }
 
 pub const Search = struct {
     pub const Result = u32;
     a: *app.App,
     s: *sess.Session,
-    query: *search.Query,
+    /// The reader's last search, written only when Enter searches, so a search left
+    /// some other way (Cancel, a tap above, the Kindle locking) keeps the one before.
+    last: *search.Query,
+    /// What's typed in the bar, from the last search on.
+    typed: search.Query,
     alloc: std.mem.Allocator,
     shown: Shown = .keyboard,
 
@@ -60,8 +65,8 @@ pub const Search = struct {
         const a = se.a;
         assert(a.display.screen.height > search_sheet.content_top);
         const page = a.display.on_screen();
-        const top = toolbar.status_row;
-        const query = se.query.slice();
+        const top = sheet_top;
+        const query = se.typed.slice();
         try search_sheet.render_bar(a.ui, page, top, query, "Search this book", .search);
         if (part == .all) switch (se.shown) {
             .keyboard => {
@@ -94,13 +99,13 @@ pub const Search = struct {
 
     pub fn on_tap(se: *Search, t: screen.Tap) !screen.Step(u32) {
         assert(se.s.current < se.s.pages.len);
-        if (search_sheet.bar_hit(t.x, t.y)) |h| {
+        if (t.y < sheet_top) return .close; // Above the sheet
+        if (search_sheet.bar_hit(sheet_top, t.x, t.y)) |h| {
             if (h == .cancel) return .close;
             if (se.shown == .keyboard) return .stay;
             se.shown = .keyboard; // The field: the keyboard back over the results
             return .{ .redraw = .all };
         }
-        if (t.y < search_sheet.top) return .close; // Above the sheet
         return switch (se.shown) {
             .keyboard => se.on_keyboard(t),
             .results => |*r| se.on_results(t, r.rows, &r.pages),
@@ -109,12 +114,13 @@ pub const Search = struct {
 
     fn on_keyboard(se: *Search, t: screen.Tap) !screen.Step(u32) {
         assert(se.shown == .keyboard);
-        switch (typing.key(se.query, t, typing.anything)) {
+        switch (typing.key(&se.typed, t, typing.anything)) {
             .none => return .stay,
             .changed => return .{ .redraw = .changing },
             .enter => {
-                const words = se.query.words();
+                const words = se.typed.words();
                 if (words.len == 0) return .stay;
+                se.last.* = se.typed;
                 const rows = try find(se.alloc, se.s, words);
                 assert(rows.len <= results_max);
                 std.debug.print("search: {d} results\n", .{rows.len});

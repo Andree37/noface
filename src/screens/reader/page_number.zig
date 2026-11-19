@@ -11,9 +11,12 @@ const screen = @import("../screen.zig");
 const typing = @import("../typing.zig");
 const Query = @import("../../model/search.zig").Query;
 
+/// The sheet starts under the reader's status row, so is drawn and hit-tested from there.
+const sheet_top = toolbar.status_row;
+
 comptime {
     // The bar, then the space for a note, then the keyboard, top to bottom
-    assert(toolbar.status_row < search_sheet.content_top);
+    assert(sheet_top <= search_sheet.top);
     assert(search_sheet.content_top < keyboard.top);
 }
 
@@ -53,7 +56,7 @@ pub const PageEntry = struct {
             "Page, from 1 to {d}",
             .{e.page_count},
         ) catch "Page";
-        const top = toolbar.status_row;
+        const top = sheet_top;
         try search_sheet.render_bar(a.ui, page, top, e.typed.slice(), placeholder, .none);
         const note_height = keyboard.top - search_sheet.content_top;
         page.fill_rect(0, search_sheet.content_top, page.width, note_height, 0xff);
@@ -68,8 +71,10 @@ pub const PageEntry = struct {
 
     pub fn on_tap(e: *PageEntry, t: screen.Tap) !screen.Step(u32) {
         assert(e.page_count > 0);
-        if (search_sheet.bar_hit(t.x, t.y)) |h| return if (h == .cancel) .close else .stay;
-        if (t.y < search_sheet.top) return .close; // Above the sheet
+        if (t.y < sheet_top) return .close; // Above the sheet
+        if (search_sheet.bar_hit(sheet_top, t.x, t.y)) |h| {
+            return if (h == .cancel) .close else .stay;
+        }
         e.note = "";
         if (typing.key(&e.typed, t, typing.digits) == .enter) {
             if (page_index(e.typed.slice(), e.page_count)) |index| {

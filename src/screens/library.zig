@@ -114,7 +114,7 @@ const LibrarySearch = struct {
             .enter => return .{ .done = .search },
             .none => {},
         }
-        return switch (search_sheet.hit(t.x, t.y, @intCast(ls.matches.len))) {
+        return switch (search_sheet.hit(search_sheet.top, t.x, t.y, @intCast(ls.matches.len))) {
             .cancel => .close,
             .row => |i| {
                 // A row tapped is one of those listed

@@ -54,6 +54,47 @@ pub fn clipped(font: *Font, page: Page, x: f32, y: i32, s: []const u8, avail: f3
     try font.draw(page, x, y, buffer[0 .. part.len + dots.len]);
 }
 
+/// Text cut at its start to `avail`, beginning with "..." when it doesn't fit, so the
+/// end of what's being typed stays in view. Returns the width drawn.
+pub fn clipped_start(font: *Font, page: Page, x: f32, y: i32, s: []const u8, avail: f32) !f32 {
+    assert(std.math.isFinite(x));
+    assert(std.math.isFinite(avail));
+    const width = try font.measure(s);
+    if (width <= avail) {
+        try font.draw(page, x, y, s);
+        return width;
+    }
+    const dots = "...";
+    var buffer: [256]u8 = undefined;
+    const start = try tail_start(font, s, avail - try font.measure(dots), buffer.len - dots.len);
+    const tail = s[start..];
+    assert(dots.len + tail.len <= buffer.len);
+    @memcpy(buffer[0..dots.len], dots);
+    @memcpy(buffer[dots.len..][0..tail.len], tail);
+    const shown = buffer[0 .. dots.len + tail.len];
+    try font.draw(page, x, y, shown);
+    return font.measure(shown);
+}
+
+/// Where the longest end of `s` that fits `avail`, and is at most `len_max` bytes,
+/// starts: never inside a character.
+fn tail_start(font: *Font, s: []const u8, avail: f32, len_max: u32) !u32 {
+    assert(std.math.isFinite(avail));
+    assert(s.len <= std.math.maxInt(u32));
+    const len: u32 = @intCast(s.len);
+    // Ends of `s` only get narrower as they start later, so the start is found by halves.
+    var low: u32 = len -| len_max;
+    var high: u32 = len;
+    while (low < high) {
+        const middle = low + (high - low) / 2;
+        if (try font.measure(s[middle..]) <= avail) high = middle else low = middle + 1;
+    }
+    var start = low;
+    while (start < len and s[start] & 0xc0 == 0x80) start += 1;
+    assert(start <= len);
+    return start;
+}
+
 /// Where the line starting `s` ends to fit `avail`: after the last whole word that
 /// fits (the word just before an overflowing space counts), or mid-word when even
 /// the first word doesn't fit.
@@ -267,4 +308,20 @@ test "a line keeps a word that fits just before the space that overflows" {
     const avail = try font.measure("abc def");
     try std.testing.expectEqualStrings("abc def", s[0..try line_end(&font, s, avail)]);
     try std.testing.expectEqualStrings("abc", s[0..try line_end(&font, s, avail - 1)]);
+}
+
+test "a long field shows the end of what's typed" {
+    const go_regular = @embedFile("../testdata/fonts/Go-Regular.ttf");
+    var font = try Font.init(go_regular, 40, 1.2);
+    const s = "the quick brown fox";
+    const avail = try font.measure("brown fox");
+    try std.testing.expectEqualStrings("brown fox", s[try tail_start(&font, s, avail, s.len)..]);
+    try std.testing.expectEqualStrings("fox", s[try tail_start(&font, s, avail, 3)..]);
+    // Just too narrow for "é au lait": the cut never lands inside the é
+    const accented = "caf\xc3\xa9 au lait";
+    const narrow = try font.measure(accented[3..]) - 1;
+    const start = try tail_start(&font, accented, narrow, accented.len);
+    try std.testing.expect(start > 3);
+    try std.testing.expect(accented[start] & 0xc0 != 0x80);
+    try std.testing.expect(try font.measure(accented[start..]) <= narrow);
 }

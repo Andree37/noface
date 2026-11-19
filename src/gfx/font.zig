@@ -44,6 +44,8 @@ pub const Font = struct {
     info: truetype.Info,
     scale: f32,
     ascent: i32,
+    /// How far its lowest letters reach under the baseline, in pixels.
+    descent: i32,
     line_height: i32,
     /// How tall its capitals stand over the baseline, in pixels: an H's height. What a
     /// label is centred by in its row, button or key (`centred_baseline`).
@@ -100,11 +102,13 @@ pub const Font = struct {
         const info = truetype.init(ttf) orelse return error.BadFont;
         const scale = truetype.scale_for_pixel_height(&info, px);
         assert(scale > 0);
-        const ascent = truetype.vertical_metrics(&info).ascent;
+        const vertical = truetype.vertical_metrics(&info);
         const font: Font = .{
             .info = info,
             .scale = scale,
-            .ascent = @intFromFloat(@as(f32, @floatFromInt(ascent)) * scale),
+            .ascent = @intFromFloat(@as(f32, @floatFromInt(vertical.ascent)) * scale),
+            // Negative in the font, under the baseline; rounded up, so it covers them
+            .descent = @intFromFloat(@ceil(@as(f32, @floatFromInt(-vertical.descent)) * scale)),
             .line_height = @intFromFloat(px * line_spacing),
             .cap_height = cap_height_of(&info, scale),
             .id = glyph_cache.new_font_id(),
@@ -132,6 +136,22 @@ pub const Font = struct {
         const baseline = top + @divTrunc(height + f.cap_height, 2);
         assert(baseline > top);
         return baseline;
+    }
+
+    /// The band a line on `baseline` takes, from its tallest letters' tops to its lowest
+    /// letters' feet: what a tint behind faded text covers, so it reaches every glyph
+    /// of the line and none of the lines around it.
+    pub fn line_band(f: *const Font, baseline: i32) struct { top: u32, height: u32 } {
+        assert(baseline >= f.ascent);
+        assert(f.descent >= 0);
+        return .{ .top = @intCast(baseline - f.ascent), .height = @intCast(f.ascent + f.descent) };
+    }
+
+    /// Fades the line on `baseline`, from `x` for `width`: tints its band, so quiet text
+    /// (a subtitle, a note) is lighter, and nothing over or under it is.
+    pub fn fade(f: *const Font, page: Page, x: u32, baseline: i32, width: u32, shade: u8) void {
+        const band = f.line_band(baseline);
+        page.tint(x, band.top, width, band.height, shade);
     }
 
     /// The baseline that puts a line's capitals' middle at `middle`: a label beside an
@@ -409,6 +429,7 @@ test "a glyph whose box lies past any page draws nothing, at the pen, never over
         .info = info,
         .scale = 1e7,
         .ascent = 0,
+        .descent = 0,
         .line_height = 1,
         .cap_height = 0,
         .id = glyph_cache.new_font_id(),

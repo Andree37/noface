@@ -33,11 +33,8 @@ const tool_taps_below = 12;
 /// The clock's baseline and the status icons' middle, down from the screen's top.
 const status_text_y = 54;
 const status_icons_y = 45;
-/// The book's title: its baseline, and the band its faded tint covers, down from the
-/// title band's top.
+/// The book's title, faded: its baseline, down from the title band's top.
 const title_baseline_drop = 54;
-const title_tint_drop = 20;
-const title_tint_height = 46;
 const tool_spacing = 120; // From one tool's centre to the next
 /// The last tool's centre, in from the screen's right edge past the margin.
 const last_tool_inset = margin + 24;
@@ -59,10 +56,6 @@ const chapter_next_left = screen_width - 2 * skip_inset;
 /// The scrubber's bar and its label, down from the scrubber's band's top.
 const scrub_drop = 110;
 const scrub_label_drop = 56;
-/// While the pages are laid out, the label's band faded: from this far above its
-/// baseline, this tall.
-const scrub_label_tint_rise = 36;
-const scrub_label_tint_height = 50;
 const scrub = slider.Slider{
     .left = skip_inset,
     .right = screen_width - skip_inset,
@@ -237,7 +230,7 @@ pub fn draw_scrub(fonts: Fonts, page: Page, at: ?Position, mono: bool) !void {
         const y = scrub_top + scrub_label_drop;
         try draw.centered(fonts.small, page, centre, y, "Laying out pages\u{2026}");
         // The label faded, as nothing can be done with it yet
-        page.tint(0, y - scrub_label_tint_rise, page.width, scrub_label_tint_height, style.faded);
+        fonts.small.fade(page, 0, y, page.width, style.faded);
         if (mono) page.threshold(scrub_top, screen_height - scrub_top);
         return;
     };
@@ -279,8 +272,7 @@ pub fn render(
 
     const title_y = tool_row + title_baseline_drop;
     try draw.clipped(fonts.caption, page, margin, title_y, title, w - 2 * margin);
-    const tint_top = tool_row + title_tint_drop;
-    page.tint(margin, tint_top, page.width - 2 * margin, title_tint_height, style.faded);
+    fonts.caption.fade(page, margin, title_y, page.width - 2 * margin, style.faded);
     page.fill_rect(0, top_height - 4, page.width, 4, 0x00);
     if (sheet) |tab| try aa.render(fonts, page, tab, chosen, running);
 

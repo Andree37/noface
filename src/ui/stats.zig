@@ -45,24 +45,15 @@ const bar_least = 6; // The sliver that shows any reading at all
 const bar_label_rise = 14; // A bar's minutes' baseline over its top
 const bar_shade = 0x90; // Days before today, in gray
 const chart_rule_thick = 2;
-/// "No reading this week yet", in the middle of the bars' room: its gray band and its
-/// baseline under that band's top.
-const empty_tint_height = 50;
-const empty_baseline_drop = 40;
 const days_shown = @typeInfo(@FieldType(Summary, "last7")).array.len;
 
-/// A tile's label over its number: its baseline and the gray band behind it, down from
-/// the tiles' top.
+/// A tile's label over its number, faded: its baseline, down from the tiles' top.
 const tile_label_drop = 40;
-const tile_tint_drop = 12;
-const tile_tint_height = 36;
 /// A row's label and value baseline, down from its rule.
 const row_baseline_drop = 68;
-/// The note under the rows: its baseline and its gray band, down from the last rule;
-/// and the room kept under it.
+/// The note under the rows, faded: its baseline, down from the last rule; and the room
+/// kept under it.
 const note_drop = 56;
-const note_tint_drop = 26;
-const note_tint_height = 40;
 const note_room = 70;
 const bar_corner = style.bar_corner;
 
@@ -114,8 +105,8 @@ fn tile(fonts: Fonts, page: Page, x: f32, label: []const u8, value: []const u8) 
     assert(x >= style.margin);
     assert(label.len > 0);
     try fonts.caption.draw(page, x, tiles_top + tile_label_drop, label);
-    const tint_top = tiles_top + tile_tint_drop;
-    page.tint(@intFromFloat(x), tint_top, tile_label_width, tile_tint_height, style.faded);
+    const baseline = tiles_top + tile_label_drop;
+    fonts.caption.fade(page, @intFromFloat(x), baseline, tile_label_width, style.faded);
     try fonts.hero.draw(page, x, tile_value_y, value);
 }
 
@@ -174,10 +165,10 @@ fn render_chart(fonts: Fonts, page: Page, s: *const Summary) !void {
         // An empty week says so, rather than leaving a blank that looks broken
         const middle: f32 = @floatFromInt(page.width / 2);
         const empty = "No reading this week yet";
-        const tint_top = chart_top + bar_room / 2;
-        const baseline: i32 = tint_top + empty_baseline_drop;
+        // Its capitals centred in the bars' room
+        const baseline = fonts.small.centred_baseline(chart_top, bar_room);
         try draw.centered(fonts.small, page, middle, baseline, empty);
-        page.tint(style.margin, tint_top, width, empty_tint_height, style.faded);
+        fonts.small.fade(page, style.margin, baseline, width, style.faded);
     }
     for (s.last7, 0..) |seconds, day| {
         const center_x: u32 = style.margin + @as(u32, @intCast(day)) * slot + slot / 2;
@@ -262,8 +253,9 @@ fn render_rows(fonts: Fonts, page: Page, s: *const Summary) !void {
     const width = page.width - 2 * style.margin;
     page.fill_rect(style.margin, rows_bottom, width, 1, style.rule);
     const note = "Days and the streak count from when noface started its journal.";
-    try fonts.caption.draw(page, style.margin, @intCast(rows_bottom + note_drop), note);
-    page.tint(style.margin, rows_bottom + note_tint_drop, width, note_tint_height, style.faded);
+    const baseline: i32 = @intCast(rows_bottom + note_drop);
+    try fonts.caption.draw(page, style.margin, baseline, note);
+    fonts.caption.fade(page, style.margin, baseline, width, style.faded);
 }
 
 test "tiles and bars count minutes the same way" {

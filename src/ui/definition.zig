@@ -20,11 +20,8 @@ const text_top = top + text_drop;
 /// The text stops where its next line's baseline would come within this of the buttons'
 /// row's top (under its rule).
 const text_clear = 16;
-/// A part of speech: the gap over it, its gray band's rise over its baseline and its
-/// height, and how much closer the next line follows it.
+/// A part of speech, faded: the gap over it, and how much closer the next line follows it.
 const pos_gap = 12;
-const pos_tint_rise = 26;
-const pos_tint_height = 34;
 const pos_tighter = 4;
 /// The gap over the entry for the word a held word is a form of.
 const base_gap = 20;
@@ -39,10 +36,8 @@ const button_width = 300;
 const button_drop = 4;
 const button_reach = 10;
 const row_taps_height = button_height + 2 * button_reach;
-/// The credit's gray band: its width in from the right margin, its rise and height.
+/// The credit, faded: as far in from the right margin as it fades.
 const credit_tint_width = 360;
-const credit_tint_rise = 28;
-const credit_tint_height = 36;
 
 pub const Hit = enum { close, highlight, get_dictionary, none };
 
@@ -133,8 +128,7 @@ const Writer = struct {
         if (!w.room()) return w.stop();
         try w.fonts.caption.draw(w.page, style.margin, w.y, name);
         const width = w.page.width - 2 * style.margin;
-        const tint_top: u32 = @intCast(w.y - pos_tint_rise);
-        w.page.tint(style.margin, tint_top, width, pos_tint_height, style.faded);
+        w.fonts.caption.fade(w.page, style.margin, w.y, width, style.faded);
         w.y += line_step - pos_tighter;
     }
 
@@ -241,8 +235,7 @@ pub fn render(fonts: Fonts, page: Page, found: Found) !void {
     const baseline = actions_baseline; // In line with "Highlight"
     try fonts.caption.draw(page, right - try fonts.caption.measure(credit), baseline, credit);
     const tint_left: u32 = @intFromFloat(right - credit_tint_width);
-    const tint_top: u32 = @intCast(baseline - credit_tint_rise);
-    page.tint(tint_left, tint_top, credit_tint_width, credit_tint_height, style.faded);
+    fonts.caption.fade(page, tint_left, baseline, credit_tint_width, style.faded);
 }
 
 /// The dictionary the sheet offers to download, if it offers one.

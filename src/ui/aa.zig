@@ -17,12 +17,9 @@ const top = toolbar.top_height;
 const tabs_height = style.fingertip;
 const tabs_gap = 16;
 /// A tab's label, centred in the tabs' row: the line under the open one, below its
-/// baseline, and the band the others' tint covers, from over the baseline, in from each
-/// side of its cell.
+/// baseline, and the others faded, in from each side of their cell.
 const tab_label = struct {
     const underline_below = 18;
-    const tint_rise = 40;
-    const tint_height = 54;
     const tint_inset = 8;
 };
 /// Under a tab's last control, before the sheet's edge.
@@ -350,11 +347,9 @@ const tile = struct {
 const theme_top = content_top + theme_gap_above;
 const theme_gap_above = 20; // Between the tabs and the tiles
 const theme_height = 300;
-/// The note under the tiles when none is in use: its baseline, and the band its tint
-/// covers, down from the tiles' foot.
+/// The note under the tiles when none is in use, faded: its baseline, down from the
+/// tiles' foot.
 const theme_note_drop = 52;
-const theme_note_tint_drop = 22;
-const theme_note_tint_height = 40;
 const theme_note_baseline = theme_top + theme_height + theme_note_drop;
 /// The Running button, across the sheet under the tiles and their note.
 const running_top = theme_note_baseline + running_gap;
@@ -399,8 +394,6 @@ comptime {
     assert(theme_note_baseline < height_for(.themes));
     // The Running button is a fingertip and more, under the note, above the sheet's edge
     assert(running_height >= style.fingertip);
-    // The note's gray band ends above the Running button
-    assert(theme_top + theme_height + theme_note_tint_drop + theme_note_tint_height <= running_top);
     assert(running_top + running_height + 4 <= height_for(.themes));
     for (switches, 0..) |sw, i| {
         assert(switch_top(i) + toggle_height + toggle_reach <= height_for(sw.tab));
@@ -605,10 +598,7 @@ fn draw_tabs(fonts: Fonts, page: Page, tab: Tab) !void {
         const underline: u32 = @intCast(baseline + tab_label.underline_below);
         try draw.choice(fonts, page, centre, .center, baseline, label, active, underline);
         const inset = tab_label.tint_inset;
-        const tint_top: u32 = @intCast(baseline - tab_label.tint_rise);
-        const tint_width = cell - 2 * inset;
-        const tint_height = tab_label.tint_height;
-        if (!active) page.tint(left + inset, tint_top, tint_width, tint_height, style.faded);
+        if (!active) fonts.small.fade(page, left + inset, baseline, cell - 2 * inset, style.faded);
     }
     page.fill_rect(0, top + tabs_height - 2, page.width, 1, style.rule);
 }
@@ -629,8 +619,9 @@ fn draw_themes(fonts: Fonts, page: Page, chosen: settings_model.Settings) !void 
     if (active_count == 0) {
         const note = "Using your own settings. Pick a theme to switch to it.";
         try fonts.caption.draw(page, margin, theme_note_baseline, note);
-        const note_top = theme_top + theme_height + theme_note_tint_drop;
-        page.tint(margin, note_top, page.width - 2 * margin, theme_note_tint_height, style.faded);
+        // Its letters, and so its faded band, end above the Running button
+        assert(theme_note_baseline + fonts.caption.descent <= running_top);
+        fonts.caption.fade(page, margin, theme_note_baseline, page.width - 2 * margin, style.faded);
     }
 }
 

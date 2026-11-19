@@ -23,12 +23,9 @@ const usual_days = 14;
 const title_size = 64;
 /// The text inside the bubble: this far in from either side.
 const text_inset = 36;
-/// The title's and the detail's baselines, and the detail's gray band, down from the
-/// bubble's top.
+/// The title's and the faded detail's baselines, down from the bubble's top.
 const title_drop = 72;
 const detail_drop = 128;
-const detail_tint_drop = 96;
-const detail_tint_height = 44;
 
 comptime {
     // The bubble sits by the battery: inside the margin on the right, under the status row
@@ -123,9 +120,8 @@ pub const Bubble = struct {
         try draw_ui.clipped(a.ui.title, page, x, title_y, b.said.title, width_available);
         const detail_y = top + detail_drop;
         try draw_ui.clipped(a.ui.caption, page, x, detail_y, b.said.detail, width_available);
-        const tint_top = top + detail_tint_drop;
         const tint_width = width - 2 * text_inset;
-        page.tint(left + text_inset, tint_top, tint_width, detail_tint_height, style.faded);
+        a.ui.caption.fade(page, left + text_inset, detail_y, tint_width, style.faded);
         try a.display.show_rect(left, top, width, height);
     }
 

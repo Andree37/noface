@@ -16,12 +16,6 @@ const title_baseline = 92; // From the sheet's top, without a cover
 const subtitle_gap = 48; // From the title's baseline to the subtitle's
 const row_height = 112; // A fingertip and some
 const bottom_pad = 40;
-/// The subtitle's gray band, down from the title's baseline, and a quiet row's, down
-/// from the row's top.
-const subtitle_tint_drop = 20;
-const subtitle_tint_height = 44;
-const quiet_tint_drop = 30;
-const quiet_tint_height = 54;
 /// The most rows a sheet is laid out for.
 pub const rows_longest = 6;
 
@@ -163,9 +157,8 @@ pub fn render_with(
     const avail: f32 = @as(f32, @floatFromInt(page.width - style.margin)) - x;
     try draw.clipped(fonts.title, page, x, @intCast(title_y), title, avail);
     try draw.clipped(fonts.caption, page, x, @intCast(title_y + subtitle_gap), subtitle, avail);
-    const tint_top = title_y + subtitle_tint_drop;
-    const tint_width: u32 = @intFromFloat(avail);
-    page.tint(@intFromFloat(x), tint_top, tint_width, subtitle_tint_height, style.faded);
+    const subtitle_y: i32 = @intCast(title_y + subtitle_gap);
+    fonts.caption.fade(page, @intFromFloat(x), subtitle_y, @intFromFloat(avail), style.faded);
     const row_x: f32 = style.margin;
     const row_avail: f32 = @floatFromInt(page.width - 2 * style.margin);
     for (rows, 0..) |r, i| {
@@ -175,9 +168,7 @@ pub fn render_with(
         const baseline = font.centred_baseline(@intCast(y), row_height);
         try draw.clipped(font, page, row_x, baseline, r.label, row_avail);
         if (r.quiet) {
-            const row_width: u32 = @intFromFloat(row_avail);
-            const quiet_top = y + quiet_tint_drop;
-            page.tint(style.margin, quiet_top, row_width, quiet_tint_height, style.faded);
+            font.fade(page, style.margin, baseline, @intFromFloat(row_avail), style.faded);
         }
     }
 }

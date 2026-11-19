@@ -794,7 +794,7 @@ fn play_on_outcome(
         .opened = opened,
         .finished = finished,
         .saved = state.load(state_path),
-        .looked_up = a.dictionaries[0] != null or a.dictionaries[1] != null,
+        .looked_up = a.languages.looked_up(),
         .offers_dictionary = a.user.settings.offer_dictionary,
         .highlights = count_notes(state_path, "highlight"),
         .bookmarks = count_notes(state_path, "bookmark"),

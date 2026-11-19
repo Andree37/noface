@@ -6,6 +6,7 @@ const assert = std.debug.assert;
 const card_screen = @import("../card.zig");
 const input_mod = @import("../../kindle/input.zig");
 const app = @import("../../app.zig");
+const languages = @import("../../languages.zig");
 const display = @import("../../display.zig");
 const card = @import("../../ui/card.zig");
 const hyphen = @import("../../layout/hyphen.zig");
@@ -33,9 +34,14 @@ comptime {
 /// The download for a book's language.
 pub fn language_of(lang: hyphen.Lang) dict_download.Language {
     const language: dict_download.Language = switch (lang) {
-        .english => .{ .file = "dict-en", .name = "English", .download_mb = 27, .size_mb = 94 },
+        .english => .{
+            .file = languages.dictionary_file(.english),
+            .name = "English",
+            .download_mb = 27,
+            .size_mb = 94,
+        },
         .portuguese => .{
-            .file = "dict-pt",
+            .file = languages.dictionary_file(.portuguese),
             .name = "Portuguese",
             .download_mb = 6,
             .size_mb = 38,
@@ -203,8 +209,8 @@ pub const Getting = struct {
         assert(g.put_back != null); // Waiting has Wi-Fi on for it
         return switch (w) {
             .finished => {
-                g.a.forget_dictionary(g.lang);
-                return g.finish(g.a.dictionary_for(g.lang) != null);
+                g.a.languages.forget_dictionary(g.lang);
+                return g.finish(g.a.languages.dictionary_for(g.lang) != null);
             },
             .cancelled => g.finish(false),
             .cant_start => g.cant_start(),

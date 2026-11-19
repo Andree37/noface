@@ -81,7 +81,7 @@ pub fn find(
     assert(word.start <= word.end);
     assert(word.end <= s.paragraphs[word.para].text.len);
     const text = dictionary.trimmed(s.paragraphs[word.para].text[word.start..word.end]);
-    const d = a.dictionary_for(lang) orelse {
+    const d = a.languages.dictionary_for(lang) orelse {
         // The book's language's, to get, when it's known
         const gettable: ?definition.Gettable =
             if (lang) |l| .{ .lang = l, .name = dict_get.language_of(l).name } else null;

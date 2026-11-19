@@ -18,17 +18,15 @@ const user_data = @import("user_data.zig");
 const Fonts = @import("ui/fonts.zig").Fonts;
 const input_mod = @import("kindle/input.zig");
 const aa = @import("ui/aa.zig");
-const file = @import("sys/file.zig");
 const display_mod = @import("display.zig");
 const Display = display_mod.Display;
 const Regions = @import("regions.zig").Regions;
+const Languages = @import("languages.zig").Languages;
 const clock = @import("sys/clock.zig");
 const jpegxr = @import("kindle/jpegxr.zig");
 const quick_model = @import("model/quick.zig");
 const text = @import("layout/text.zig");
-const hyphen = @import("layout/hyphen.zig");
 const journal_model = @import("model/journal.zig");
-const dictionary = @import("model/dictionary.zig");
 const os = @import("sys/os.zig");
 const battery_model = @import("model/battery.zig");
 const battery_log = @import("kindle/battery_log.zig");
@@ -55,9 +53,6 @@ const notice_height_px = 100;
 const notice_above_bottom_px = 260;
 const notice_baseline_px = 62;
 
-/// How many languages noface hyphenates and has dictionaries for.
-const languages_count = @typeInfo(hyphen.Lang).@"enum".field_names.len;
-
 comptime {
     // The clock's text is drawn inside the band its partial refresh covers.
     assert(clock_baseline_px < clock_height_px);
@@ -68,8 +63,6 @@ comptime {
     // A face's book size and the reader's size each fit a byte of a font's key
     assert(book_model.size_scales.len <= std.math.maxInt(u8));
     assert(settings_model.sizes.len <= std.math.maxInt(u8));
-    // Every language has a dictionary file, named in `dictionary_for`.
-    assert(languages_count == 2);
     // The interface's own family is the first, and always offered.
     assert(settings_model.builtin_families.len >= 1);
     // A face's book size starts at its normal step.
@@ -136,10 +129,8 @@ pub const App = struct {
     utc_offset: i64,
     clock_minute: u64 = 0,
     layout: text.Layout,
-    // Made the first time a book in that language opens, then kept
-    hyphenators: [languages_count]?hyphen.Hyphenator = @splat(null),
-    // Mapped the first time a word in that language is looked up, then kept
-    dictionaries: [languages_count]?dictionary.Dictionary = @splat(null),
+    /// Hyphenation and dictionaries, by language (languages.zig).
+    languages: Languages,
 
     /// Lets go of everything the App holds for its whole life: the buffers
     /// `setup.assemble` made, the hyphenation and pictures in `alloc`, and the font and
@@ -149,11 +140,7 @@ pub const App = struct {
     pub fn release(a: *App) void {
         assert(a.regions.book.empty()); // The book let go of its own first
         a.typefaces.release();
-        for (std.enums.values(hyphen.Lang)) |lang| a.forget_dictionary(lang);
-        for (&a.hyphenators) |*slot| {
-            if (slot.*) |*hyphenator| hyphenator.deinit();
-            slot.* = null;
-        }
+        a.languages.release();
         a.pictures.clear(a.alloc);
         a.display.release(a.alloc);
         a.alloc.free(a.lock_kept.saved);
@@ -161,64 +148,9 @@ pub const App = struct {
         a.* = undefined;
     }
 
-    /// Forgets a language's dictionary, so the next lookup maps the file again: after
-    /// one has just been downloaded.
-    pub fn forget_dictionary(a: *App, lang: hyphen.Lang) void {
-        const slot = &a.dictionaries[@backingInt(lang)];
-        if (slot.*) |d| {
-            assert(d.data.len > 0); // An empty file is an error from file.map
-            file.unmap(d.data);
-        }
-        slot.* = null;
-    }
-
-    /// The dictionary for a book's language, from dict-en or dict-pt beside the
-    /// settings. Null when the language isn't known or its file isn't there.
-    pub fn dictionary_for(a: *App, lang: ?hyphen.Lang) ?dictionary.Dictionary {
-        const l = lang orelse return null;
-        const slot = &a.dictionaries[@backingInt(l)];
-        if (slot.* == null) {
-            var buf: [320]u8 = undefined;
-            const name = switch (l) {
-                .english => "dict-en",
-                .portuguese => "dict-pt",
-            };
-            const path = std.fmt.bufPrintSentinel(
-                &buf,
-                "{s}/{s}",
-                .{ a.state_dir, name },
-                0,
-            ) catch return null;
-            const data = file.map(path) catch return null;
-            assert(data.len > 0); // An empty file is an error from file.map
-            slot.* = dictionary.Dictionary.open(data) orelse {
-                file.unmap(data);
-                std.debug.print("dictionary {s} unreadable\n", .{name});
-                return null;
-            };
-            assert(slot.*.?.data.ptr == data.ptr);
-        }
-        assert(slot.* != null);
-        return slot.*;
-    }
-
     /// Today, as the journal counts days: the local calendar day.
     pub fn today(a: *const App) i32 {
         return journal_model.day_of(unix_time(), a.utc_offset);
-    }
-
-    /// Hyphenation for a book's language, or null to break only at spaces and dashes.
-    pub fn hyphenator_for(a: *App, lang: ?hyphen.Lang) ?*const hyphen.Hyphenator {
-        const l = lang orelse return null;
-        const slot = &a.hyphenators[@backingInt(l)];
-        if (slot.* == null) {
-            slot.* = hyphen.Hyphenator.init(a.alloc, l) catch |err| {
-                std.debug.print("hyphenation not loaded: {s}\n", .{@errorName(err)});
-                return null;
-            };
-        }
-        assert(slot.* != null);
-        return &slot.*.?;
     }
 
     /// Fonts are kept per size, so stepping through sizes doesn't reload them.

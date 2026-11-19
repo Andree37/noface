@@ -252,7 +252,7 @@ fn read_book_parse(
     for (book.chapters) |chapter| assert(chapter.para < book.paragraphs.len);
     book_model.plain_body(book.paragraphs);
     const lang = hyphen.detect(book.paragraphs);
-    a.layout.hyphenator = a.hyphenator_for(lang);
+    a.layout.hyphenator = a.languages.hyphenator(a.alloc, lang);
     std.debug.print("language {s}\n", .{if (lang) |l| @tagName(l) else "unknown"});
     return .{ .book = book, .lang = lang };
 }

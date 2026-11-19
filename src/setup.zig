@@ -321,6 +321,7 @@ pub fn assemble(p: Parts) !app.App {
             .cover = try p.alloc.alloc(u8, pixels),
         },
         .state_dir = p.data_dir,
+        .languages = .{ .dir = p.data_dir },
         .library_path = p.library_path,
         .battery_path = p.files.battery,
         .user = .load(.{

@@ -446,6 +446,7 @@ pub const Reader = struct {
     pending: controls.Pending = .none, // The scrubber, an Aa slider, or a card from Aa
     selecting: hl.Selecting = .{}, // Words being selected, or a highlight's end dragged
     picture: picture_view.Viewer = undefined, // A picture held, shown whole
+    footnote: note_view.Footnote = .{}, // The note in a panel, while the view is `.note`
     /// Running mode, while it's on: the phrase on screen and its timer (reader/run.zig).
     /// The reader alone knows it's on; the toolbar and the session are told.
     run: ?run_mode.Run = null,
@@ -931,7 +932,7 @@ pub const Reader = struct {
         if (r.highlight_at(x, y)) |id| return r.select_highlight(id);
         if (r.s.reference_at(x, y)) |target| {
             r.view = .note;
-            return note_view.open_note(a, r.s, target);
+            return r.footnote.open(a, r.s, target);
         }
         if (y < touch_zones.top_zone) return r.open_toolbar();
         try r.turn_by(input_mod.turn_direction(x, a.input.width) + a.input.take_turns(), us);
@@ -1300,15 +1301,9 @@ pub const Reader = struct {
                 unreachable; // `on_touch` brings touches alone
             },
         };
-        const s = r.s;
-        if (t.y >= s.note_top) {
-            if (s.note_next) |next| {
-                try note_view.show_note(r.a, s, next, r.a.screen.height - s.note_top);
-                return null;
-            }
-        }
+        if (try r.footnote.tap(r.a, r.s, t.y)) return null;
         r.view = .page;
-        try note_view.close_note(r.a, s);
+        try r.footnote.close(r.a, r.s);
         assert(r.reading());
         return null;
     }

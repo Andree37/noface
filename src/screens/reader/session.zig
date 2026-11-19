@@ -6,7 +6,6 @@ const paginate = @import("paginate.zig");
 const check = @import("../../base/check.zig");
 const Page = @import("../../gfx/page.zig").Page;
 const book_model = @import("../../model/book.zig");
-const note_rules = @import("../../model/notes.zig");
 const stats = @import("../../model/stats.zig");
 const bookmarks = @import("../../model/bookmarks.zig");
 const icons = @import("../../ui/icons.zig");
@@ -53,10 +52,6 @@ pub const Session = struct {
     learns_speed: bool = true,
     /// What the reader is at. Settings changes keep to this, not the page edge.
     anchor: book_model.Pos,
-    note_parts: [note_rules.max_note_parts]book_model.Paragraph = undefined,
-    note_len: u32 = 0,
-    note_top: u32 = 0,
-    note_next: ?book_model.Pos = null,
     /// Highlights and bookmarks, and where they are kept.
     notes: book_notes.BookNotes = .{},
     pages_path: [:0]const u8 = "", // Where this book's page breaks are saved

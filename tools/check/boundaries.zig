@@ -17,7 +17,12 @@
 //!           and kindle.
 //!   testing What only the tests use: the pretend Kindle. Imports
 //!           testing, kindle, sys and model. No folder above may import it.
-//!   screens, and files at the top of src/: may import anything.
+//!   screens The screens on the stack: what's shown and what taps do. Imports anything
+//!           but testing.
+//!   (top)   Files at the top of src/: the App and what it's made of (display, regions,
+//!           user data, languages, typefaces), and the programs' roots. The App's parts
+//!           import anything but screens and testing, as screens build on them; the
+//!           roots (`roots`), which put screens and the App together, import anything.
 //! Every folder may import base.
 const std = @import("std");
 const assert = std.debug.assert;
@@ -35,7 +40,16 @@ const rules = [_]Rule{
     .{ .folder = "epub", .allowed = &.{ "epub", "model" } },
     .{ .folder = "library", .allowed = &.{ "library", "sys", "model", "epub", "kindle" } },
     .{ .folder = "testing", .allowed = &.{ "testing", "kindle", "sys", "model" } },
+    .{ .folder = "screens", .allowed = &(.{"screens"} ++ app_parts) },
+    .{ .folder = "", .allowed = &app_parts },
 };
+
+/// What the App's parts at the top of src/, and the screens on them, may use.
+const app_parts = .{ "", "sys", "model", "gfx", "layout", "ui", "kindle", "epub", "library" };
+
+/// The files at the top of src/ that put a program together: a program's start, the
+/// App's assembly with what the library needs reserved, and the tests' lists.
+const roots = [_][]const u8{ "main.zig", "setup.zig", "scenarios.zig", "tests.zig" };
 
 const import_prefix = "@import(\"";
 /// The longest path inside src/ an import may resolve to.
@@ -85,6 +99,9 @@ pub fn check(
 ) !u32 {
     assert(std.mem.endsWith(u8, file, ".zig"));
     const from = folder_of(file);
+    for (roots) |root| {
+        if (std.mem.eql(u8, file, root)) return 0;
+    }
     const rule = for (rules) |r| {
         if (std.mem.eql(u8, r.folder, from)) break r;
     } else return 0;
@@ -187,6 +204,13 @@ test "imports are judged by folder" {
     try expect_problems(1, "ui/a.zig", "const p = @import(\"../sys/os.zig\");");
     try expect_problems(0, "ui/a.zig", "const std = @import(\"std\");");
     try expect_problems(1, "kindle/a.zig", "const f = @import(\"../testing/fake_kindle.zig\");");
+    try expect_problems(1, "screens/a.zig", "const f = @import(\"../testing/fake_kindle.zig\");");
+    try expect_problems(0, "screens/a.zig", "const a = @import(\"../app.zig\");");
+    // The App's parts are below the screens, and the roots above them
+    try expect_problems(1, "app.zig", "const r = @import(\"screens/reader.zig\");");
+    try expect_problems(1, "display.zig", "const f = @import(\"testing/fake_kindle.zig\");");
+    try expect_problems(0, "setup.zig", "const b = @import(\"screens/books.zig\");");
+    try expect_problems(0, "tests.zig", "const f = @import(\"testing/fake_kindle.zig\");");
 }
 
 test "a file with tests must be listed" {

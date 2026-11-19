@@ -19,7 +19,6 @@ const bubble_gap = 12;
 /// The white edge cleared around the bubble, so it stands off the text under it.
 const bubble_border = 4;
 /// Where "Delete" sits, down from the bubble's top.
-const bubble_label_baseline = 62;
 /// How far a glyph may reach past its word's box, at either side.
 const glyph_overhang = 4;
 /// Kept clear at the bottom of the screen: a bubble that would reach into it goes
@@ -28,7 +27,6 @@ const bubble_bottom_clear = 130;
 
 comptime {
     assert(bubble_width + 2 * bubble_border <= style.screen_width);
-    assert(bubble_label_baseline < bubble_height);
     assert(bubble_height + bubble_gap + bubble_bottom_clear < style.screen_height);
 }
 
@@ -120,7 +118,7 @@ pub fn draw_delete_bubble(
     screen_page.fill_rect(clear.left, clear.top, clear.width, clear.height, 0xff);
     draw.box(screen_page, left, top, bubble_width, bubble_height);
     const center_x: f32 = @floatFromInt(a.display.screen.width / 2);
-    const label_y: i32 = @intCast(top + bubble_label_baseline);
+    const label_y = a.ui.small.centred_baseline(@intCast(top), bubble_height);
     try draw.centered(a.ui.small, screen_page, center_x, label_y, "Delete");
     return top;
 }

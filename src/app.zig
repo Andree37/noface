@@ -42,22 +42,16 @@ pub const clock_height_px = 56;
 
 pub const clock_width_px = 160;
 
-/// Where the clock's text sits, down from the top of its band.
-const clock_baseline_px = 38;
-
 pub const notice_ms = 1800;
-/// The notice's box over the page: its size, its top from the screen's bottom, and
-/// its text's baseline down from its top.
+/// The notice's box over the page, its text centred in it: its size, and its top from
+/// the screen's bottom.
 const notice_width_px = 760;
 const notice_height_px = 100;
 const notice_above_bottom_px = 260;
-const notice_baseline_px = 62;
 
 comptime {
     // The clock's text is drawn inside the band its partial refresh covers.
-    assert(clock_baseline_px < clock_height_px);
     assert(clock_height_px < clock_width_px);
-    assert(notice_baseline_px < notice_height_px);
     assert(notice_height_px < notice_above_bottom_px);
     assert(notice_width_px < style.screen.width_px);
     // A face's book size and the reader's size each fit a byte of a font's key
@@ -271,8 +265,8 @@ pub const App = struct {
         var buf: [8]u8 = undefined;
         const time = clock.format_clock(&buf, @intCast(unix_time()), a.utc_offset);
         const center_x: f32 = @floatFromInt(a.display.screen.width / 2);
-        const baseline_y = clock_top_px + clock_baseline_px;
         const font = a.ui.caption;
+        const baseline_y = font.centred_baseline(clock_top_px, clock_height_px);
         draw.centered(font, target, center_x, baseline_y, time) catch {}; // Ignored: a blank clock.
         a.clock_minute = unix_time() / 60;
     }
@@ -318,7 +312,7 @@ pub fn show_notice(a: *App, message: []const u8) !void {
     const top = d.screen.height - notice_above_bottom_px;
     draw.box(screen_page, left, top, notice_width_px, notice_height_px);
     const center_x: f32 = @floatFromInt(left + notice_width_px / 2);
-    const baseline: i32 = @intCast(top + notice_baseline_px);
+    const baseline = a.ui.small.centred_baseline(@intCast(top), notice_height_px);
     try draw.centered(a.ui.small, screen_page, center_x, baseline, message);
     try d.show_rect(left, top, notice_width_px, notice_height_px);
     os.sleep_ms(notice_ms);

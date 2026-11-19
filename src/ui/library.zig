@@ -90,7 +90,6 @@ const message_above_pager = 30;
 const empty_drop = 60; // "No books here yet.", under the grid's top
 const message_baseline = footer.top - message_above_pager;
 const menu_right = 220; // The menu takes taps left of here, in the status strip
-const status_text_drop = 9; // The strip's text's baseline under its middle
 const status_menu_rise = 14; // The menu's lines' top over it
 const battery_reach = 300; // And the battery this far from the right edge
 
@@ -136,10 +135,8 @@ const tabs = tabs: {
 const button_top = 0;
 const button_height = tabs_height;
 const icon_inset = 46; // From a button's rounded end to its icon's centre
-const button_label_drop = 55; // A button's label's baseline under its top
-/// The tabs row's labels: their baseline and the line under the chosen one, down from
-/// the row's top; the band the others' tint covers, and the room kept at their right.
-const tab_baseline = 54;
+/// The tabs row's labels, centred in its buttons: the line under the chosen one, down
+/// from the row's top; the band the others' tint covers, and the room kept at their right.
 const tab_underline = 62;
 const tab_tint_drop = 22;
 const tab_tint_height = 44;
@@ -451,12 +448,11 @@ fn percent_badge(font: *Font, page: Page, x: u32, y: u32, percent: u32) !void {
 }
 
 /// A corner badge's pill: its radius, in from its cover's corner, and its label's room
-/// either side and drop from its middle to its baseline.
+/// either side; the label is centred on its middle.
 const badge = struct {
     const radius = 19;
     const inset = 12;
     const label_pad = 13;
-    const label_drop = 9;
 };
 
 /// `s` in a small white pill, its middle at `cy`, in from the cover's left at `x`.
@@ -468,7 +464,7 @@ fn draw_badge(font: *Font, page: Page, x: u32, cy: f32, s: []const u8) !void {
     const ends = [2]f32{ left + r, left + @max(w - r, r) };
     page.pill(ends[0], ends[1], cy, r, 0x00);
     page.pill(ends[0], ends[1], cy, r - 2, 0xff);
-    try font.draw(page, left + badge.label_pad, @intFromFloat(cy + badge.label_drop), s);
+    try font.draw(page, left + badge.label_pad, font.centred_on(@intFromFloat(cy)), s);
 }
 
 /// "#2" in a small white pill over a cover's top left corner, for a book in a series.
@@ -699,11 +695,11 @@ fn draw_cell(
 
 fn draw_status(fonts: Fonts, page: Page, quick: *const quick_model.Quick) !void {
     const w: f32 = @floatFromInt(page.width);
-    // One centre line for everything in the strip: the text's baseline a little under
-    // it, the menu's lines from a little over it
+    // One centre line for everything in the strip: the text's capitals centred on it,
+    // the menu's lines from a little over it
     const centre = status_height / 2;
-    const baseline = centre + status_text_drop;
-    comptime assert(baseline < status_height);
+    const baseline = fonts.caption.centred_on(centre);
+    assert(baseline < status_height);
     comptime assert(centre > status_menu_rise);
     icons.menu(page, margin, centre - status_menu_rise);
     const clock = quick.clock_text();
@@ -735,7 +731,8 @@ fn draw_search_header(fonts: Fonts, page: Page, query: []const u8, found: u32) !
     comptime assert(hero_top + search_head.button_drop + button_height <= hero_bottom);
     const pad = search_head.button_pad;
     button_outline(page, left, left + w + 2 * pad, top);
-    try fonts.small.draw(page, left + pad, top + button_label_drop, label);
+    const baseline = fonts.small.centred_baseline(top + button_top, button_height);
+    try fonts.small.draw(page, left + pad, baseline, label);
 }
 
 fn draw_tabs(
@@ -747,7 +744,7 @@ fn draw_tabs(
     searching: bool,
 ) !void {
     assert(top == hero_tabs_top or top == plain_tabs_top);
-    const y = top + tab_baseline;
+    const y = fonts.small.centred_baseline(top + button_top, button_height);
     const cy: f32 = @floatFromInt(top + button_top + button_height / 2);
     const r: f32 = button_height / 2;
     if (searching) {
@@ -780,7 +777,7 @@ fn draw_tabs(
 fn draw_tabs_sort(fonts: Fonts, page: Page, top: i32, order: catalog.Order) !void {
     assert(top == hero_tabs_top or top == plain_tabs_top);
     assert(order.label().len > 0);
-    const y = top + tab_baseline;
+    const y = fonts.small.centred_baseline(top + button_top, button_height);
     const cy: f32 = @floatFromInt(top + button_top + button_height / 2);
     const right: f32 = @floatFromInt(page.width - margin);
     // One width for every order, sized to the longest label, so the button stays put

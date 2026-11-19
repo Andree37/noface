@@ -49,8 +49,6 @@ const days_shown = @typeInfo(@FieldType(Summary, "last7")).array.len;
 
 /// A tile's label over its number, faded: its baseline, down from the tiles' top.
 const tile_label_drop = 40;
-/// A row's label and value baseline, down from its rule.
-const row_baseline_drop = 68;
 /// The note under the rows, faded: its baseline, down from the last rule; and the room
 /// kept under it.
 const note_drop = 56;
@@ -115,7 +113,8 @@ fn row(fonts: Fonts, page: Page, index: u32, label: []const u8, value: []const u
     assert(label.len > 0);
     const y = rows_top + index * row_height;
     page.fill_rect(style.margin, y, page.width - 2 * style.margin, 1, style.rule);
-    const baseline: i32 = @intCast(y + row_baseline_drop);
+    // Its label and value centred in the row under its rule
+    const baseline = fonts.small.centred_baseline(@intCast(y), row_height);
     try fonts.small.draw(page, style.margin, baseline, label);
     const right: f32 = @floatFromInt(page.width - style.margin);
     try fonts.small.draw(page, right - try fonts.small.measure(value), baseline, value);

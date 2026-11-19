@@ -11,12 +11,10 @@ const toolbar = @import("toolbar.zig");
 const Fonts = @import("fonts.zig").Fonts;
 
 pub const top = toolbar.top_height; // Under the toolbar, which stays visible above
-/// The tabs' band over the list, or the query field's in search; the tabs' labels'
-/// baseline in it, and the line under the open one under that.
+/// The tabs' band over the list, or the query field's in search, its labels centred in
+/// it; and the line under the open one, under their baseline.
 const header_band = 112;
-const tabs_baseline_drop = 72;
 const tabs_underline_drop = 14;
-const tabs_baseline = top + tabs_baseline_drop;
 pub const list_top = top + header_band;
 /// The rule over the list, this far over its first row.
 const list_rule_rise = 12;
@@ -42,7 +40,6 @@ const pager = draw.bottom_pager;
 comptime {
     if (list_top + rows * row_height > pager.top) @compileError("the list runs into the pager");
     assert(rows > 0);
-    assert(tabs_baseline < list_top);
     assert(pager.bottom <= style.screen_height);
     // The deepest row, marked, still leaves room for its text before the page number
     const text_left = style.margin + depth_shown_max * indent + mark_width;
@@ -216,9 +213,11 @@ pub fn render(
     page.fill_rect(0, top, page.width, page.height - top, style.white);
     page.fill_rect(0, top, page.width, 1, style.rule);
     const half: f32 = @floatFromInt(page.width / 2);
-    const underline_y = tabs_baseline + tabs_underline_drop;
+    const baseline = fonts.small.centred_baseline(top, header_band);
+    const underline_y: u32 = @intCast(baseline + tabs_underline_drop);
+    // The line under the open tab stays over the rule over the list
+    assert(underline_y + style.underline < list_top - list_rule_rise);
     const contents = tab == .contents;
-    const baseline = tabs_baseline;
     const left_centre = half / 2;
     const right_centre = half + half / 2;
     try draw.choice(fonts, page, left_centre, .center, baseline, "Contents", contents, underline_y);

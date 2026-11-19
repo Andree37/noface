@@ -68,8 +68,8 @@ pub const Back = struct {
         assert(to < pages.len);
         const shown_before = b.place != null;
         const turning = move == .turn;
-        if (b.place) |place| {
-            if (settled and book_model.page_containing(pages, place.para, place.byte) == to) {
+        if (b.place) |kept| {
+            if (settled and book_model.page_containing(pages, kept.para, kept.byte) == to) {
                 b.place = null; // Back where they were, however they got there
             } else if (to == from) {
                 // Drawn again in place: nothing moved
@@ -89,8 +89,8 @@ pub const Back = struct {
 
     /// The page the button returns to.
     pub fn page(b: Back, pages: []const book_model.Pos) ?u32 {
-        const place = b.place orelse return null;
-        const index = book_model.page_containing(pages, place.para, place.byte);
+        const kept = b.place orelse return null;
+        const index = book_model.page_containing(pages, kept.para, kept.byte);
         assert(index < pages.len);
         return index;
     }
@@ -150,6 +150,12 @@ pub const Back = struct {
     }
 };
 
+/// The middle of the button, on a screen this tall.
+pub fn place(screen_height: u32) style.Point {
+    const r = rect(screen_height);
+    return .{ .x = @intCast(r.x + r.width / 2), .y = @intCast(r.y + r.height / 2) };
+}
+
 /// The button's place on a screen: the bottom left, over the footer.
 fn rect(screen_height: u32) Rect {
     assert(screen_height > above_bottom_px);
@@ -185,6 +191,12 @@ test "a jump keeps the place left, arriving back or reading on lets go of it" {
     }
     try std.testing.expect(b.note_move(&pages, 18, 19, .turn, true));
     try std.testing.expectEqual(@as(?u32, null), b.page(&pages));
+}
+
+test "the button's place is a touch on it" {
+    const b: Back = .{ .place = .{} };
+    const p = place(style.screen_height);
+    try std.testing.expect(b.hit(style.screen_height, p.x, p.y));
 }
 
 test "the button takes a fingertip's touches around it, and none with no place kept" {

@@ -159,6 +159,28 @@ pub fn hit(x: i32, y: i32, sheet: ?aa.Tab) Hit {
     return .stay;
 }
 
+/// The middle of a control's taps, with the Aa sheet closed. The scrubber's is its
+/// middle, a page halfway through the book.
+pub fn place(h: Hit) style.Point {
+    const tools_middle = status_row + (tool_row + tool_taps_below - status_row) / 2;
+    const bottom_middle = bottom_top + (scrub.y - scrub_reach - bottom_top) / 2;
+    const point: style.Point = switch (h) {
+        .home => .{ .x = home_right / 2, .y = tools_middle },
+        .text, .goto, .bookmark, .search, .more => for (tools) |t| {
+            if (t.hit == h) break .{ .x = t.x, .y = tools_middle };
+        } else unreachable, // Every tool is in the row
+        .close => .{ .x = screen_width / 2, .y = (top_height + bottom_top) / 2 },
+        .chapter_prev => .{ .x = chapter_prev_right / 2, .y = bottom_middle },
+        .chapter_next => .{ .x = (chapter_next_left + screen_width) / 2, .y = bottom_middle },
+        .scrub => .{ .x = (scrub.left + scrub.right) / 2, .y = scrub.y },
+        // Not a control: what's left between them, and the sheet's own controls
+        .stay, .sheet => unreachable,
+    };
+    assert(point.x >= 0);
+    assert(point.y < screen_height);
+    return point;
+}
+
 /// Page index for a finger at `x` on the scrubber.
 pub fn page_at(x: i32, total: u32) u32 {
     if (total <= 1) return 0;
@@ -293,6 +315,14 @@ fn draw_tool(fonts: Fonts, page: Page, t: Tool, bookmarked: bool) !void {
         .more => icons.dots(page, x, tool_icon_y),
         // Only the five above are in `tools`; these are the toolbar's other parts
         .close, .stay, .home, .chapter_prev, .chapter_next, .scrub, .sheet => unreachable,
+    }
+}
+
+test "every control's place is a tap on it" {
+    for (std.enums.values(Hit)) |h| {
+        if (h == .stay or h == .sheet) continue;
+        const p = place(h);
+        try std.testing.expectEqual(h, hit(p.x, p.y, null));
     }
 }
 

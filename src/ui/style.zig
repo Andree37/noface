@@ -45,6 +45,10 @@ pub const button_corner = 24; // Buttons, bubbles and tiles
 pub const key_corner = 14; // Keyboard keys
 pub const bar_corner = 10; // The bars of a chart
 
+/// A point of the screen: the middle of a control's taps, where a script or a test taps
+/// it by name (screens/places.zig), so it follows the control wherever layout puts it.
+pub const Point = struct { x: i32, y: i32 };
+
 /// A rectangle of the screen, in its pixels: where something is drawn, and so where it
 /// takes taps.
 pub const Rect = struct {

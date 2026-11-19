@@ -13,6 +13,7 @@ const page_number = @import("page_number.zig");
 const sess = @import("session.zig");
 const highlights_model = @import("../../model/highlights.zig");
 const screen = @import("../screen.zig");
+const style = @import("../../ui/style.zig");
 
 /// What the reader does after the menu.
 pub const Outcome = union(enum) {
@@ -21,7 +22,7 @@ pub const Outcome = union(enum) {
     refresh, // Show the current page with a full, clean refresh
 };
 
-const Option = enum { go_to_page, beginning, details, refresh, finished, unread, cancel };
+pub const Option = enum { go_to_page, beginning, details, refresh, finished, unread, cancel };
 
 /// The longest label, so each fits its row on one line.
 const label_bytes_max = 32;
@@ -41,6 +42,23 @@ fn label(option: Option) []const u8 {
     return text;
 }
 
+/// The menu's rows, top to bottom: the last marks the book finished, or unread once it is.
+const menu_rows = 5;
+
+/// The middle of an option's row on the menu's card, for a script to tap: finishing
+/// and marking unread share the last.
+pub fn place(option: Option) style.Point {
+    const row: u32 = switch (option) {
+        .go_to_page => 0,
+        .beginning => 1,
+        .details => 2,
+        .refresh => 3,
+        .finished, .unread => menu_rows - 1,
+        .cancel => unreachable, // Not on the menu: tapping above the card closes it
+    };
+    return card.place(menu_rows, row);
+}
+
 /// Starts the menu in `m`, where it stays while it's open (`screen.open`): its card
 /// over the page, then Go to page's keyboard or the book's details. Done with what the
 /// reader does after it.
@@ -51,6 +69,10 @@ pub fn begin(m: *More, a: *app.App, s: *sess.Session, entry: *catalog.Entry) !vo
     // No Cancel: tapping above the sheet closes it
     const read_option: Option = if (entry.is_read()) .unread else .finished;
     m.list = .{ .go_to_page, .beginning, .details, .refresh, read_option };
+    // Where `place` says each option is
+    for (m.list, 0..) |option, row| {
+        assert(place(option).y == card.place(menu_rows, @intCast(row)).y);
+    }
     for (m.list, &m.rows) |option, *row| row.* = .{ .label = label(option) };
     assert(m.phase == .menu);
 }
@@ -62,8 +84,8 @@ pub const More = struct {
     entry: *catalog.Entry,
     background: display.Backdrop, // The page under it
     phase: enum { menu, page_number, details } = .menu,
-    list: [5]Option = undefined,
-    rows: [5]card.Row = undefined,
+    list: [menu_rows]Option = undefined,
+    rows: [menu_rows]card.Row = undefined,
     card: card_screen.Card = undefined,
     card_ending: ?screen.Ending(u32) = null,
     page_entry: page_number.PageEntry = undefined,

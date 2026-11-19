@@ -4,23 +4,23 @@
 # Start from a fresh test folder: noface on its library, the book not opened before.
 
 # Opening the book from the library's hero
-tap 200 300
+tap library.hero
 log screen: Reader opened
 drawn 600
 still
 
 # The toolbar, its Aa sheet, the Themes tab, and the Running button under the tiles
-tap 636 100
+tap page.top
 drawn 200
 still
-tap 696 118
+tap toolbar.text
 drawn 400
 still
-tap 150 274
+tap aa.tab.themes
 drawn 400
 still
 shot themes
-tap 636 790
+tap aa.running
 log running: on
 log running: phrases from
 still
@@ -31,55 +31,55 @@ wait 4000
 shot later
 
 # A contact too short for a finger, as a drop of sweat makes, moves nothing
-hold 1100 900 30
+hold running.next 30
 log running: too short a touch
 wait 1000
 
 # A tap on the right shows the next phrase now; on the left, the one before again
-tap 1100 900
+tap running.next
 log running: tap next
 still
 shot faster
 wait 1000
-tap 150 900
+tap running.back
 log running: tap back
 still
 
 # The pause button stops the phrases, and again carries on; so does the middle column
 wait 1000
-tap 104 1625
+tap running.pause
 log running: paused
 still
 shot stopped
 wait 1000
-tap 104 1625
+tap running.pause
 log running: resumed
 still
 wait 1000
-tap 636 900
+tap running.middle
 log running: paused
 still
 wait 1000
-tap 636 900
+tap running.middle
 log running: resumed
 still
 
 # The card from the top band, over the phrases, paused; and Resume, which carries on
 wait 1000
-tap 636 150
+tap running.top
 log screen: Card opened
 still
 shot card
-tap 636 1376
+tap card.3.0
 log running: resume_running
 still
 
 # The card again, and Stop running
 wait 1000
-tap 636 150
+tap running.top
 log screen: Card opened
 still
-tap 636 1600
+tap card.3.2
 log running: stop
 log running: off
 still

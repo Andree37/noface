@@ -366,6 +366,41 @@ fn hit_tabs(x: i32) Hit {
 
 pub const Rect = style.Rect;
 
+/// The middle of a control's taps on the library's first page, the hero's: a book's,
+/// of the grid's `book`th; the clear-search's, the hero's place while searching.
+pub fn place(h: Hit) style.Point {
+    const status_middle = status_height / 2;
+    const band = tabs_band(true);
+    const tabs_middle = @divTrunc(band.top + band.bottom, 2);
+    const hero_middle = (status_height + hero_bottom) / 2;
+    const point: style.Point = switch (h) {
+        .menu => .{ .x = menu_right / 2, .y = status_middle },
+        .battery => .{ .x = screen_width - battery_reach / 2, .y = status_middle },
+        .hero, .clear_search => .{ .x = (margin + hero_dots_left) / 2, .y = hero_middle },
+        .hero_dots => .{
+            .x = (hero_dots_left + screen_width) / 2,
+            .y = (status_height + hero_dots_bottom) / 2,
+        },
+        .tab => |filter| for (tabs) |t| {
+            const middle = @divTrunc(t.left + t.right, 2);
+            if (t.filter == filter) break .{ .x = middle, .y = tabs_middle };
+        } else unreachable, // Every filter has its tab
+        .search => .{ .x = search_cx, .y = tabs_middle },
+        .stats => .{ .x = stats_cx, .y = tabs_middle },
+        .sort => .{ .x = @divTrunc(sort_left + screen_width, 2), .y = tabs_middle },
+        .prev => footer.place(.prev),
+        .next => footer.place(.next),
+        .book => |index| book: {
+            const r = book_rect(index, 0);
+            break :book .{ .x = @intCast(r.x + r.w / 2), .y = @intCast(r.y + r.h / 2) };
+        },
+        .none => unreachable, // Not a control
+    };
+    assert(point.x >= 0);
+    assert(point.y < style.screen_height);
+    return point;
+}
+
 /// Screen area of the hero, for tap feedback.
 pub fn hero_rect(width: u32) Rect {
     return .{ .x = margin, .y = hero_top, .w = width - 2 * margin, .h = cover.hero_height };
@@ -853,6 +888,24 @@ test "later pages lead on from page one's last book" {
     const last = test_book(last_slot, false);
     const last_hit: Hit = .{ .book = first_index + last_slot };
     try std.testing.expectEqual(last_hit, hit(last[0], last[1], 1, test_books, false));
+}
+
+test "every control's place is a tap on it" {
+    const books = grid_size(true) + grid_size(false); // A second page, for the pager
+    const filters = std.enums.values(catalog.Filter);
+    var controls: [12 + filters.len]Hit = undefined;
+    const last_on_page = grid_size(true) - 1;
+    const fixed = [_]Hit{
+        .hero,    .hero_dots, .prev,  .next,          .sort,                     .menu,
+        .battery, .search,    .stats, .{ .book = 0 }, .{ .book = last_on_page }, .clear_search,
+    };
+    @memcpy(controls[0..fixed.len], &fixed);
+    for (controls[fixed.len..], filters) |*c, f| c.* = .{ .tab = f };
+    for (controls) |h| {
+        const p = place(h);
+        const searching = h == .clear_search;
+        try std.testing.expectEqual(h, hit(p.x, p.y, 0, books, searching));
+    }
 }
 
 test "header and footer controls" {

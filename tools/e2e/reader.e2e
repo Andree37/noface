@@ -5,57 +5,57 @@
 # grows much slower fails.
 
 # Opening the book from the library's hero
-tap 200 300
+tap library.hero
 log screen: Reader opened
 drawn 600
 still
 
 # Turning: a tap on either side, and a swipe either way
-tap 1100 900
+tap page.forward
 log turn to 2
 drawn 500
 still
-tap 150 900
+tap page.back
 log turn to 1
 drawn 500
 still
-drag 1000 900 300 900 200
+drag page.forward page.back 200
 log turn to 2
 drawn 500
 still
-drag 300 900 1000 900 200
+drag page.back page.forward 200
 log turn to 1
 drawn 500
 still
 
 # The toolbar, from a tap at the top
-tap 636 100
+tap page.top
 drawn 200
 shot toolbar
 
 # Its bookmark, on and off again
-tap 936 120
+tap toolbar.bookmark
 log bookmark added
 drawn 200
 still
-tap 936 120
+tap toolbar.bookmark
 log bookmark removed
 drawn 200
 still
 
 # A tap on the page closes it
-tap 636 900
+tap toolbar.close
 drawn 200
 still
 
 # The quick panel, pulled down from the top
-drag 636 40 636 700 300
+drag page.top page.middle 300
 log screen: Panel opened
 drawn 200
 shot panel
 
 # A tap on the page below it closes it
-tap 636 1300
+tap panel.close
 log screen: Panel closed
 drawn 200
 still
@@ -67,13 +67,13 @@ shot held
 log screen: Card opened
 
 # No dictionary in the test folder: not now, which leaves the word's sheet
-tap 140 1604
+tap card.2.1
 log screen: Card done
 drawn 200
 still
 
 # The sheet's Highlight: the word alone, left selected with its delete bubble
-tap 220 1594
+tap define.highlight
 log words, saved true
 drawn 500
 shot highlighted
@@ -98,11 +98,11 @@ still
 
 # Turning away from the page with "reader" still highlighted, and back to it: both
 # turns take the gray-safe refresh, without a flash
-tap 1100 900
+tap page.forward
 log turn to 2
 drawn 500
 still
-tap 150 900
+tap page.back
 log turn to 1
 drawn 500
 still
@@ -119,10 +119,10 @@ drawn 500
 still
 
 # Home, from the toolbar: the book closes, the library is back
-tap 636 100
+tap page.top
 drawn 200
 still
-tap 150 120
+tap toolbar.home
 log screen: Reader done
 log library render
 drawn 300

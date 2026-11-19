@@ -211,6 +211,12 @@ pub const size_row = Row{
     .top = switch_top(switch_for("bold_starts")) + toggle_height + toggle_reach,
     .steps = settings_model.sizes.len,
 };
+/// The middle of a slider row's taps, down the screen; along it, a tap is a value.
+pub fn row_middle(r: Row) i32 {
+    assert(r.top + row_height <= max_height);
+    return @intCast(r.top + row_height / 2);
+}
+
 pub const spacing_row = Row{
     .slider = .spacing,
     .label = "Line spacing",
@@ -446,6 +452,29 @@ fn within(y: i32, from: i32, size: i32) bool {
 fn on_toggle(y: i32, toggle_top: i32) bool {
     assert(toggle_top >= content_top);
     return within(y, toggle_top - toggle_reach, toggle_height + 2 * toggle_reach);
+}
+
+/// The middle of a control's taps on tab `tab` of the sheet: its tabs, on any of them,
+/// and the Running button, on Themes.
+pub fn place(tab: Tab, h: Hit) style.Point {
+    const point: style.Point = switch (h) {
+        .tab => |t| tab: {
+            const cell: i32 = screen_width / tab_labels.len;
+            const index: i32 = @intCast(@backingInt(t));
+            break :tab .{ .x = index * cell + @divTrunc(cell, 2), .y = top + tabs_height / 2 };
+        },
+        .running => running: {
+            assert(tab == .themes); // Only that tab has it
+            const y = running_top + running_height / 2;
+            break :running .{ .x = margin + themes_width / 2, .y = y };
+        },
+        // Placed by tests of their own, where they're laid out for a tab and typefaces
+        .none, .theme, .family, .more_families, .text_size, .spacing, .margins, .toggle => {
+            unreachable;
+        },
+    };
+    assert(std.meta.eql(hit(tab, .{}, point.x, point.y), h));
+    return point;
 }
 
 pub fn hit(tab: Tab, families: Families, x: i32, y: i32) Hit {
@@ -755,10 +784,7 @@ fn test_family_middle(families: Families, cell: u32) [2]i32 {
     return .{ @intCast(x), @intCast(y) };
 }
 
-/// The middle of a slider row, and of switch `i`.
-fn test_row_middle(r: Row) i32 {
-    return @intCast(r.top + row_height / 2);
-}
+/// The middle of switch `i`.
 fn test_switch_middle(i: u32) i32 {
     return @intCast(switch_top(i) + toggle_height / 2);
 }
@@ -796,6 +822,17 @@ test "with more typefaces than cells, the last cell turns the page, round to the
     try std.testing.expectEqual(@as(u32, 5), family_page_of(families, 5));
 }
 
+test "the tabs' and the Running button's places are taps on them" {
+    for (std.enums.values(Tab)) |open| {
+        for (std.enums.values(Tab)) |t| {
+            const p = place(open, .{ .tab = t });
+            try std.testing.expectEqual(Hit{ .tab = t }, hit(open, .{}, p.x, p.y));
+        }
+    }
+    const run = place(.themes, .running);
+    try std.testing.expectEqual(Hit.running, hit(.themes, .{}, run.x, run.y));
+}
+
 test "tabs split the top row evenly" {
     const families: Families = .{}; // The Kindle's typefaces alone
     const cell = screen_width / tab_labels.len;
@@ -822,15 +859,15 @@ test "each tab maps its own controls" {
     }
     try std.testing.expectEqual(
         Hit.text_size,
-        hit(.font, families, test_x, test_row_middle(size_row)),
+        hit(.font, families, test_x, row_middle(size_row)),
     );
     try std.testing.expectEqual(
         Hit.spacing,
-        hit(.layout, families, test_x, test_row_middle(spacing_row)),
+        hit(.layout, families, test_x, row_middle(spacing_row)),
     );
     try std.testing.expectEqual(
         Hit.margins,
-        hit(.layout, families, test_x, test_row_middle(margin_row)),
+        hit(.layout, families, test_x, row_middle(margin_row)),
     );
     // Every switch answers on its own tab, where it's drawn
     for (switches, 0..) |sw, i| {

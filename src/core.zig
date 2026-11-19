@@ -36,3 +36,5 @@ pub const notes = @import("ui/notes.zig");
 pub const search_sheet = @import("ui/search_sheet.zig");
 pub const book_actions = @import("ui/book_actions.zig");
 pub const toolbar = @import("ui/toolbar.zig");
+/// Every control a script taps, by name, for the device tests (tools/e2e.zig).
+pub const places = @import("screens/places.zig");

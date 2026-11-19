@@ -7,107 +7,107 @@
 still
 
 # Paging: on to the second page and back
-tap 832 1590
+tap library.next
 log library tap 832,1590: next
 drawn 150
 still
-tap 440 1590
+tap library.prev
 log library tap 440,1590: prev
 drawn 150
 still
 
 # The filter's tabs: Unread, Read, then All again
-tap 340 558
+tap library.tab.unread
 log library tap 340,558: tab
 drawn 150
 still
-tap 500 558
+tap library.tab.read
 log library tap 500,558: tab
 drawn 150
 still
-tap 200 558
+tap library.tab.all
 log library tap 200,558: tab
 drawn 150
 still
 
 # Sorting: each of the six orders, round to the first
-tap 1000 558
+tap library.sort
 log library tap 1000,558: sort
 drawn 150
 still
-tap 1000 558
+tap library.sort
 log library tap 1000,558: sort
 drawn 150
 still
-tap 1000 558
+tap library.sort
 log library tap 1000,558: sort
 drawn 150
 still
-tap 1000 558
+tap library.sort
 log library tap 1000,558: sort
 drawn 150
 still
-tap 1000 558
+tap library.sort
 log library tap 1000,558: sort
 drawn 150
 still
-tap 1000 558
+tap library.sort
 log library tap 1000,558: sort
 drawn 150
 still
 
 # Reading stats, closed by any tap
-tap 758 558
+tap library.stats
 log screen: Stats opened
 drawn 150
 still
-tap 636 900
+tap screen.middle
 log screen: Stats closed by tap
 drawn 150
 still
 
 # Searching: "scen" typed, each key drawn, then Search; tapping the hero's place clears it
-tap 642 558
+tap library.search
 log screen: LibrarySearch opened
 drawn 150
 still
-tap 264 1376
+tap key.s
 drawn 150
 still
-tap 512 1496
+tap key.c
 drawn 150
 still
-tap 326 1256
+tap key.e
 drawn 150
 still
-tap 884 1496
+tap key.n
 drawn 150
 still
-tap 954 1616
+tap key.search
 log screen: LibrarySearch done by tap
 drawn 150
 still
-tap 636 300
+tap library.clear_search
 log library tap 636,300: clear_search
 drawn 150
 still
 
 # A book's actions, from holding it; a tap above the sheet closes it
-hold 190 760 700
+hold library.book.first 700
 log screen: Sheet opened
 drawn 150
 still
-tap 636 150
+tap card.above
 log closed by tap
 drawn 150
 still
 
 # The quick panel, from the menu corner
-tap 100 48
+tap library.menu
 log screen: Panel opened
 drawn 150
 still
-tap 636 1300
+tap panel.close
 log screen: Panel closed by tap
 drawn 150
 still

@@ -67,6 +67,26 @@ comptime {
     assert(button_width >= style.fingertip);
 }
 
+/// The middle of a button's taps, on the row along the sheet's foot.
+pub fn place(h: Hit) style.Point {
+    const y = actions_top + row_taps_height / 2;
+    const point: style.Point = switch (h) {
+        .highlight => .{ .x = style.margin + button_width / 2, .y = y },
+        .get_dictionary => .{ .x = get_left + get_width / 2, .y = y },
+        .close => .{ .x = style.screen_width / 2, .y = top / 2 },
+        .none => unreachable, // Not a control
+    };
+    assert(hit(point.x, point.y) == h);
+    return point;
+}
+
+test "every button's place is a tap on it" {
+    for ([_]Hit{ .highlight, .get_dictionary, .close }) |h| {
+        const p = place(h);
+        try std.testing.expectEqual(h, hit(p.x, p.y));
+    }
+}
+
 pub fn hit(x: i32, y: i32) Hit {
     if (y < top) return .close;
     const reach = button_reach;

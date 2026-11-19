@@ -193,6 +193,19 @@ pub const Pager = struct {
         return null;
     }
 
+    /// The middle of an arrow's taps, inside the band it's drawn in.
+    pub fn place(p: Pager, h: Hit) style.Point {
+        assert(p.top < p.bottom);
+        const left: i32 = switch (h) {
+            .prev => prev_left,
+            .next => next_left,
+        };
+        const middle: i32 = @intCast((p.top + p.bottom) / 2);
+        const point: style.Point = .{ .x = left + button / 2, .y = middle };
+        assert(p.hit(point.x, point.y).? == h);
+        return point;
+    }
+
     pub fn render(p: Pager, fonts: Fonts, page: Page, index: u32, pages: u32) !void {
         assert(p.top < p.bottom);
         assert(pages > 0);

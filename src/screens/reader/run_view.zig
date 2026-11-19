@@ -392,8 +392,15 @@ pub fn show_dial(a: *app.App, cx: i32, step: u32, arrow: ?Run.Pace) !void {
 }
 
 fn icons_y(a: *const app.App) i32 {
-    const bottom: i32 = @intCast(a.display.screen.height);
-    return bottom - footer_baseline_above_bottom_px - icons_above_baseline_px;
+    return pause_place(a.display.screen.height).y;
+}
+
+/// The pause button's middle, at the left of the footer, on a screen this tall.
+pub fn pause_place(screen_height: u32) style.Point {
+    const bottom: i32 = @intCast(screen_height);
+    const y = bottom - footer_baseline_above_bottom_px - icons_above_baseline_px;
+    assert(y > 0);
+    return .{ .x = pause_x, .y = y };
 }
 
 /// `text`'s words in lines no wider than `width`, as many as `lines` holds; a word

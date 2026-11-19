@@ -45,6 +45,11 @@ const goto_ui = @import("ui/goto.zig");
 const selection = @import("ui/selection.zig");
 const run_mode = @import("screens/reader/run.zig");
 const running_model = @import("model/running.zig");
+const places = @import("screens/places.zig");
+const run_view = @import("screens/reader/run_view.zig");
+const back_button_ui = @import("screens/reader/back_button.zig");
+const more = @import("screens/reader/more.zig");
+const definition_ui = @import("ui/definition.zig");
 
 const go_regular = @embedFile("testdata/fonts/Go-Regular.ttf");
 const go_bold = @embedFile("testdata/fonts/Go-Bold.ttf");
@@ -54,19 +59,25 @@ const Step = input_mod.Step;
 const width = 1272;
 const height = 1696;
 
-/// Where the toolbar's buttons are tapped, down from the top of the screen.
-const toolbar_button_y = 118;
-/// Where the page scrubber is touched, on its bar.
-const scrubber_y = 1610;
+/// Where the page scrubber is touched, on its bar: along it, a value.
+const scrubber_y = toolbar.place(.scrub).y;
 
 /// Row `i` of a card of `rows`.
 fn card_row(rows: u32, i: u32) Step {
     assert(rows > 0);
     assert(i < rows);
-    return tap(636, @intCast(card.row_centre(rows, i)));
+    return tap_on(card.place(rows, i));
 }
-const highlight_button = tap(122, 1596); // On the definition sheet
-const above_sheet = tap(636, 300);
+/// A control, tapped in the middle of its taps (screens/places.zig).
+fn tap_on(p: style.Point) Step {
+    return tap(p.x, p.y);
+}
+/// A tool of the toolbar's top row.
+fn tool(h: toolbar.Hit) Step {
+    return tap_on(toolbar.place(h));
+}
+const highlight_button = tap_on(definition_ui.place(.highlight)); // On the definition sheet
+const above_sheet = tap_on(card.place_above());
 
 fn tap(x: i32, y: i32) Step {
     // A tap the script makes lands on the screen
@@ -101,29 +112,34 @@ const lock_it: Step = .{ .act = .lock };
 const wake: Step = .{ .act = .unlock };
 /// The quick panel pulled down from the top, and its Kindle button, which leaves noface.
 const pull_down: Step = .{ .act = .pull };
-const panel_kindle = tap(795, 430);
+const panel_kindle = tap_on(menu_ui.place(.kindle));
 /// Series… on a book's card, held in the library: its third row, after Remove and Mark
 /// as read. Then the series lists' second row, "Not in a series", and "Library" along
 /// their top.
 const book_series = card_row(3, 2);
-const not_in_a_series = tap(636, goto_ui.list_top + 150);
-const list_back_to_library = tap(636, 100);
-const forward = tap(1000, 900);
-const back = tap(150, 900);
-const top = tap(636, 60);
-const page_middle = tap(636, 1000);
+const not_in_a_series = tap_on(goto_ui.place(.{ .row = 1 }));
+const list_back_to_library = tap_on(goto_ui.place(.close));
+const forward = tap_on(places.page.forward);
+const back = tap_on(places.page.back);
+const top = tap_on(places.page.top);
+const page_middle = tap_on(places.page.middle);
+/// A tap on the page clear of `a_word` and the handles of its highlight, which lets the
+/// highlight go: it's the page's text that says where, not a control.
+const away_from_word = tap(636, 1000);
+/// The middle column while running, which pauses and carries on.
+const running_middle = tap_on(places.running_mode.middle);
 /// A hold on a word of the first page.
 const a_word = hold(600, 700);
 /// Running mode on, from the page: the toolbar, its Aa sheet, the Themes tab, and the
 /// Running button under its tiles. Then, while running, a tap in the pause band and the
 /// pause card's rows.
-const text_settings_button = tap(696, toolbar_button_y);
-const themes_tab = tap(150, 274);
-const running_button = tap(636, 790);
+const text_settings_button = tool(.text);
+const themes_tab = tap_on(aa.place(.themes, .{ .tab = .themes }));
+const running_button = tap_on(aa.place(.themes, .running));
 const start_running = [_]Step{ top, text_settings_button, themes_tab, running_button };
-const pause_tap = tap(636, 150);
+const pause_tap = tap_on(places.running_mode.top);
 /// The pause button, at the left of running's footer (screens/reader/run.zig).
-const pause_button = tap(75, 1625);
+const pause_button = tap_on(run_view.pause_place(height));
 const pause_resume = card_row(3, 0);
 const pause_stop = card_row(3, 2);
 
@@ -136,12 +152,13 @@ comptime {
     assert(forward.act.tap.x >= width / 3);
     // `top` opens the toolbar; the middle of the page is outside it, and closes it
     assert(top.act.tap.y < toolbar.top_height);
-    assert(toolbar_button_y < toolbar.top_height);
     // The scrubber takes touches along its whole bar
     assert(toolbar.hit(400, scrubber_y, null) == .scrub);
     assert(toolbar.hit(1100, scrubber_y, null) == .scrub);
     assert(page_middle.act.tap.y > toolbar.top_height);
     assert(page_middle.act.tap.y < toolbar.bottom_top);
+    // Clear of the held word's line, and the handles under it
+    assert(away_from_word.act.tap.y > a_word.act.hold.y + 2 * style.fingertip);
     // A word is held in the page's text, clear of the toolbar's two parts
     assert(a_word.act.hold.y > toolbar.top_height);
     assert(a_word.act.hold.y < toolbar.bottom_top);
@@ -155,7 +172,8 @@ comptime {
     const back_to_library = list_back_to_library.act.tap;
     assert(goto_ui.hit(back_to_library.x, back_to_library.y, 0, 2) == .close);
     // Aa's Themes tab, and the Running button on it
-    assert(toolbar.hit(text_settings_button.act.tap.x, toolbar_button_y, null) == .text);
+    const text = text_settings_button.act.tap;
+    assert(toolbar.hit(text.x, text.y, null) == .text);
     const tab = themes_tab.act.tap;
     assert(std.meta.eql(aa.hit(.themes, .{}, tab.x, tab.y), aa.Hit{ .tab = .themes }));
     const run = running_button.act.tap;
@@ -972,16 +990,16 @@ const scenarios = [_]Scenario{
                     above_sheet,
                     // The text settings, closed
                     top,
-                    tap(696, toolbar_button_y),
+                    tool(.text),
                     page_middle,
                     // Contents, closed above it
                     top,
-                    tap(816, toolbar_button_y),
-                    tap(636, 120),
+                    tool(.goto),
+                    tap_on(goto_ui.place(.close)),
                     // The menu, closed above the card
                     top,
-                    tap(1176, toolbar_button_y),
-                    tap(636, 200),
+                    tool(.more),
+                    tap_on(card.place_above()),
                     wait(130_000), // Past the Wi-Fi pause
                 });
                 try expect(same_place(plain.saved, busy.saved), "the place moved");
@@ -1032,9 +1050,9 @@ const scenarios = [_]Scenario{
         .run = struct {
             fn run() !void {
                 const read_on = try play(&.{ forward, forward, forward });
-                const contents = tap(816, toolbar_button_y);
-                const first_chapter = tap(636, 390);
-                const back_button = tap(205, 1626);
+                const contents = tool(.goto);
+                const first_chapter = tap_on(goto_ui.place(.{ .row = 0 }));
+                const back_button = tap_on(back_button_ui.place(height));
                 // Back sits in the toolbar's lower part, under the scrubber
                 assert(back_button.act.tap.y >= toolbar.scrub_top);
                 const jumped = try play(&.{
@@ -1052,7 +1070,7 @@ const scenarios = [_]Scenario{
                     "Back didn't return to the page",
                 );
                 // The toolbar's chapter skip is a jump too
-                const chapter_back = tap(110, 1450);
+                const chapter_back = tool(.chapter_prev);
                 // In the toolbar's lower part, above the scrubber
                 assert(chapter_back.act.tap.y >= toolbar.bottom_top);
                 assert(chapter_back.act.tap.y < toolbar.scrub_top);
@@ -1071,8 +1089,8 @@ const scenarios = [_]Scenario{
                     "Back didn't follow a chapter skip",
                 );
                 // The ⋮ menu's Go to beginning is a jump too, so it can be undone
-                const menu = tap(1176, toolbar_button_y);
-                const beginning = tap(636, 1265); // Its second row
+                const menu = tool(.more);
+                const beginning = tap_on(more.place(.beginning));
                 const started_over = try play(&.{
                     forward, forward, forward, top, menu, beginning,
                 });
@@ -1094,10 +1112,10 @@ const scenarios = [_]Scenario{
         .name = "after Go to beginning, Back is still there when the book is opened again",
         .run = struct {
             fn run() !void {
-                const menu = tap(1176, toolbar_button_y);
-                const beginning = tap(636, 1265); // Its second row
-                const back_button = tap(205, 1626);
-                const home = tap(150, toolbar_button_y);
+                const menu = tool(.more);
+                const beginning = tap_on(more.place(.beginning));
+                const back_button = tap_on(back_button_ui.place(height));
+                const home = tool(.home);
                 const hero = tap_in(library_ui.hero_rect(width));
                 const library: Kindle = .{ .library = true, .read_before = .{} };
                 const kept_on = try play_on(library, &.{
@@ -1138,7 +1156,7 @@ const scenarios = [_]Scenario{
         .run = struct {
             fn run() !void {
                 const r = try play_on(.{ .dictionary = true }, &.{
-                    a_word, lift, highlight_button, page_middle,
+                    a_word, lift, highlight_button, away_from_word,
                 });
                 try expect(r.looked_up, "the dictionary wasn't opened");
                 try expect(r.highlights == 1, "the word wasn't highlighted");
@@ -1160,7 +1178,7 @@ const scenarios = [_]Scenario{
                     a_word,
                     lift,
                     highlight_button,
-                    page_middle,
+                    away_from_word,
                 });
                 try expect(!r.offers_dictionary, "it would ask again");
                 try expect(r.highlights == 1, "the word wasn't highlighted");
@@ -1175,7 +1193,7 @@ const scenarios = [_]Scenario{
                 // The pretend Kindle starts no programs, so curl never runs
                 const r = try play(&.{
                     a_word,         lift,             card_row(2, 0),
-                    card_row(1, 0), highlight_button, page_middle,
+                    card_row(1, 0), highlight_button, away_from_word,
                 });
                 try expect(!r.looked_up, "a dictionary appeared from nowhere");
                 try expect(r.highlights == 1, "the word wasn't highlighted");
@@ -1184,7 +1202,7 @@ const scenarios = [_]Scenario{
     },
     .{ .name = "the toolbar's bookmark marks the page, and again unmarks it", .run = struct {
         fn run() !void {
-            const bookmark = tap(936, toolbar_button_y);
+            const bookmark = tool(.bookmark);
             const once = try play(&.{ top, bookmark, page_middle });
             try expect(once.bookmarks == 1, "the page wasn't bookmarked");
             const twice = try play(&.{ top, bookmark, bookmark, page_middle });
@@ -1197,7 +1215,7 @@ const scenarios = [_]Scenario{
                 tap_in(library_ui.book_rect(0, 0)),
                 wait(2_000),
                 top,
-                tap(150, toolbar_button_y),
+                tool(.home),
             });
             try expect(r.opened[0], "the book didn't open");
         }
@@ -1206,7 +1224,7 @@ const scenarios = [_]Scenario{
         .name = "a tap made while the stats were up closes them and never reaches the library",
         .run = struct {
             fn run() !void {
-                const stats_button = tap(758, 558);
+                const stats_button = tap_on(library_ui.place(.stats));
                 const hero = tap_in(library_ui.hero_rect(width));
                 const hit = library_ui.hit(758, 558, 0, 1, false);
                 try expect(hit == .stats, "the stats button isn't where it was");
@@ -1238,10 +1256,10 @@ const scenarios = [_]Scenario{
                     .read_before = .{},
                 }, &.{
                     tap_in(library_ui.hero_rect(width)), wait(2_000), // Continue the first
-                    top, tap(1176, toolbar_button_y), tap(600, 1600), // ⋮, Mark as finished
-                    top, tap(150, toolbar_button_y), // Home, where the next one is offered
-                    tap(600, 1604), // Up next: Read it now
-                    wait(2_000), top, tap(150, toolbar_button_y), // Home
+                    top, tool(.more), tap_on(more.place(.finished)), // ⋮, Mark as finished
+                    top, tool(.home), // Home, where the next one is offered
+                    card_row(1, 0), // Up next: Read it now
+                    wait(2_000), top, tool(.home), // Home
                 });
                 try expect(r.finished[0], "the first wasn't marked finished");
                 try expect(r.opened[1], "the next one didn't open");
@@ -1252,11 +1270,11 @@ const scenarios = [_]Scenario{
         .name = "a book marked finished then unread starts again, and stays unread",
         .run = struct {
             fn run() !void {
-                const read_row = tap(600, 1600); // The ⋮ menu's last row
+                const read_row = tap_on(more.place(.finished)); // Finished, or unread once it is
                 const r = try play(&.{
-                    forward, forward,                     forward,
-                    top,     tap(1176, toolbar_button_y), read_row,
-                    top,     tap(1176, toolbar_button_y), read_row,
+                    forward, forward,     forward,
+                    top,     tool(.more), read_row,
+                    top,     tool(.more), read_row,
                 });
                 try expect(!r.finished[0], "it's still marked finished");
                 try expect(r.saved.para == 0, "it didn't start again");
@@ -1269,11 +1287,11 @@ const scenarios = [_]Scenario{
         .name = "changing the text size again and again takes no more memory",
         .run = struct {
             fn run() !void {
-                const sheet = [_]Step{ top, tap(696, toolbar_button_y) };
+                const sheet = [_]Step{ top, tool(.text) };
                 // The slider's smallest step, then its largest, each a tap and a lift
                 const change = [_]Step{
-                    tap(100, aa.size_row.top + 90),  lift,
-                    tap(1172, aa.size_row.top + 90), lift,
+                    tap(100, aa.row_middle(aa.size_row)),  lift,
+                    tap(1172, aa.row_middle(aa.size_row)), lift,
                 };
                 const twice = try play(&(sheet ++ change));
                 const often = try play(&(sheet ++ change ++ change ++ change ++ change));
@@ -1288,13 +1306,14 @@ const scenarios = [_]Scenario{
             "look as they should",
         .run = struct {
             fn run() !void {
-                const text_settings = tap(696, toolbar_button_y);
+                const text_settings = tool(.text);
+                const font_tab = tap_on(aa.place(.themes, .{ .tab = .font }));
                 const shots = .{
                     .{ Snapshot.page, &[_]Step{forward} },
                     .{ Snapshot.toolbar, &[_]Step{ forward, top } },
                     .{
                         Snapshot.@"aa-font",
-                        &[_]Step{ forward, top, text_settings, tap(477, 270) },
+                        &[_]Step{ forward, top, text_settings, font_tab },
                     },
                     .{ Snapshot.definition, &[_]Step{ forward, a_word, lift } },
                 };
@@ -1330,9 +1349,9 @@ const scenarios = [_]Scenario{
         .run = struct {
             fn run() !void {
                 const hero = tap_in(library_ui.hero_rect(width));
-                const home = tap(150, toolbar_button_y);
+                const home = tool(.home);
                 const bigger = [_]Step{
-                    top, tap(696, toolbar_button_y), tap(1172, aa.size_row.top + 90), lift,
+                    top, tool(.text), tap(1172, aa.row_middle(aa.size_row)), lift,
                 };
                 const before: ReadBefore = .{ .para = 6, .byte = 120 };
                 const kept_on = try play_on(.{ .library = true, .read_before = before }, &.{
@@ -1367,7 +1386,7 @@ const scenarios = [_]Scenario{
         .run = struct {
             fn run() !void {
                 // The Aa sheet opens on its Font tab, with the text size's slider
-                const slider_y: i32 = @intCast(aa.size_row.top + 90);
+                const slider_y = aa.row_middle(aa.size_row);
                 const along: Step = .{ .act = .{ .drag = .{ .x = 1172, .y = slider_y } } };
                 const begin = [_]Step{ top, text_settings_button, tap(400, slider_y), along };
                 const lifted = try play(&(begin ++ [_]Step{lift}));
@@ -1431,7 +1450,7 @@ const scenarios = [_]Scenario{
                 var arena = std.heap.ArenaAllocator.init(std.heap.smp_allocator);
                 defer arena.deinit();
                 const held_at = a_word.act.hold;
-                const highlighted = [_]Step{ a_word, lift, highlight_button, page_middle };
+                const highlighted = [_]Step{ a_word, lift, highlight_button, away_from_word };
                 // Read before, so it opens with its first pages and lays out the rest on
                 // ticks, as a book opened again after a layout change does
                 const read: Kindle = .{ .dictionary = true, .read_before = .{} };
@@ -1447,12 +1466,12 @@ const scenarios = [_]Scenario{
                 const handle = selection.end_handle(&.{held});
                 // The highlight tapped to select it, then the whole book laid out on ticks
                 const selected = highlighted ++ [_]Step{ tap(held_at.x, held_at.y), wait(3_000) };
-                const kept = try play_on(read, &(selected ++ .{page_middle}));
+                const kept = try play_on(read, &(selected ++ .{away_from_word}));
                 const dragged = try play_on(read, &(selected ++ .{
                     tap(handle.x, handle.y),
                     drag_to(next),
                     lift,
-                    page_middle,
+                    away_from_word,
                 }));
                 try expect(kept.highlights == 1, "the word wasn't highlighted");
                 try expect(dragged.highlights == 1, "the drag made another highlight");
@@ -1544,9 +1563,9 @@ const scenarios = [_]Scenario{
                 const went_on = !same_place(button_resumed.saved, button_held.saved);
                 try expect(went_on, "the pause button didn't carry on");
                 // The middle column, the screen's height, pauses as the button does
-                const middle = [_]Step{ wait(2_000), page_middle, wait(300_000) };
+                const middle = [_]Step{ wait(2_000), running_middle, wait(300_000) };
                 const middle_held = try play(&(start_running ++ middle));
-                const tapped_middle = [_]Step{ wait(2_000), page_middle };
+                const tapped_middle = [_]Step{ wait(2_000), running_middle };
                 const middle_tapped = try play(&(start_running ++ tapped_middle));
                 const middle_there = same_place(middle_held.saved, middle_tapped.saved);
                 try expect(middle_there, "the place moved on when paused from the middle");
@@ -1561,7 +1580,7 @@ const scenarios = [_]Scenario{
                 const going = try play_on(.{ .read_before = .{ .para = 120 } }, &(start_running ++
                     [_]Step{wait(2_000)}));
                 try expect(going.awake_at_end, "the Kindle wasn't held awake while running");
-                const paused = try play(&(start_running ++ [_]Step{ wait(2_000), page_middle }));
+                const paused = try play(&(start_running ++ [_]Step{ wait(2_000), running_middle }));
                 try expect(!paused.awake_at_end, "the Kindle was held awake while paused");
                 // Near the book's end: run past its last phrase, then lock and wake
                 const near_end: Kindle = .{ .read_before = .{ .para = 120 } };

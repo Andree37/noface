@@ -102,6 +102,42 @@ pub fn current(chapters: []const book_model.Chapter, para: u32) ?u32 {
 
 pub const Hit = union(enum) { none, close, tab: Tab, row: u32, prev, next };
 
+/// The middle of a control's taps: a tab's, a row's of the list's page, the pager's
+/// arrows', and closing's, on the toolbar above.
+pub fn place(h: Hit) style.Point {
+    const point: style.Point = switch (h) {
+        .close => .{ .x = style.screen_width / 2, .y = top / 2 },
+        .tab => |t| .{
+            .x = switch (t) {
+                .contents => style.screen_width / 4,
+                .notes => style.screen_width * 3 / 4,
+            },
+            .y = (top + list_top) / 2,
+        },
+        .row => |r| .{
+            .x = style.screen_width / 2,
+            .y = @intCast(list_top + r % rows * row_height + row_height / 2),
+        },
+        .prev => pager.place(.prev),
+        .next => pager.place(.next),
+        .none => unreachable, // Not a control
+    };
+    assert(point.y < style.screen_height);
+    return point;
+}
+
+test "every control's place is a tap on it" {
+    const count = 2 * rows; // Two pages of rows
+    const controls = [_]Hit{
+        .close, .{ .tab = .contents }, .{ .tab = .notes }, .{ .row = 0 }, .{ .row = rows - 1 },
+        .prev,  .next,
+    };
+    for (controls) |h| {
+        const p = place(h);
+        try std.testing.expectEqual(h, hit(p.x, p.y, 0, count));
+    }
+}
+
 pub fn hit(x: i32, y: i32, list_page: u32, count: u32) Hit {
     if (y < top) return .close;
     if (y < list_top) return .{ .tab = if (x < style.screen_width / 2) .contents else .notes };

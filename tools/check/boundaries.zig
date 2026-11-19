@@ -22,7 +22,8 @@
 //!   (top)   Files at the top of src/: the App and what it's made of (display, regions,
 //!           user data, languages, typefaces), and the programs' roots. The App's parts
 //!           import anything but screens and testing, as screens build on them; the
-//!           roots (`roots`), which put screens and the App together, import anything.
+//!           roots (`roots`), which put screens and the App together, or give the tools
+//!           what they use, import anything.
 //! Every folder may import base.
 const std = @import("std");
 const assert = std.debug.assert;
@@ -48,8 +49,9 @@ const rules = [_]Rule{
 const app_parts = .{ "", "sys", "model", "gfx", "layout", "ui", "kindle", "epub", "library" };
 
 /// The files at the top of src/ that put a program together: a program's start, the
-/// App's assembly with what the library needs reserved, and the tests' lists.
-const roots = [_][]const u8{ "main.zig", "setup.zig", "scenarios.zig", "tests.zig" };
+/// App's assembly with what the library needs reserved, the tests' lists, and what the
+/// tools in tools/ reach src/ through.
+const roots = [_][]const u8{ "main.zig", "setup.zig", "scenarios.zig", "tests.zig", "core.zig" };
 
 const import_prefix = "@import(\"";
 /// The longest path inside src/ an import may resolve to.

@@ -24,7 +24,7 @@ const subtitle_tint_height = 44;
 const quiet_tint_drop = 30;
 const quiet_tint_height = 54;
 /// The most rows a sheet is laid out for.
-const rows_longest = 6;
+pub const rows_longest = 6;
 
 comptime {
     assert(row_height >= style.fingertip);
@@ -75,6 +75,21 @@ pub fn row_centre(rows: u32, i: u32) u32 {
     assert(centre < style.screen_height - bottom_pad);
     return centre;
 }
+
+/// The middle of row `i` of a card of `rows` (one without a cover), for a script to tap.
+pub fn place(rows: u32, i: u32) style.Point {
+    return .{ .x = style.screen_width / 2, .y = @intCast(row_centre(rows, i)) };
+}
+
+/// A tap above every card, which closes whichever is open: just under the status strip,
+/// over the tallest card, with a cover.
+pub fn place_above() style.Point {
+    const y = style.status_height + style.fingertip / 2;
+    comptime assert(y < style.screen_height - height_with(rows_longest, cover_sized));
+    return .{ .x = style.screen_width / 2, .y = y };
+}
+/// A cover's place, for sizing the tallest card: only its having one counts.
+const cover_sized: ?Cover = .{ .pixels = &.{}, .width = 0, .height = 0 };
 
 pub fn top(rows: u32) u32 {
     const result = style.screen_height - height(rows);

@@ -80,6 +80,41 @@ pub fn hit(x: i32, y: i32) ?Key {
     return null;
 }
 
+/// The middle of a key's taps.
+pub fn place(target: Key) style.Point {
+    const middle_down = key_height / 2;
+    const first_y: i32 = keys_top + middle_down; // The first row's middle
+    const last_row_y: i32 = first_y + @as(i32, rows.len) * row_step;
+    const point: style.Point = switch (target) {
+        .char => |char| char: for (rows, 0..) |row, r| {
+            const column = std.mem.indexOfScalar(u8, row, char) orelse continue;
+            const left = row_left(@intCast(r)) + @as(i32, @intCast(column)) * (key_width + gap);
+            const y = first_y + @as(i32, @intCast(r)) * row_step;
+            break :char .{ .x = left + key_width / 2, .y = y };
+        } else unreachable, // A key the keyboard has
+        .backspace => .{
+            .x = backspace_x + backspace_width / 2,
+            .y = first_y + @as(i32, last_letters) * row_step,
+        },
+        .space => .{ .x = space_left + space_width / 2, .y = last_row_y },
+        .enter => .{ .x = enter_left + enter_width / 2, .y = last_row_y },
+    };
+    assert(point.y < style.screen_height);
+    assert(std.meta.eql(hit(point.x, point.y), target));
+    return point;
+}
+
+test "every key's place is a tap on it" {
+    for (rows) |row| for (row) |char| {
+        const p = place(.{ .char = char });
+        try std.testing.expectEqual(Key{ .char = char }, hit(p.x, p.y).?);
+    };
+    for ([_]Key{ .backspace, .space, .enter }) |special_key| {
+        const p = place(special_key);
+        try std.testing.expectEqual(special_key, hit(p.x, p.y).?);
+    }
+}
+
 // The keys sit on a light gray tray, white with rounded corners and a soft shadow
 const tray = 0xe2;
 const shadow = 0xa8;

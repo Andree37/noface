@@ -302,6 +302,26 @@ pub fn hit(x: i32, y: i32) Hit {
     return .none;
 }
 
+/// The middle of a tile's taps, and for closing, of the page under the panel.
+pub fn place(h: Hit) style.Point {
+    const point: style.Point = switch (h) {
+        .close => .{ .x = style.screen_width / 2, .y = (height + style.screen_height) / 2 },
+        // The sliders and their ends take a level, by where along them: not a place
+        .none, .dimmer, .brighter, .slider, .cooler, .warmer, .warmth => unreachable,
+        .schedule => .{
+            .x = @divTrunc(schedule_left + style.screen_width, 2),
+            .y = @divTrunc(schedule_top + schedule_bottom, 2),
+        },
+        .airplane, .bluetooth, .settings, .kindle, .sync => tile: for (tiles, 0..) |t, i| {
+            if (t.hit != h) continue;
+            const c = tile_center(@intCast(i));
+            break :tile .{ .x = c.x, .y = c.y };
+        } else unreachable, // Each is a tile
+    };
+    assert(hit(point.x, point.y) == h);
+    return point;
+}
+
 pub fn band_top(row: Row) u32 {
     assert(row.y >= band_above);
     const top = row.y - band_above;
@@ -470,6 +490,17 @@ const test_minus_x = step_mark_middle;
 const test_plus_x = screen_width - step_mark_middle;
 const test_bar_x = screen_width / 2;
 const test_schedule_x = schedule_left + schedule_reach / 2;
+
+test "every tile's place, and closing's, is a tap on it" {
+    for (tiles) |t| {
+        const p = place(t.hit);
+        try std.testing.expectEqual(t.hit, hit(p.x, p.y));
+    }
+    for ([_]Hit{ .close, .schedule }) |h| {
+        const p = place(h);
+        try std.testing.expectEqual(h, hit(p.x, p.y));
+    }
+}
 
 test "panel maps taps where it draws them" {
     for (tiles, 0..) |t, i| {

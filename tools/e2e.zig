@@ -4,11 +4,15 @@
 //! Usage: e2e <script> <log> <out dir>
 //!
 //! Each line of the script is a step; `#` starts a comment.
-//!   tap <x> <y>                     A finger down and up.
-//!   hold <x> <y> <ms>               A finger down for <ms>.
-//!   drag <x0> <y0> <x1> <y1> <ms> [<hold ms>]
+//!   tap <point>                     A finger down and up.
+//!   hold <point> <ms>               A finger down for <ms>.
+//!   drag <point> <point> <ms> [<hold ms>]
 //!                                   A finger moved from one point to the other over <ms>,
 //!                                   held still first for <hold ms> if given.
+//! A point is a control by name, as screens/places.zig lists them ("toolbar.bookmark",
+//! "key.s", "card.3.0"), so a script follows layout as it moves, or "<x> <y>" for what
+//! isn't a control, like a word on the page. Every name is checked before the first
+//! touch.
 //!   power                           The power button, which locks or unlocks.
 //!   log <text>                      A line with <text> logged since the last touch, within
 //!                                   10 s.
@@ -216,7 +220,9 @@ const Run = struct {
 };
 
 /// Why a step failed, to print.
-const Failure = error{ Usage, Timeout, TooSlow, CantSave, NoLog };
+const Failure = error{ Usage, Timeout, TooSlow, CantSave, NoLog, UnknownPlace };
+const Words = std.mem.TokenIterator(u8, .any);
+const Point = core.places.Point;
 
 pub fn main(init: std.process.Init.Minimal) !void {
     const argv = init.args.vector;
@@ -229,6 +235,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         .log_path = argv[2],
         .out_dir = std.mem.sliceTo(argv[3], 0),
     };
+    if (!script_reads(script)) std.process.exit(1);
     var lines = std.mem.splitScalar(u8, script, '\n');
     var line_number: u32 = 0;
     var passed: u32 = 0;
@@ -252,6 +259,28 @@ pub fn main(init: std.process.Init.Minimal) !void {
     std.debug.print("e2e: {d} steps passed\n", .{passed});
 }
 
+/// Whether every touch in `script` reads, its places found, before any is made: a
+/// mistake in a later line would otherwise show only after the touches before it.
+fn script_reads(script: []const u8) bool {
+    var lines = std.mem.splitScalar(u8, script, '\n');
+    var line_number: u32 = 0;
+    var bad: u32 = 0;
+    while (lines.next()) |line_raw| {
+        line_number += 1;
+        const code = line_raw[0 .. std.mem.indexOfScalar(u8, line_raw, '#') orelse line_raw.len];
+        var words = std.mem.tokenizeAny(u8, code, " \t\r");
+        const verb = words.next() orelse continue;
+        _ = parse_touch(verb, &words) catch |err| {
+            std.debug.print("FAIL {d}: {s}: {s}, before any touch\n", .{
+                line_number, std.mem.trim(u8, code, " \t\r"), @errorName(err),
+            });
+            bad += 1;
+        };
+    }
+    assert(bad <= line_number);
+    return bad == 0;
+}
+
 /// Plays one step, returning how long the screen took to change for a `drawn` step.
 fn step(run: *Run, line: []const u8) Failure!?u32 {
     assert(line.len > 0);
@@ -270,66 +299,86 @@ fn step(run: *Run, line: []const u8) Failure!?u32 {
     } else if (std.mem.eql(u8, verb, "wait")) {
         sleep_ms(try number(&words));
     } else {
-        try touch(run, verb, &words);
+        try touch(run, try parse_touch(verb, &words) orelse return error.Usage);
+    }
+    return null;
+}
+
+/// A touch a script makes, or the power button, read from its line.
+const Touch = union(enum) {
+    power,
+    tap: Point,
+    hold: struct { at: Point, ms: u32 },
+    drag: struct { from: Point, to: Point, ms: u32, hold_ms: u32 },
+};
+
+/// The touch a line's words say, its points by name or as "<x> <y>"; null for a line
+/// that isn't a touch. Every line is read this way before the first touch is made, so a
+/// name no place has stops the run before it taps anything.
+fn parse_touch(verb: []const u8, words: *Words) Failure!?Touch {
+    assert(verb.len > 0);
+    if (std.mem.eql(u8, verb, "power")) return .power;
+    if (std.mem.eql(u8, verb, "tap")) return .{ .tap = try point(words) };
+    if (std.mem.eql(u8, verb, "hold")) {
+        const at = try point(words);
+        return .{ .hold = .{ .at = at, .ms = try number(words) } };
+    }
+    if (std.mem.eql(u8, verb, "drag")) {
+        const from = try point(words);
+        const to = try point(words);
+        const ms = try number(words);
+        // A hold first, for selecting: a word that isn't a number is a mistake, not none
+        const hold_ms: u32 = if (words.peek() != null) try number(words) else 0;
+        return .{ .drag = .{ .from = from, .to = to, .ms = ms, .hold_ms = hold_ms } };
     }
     return null;
 }
 
 /// Plays a touch, or the power button.
-fn touch(run: *Run, verb: []const u8, words: *std.mem.TokenIterator(u8, .any)) Failure!void {
-    assert(verb.len > 0);
+fn touch(run: *Run, t: Touch) Failure!void {
     assert(!run.panel.finger_down);
-    if (std.mem.eql(u8, verb, "power")) {
-        run.mark();
-        const argv = [_:null]?[*:0]const u8{ lipc_set, "com.lab126.powerd", "powerButton", "1" };
-        var out: [64]u8 = undefined;
-        _ = core.process.run(&argv, &out) orelse return error.Timeout;
-    } else if (std.mem.eql(u8, verb, "tap")) {
-        const x = try coordinate(words);
-        const y = try coordinate(words);
-        run.mark();
-        run.panel.down(x, y);
-        sleep_ms(touchsim.tap_ms);
-        run.panel.up();
-    } else if (std.mem.eql(u8, verb, "hold")) {
-        const x = try coordinate(words);
-        const y = try coordinate(words);
-        const hold_ms = try number(words);
-        run.mark();
-        run.panel.down(x, y);
-        sleep_ms(hold_ms);
-        run.panel.up();
-    } else if (std.mem.eql(u8, verb, "drag")) {
-        try drag(run, words);
-    } else {
-        return error.Usage;
+    run.mark();
+    switch (t) {
+        .power => {
+            const argv = [_:null]?[*:0]const u8{
+                lipc_set, "com.lab126.powerd", "powerButton", "1",
+            };
+            var out: [64]u8 = undefined;
+            _ = core.process.run(&argv, &out) orelse return error.Timeout;
+        },
+        .tap => |at| {
+            run.panel.down(at.x, at.y);
+            sleep_ms(touchsim.tap_ms);
+            run.panel.up();
+        },
+        .hold => |h| {
+            run.panel.down(h.at.x, h.at.y);
+            sleep_ms(h.ms);
+            run.panel.up();
+        },
+        .drag => |d| drag(run, d.from, d.to, d.ms, d.hold_ms),
     }
     run.lifted();
 }
 
-/// A finger moved in `drag_steps` even steps over the time given.
-fn drag(run: *Run, words: *std.mem.TokenIterator(u8, .any)) Failure!void {
+/// A finger moved in `drag_steps` even steps over `total_ms`, held still at `from` for
+/// `hold_ms` first.
+fn drag(run: *Run, from: Point, to: Point, total_ms: u32, hold_ms: u32) void {
     assert(!run.panel.finger_down);
-    var at: [4]i32 = undefined;
-    for (&at) |*value| value.* = try coordinate(words);
-    const total_ms = try number(words);
-    // A hold first, for selecting: a word that isn't a number is a mistake, not none
-    const hold_ms: u32 = if (words.peek() != null) try number(words) else 0;
-    run.mark();
-    run.panel.down(at[0], at[1]);
+    run.panel.down(from.x, from.y);
     sleep_ms(hold_ms);
-    var x = at[0];
-    var y = at[1];
+    var x = from.x;
+    var y = from.y;
     for (1..drag_steps + 1) |index| {
         sleep_ms(total_ms / drag_steps);
         const i: i32 = @intCast(index);
-        x = at[0] + @divTrunc((at[2] - at[0]) * i, drag_steps);
-        y = at[1] + @divTrunc((at[3] - at[1]) * i, drag_steps);
+        x = from.x + @divTrunc((to.x - from.x) * i, drag_steps);
+        y = from.y + @divTrunc((to.y - from.y) * i, drag_steps);
         run.panel.move(x, y);
     }
     // The last step lands where the drag ends
-    assert(x == at[2]);
-    assert(y == at[3]);
+    assert(x == to.x);
+    assert(y == to.y);
     run.panel.up();
 }
 
@@ -389,16 +438,32 @@ fn log_has(path: [*:0]const u8, from: u64, wanted: []const u8) Failure!bool {
     return std.mem.indexOf(u8, log_buffer[0..read], wanted) != null;
 }
 
-/// The next word as a place on the screen, in its pixels: no screen is wider or taller.
-fn coordinate(words: *std.mem.TokenIterator(u8, .any)) Failure!i32 {
+/// The next point: a place by name (screens/places.zig), or "<x> <y>" for what isn't a
+/// control, like a word on the page.
+fn point(words: *Words) Failure!Point {
     const word = words.next() orelse return error.Usage;
     assert(word.len > 0);
-    return std.fmt.parseInt(u16, word, 10) catch return error.Usage;
+    if (!std.ascii.isDigit(word[0])) return core.places.find(word) orelse error.UnknownPlace;
+    const x = std.fmt.parseInt(u16, word, 10) catch return error.Usage;
+    const y_word = words.next() orelse return error.Usage;
+    const y = std.fmt.parseInt(u16, y_word, 10) catch return error.Usage;
+    return .{ .x = x, .y = y };
 }
 
 /// The next word as a number.
-fn number(words: *std.mem.TokenIterator(u8, .any)) Failure!u32 {
+fn number(words: *Words) Failure!u32 {
     const word = words.next() orelse return error.Usage;
     assert(word.len > 0);
     return std.fmt.parseInt(u32, word, 10) catch return error.Usage;
+}
+
+test "every script reads, each place it names found" {
+    const scripts = [_][]const u8{
+        @embedFile("e2e/library.e2e"),
+        @embedFile("e2e/reader.e2e"),
+        @embedFile("e2e/running.e2e"),
+    };
+    for (scripts) |script| try std.testing.expect(script_reads(script));
+    try std.testing.expect(!script_reads("tap toolbar.nothing\n"));
+    try std.testing.expect(script_reads("tap 10 20 # A word\ntap page.forward\n"));
 }

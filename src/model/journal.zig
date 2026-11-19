@@ -366,7 +366,7 @@ test "every day stays in the file, and a streak over years is counted whole" {
     try std.testing.expectEqualStrings(text.items, saved.items);
 }
 
-/// What saving writes over `content` with `j` in memory, as app.zig's `save_journal`.
+/// What saving writes over `content` with `j` in memory, as user_data.zig's `save_journal`.
 fn test_save(buf: []u8, content: []const u8, j: *const Journal) ![]const u8 {
     var window_buf: [max_format_bytes]u8 = undefined;
     const window = format(&window_buf, j);

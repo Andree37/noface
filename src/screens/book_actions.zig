@@ -43,7 +43,7 @@ pub fn mark_read(a: *app.App, e: *catalog.Entry, done: bool) void {
     }
     if (done != counted) {
         if (done) a.journal.finish(a.today()) else a.journal.unfinish(a.today());
-        app.save_journal(a);
+        a.save_journal();
     }
     std.debug.print("marked {s}\n", .{if (done) "read" else "unread"});
 }

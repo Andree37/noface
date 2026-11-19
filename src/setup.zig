@@ -5,6 +5,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const app = @import("app.zig");
+const user_data = @import("user_data.zig");
 const paths = @import("kindle/paths.zig");
 const memory = @import("base/memory.zig");
 const hwtcon = @import("kindle/hwtcon.zig");
@@ -303,7 +304,7 @@ pub fn assemble(p: Parts) !app.App {
     assert(pixels > 0);
     assert(p.files.settings.len > 0); // DataFiles.init ran
     const regions = try reserve_reading();
-    const speeds = app.load_speed(p.files.speed);
+    const speeds = user_data.load_speed(p.files.speed);
     var slots: [3]app.Slot = undefined;
     for (&slots) |*s| s.* = .{ .buf = try p.alloc.alloc(u8, pixels) };
     const ui = Fonts{
@@ -349,10 +350,10 @@ pub fn assemble(p: Parts) !app.App {
         .speed_path = p.files.speed,
         .journal_path = p.files.journal,
         .battery_path = p.files.battery,
-        .settings = app.load_settings(p.files.settings),
+        .settings = user_data.load_settings(p.files.settings),
         .speed = speeds.speed,
         .running_pace = speeds.running_pace,
-        .journal = app.load_journal(p.files.journal),
+        .journal = user_data.load_journal(p.files.journal),
         .utc_offset = 0,
         .layout = layout,
     };

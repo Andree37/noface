@@ -14,6 +14,7 @@ const fonts_db = @import("kindle/fonts.zig");
 const process = @import("sys/process.zig");
 const image = @import("gfx/image.zig");
 const app = @import("app.zig");
+const user_data = @import("user_data.zig");
 const hwtcon = @import("kindle/hwtcon.zig");
 const input_mod = @import("kindle/input.zig");
 const Font = @import("gfx/font.zig").Font;
@@ -809,7 +810,7 @@ fn play_on_outcome(
         .awake_at_end = ran.awake_at_end,
         .speed_pages = a.speed.pages,
         .settings = a.settings,
-        .saved_settings = app.load_settings(a.settings_path),
+        .saved_settings = user_data.load_settings(a.settings_path),
         .airplane_asked_on = ran.fake.was_set(wifi_key ++ " 0"),
         .airplane_at_end = std.mem.eql(u8, ran.fake.get(wifi_key), "0"),
         .wifi_note_left = file.read_small(wifi_saver.note_path(), &note_buf).len > 0,

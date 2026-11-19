@@ -1058,7 +1058,7 @@ pub const Reader = struct {
         r.run = null;
         r.s.learns_speed = true;
         std.debug.print("running: off\n", .{});
-        app.save_speed(a);
+        a.save_speed();
         assert(r.run == null);
     }
 

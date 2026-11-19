@@ -51,6 +51,8 @@ test {
     _ = @import("screens/card.zig");
     _ = @import("sys/process.zig");
     _ = @import("app.zig");
+    _ = @import("user_data.zig");
+    _ = @import("gfx/picture_cache.zig");
     _ = @import("kindle/paths.zig");
     _ = @import("setup.zig");
     _ = @import("kindle/input/gestures.zig");

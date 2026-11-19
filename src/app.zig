@@ -10,15 +10,15 @@ const Page = @import("gfx/page.zig").Page;
 const Font = @import("gfx/font.zig").Font;
 const book_model = @import("model/book.zig");
 const stats = @import("model/stats.zig");
-const running_model = @import("model/running.zig");
 const cover = @import("gfx/image.zig");
+const picture_cache = @import("gfx/picture_cache.zig");
 const draw = @import("ui/draw.zig");
 const state = @import("sys/state.zig");
+const user_data = @import("user_data.zig");
 const Fonts = @import("ui/fonts.zig").Fonts;
 const input_mod = @import("kindle/input.zig");
 const aa = @import("ui/aa.zig");
 const file = @import("sys/file.zig");
-const calls = @import("sys/calls.zig");
 const hwtcon = @import("kindle/hwtcon.zig");
 const library = @import("ui/library.zig");
 const covers_ui = @import("ui/covers.zig");
@@ -178,7 +178,7 @@ pub const App = struct {
     /// The running pace (model/running.zig), once running mode has been used: words a
     /// minute while reading on a treadmill, learned apart from `speed`.
     running_pace: ?f64 = null,
-    pictures: Pictures = .{}, // Pictures of the open book, ready to copy onto pages
+    pictures: picture_cache.Pictures = .{}, // Pictures of the open book, ready to copy onto pages
     settings: settings_model.Settings,
     quick: quick_model.Quick = .{},
     utc_offset: i64,
@@ -274,7 +274,16 @@ pub const App = struct {
     }
 
     pub fn save_settings(a: *const App) void {
-        write_settings(a.settings_path, a.settings);
+        user_data.save_settings(a.settings_path, a.settings);
+    }
+
+    /// Saves the reading speed and the running pace, after reading teaches them.
+    pub fn save_speed(a: *const App) void {
+        user_data.save_speed(a.speed_path, .{ .speed = a.speed, .running_pace = a.running_pace });
+    }
+
+    pub fn save_journal(a: *const App) void {
+        user_data.save_journal(a.journal_path, &a.journal);
     }
 
     /// Fonts are kept per size, so stepping through sizes doesn't reload them.
@@ -565,197 +574,4 @@ pub fn clean_rect(a: *App, left: u32, top: u32, width: u32, height: u32) !void {
     assert(left + width <= a.screen.width);
     assert(top + height <= a.screen.height);
     try a.screen.wait_complete(try a.screen.show_region(left, top, width, height, .clean));
-}
-
-/// The journal saved at `path`: every day is in the file, which is mapped, never read
-/// whole into memory; the journal keeps its latest days.
-pub fn load_journal(path: [*:0]const u8) journal_model.Journal {
-    const content = file.map(path) catch return .{};
-    defer file.unmap(content);
-    const journal = journal_model.parse(content);
-    assert(journal.len <= journal.days.len); // The latest days, the rest in the file
-    return journal;
-}
-
-/// Saves the journal: the days already in the file and older than memory holds, as
-/// they are, then the days memory holds. Not saved when the file is there but can't be
-/// read: written over, the days only it holds would be lost.
-pub fn save_journal(a: *const App) void {
-    var buf: [journal_model.max_format_bytes]u8 = undefined;
-    assert(a.journal.len <= a.journal.days.len);
-    const content = journal_model.format(&buf, &a.journal);
-    assert(content.len >= journal_model.tag_line_bytes); // Sized for the longest journal
-    const old: ?[]const u8 = file.map(a.journal_path) catch |err| switch (err) {
-        // No file yet, or nothing in it: nothing older to keep
-        error.NotFound, error.EmptyFile => null,
-        error.OpenFailed, error.SeekFailed, error.MmapFailed => {
-            log.info("journal not saved: {s}", .{@errorName(err)});
-            return;
-        },
-    };
-    defer if (old) |o| file.unmap(o);
-    const first_day: ?i32 = if (a.journal.len > 0) a.journal.days[0].day else null;
-    // No file, or nothing in it, has no day to keep
-    const older = journal_model.older_lines(old orelse "", first_day);
-    const parts = [_][]const u8{
-        content[0..journal_model.tag_line_bytes],
-        older[0],
-        older[1], // A line break, when the file's last line had none
-        content[journal_model.tag_line_bytes..],
-    };
-    file.write_parts(a.journal_path, &parts);
-}
-
-/// The speed file: the reader's speed, then the running pace once there is one.
-const speed_bytes_max = 128;
-
-pub const Speeds = struct { speed: stats.Speed, running_pace: ?f64 };
-
-pub fn load_speed(path: [*:0]const u8) Speeds {
-    var buf: [speed_bytes_max]u8 = undefined;
-    const content = file.read_small(path, &buf);
-    const speed = stats.parse(content);
-    assert(speed.seconds >= 0); // Parsing starts over on anything else
-    assert(speed.words >= 0);
-    return .{ .speed = speed, .running_pace = running_model.parse_pace(content) };
-}
-
-pub fn save_speed(a: *const App) void {
-    var buf: [speed_bytes_max / 2]u8 = undefined;
-    var pace_buf: [speed_bytes_max / 2]u8 = undefined;
-    assert(a.speed.seconds >= 0);
-    assert(a.speed.words >= 0);
-    const pace = if (a.running_pace) |wpm| running_model.format_pace(&pace_buf, wpm) else "";
-    file.write_parts(a.speed_path, &.{ stats.format(&buf, a.speed), pace });
-}
-
-pub fn load_settings(path: [*:0]const u8) settings_model.Settings {
-    var buf: [settings_bytes_max]u8 = undefined;
-    const settings = settings_model.parse(file.read_small(path, &buf));
-    // Parsing clamps every value to its steps
-    assert(settings.size < settings_model.sizes.len);
-    assert(settings.font.len > 0);
-    return settings;
-}
-
-/// Room for every setting with the longest typeface name a setting holds.
-const settings_bytes_max = settings_model.family_bytes_max + 1024;
-
-fn write_settings(path: [*:0]const u8, s: settings_model.Settings) void {
-    assert(path[0] != 0);
-    var buf: [settings_bytes_max]u8 = undefined;
-    const content = settings_model.format(&buf, s);
-    // Every setting but the name is a word or a number: the name is the only long one
-    assert(content.len > 0);
-    file.write_small(path, content);
-}
-
-/// The last few pictures drawn, decoded, scaled and dithered, so drawing a page
-/// again doesn't decode them again. Keyed by where the picture's bytes sit in the
-/// open book, so it must be cleared when the book closes.
-pub const Pictures = struct {
-    entries: [slots]?Entry = @splat(null), // Null until a picture is put there
-    next: u32 = 0, // Which entry to replace next
-
-    const slots = 8;
-    const Entry = struct { key: [*]const u8, w: u32, h: u32, pixels: []u8 };
-
-    pub fn get(p: *const Pictures, data: [*]const u8, w: u32, h: u32) ?[]const u8 {
-        assert(p.next < slots);
-        for (p.entries) |entry| {
-            const e = entry orelse continue;
-            if (e.key == data and e.w == w and e.h == h) {
-                assert(e.pixels.len == @as(u64, w) * h); // As put
-                return e.pixels;
-            }
-        }
-        return null;
-    }
-
-    pub fn put(
-        p: *Pictures,
-        alloc: std.mem.Allocator,
-        data: [*]const u8,
-        w: u32,
-        h: u32,
-        pixels: []u8,
-    ) void {
-        assert(pixels.len == @as(u64, w) * h); // A whole picture at its size
-        assert(p.next < slots);
-        const slot = &p.entries[p.next];
-        if (slot.*) |e| alloc.free(e.pixels);
-        slot.* = .{ .key = data, .w = w, .h = h, .pixels = pixels };
-        p.next = (p.next + 1) % slots;
-    }
-
-    pub fn clear(p: *Pictures, alloc: std.mem.Allocator) void {
-        assert(p.next < slots);
-        for (&p.entries) |*slot| {
-            if (slot.*) |e| alloc.free(e.pixels);
-            slot.* = null;
-        }
-        p.next = 0;
-    }
-};
-
-test "pictures are kept until replaced or cleared" {
-    const alloc = std.testing.allocator;
-    var p = Pictures{};
-    defer p.clear(alloc);
-    const key = "abc";
-    p.put(alloc, key.ptr, 2, 1, try alloc.dupe(u8, "xy"));
-    try std.testing.expectEqualStrings("xy", p.get(key.ptr, 2, 1).?);
-    try std.testing.expect(p.get(key.ptr, 4, 2) == null); // Another size
-    for (0..Pictures.slots) |i| {
-        p.put(alloc, @ptrFromInt(0x1000 + i), 1, 1, try alloc.dupe(u8, "z"));
-    }
-    try std.testing.expect(p.get(key.ptr, 2, 1) == null); // Pushed out
-}
-
-/// An App with only what saving the journal reads, its journal saved at "/tmp/<name>-<pid>".
-fn journal_app(path_buffer: []u8, name: []const u8) !App {
-    var a: App = undefined;
-    a.journal = .{};
-    const format = "/tmp/noface-{s}-{d}";
-    const fields = .{ name, calls.getpid() };
-    a.journal_path = try std.fmt.bufPrintSentinel(path_buffer, format, fields, 0);
-    _ = calls.unlink(a.journal_path); // Ignored: only there after a run that stopped
-    return a;
-}
-
-test "a journal that's there but can't be read is never written over" {
-    var path_buffer: [64]u8 = undefined;
-    var a = try journal_app(&path_buffer, "journal-unreadable");
-    defer _ = calls.unlink(a.journal_path); // Ignored: only /tmp is left fuller
-    a.journal.add(20_000, 600, 3);
-    save_journal(&a);
-    try std.testing.expectEqual(1, load_journal(a.journal_path).len);
-    // A link to itself is there but can't be opened, as on a drive that fails a read
-    _ = calls.unlink(a.journal_path); // Ignored: checked by the link made in its place
-    try std.testing.expect(!os.failed(calls.symlink(a.journal_path, a.journal_path)));
-    a.journal.add(20_001, 600, 3);
-    save_journal(&a);
-    // Still the link: nothing was renamed over it
-    try std.testing.expectError(error.OpenFailed, file.map(a.journal_path));
-}
-
-test "the longest typeface name a setting holds saves and comes back" {
-    defer settings_model.reset_families();
-    var buffer: [64]u8 = undefined;
-    const format = "/tmp/noface-settings-test-{d}";
-    const path = try std.fmt.bufPrintSentinel(&buffer, format, .{calls.getpid()}, 0);
-    defer _ = calls.unlink(path); // Ignored: only /tmp is left fuller
-    // The longest a font file's name can make one: 255 characters, three bytes each
-    const long: [255 * 3]u8 = comptime blk: {
-        var name: [255 * 3]u8 = undefined;
-        for (0..255) |i| name[i * 3 ..][0..3].* = "\u{6587}".*;
-        break :blk name;
-    };
-    const kept = settings_model.builtin_families;
-    settings_model.offer_families(&(kept ++ .{&long}));
-    var s = settings_model.Settings{};
-    s.font = settings_model.Family.of(&long).?;
-    write_settings(path, s);
-    try std.testing.expectEqual(s.font, load_settings(path).font);
-    try std.testing.expect(s.family_index() + 1 == settings_model.families.len);
 }

@@ -17,6 +17,7 @@ const text = @import("../../layout/text.zig");
 const now_us = os.now_us;
 const unix_time = os.unix_time;
 const app = @import("../../app.zig");
+const user_data = @import("../../user_data.zig");
 const style = @import("../../ui/style.zig");
 const Zone = @import("../../kindle/input.zig").Zone;
 const back_button = @import("back_button.zig");
@@ -493,8 +494,8 @@ pub fn save_progress(
     saved.back_byte = if (back) |b| b.byte else 0;
     saved.back_turns = s.back.turns_since_jump;
     state.save(path, saved);
-    app.save_speed(s.app);
-    app.save_journal(s.app);
+    s.app.save_speed();
+    s.app.save_journal();
     entry.percent = percent;
     entry.last = now;
     entry.seconds_read = seconds;
@@ -513,7 +514,7 @@ pub fn relayout(a: *app.App, s: *Session) !void {
     assert(a.pages_budget.region.?.kind == .bump);
     a.apply_settings() catch |err| {
         std.debug.print("settings failed: {s}\n", .{@errorName(err)});
-        a.settings = app.load_settings(a.settings_path);
+        a.settings = user_data.load_settings(a.settings_path);
         return a.apply_settings();
     };
     a.save_settings();

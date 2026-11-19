@@ -10,7 +10,6 @@ const goto_ui = @import("../ui/goto.zig");
 const keyboard = @import("../ui/keyboard.zig");
 const search_sheet = @import("../ui/search_sheet.zig");
 const draw_ui = @import("../ui/draw.zig");
-const icons = @import("../ui/icons.zig");
 const style = @import("../ui/style.zig");
 const files = @import("../library/files.zig");
 const input_mod = @import("../kindle/input.zig");
@@ -34,6 +33,17 @@ comptime {
     assert(keyboard.top < style.screen_height);
 }
 
+/// The choices' header, over the list where the Go To sheet's tabs would be, the screen
+/// having no status strip: the back link's arrow's middle, the heading's and the book's
+/// baselines, the book's gray band's rise over its baseline and its height.
+const header = struct {
+    const back_y = 70;
+    const heading_y = goto_ui.top - 6;
+    const about_y = goto_ui.list_top - 62;
+    const about_tint_rise = 28;
+    const about_tint_height = 36;
+};
+
 const Choices = struct {
     pub const Result = u32;
     /// A row takes its tap as it lands, however long it's held, as on any sheet: not
@@ -51,13 +61,17 @@ const Choices = struct {
         const a = c.a;
         const page = a.page(a.screen.pixels);
         page.fill_rect(0, 0, page.width, page.height, style.white);
-        // Back to the library along the top, as the stats screen has it
-        icons.back(page, style.margin + 18, 70);
-        try a.ui.small.draw(page, style.margin + 56, 82, "Library");
+        // Back to the library along the top, as the stats screen has it, then what's
+        // being chosen and the book it's for, over the list
+        try draw_ui.draw_back_link(a.ui.small, page, header.back_y, "Library");
         const width_available: f32 = @floatFromInt(page.width - 2 * style.margin);
-        try draw_ui.clipped(a.ui.hero, page, style.margin, 222, c.heading, width_available);
-        try draw_ui.clipped(a.ui.caption, page, style.margin, 278, c.about, width_available);
-        page.tint(style.margin, 250, page.width - 2 * style.margin, 36, style.faded);
+        const heading_y = header.heading_y;
+        try draw_ui.clipped(a.ui.hero, page, style.margin, heading_y, c.heading, width_available);
+        const about_y = header.about_y;
+        try draw_ui.clipped(a.ui.caption, page, style.margin, about_y, c.about, width_available);
+        const tint_top = about_y - header.about_tint_rise;
+        const tint_width = page.width - 2 * style.margin;
+        page.tint(style.margin, tint_top, tint_width, header.about_tint_height, style.faded);
         try goto_ui.render_list(a.ui, page, c.rows, null, c.pages.page, "");
         try a.show_band(0, a.screen.height);
     }

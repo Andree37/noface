@@ -7,14 +7,33 @@ const book_model = @import("../model/book.zig");
 const draw = @import("draw.zig");
 const icons = @import("icons.zig");
 const style = @import("style.zig");
+const toolbar = @import("toolbar.zig");
 const Fonts = @import("fonts.zig").Fonts;
 
-pub const top = 228; // Under the toolbar, which stays visible above
-const tabs_baseline = top + 72;
-pub const list_top = top + 112; // Above it: the tabs here, the query field in search
-const row_height = 100;
+pub const top = toolbar.top_height; // Under the toolbar, which stays visible above
+/// The tabs' band over the list, or the query field's in search; the tabs' labels'
+/// baseline in it, and the line under the open one under that.
+const header_band = 112;
+const tabs_baseline_drop = 72;
+const tabs_underline_drop = 14;
+const tabs_baseline = top + tabs_baseline_drop;
+pub const list_top = top + header_band;
+/// The rule over the list, this far over its first row.
+const list_rule_rise = 12;
+const row_height = style.fingertip;
 const row_baseline = 62; // From a row's top to its text's baseline
-pub const rows = 11;
+/// As many rows as fit between the header and the pager.
+pub const rows = (pager.top - list_top) / row_height;
+/// "No bookmarks or highlights yet.", down from the list's top.
+const empty_drop = 200;
+/// A bookmark's or highlight's sign: its middle in from where the row's text would start.
+const mark_middle_inset = 17;
+/// The bar left of the row being read: in from the margin's edge, its top down from the
+/// row's, and its size.
+const reading_bar_outset = 28;
+const reading_bar_drop = 22;
+const reading_bar_width = 8;
+const reading_bar_height = 56;
 const indent = 48; // Per level of nesting
 const depth_shown_max = 4; // Deeper rows are indented no further
 const mark_width = 56; // Room for a bookmark or highlight sign before the text
@@ -23,7 +42,7 @@ const pager = draw.bottom_pager;
 
 comptime {
     if (list_top + rows * row_height > pager.top) @compileError("the list runs into the pager");
-    assert(row_height >= 100); // A fingertip
+    assert(rows > 0);
     assert(row_baseline < row_height);
     assert(tabs_baseline < list_top);
     assert(pager.bottom <= style.screen_height);
@@ -143,8 +162,8 @@ fn draw_mark(page: Page, mark: Mark, x: f32, y: u32) void {
     const cy: f32 = @floatFromInt(y + row_height / 2);
     switch (mark) {
         .none => unreachable, // Asserted above: only marked rows draw one
-        .bookmark => icons.bookmark_filled(page, x + 17, cy),
-        .highlight => icons.highlighter(page, x + 17, cy),
+        .bookmark => icons.bookmark_filled(page, x + mark_middle_inset, cy),
+        .highlight => icons.highlighter(page, x + mark_middle_inset, cy),
     }
 }
 
@@ -163,7 +182,7 @@ pub fn render(
     page.fill_rect(0, top, page.width, page.height - top, style.white);
     page.fill_rect(0, top, page.width, 1, style.rule);
     const half: f32 = @floatFromInt(page.width / 2);
-    const underline_y = tabs_baseline + 14;
+    const underline_y = tabs_baseline + tabs_underline_drop;
     const contents = tab == .contents;
     const baseline = tabs_baseline;
     const left_centre = half / 2;
@@ -183,10 +202,12 @@ pub fn render_list(
     list_page: u32,
     empty: []const u8,
 ) !void {
-    page.fill_rect(0, list_top - 12, page.width, page.height - (list_top - 12), style.white);
-    page.fill_rect(style.margin, list_top - 12, page.width - 2 * style.margin, 1, style.rule);
+    const rule_y = list_top - list_rule_rise;
+    page.fill_rect(0, rule_y, page.width, page.height - rule_y, style.white);
+    page.fill_rect(style.margin, rule_y, page.width - 2 * style.margin, 1, style.rule);
     if (list.len == 0) {
-        try draw.centered(fonts.small, page, @floatFromInt(page.width / 2), list_top + 200, empty);
+        const middle: f32 = @floatFromInt(page.width / 2);
+        try draw.centered(fonts.small, page, middle, list_top + empty_drop, empty);
         return;
     }
     const first = list_page * rows;
@@ -207,7 +228,12 @@ pub fn render_list(
         }
         const font = if (here) fonts.title else fonts.small;
         try draw.clipped(font, page, left, baseline, r.label, right - page_label_width - left);
-        if (here) page.fill_rect(style.margin - 28, y + 22, 8, 56, style.black);
+        if (here) {
+            const bar_left = style.margin - reading_bar_outset;
+            const bar_top = y + reading_bar_drop;
+            const bar_w = reading_bar_width;
+            page.fill_rect(bar_left, bar_top, bar_w, reading_bar_height, style.black);
+        }
         var label: [16]u8 = undefined;
         const number = r.note orelse std.fmt.bufPrint(&label, "{d}", .{r.page + 1}) catch "";
         try fonts.caption.draw(page, right - try fonts.caption.measure(number), baseline, number);
@@ -230,29 +256,38 @@ test "the current chapter is the last one started" {
 }
 
 test "taps pick a tab, a row on the shown page, or close" {
-    try std.testing.expectEqual(Hit.close, hit(600, 100, 0, 30));
-    try std.testing.expectEqual(Hit{ .tab = .contents }, hit(300, top + 60, 0, 30));
-    try std.testing.expectEqual(Hit{ .tab = .notes }, hit(900, top + 60, 0, 30));
-    try std.testing.expectEqual(Hit{ .row = 0 }, hit(600, list_top + 10, 0, 30));
-    const third_row = list_top + 2 * row_height + 10;
-    try std.testing.expectEqual(Hit{ .row = rows + 2 }, hit(600, third_row, 1, 30));
-    // Past the last
-    try std.testing.expectEqual(Hit.none, hit(600, list_top + 9 * row_height + 10, 2, 30));
-    try std.testing.expectEqual(@as(u32, 3), page_count(30));
+    const x = style.screen_width / 2;
+    const count = 2 * rows + rows / 2; // Two pages and a half
+    try std.testing.expectEqual(Hit.close, hit(x, top - 1, 0, count));
+    const tabs_y = (top + list_top) / 2;
+    const contents_x = style.screen_width / 4;
+    const notes_x = 3 * style.screen_width / 4;
+    try std.testing.expectEqual(Hit{ .tab = .contents }, hit(contents_x, tabs_y, 0, count));
+    try std.testing.expectEqual(Hit{ .tab = .notes }, hit(notes_x, tabs_y, 0, count));
+    const first_row = list_top + row_height / 2;
+    try std.testing.expectEqual(Hit{ .row = 0 }, hit(x, first_row, 0, count));
+    const third_row = first_row + 2 * row_height;
+    try std.testing.expectEqual(Hit{ .row = rows + 2 }, hit(x, third_row, 1, count));
+    // Past the last, on the last page
+    const past_last = first_row + (rows / 2) * row_height;
+    try std.testing.expectEqual(Hit.none, hit(x, past_last, 2, count));
+    try std.testing.expectEqual(@as(u32, 3), page_count(count));
     try std.testing.expectEqual(@as(u32, 1), page_count(0));
 }
 
 test "a list turns a page at a time, and not past either end" {
     var p = Pages{};
-    const y = pager.top + 20;
-    const prev_x = draw.Pager.prev_left + 10;
-    const next_x = draw.Pager.next_left + 10;
+    const y = (pager.top + pager.bottom) / 2;
+    const prev_x = draw.Pager.prev_left + 1;
+    const next_x = draw.Pager.next_left + 1;
     try std.testing.expect(p.tap(prev_x, y, 3 * rows) == .none); // Already first
     try std.testing.expect(p.tap(next_x, y, 3 * rows) == .turned);
     try std.testing.expect(p.tap(next_x, y, 3 * rows) == .turned);
     try std.testing.expect(p.tap(next_x, y, 3 * rows) == .none); // Already last
     try std.testing.expectEqual(@as(u32, 2), p.page);
-    try std.testing.expectEqual(Pages.Tap{ .row = 2 * rows }, p.tap(100, list_top + 10, 3 * rows));
+    const first_row = list_top + row_height / 2;
+    const first_tap = p.tap(style.margin, first_row, 3 * rows);
+    try std.testing.expectEqual(Pages.Tap{ .row = 2 * rows }, first_tap);
 }
 
 test "the list fits on screen" {

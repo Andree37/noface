@@ -1405,7 +1405,7 @@ test "the charger, the quick panel, and taps on a note or a highlight never wait
     };
     try std.testing.expect(!needs_all_pages(.charger, .page, null, &s));
     try std.testing.expect(!needs_all_pages(.pull, .page, null, &s));
-    const tap: input_mod.Action = .{ .tap = .{ .x = 600, .y = 800, .us = 0 } };
+    const tap: input_mod.Action = .{ .tap = .{ .x = 0, .y = 0, .us = 0 } }; // Anywhere
     try std.testing.expect(!needs_all_pages(tap, .note, null, &s));
     const highlight: View = .{ .highlight = .{ .id = "h1" } };
     try std.testing.expect(!needs_all_pages(tap, highlight, null, &s));

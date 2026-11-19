@@ -48,6 +48,7 @@ const log = std.log.scoped(.screen);
 const app = @import("../app.zig");
 const input_mod = @import("../kindle/input.zig");
 const os = @import("../sys/os.zig");
+const device = @import("../model/device.zig");
 
 pub const Tap = input_mod.Tap;
 pub const Action = input_mod.Action;
@@ -653,21 +654,29 @@ const ExampleRoot = struct {
     }
 };
 
+/// The screen the tests' fake input reports, and a tap in its middle.
+const test_screen = device.screen(.paperwhite_12);
+const test_middle: input_mod.Tap = .{
+    .x = @intCast(test_screen.width_px / 2),
+    .y = @intCast(test_screen.height_px / 2),
+    .us = 0,
+};
+
 test "a screen draws whole, takes taps until done, and gives back its result" {
     // Scripted taps move the test clock: the real one comes back after, for the tests that
     // follow
     defer os.fake_us = null;
     // Clear of the thumb zones
-    const middle: input_mod.Step = .{ .act = .{ .tap = .{ .x = 600, .y = 800, .us = 0 } } };
+    const middle: input_mod.Step = .{ .act = .{ .tap = test_middle } };
     var steps = [_]input_mod.Step{ middle, middle, middle };
     var script = input_mod.Script{ .steps = &steps };
     var input = input_mod.Input{
         .touch = -1,
         .power = -1,
-        .width = 1272,
-        .height = 1696,
-        .x_max = 1272,
-        .y_max = 1696,
+        .width = test_screen.width_px,
+        .height = test_screen.height_px,
+        .x_max = test_screen.width_px,
+        .y_max = test_screen.height_px,
         .script = &script,
     };
     var a: app.App = undefined;
@@ -746,10 +755,10 @@ test "an error out of the loop still ends every screen, as leaving does" {
     var input = input_mod.Input{
         .touch = -1,
         .power = -1,
-        .width = 1272,
-        .height = 1696,
-        .x_max = 1272,
-        .y_max = 1696,
+        .width = test_screen.width_px,
+        .height = test_screen.height_px,
+        .x_max = test_screen.width_px,
+        .y_max = test_screen.height_px,
         .script = &script,
     };
     var a: app.App = undefined;

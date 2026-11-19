@@ -13,7 +13,8 @@ const input_mod = @import("../kindle/input.zig");
 
 const width = 640;
 const height = 176;
-const top = 100; // Just under the status row
+const top_gap = 4; // Under the status row
+const top = style.status_height + top_gap;
 const left = style.screen_width - style.margin - width;
 /// Days of reading averaged for "your usual".
 const usual_days = 14;
@@ -21,6 +22,12 @@ const usual_days = 14;
 const title_size = 64;
 /// The text inside the bubble: this far in from either side.
 const text_inset = 36;
+/// The title's and the detail's baselines, and the detail's gray band, down from the
+/// bubble's top.
+const title_drop = 72;
+const detail_drop = 128;
+const detail_tint_drop = 96;
+const detail_tint_height = 44;
 
 comptime {
     // The bubble sits by the battery: inside the margin on the right, under the status row
@@ -114,9 +121,13 @@ pub const Bubble = struct {
         draw_ui.box(page, left, top, width, height);
         const x: f32 = left + text_inset;
         const width_available: f32 = width - 2 * text_inset;
-        try draw_ui.clipped(a.ui.title, page, x, top + 72, b.said.title, width_available);
-        try draw_ui.clipped(a.ui.caption, page, x, top + 128, b.said.detail, width_available);
-        page.tint(left + text_inset, top + 96, width - 2 * text_inset, 44, style.faded);
+        const title_y = top + title_drop;
+        try draw_ui.clipped(a.ui.title, page, x, title_y, b.said.title, width_available);
+        const detail_y = top + detail_drop;
+        try draw_ui.clipped(a.ui.caption, page, x, detail_y, b.said.detail, width_available);
+        const tint_top = top + detail_tint_drop;
+        const tint_width = width - 2 * text_inset;
+        page.tint(left + text_inset, tint_top, tint_width, detail_tint_height, style.faded);
         try a.show_rect(left, top, width, height);
     }
 

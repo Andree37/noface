@@ -10,21 +10,24 @@ const now_us = os.now_us;
 const app = @import("../app.zig");
 const picture = @import("../epub/picture.zig");
 const draw = @import("../ui/draw.zig");
+const style = @import("../ui/style.zig");
 const screen = @import("screen.zig");
 const input_mod = @import("../kindle/input.zig");
 
-pub const lock_redraw_us = 1500 * 1000;
+pub const lock_redraw_us = 1500 * std.time.us_per_ms;
 
 pub const lock_redraws = 2;
 
 /// Pictures of the same proportions, within this many percent, count as one shape.
 const shape_tolerance_percent = 4;
 
-/// The title drawn for a book without a cover: this far in from either side, and its
-/// first line this far down.
+/// The title drawn for a book without a cover: this far in from either side, its first
+/// line this far over the screen's middle, and the author this far under its last.
 const title_side = 120;
-const title_top = 760;
+const title_rise = 88;
+const title_top = style.screen_height / 2 - title_rise;
 const title_lines_max = 4;
+const author_gap = 24;
 
 comptime {
     assert(lock_redraws > 0);
@@ -297,7 +300,7 @@ fn draw_title(a: *app.App, entry: ?*const catalog.Entry, target: []u8) void {
     ) catch 1;
     assert(lines <= title_lines_max);
     if (e.author.len > 0) {
-        const author_top = title_top + @as(i32, @intCast(lines)) * step + 24;
+        const author_top = title_top + @as(i32, @intCast(lines)) * step + author_gap;
         draw.clipped(
             a.ui.small,
             page,

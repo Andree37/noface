@@ -180,11 +180,11 @@ pub const More = struct {
             const time = stats.format_minutes(&time_left_buffer, minutes);
             left = std.fmt.bufPrint(&m.left_buffer, "{s} left in the book", .{time}) catch "";
         }
-        const highlights = highlights_model.count(s.highlights.items);
+        const highlights = highlights_model.count(s.notes.highlights.items);
         const counts = std.fmt.bufPrint(
             &m.counts_buffer,
             "{d} chapters, {d} highlights, {d} bookmarks",
-            .{ s.chapters.len, highlights, s.bookmarks.items.len },
+            .{ s.chapters.len, highlights, s.notes.bookmarks.items.len },
         ) catch "";
         m.details_rows = .{
             .{ .quiet = true, .label = progress },

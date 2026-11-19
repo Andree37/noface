@@ -31,7 +31,6 @@ const page_store = @import("reader/page_store.zig");
 const paginate = @import("reader/paginate.zig");
 const search = @import("reader/search.zig");
 const bookmark = @import("reader/bookmark.zig");
-const bookmarks = @import("../model/bookmarks.zig");
 const panel = @import("panel.zig");
 const lock = @import("lock.zig");
 const screen = @import("screen.zig");
@@ -407,21 +406,7 @@ fn read_book_notes(
     }
     session.words_before = words_before;
     assert(session.words_before.len == paragraphs.len + 1);
-    session.notes = try .choose(alloc, entry, state_path);
-    // The database's answer for each kind, read into this before it's parsed
-    const stored = try alloc.alloc(u8, 1024 * 1024);
-    const highlight_notes = try session.notes.read(alloc, .highlight, stored);
-    const highlights_read = try highlights.parse(alloc, paragraphs, highlight_notes);
-    try session.highlights.appendSlice(alloc, highlights_read);
-    // Copied, as `stored` is read into again for the bookmarks
-    const ids = try alloc.alloc([]const u8, highlight_notes.len);
-    for (ids, highlight_notes) |*id, note| id.* = try alloc.dupe(u8, note.id);
-    session.stored_highlight_ids = ids;
-    const bookmark_notes = try session.notes.read(alloc, .bookmark, stored);
-    const bookmarks_read = try bookmarks.parse(alloc, paragraphs, bookmark_notes);
-    try session.bookmarks.appendSlice(alloc, bookmarks_read);
-    std.debug.print("{d} bookmarks loaded\n", .{session.bookmarks.items.len});
-    std.debug.print("{d} highlights loaded\n", .{session.highlights.items.len});
+    try session.notes.load(alloc, entry, state_path, paragraphs);
     try hl.refresh_marks(a, session, alloc);
 }
 
@@ -1015,7 +1000,7 @@ pub const Reader = struct {
         assert(r.view == .page);
         assert(r.s.current < r.s.pages.len);
         const word = selection.word_under(r.s.page_words(), x, y) orelse return null;
-        return highlights.at_word(r.s.highlights.items, word);
+        return highlights.at_word(r.s.notes.highlights.items, word);
     }
 
     /// Turns `delta` pages, stopping at either end, and saves the place every few turns.
@@ -1284,7 +1269,7 @@ pub const Reader = struct {
             }
         }
         const words = r.s.page_words();
-        if (highlights.word_range(words, r.s.highlights.items, id)) |range| {
+        if (highlights.word_range(words, r.s.notes.highlights.items, id)) |range| {
             assert(range.lo <= range.hi);
             const chosen = words[range.lo .. range.hi + 1];
             const grab_start = selection.near_handle(selection.start_handle(chosen), t.x, t.y);

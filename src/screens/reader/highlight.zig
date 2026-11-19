@@ -41,17 +41,14 @@ pub fn save_highlight(
     assert(span.last_para < s.paragraphs.len);
     const start = records.point_for(s, span.first_para, span.first_byte) orelse return false;
     const end = records.point_for(s, span.last_para, span.last_byte) orelse return false;
-    return s.notes.put(.highlight, id, start, end);
+    return s.notes.store.put(.highlight, id, start, end);
 }
 
 /// Rebuilds the marks drawn on pages, after highlights change.
 pub fn refresh_marks(a: *app.App, s: *sess.Session, alloc: std.mem.Allocator) !void {
-    s.marks.clearRetainingCapacity(); // One list, reused, rather than a new one each time
-    for (s.highlights.items) |h| try s.marks.append(alloc, h.mark);
-    assert(s.marks.items.len == s.highlights.items.len);
-    a.layout.marks = s.marks.items;
+    a.layout.marks = try s.notes.rebuild_marks(alloc);
     // Layout reads the session's list itself, so the two can't drift apart
-    assert(a.layout.marks.ptr == s.marks.items.ptr);
+    assert(a.layout.marks.ptr == s.notes.marks.items.ptr);
     a.forget_pages();
 }
 
@@ -63,7 +60,7 @@ pub fn show_page(a: *app.App, s: *sess.Session, active: ?[]const u8) !?u32 {
     var delete_top: ?u32 = null;
     if (active) |id| {
         const words = s.page_words();
-        if (highlights.word_range(words, s.highlights.items, id)) |range| {
+        if (highlights.word_range(words, s.notes.highlights.items, id)) |range| {
             assert(range.lo <= range.hi);
             assert(range.hi < words.len);
             const screen_page = a.page(a.screen.pixels);
@@ -336,23 +333,23 @@ pub fn new_highlight(
         try highlight_not_saved(a, s);
         return null;
     };
-    const taken = s.stored_highlight_ids;
-    const id = highlights.free_id(alloc, s.highlights.items, taken, start.short) catch |err| {
+    const taken = s.notes.stored_highlight_ids;
+    const id = highlights.free_id(alloc, s.notes.highlights.items, taken, start.short) catch |err| {
         if (err != error.PositionTooLarge) return err;
         try highlight_not_saved(a, s);
         return null;
     };
     const saved = save_highlight(s, id, highlights.Span.of(lo, hi));
-    if (saved) s.notes.sync();
+    if (saved) s.notes.store.sync();
     const word_count = @max(fixed, head) - @min(fixed, head) + 1;
     std.debug.print("highlight {s}: {d} words, saved {}\n", .{ id, word_count, saved });
     if (!saved) {
         try highlight_not_saved(a, s);
         return null;
     }
-    try highlights.add(&s.highlights, alloc, s.paragraphs, id, highlights.Span.of(lo, hi));
+    try highlights.add(&s.notes.highlights, alloc, s.paragraphs, id, highlights.Span.of(lo, hi));
     try refresh_marks(a, s, alloc);
-    assert(highlights.extent(s.highlights.items, id) != null);
+    assert(highlights.extent(s.notes.highlights.items, id) != null);
     return id;
 }
 
@@ -367,8 +364,8 @@ pub fn extend_highlight(
     grab_start: bool,
 ) !?screen.Frame {
     const words = s.page_words();
-    const range = highlights.word_range(words, s.highlights.items, id) orelse return null;
-    const whole = highlights.extent(s.highlights.items, id) orelse return null;
+    const range = highlights.word_range(words, s.notes.highlights.items, id) orelse return null;
+    const whole = highlights.extent(s.notes.highlights.items, id) orelse return null;
     assert(range.lo <= range.hi);
     assert(range.hi < words.len);
     sel.extending = .{ .id = id, .whole = whole, .grab_start = grab_start };
@@ -400,13 +397,13 @@ pub fn extend_ended(
     const whole = extending.whole;
     const span = highlights.dragged(whole, words[fixed], words[head], grab_start, crossed);
     const saved = save_highlight(s, id, span);
-    if (saved) s.notes.sync();
+    if (saved) s.notes.store.sync();
     std.debug.print("highlight extended: saved {}\n", .{saved});
     if (!saved) return app.show_notice(a, "This highlight couldn't be changed.");
-    highlights.remove(&s.highlights, id);
-    try highlights.add(&s.highlights, alloc, s.paragraphs, id, span);
+    highlights.remove(&s.notes.highlights, id);
+    try highlights.add(&s.notes.highlights, alloc, s.paragraphs, id, span);
     try refresh_marks(a, s, alloc);
-    assert(highlights.extent(s.highlights.items, id) != null);
+    assert(highlights.extent(s.notes.highlights.items, id) != null);
 }
 
 /// Deletes a highlight here and, through sync, everywhere.
@@ -417,12 +414,12 @@ pub fn remove_highlight(
     id: []const u8,
 ) !void {
     // Only a highlight on the page has a Delete bubble to tap
-    assert(highlights.extent(s.highlights.items, id) != null);
-    const removed = s.notes.remove(.highlight, id);
+    assert(highlights.extent(s.notes.highlights.items, id) != null);
+    const removed = s.notes.store.remove(.highlight, id);
     std.debug.print("highlight removed: {}\n", .{removed});
     if (!removed) return app.show_notice(a, "This highlight couldn't be deleted.");
-    s.notes.sync();
-    highlights.remove(&s.highlights, id);
+    s.notes.store.sync();
+    highlights.remove(&s.notes.highlights, id);
     try refresh_marks(a, s, alloc);
-    assert(highlights.extent(s.highlights.items, id) == null);
+    assert(highlights.extent(s.notes.highlights.items, id) == null);
 }

@@ -126,7 +126,7 @@ fn before(_: void, x: Placed, y: Placed) bool {
 fn notes_rows(alloc: std.mem.Allocator, s: *const sess.Session) ![]goto.Row {
     assert(s.pages.len > 0);
     var placed: std.ArrayList(Placed) = .empty;
-    for (s.bookmarks.items) |b| {
+    for (s.notes.bookmarks.items) |b| {
         const words = highlights.excerpt(s.paragraphs[b.para].text[b.byte..], excerpt_bytes);
         const page = book_model.page_containing(s.pages, b.para, b.byte);
         try placed.append(alloc, .{
@@ -136,9 +136,9 @@ fn notes_rows(alloc: std.mem.Allocator, s: *const sess.Session) ![]goto.Row {
         });
     }
     // A highlight has a mark per paragraph it covers; list it once, from its start.
-    for (s.highlights.items, 0..) |h, i| {
-        if (!highlights.first_of_id(s.highlights.items, @intCast(i))) continue;
-        const span = highlights.extent(s.highlights.items, h.id) orelse continue;
+    for (s.notes.highlights.items, 0..) |h, i| {
+        if (!highlights.first_of_id(s.notes.highlights.items, @intCast(i))) continue;
+        const span = highlights.extent(s.notes.highlights.items, h.id) orelse continue;
         const para = s.paragraphs[span.first_para].text;
         const last = if (span.last_para == span.first_para) span.last_byte else para.len;
         const end = @min(last, para.len);

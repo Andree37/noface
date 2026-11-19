@@ -13,8 +13,6 @@ const icons = @import("../../ui/icons.zig");
 const catalog = @import("../../model/catalog.zig");
 const os = @import("../../sys/os.zig");
 const cache = @import("../../layout/page_cache.zig");
-const highlights = @import("../../model/highlights.zig");
-const note_store = @import("note_store.zig");
 const state = @import("../../sys/state.zig");
 const text = @import("../../layout/text.zig");
 const now_us = os.now_us;
@@ -24,6 +22,7 @@ const style = @import("../../ui/style.zig");
 const Zone = @import("../../kindle/input.zig").Zone;
 const back_button = @import("back_button.zig");
 const reading_clock = @import("reading_clock.zig");
+const book_notes = @import("book_notes.zig");
 const hwtcon = @import("../../kindle/hwtcon.zig");
 
 pub const Query = @import("../../model/search.zig").Query;
@@ -58,16 +57,9 @@ pub const Session = struct {
     note_len: u32 = 0,
     note_top: u32 = 0,
     note_next: ?book_model.Pos = null,
-    highlights: std.ArrayList(highlights.Highlight) = .empty,
-    /// The ID of every highlight stored for the book as it opened, those its text
-    /// couldn't place too: a new highlight never takes one (`highlights.free_id`).
-    stored_highlight_ids: []const []const u8 = &.{},
-    bookmarks: std.ArrayList(bookmarks.Bookmark) = .empty,
-    /// What layout shades, rebuilt from highlights.
-    marks: std.ArrayList(book_model.Mark) = .empty,
+    /// Highlights and bookmarks, and where they are kept.
+    notes: book_notes.BookNotes = .{},
     pages_path: [:0]const u8 = "", // Where this book's page breaks are saved
-    /// Where highlights and bookmarks are kept, chosen as the book opens.
-    notes: note_store.NoteStore = .off,
     book_bytes: u64 = 0, // The book file's size, part of the saved breaks' key
     // A first open still being laid out: pages count from the reader's place until done
     progress: ?*paginate.Progressive = null,
@@ -308,7 +300,7 @@ pub const Session = struct {
     pub fn is_bookmarked(s: *const Session, index: u32) bool {
         assert(index < s.pages.len);
         assert(s.pages.len > 0);
-        return bookmarks.any_on_page(s.bookmarks.items, s.pages[index], s.page_end(index));
+        return bookmarks.any_on_page(s.notes.bookmarks.items, s.pages[index], s.page_end(index));
     }
 
     /// Starts showing a full-width band of the screen where the page on screen is put

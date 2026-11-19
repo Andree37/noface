@@ -19,17 +19,18 @@ pub fn toggle(
     const to = s.page_end(s.current);
     if (s.is_bookmarked(s.current)) {
         var index: u32 = 0;
-        while (index < s.bookmarks.items.len) {
-            const b = s.bookmarks.items[index];
+        while (index < s.notes.bookmarks.items.len) {
+            const b = s.notes.bookmarks.items[index];
             if (!bookmarks.is_on_page(b, from, to)) {
                 index += 1;
                 continue;
             }
-            if (!s.notes.remove(.bookmark, b.id)) {
-                s.notes.sync(); // Those already removed from the page go to Amazon all the same
+            if (!s.notes.store.remove(.bookmark, b.id)) {
+                // Those already removed from the page go to Amazon all the same
+                s.notes.store.sync();
                 return app.show_notice(a, "This bookmark couldn't be removed.");
             }
-            _ = s.bookmarks.orderedRemove(index);
+            _ = s.notes.bookmarks.orderedRemove(index);
         }
         assert(!s.is_bookmarked(s.current));
         std.debug.print("bookmark removed\n", .{});
@@ -45,14 +46,14 @@ pub fn toggle(
         };
         const prefix = annotations.Kind.bookmark.prefix();
         const id = try std.fmt.allocPrint(alloc, "{s}{d}", .{ prefix, point.short });
-        if (!s.notes.put(.bookmark, id, point, point)) {
+        if (!s.notes.store.put(.bookmark, id, point, point)) {
             return app.show_notice(a, "This bookmark couldn't be saved.");
         }
-        try s.bookmarks.append(alloc, .{ .id = id, .para = at.para, .byte = at.byte });
+        try s.notes.bookmarks.append(alloc, .{ .id = id, .para = at.para, .byte = at.byte });
         assert(s.is_bookmarked(s.current));
         std.debug.print("bookmark added\n", .{});
     }
-    s.notes.sync();
+    s.notes.store.sync();
 }
 
 /// The first place on a page that Amazon numbers. Pages can open on a heading

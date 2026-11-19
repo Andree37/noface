@@ -139,8 +139,7 @@ fn main_reader(init: std.process.Init.Minimal) !void {
     var files: setup.DataFiles = .{};
     try files.init(state_dir);
     assert(files.settings.len > state_dir.len); // The data folder, then the file's name
-    // Before the settings: a chosen typeface of the reader's is found by name
-    fonts_db.find_own(alloc, sets_text);
+    const offered = fonts_db.find_own(alloc, sets_text);
     var shared = try setup.assemble(.{
         .alloc = alloc,
         .app_budget = &app_budget,
@@ -151,6 +150,7 @@ fn main_reader(init: std.process.Init.Minimal) !void {
         .data_dir = state_dir,
         .files = &files,
         .library_path = argv[1],
+        .offered = offered,
     });
     try main_reader_configure(&shared, init, &files);
     memory.seal(); // From here on, every allocation comes out of a region reserved above

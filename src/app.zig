@@ -148,6 +148,11 @@ pub const App = struct {
         a.* = undefined;
     }
 
+    /// The typefaces on offer: the Kindle's, then the reader's own.
+    pub fn families(a: *const App) settings_model.Families {
+        return a.typefaces.offered.families;
+    }
+
     /// Today, as the journal counts days: the local calendar day.
     pub fn today(a: *const App) i32 {
         return journal_model.day_of(unix_time(), a.utc_offset);
@@ -164,7 +169,9 @@ pub const App = struct {
         a.layout.justify = !a.user.settings.left_align;
         a.layout.bold_starts = a.user.settings.bold_starts;
         // The Aa sheet shows the page of typefaces with the one chosen
-        a.aa_kept.family_first = aa.family_page_of(a.user.settings.family_index());
+        const offered = a.families();
+        const chosen = a.user.settings.family_index(offered);
+        a.aa_kept.family_first = aa.family_page_of(offered, chosen);
         assert(a.layout.margin_x > 0);
         assert(a.body.line_height > 0);
     }
@@ -173,9 +180,10 @@ pub const App = struct {
     /// size, to show their names in themselves. One that can't be loaded is null, and
     /// its name shows in the interface font.
     pub fn load_family_samples(a: *App) []const ?*Font {
-        const families_count = settings_model.families.len;
-        assert(a.aa_kept.family_first < families_count);
-        const shown = @min(aa.families_per_page(), families_count - a.aa_kept.family_first);
+        const offered = a.families();
+        const first = a.aa_kept.family_first;
+        assert(first < offered.count());
+        const shown = @min(aa.families_per_page(offered), offered.count() - first);
         assert(shown <= a.aa_kept.family_sample_ptrs.len);
         for (a.aa_kept.family_sample_ptrs[0..shown], a.aa_kept.family_first..) |*sample, family| {
             sample.* = a.typefaces.sample(@intCast(family));
@@ -193,7 +201,7 @@ pub const App = struct {
         const which: u2 = @as(u2, @intFromBool(bold)) | @as(u2, @intFromBool(italic)) << 1;
         const scale = book_model.size_scales[size];
         const key: typefaces.FaceKey = .{
-            .family = a.user.settings.family_index(),
+            .family = a.user.settings.family_index(a.families()),
             .which = which,
             .size = @intCast(a.user.settings.size),
             .scale = size,

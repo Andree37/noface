@@ -5,6 +5,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const app = @import("app.zig");
+const fonts_db = @import("kindle/fonts.zig");
 const Regions = @import("regions.zig").Regions;
 const display = @import("display.zig");
 const paths = @import("kindle/paths.zig");
@@ -280,6 +281,8 @@ pub const Parts = struct {
     data_dir: []const u8,
     files: *const DataFiles,
     library_path: [*:0]const u8,
+    /// The typefaces on offer: the Kindle's alone unless the reader's own were found.
+    offered: fonts_db.Offered = .{},
 };
 
 /// An App with its buffers made and its saved settings, speed and journal read. The
@@ -322,6 +325,7 @@ pub fn assemble(p: Parts) !app.App {
         },
         .state_dir = p.data_dir,
         .languages = .{ .dir = p.data_dir },
+        .typefaces = .{ .offered = p.offered },
         .library_path = p.library_path,
         .battery_path = p.files.battery,
         .user = .load(.{

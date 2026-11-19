@@ -53,18 +53,23 @@ comptime {
     assert(std.math.maxInt(Which) + 1 == faces[0].len);
 }
 
-/// The reader's own families' files, as many as `find_own` found, in the order they're
-/// offered after the Kindle's.
-var own: []const [4][:0]const u8 = &.{};
+/// The typefaces on offer and where their files are: the Kindle's, then the reader's
+/// own `find_own` found, in the same order. The Kindle's alone until then.
+pub const Offered = struct {
+    families: settings.Families = .{},
+    /// The reader's own families' files, offered after the Kindle's.
+    own: []const [4][:0]const u8 = &.{},
 
-/// The file for a family's weight and slant.
-pub fn path(family: u32, bold: bool, italic: bool) [*:0]const u8 {
-    const which: Which = @as(Which, @intFromBool(bold)) | @as(Which, @intFromBool(italic)) << 1;
-    if (family < faces.len) return faces[family][which];
-    // Only a family `find_own` filled in is offered
-    assert(family - faces.len < own.len);
-    return own[family - faces.len][which];
-}
+    /// The file for a family's weight and slant.
+    pub fn path(o: *const Offered, family: u32, bold: bool, italic: bool) [*:0]const u8 {
+        assert(o.families.names.len == faces.len + o.own.len);
+        assert(family < o.families.names.len); // Only a family on offer is drawn
+        const which: Which =
+            @as(Which, @intFromBool(bold)) | @as(Which, @intFromBool(italic)) << 1;
+        if (family < faces.len) return faces[family][which];
+        return o.own[family - faces.len][which];
+    }
+};
 
 /// What a font file's name says: its family, and which of the four it is (null for
 /// weights noface doesn't use, like Light or Medium). "Literata-BoldItalic.ttf" is
@@ -214,19 +219,17 @@ pub fn complete(files: [4]?[]const u8) [4][]const u8 {
     };
 }
 
-/// Finds the reader's own typefaces in the fonts folder and offers them after the
-/// Kindle's, every one there is. Files that `usable` turns down (not fonts noface can
-/// set text in) are left out, and a name already offered is offered once. Called
-/// once, before the settings are read, so a chosen one is found by name. The lists are
-/// kept in `alloc`'s memory for good; with no room for another, the rest are left out.
-pub fn find_own(alloc: std.mem.Allocator, usable_font: *const fn ([]const u8) bool) void {
-    assert(own.len == 0);
-    assert(settings.families.len == settings.builtin_families.len);
+/// Finds the reader's own typefaces in the fonts folder, every one there is, and gives
+/// them on offer after the Kindle's. Files that `usable` turns down (not fonts noface
+/// can set text in) are left out, and a name already offered is offered once. The lists
+/// are kept in `alloc`'s memory for good; with no room for another, the rest are left
+/// out, and with none for the list at all, the Kindle's alone are on offer.
+pub fn find_own(alloc: std.mem.Allocator, usable_font: *const fn ([]const u8) bool) Offered {
     const names = list_dir(alloc, own_dir);
-    const found = group(alloc, names) catch return;
+    const found = group(alloc, names) catch return .{};
     var own_list: std.ArrayList([4][:0]const u8) = .empty;
     var offered: std.ArrayList([]const u8) = .empty;
-    offered.appendSlice(alloc, &settings.builtin_families) catch return;
+    offered.appendSlice(alloc, &settings.builtin_families) catch return .{};
     // Each family's trials take up to seconds, before the loop that beats first turns: a
     // folder of many keeps the watchdog told noface is alive, as a library build does
     var beat_us = os.now_us();
@@ -250,8 +253,7 @@ pub fn find_own(alloc: std.mem.Allocator, usable_font: *const fn ([]const u8) bo
         std.debug.print("fonts: added {s}\n", .{family.name});
     }
     assert(offered.items.len == settings.builtin_families.len + own_list.items.len);
-    own = own_list.items;
-    settings.offer_families(offered.items);
+    return .{ .families = .offer(offered.items), .own = own_list.items };
 }
 
 fn find_own_offered(offered: []const []const u8, name: []const u8) bool {

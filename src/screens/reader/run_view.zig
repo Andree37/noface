@@ -122,7 +122,7 @@ fn draw_phrases(run: *const Run, a: *app.App, s: *sess.Session) !void {
     const page = a.display.on_screen();
     const band = a.display.screen.height - footer_height_px - text_top;
     page.fill_rect(0, text_top, a.display.screen.width, band, 0xff);
-    const family = a.user.settings.family_index();
+    const family = a.user.settings.family_index(a.families());
     const big = try a.typefaces.phrase_face(family, true, phrase_px);
     const small = try a.typefaces.phrase_face(family, false, context_px);
     const width: f32 = @floatFromInt(a.display.screen.width - 2 * phrase_margin_px);
@@ -208,7 +208,8 @@ pub fn on_pause_button(a: *const app.App, x: i32, y: i32) bool {
 /// The phrase at `at`, or the first after it, as long as fits the screen at the
 /// phrase's size (model/phrases.zig).
 pub fn phrase_at(a: *app.App, s: *const sess.Session, at: book_model.Pos) !?phrases.Phrase {
-    const font = try a.typefaces.phrase_face(a.user.settings.family_index(), true, phrase_px);
+    const family = a.user.settings.family_index(a.families());
+    const font = try a.typefaces.phrase_face(family, true, phrase_px);
     const width: f32 = @floatFromInt(a.display.screen.width - 2 * phrase_margin_px);
     const room: Room = .{ .font = font, .width = width };
     return phrases.at(s.paragraphs, at, .{ .ctx = &room, .call = Room.fits });

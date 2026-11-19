@@ -45,7 +45,7 @@ pub fn key(a: *const app.App, book_bytes: u64) u64 {
     // Every setting that moves breaks, so a new one can't be left out by mistake
     inline for (@typeInfo(settings_model.Settings).@"struct".field_names) |name| {
         if (comptime settings_model.moves_breaks(name)) {
-            const value: u64 = key_setting(name, @field(s, name));
+            const value: u64 = key_setting(name, @field(s, name), a.families());
             h.update(std.mem.asBytes(&value));
         }
     }
@@ -53,13 +53,13 @@ pub fn key(a: *const app.App, book_bytes: u64) u64 {
 }
 
 /// One setting's part of the key: a switch as 0 or 1, a choice by its number.
-fn key_setting(comptime name: []const u8, value: anytype) u64 {
+fn key_setting(comptime name: []const u8, value: anytype, families: settings_model.Families) u64 {
     return switch (@typeInfo(@TypeOf(value))) {
         .bool => @intFromBool(value),
         // The typeface drawn, by its name: a font whose file is gone for now is drawn
         // in the first, and breaks laid out so mustn't serve it once it's back
         .@"struct" => if (@TypeOf(value) == settings_model.Family)
-            std.hash.Wyhash.hash(0, settings_model.families[value.index()])
+            std.hash.Wyhash.hash(0, families.names[value.index(families)])
         else
             @compileError("page_store.key: say how to key the setting " ++ name),
         .int => |int| blk: {

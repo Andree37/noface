@@ -41,6 +41,7 @@ pub fn draw_toolbar(a: *app.App, s: *sess.Session, book: Book, drawn: Drawn) !vo
     if (drawn.sheet_open and a.aa_kept.tab == .font) {
         fonts.families = a.load_family_samples();
         fonts.family_first = a.aa_kept.family_first;
+        fonts.family_names = a.families();
     }
     try toolbar.render(
         fonts,
@@ -238,7 +239,7 @@ pub fn tap_sheet(
 ) !SheetTap {
     assert(s.current < s.pages.len);
     const sheet_only: Drawn = .{ .sheet_open = true, .whole_page = false };
-    switch (aa.hit(a.aa_kept.tab, x, y)) {
+    switch (aa.hit(a.aa_kept.tab, a.families(), x, y)) {
         .none => return .done,
         .tab => |tab| {
             a.aa_kept.tab = tab;
@@ -259,11 +260,12 @@ pub fn tap_sheet(
         .family => |cell| {
             const family = a.aa_kept.family_first + cell;
             // The last page may have fewer typefaces than cells
-            if (family >= settings_model.families.len) return .done;
-            a.user.settings.font = settings_model.Family.of(settings_model.families[family]).?;
+            const families = a.families();
+            if (family >= families.count()) return .done;
+            a.user.settings.font = settings_model.Family.of(families.names[family]).?;
         },
         .more_families => {
-            a.aa_kept.family_first = aa.next_family_page(a.aa_kept.family_first);
+            a.aa_kept.family_first = aa.next_family_page(a.families(), a.aa_kept.family_first);
             try draw_toolbar(a, s, book, sheet_only);
             return .done;
         },

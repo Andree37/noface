@@ -68,6 +68,8 @@ pub const Typefaces = struct {
     /// Every family's four files, for the tests, which have none of
     /// the Kindle's: null to map each family's own.
     stand_in: ?[4][]const u8 = null,
+    /// The typefaces on offer and their files (kindle/fonts.zig).
+    offered: fonts_db.Offered = .{},
 
     /// The font for `key` at `px` pixels, made now if it isn't kept. `pinned`, a font
     /// in use outside of any page, is never the one given up for it.
@@ -146,7 +148,7 @@ pub const Typefaces = struct {
         const data, const mapped = if (t.stand_in) |files|
             .{ files[which], false }
         else
-            .{ try file.map(fonts_db.path(family, bold, italic)), true };
+            .{ try file.map(t.offered.path(family, bold, italic)), true };
         const at = t.file_place();
         if (t.files[at]) |old| {
             if (old.mapped) file.unmap(old.data);

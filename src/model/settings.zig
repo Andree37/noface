@@ -7,28 +7,40 @@ const check = @import("../base/check.zig");
 /// The Kindle's typefaces, by name. kindle/fonts.zig has their files, in the same order.
 pub const builtin_families = [_][]const u8{ "Ember", "Bookerly", "Baskerville", "Serif" };
 /// The typefaces offered: the Kindle's, then the reader's own from the Kindle's fonts
-/// folder, as many as are there, found at start.
-pub var families: []const []const u8 = &builtin_families;
+/// folder, as many as are there, found at start (kindle/fonts.zig).
+pub const Families = struct {
+    names: []const []const u8 = &builtin_families,
 
-/// Offers `all`: the Kindle's typefaces, then the reader's own, each name once. `all`
-/// must stay as long as it's offered.
-pub fn offer_families(all: []const []const u8) void {
-    assert(all.len >= builtin_families.len);
-    for (builtin_families, all[0..builtin_families.len]) |builtin, name| {
-        assert(std.mem.eql(u8, builtin, name));
+    /// Offers `all`: the Kindle's typefaces, then the reader's own, each name once.
+    /// `all` must stay as long as it's offered.
+    pub fn offer(all: []const []const u8) Families {
+        assert(all.len >= builtin_families.len);
+        for (builtin_families, all[0..builtin_families.len]) |builtin, name| {
+            assert(std.mem.eql(u8, builtin, name));
+        }
+        const f: Families = .{ .names = all };
+        // Each name fits a setting, so whichever is chosen is kept whole
+        for (all) |name| assert(name.len <= family_bytes_max);
+        // Each name once, so a name picks one typeface
+        for (all, 0..) |name, i| assert(f.named(name).? == i);
+        return f;
     }
-    families = all;
-    // Each name fits a setting, so whichever is chosen is kept whole
-    for (all) |name| assert(name.len <= family_bytes_max);
-    // Each name once, so a name picks one typeface
-    for (all, 0..) |name, i| assert(family_named(name).? == i);
-}
 
-/// Back to the Kindle's typefaces only (for tests).
-pub fn reset_families() void {
-    families = &builtin_families;
-    assert(families.len == builtin_families.len);
-}
+    pub fn count(f: Families) u32 {
+        assert(f.names.len >= builtin_families.len);
+        assert(f.names.len <= std.math.maxInt(u32));
+        return @intCast(f.names.len);
+    }
+
+    /// The place of the typeface named `name`, if it's on offer.
+    pub fn named(f: Families, name: []const u8) ?u32 {
+        assert(f.names.len >= builtin_families.len);
+        for (f.names, 0..) |offered, i| {
+            if (std.mem.eql(u8, offered, name)) return @intCast(i);
+        }
+        return null;
+    }
+};
 
 pub const sizes = [_]f32{ 36, 40, 46, 52, 58, 66 };
 
@@ -84,9 +96,9 @@ pub const Family = struct {
 
     /// Its place among the typefaces on offer, which is the one drawn; the first while
     /// its file is gone.
-    pub fn index(f: *const Family) u32 {
-        const found = family_named(f.name()) orelse 0;
-        assert(found < families.len);
+    pub fn index(f: *const Family, families: Families) u32 {
+        const found = families.named(f.name()) orelse 0;
+        assert(found < families.names.len);
         return found;
     }
 };
@@ -131,8 +143,8 @@ pub const Settings = struct {
     }
 
     /// The chosen typeface's place among those on offer: see `Family.index`.
-    pub fn family_index(s: *const Settings) u32 {
-        return s.font.index();
+    pub fn family_index(s: *const Settings, families: Families) u32 {
+        return s.font.index(families);
     }
 };
 
@@ -237,14 +249,6 @@ fn step(value: []const u8, count: u32, fallback: u32) u32 {
     return chosen;
 }
 
-fn family_named(name: []const u8) ?u32 {
-    assert(families.len >= builtin_families.len);
-    for (families, 0..) |f, i| {
-        if (std.mem.eql(u8, f, name)) return @intCast(i);
-    }
-    return null;
-}
-
 fn is_on(value: []const u8, fallback: bool) bool {
     if (std.mem.eql(u8, value, "on")) return true;
     if (std.mem.eql(u8, value, "off")) return false;
@@ -282,7 +286,8 @@ test "bad or unknown lines change nothing; a typeface not on offer is kept by na
     try std.testing.expectEqual(Settings{ .spacing = 2 }, s);
     const comic = parse("font Comic\n");
     try std.testing.expectEqualStrings("Comic", comic.font.name());
-    try std.testing.expectEqual(@as(u32, 0), comic.family_index()); // The first, meanwhile
+    // The first, meanwhile
+    try std.testing.expectEqual(@as(u32, 0), comic.family_index(.{}));
 }
 
 test "defaults match the original reader" {
@@ -292,9 +297,9 @@ test "defaults match the original reader" {
 }
 
 test "the reader's own typefaces are offered after the Kindle's, by name" {
-    defer reset_families();
-    try std.testing.expect(family_named("Bookerly") != null);
-    try std.testing.expect(family_named("Open Sans") == null);
+    const builtin: Families = .{};
+    try std.testing.expect(builtin.named("Bookerly") != null);
+    try std.testing.expect(builtin.named("Open Sans") == null);
     // Many more than the two there once was room for
     var all: [builtin_families.len + 40][]const u8 = undefined;
     var names: [40][8]u8 = undefined;
@@ -303,15 +308,15 @@ test "the reader's own typefaces are offered after the Kindle's, by name" {
         name.* = try std.fmt.bufPrint(buffer, "Own {d}", .{i});
     }
     all[all.len - 1] = "Open Sans";
-    offer_families(&all);
+    const offered = Families.offer(&all);
     const s = parse("font Open Sans\n");
-    try std.testing.expectEqual(all.len - 1, s.family_index());
+    try std.testing.expectEqual(all.len - 1, s.family_index(offered));
     var buf: [256]u8 = undefined;
     try std.testing.expectEqual(s.font, parse(format(&buf, s)).font);
-    try std.testing.expectEqual(builtin_families.len + 7, parse("font Own 7\n").family_index());
-    reset_families();
+    const own_7 = parse("font Own 7\n").family_index(offered);
+    try std.testing.expectEqual(builtin_families.len + 7, own_7);
     // Its file gone since: the first typeface, and its name kept for when it's back
-    try std.testing.expectEqual(@as(u32, 0), s.family_index());
+    try std.testing.expectEqual(@as(u32, 0), s.family_index(builtin));
     try std.testing.expectEqualStrings("Open Sans", parse(format(&buf, s)).font.name());
 }
 

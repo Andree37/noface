@@ -157,9 +157,9 @@ comptime {
     // Aa's Themes tab, and the Running button on it
     assert(toolbar.hit(text_settings_button.act.tap.x, toolbar_button_y, null) == .text);
     const tab = themes_tab.act.tap;
-    assert(std.meta.eql(aa.hit(.themes, tab.x, tab.y), aa.Hit{ .tab = .themes }));
+    assert(std.meta.eql(aa.hit(.themes, .{}, tab.x, tab.y), aa.Hit{ .tab = .themes }));
     const run = running_button.act.tap;
-    assert(aa.hit(.themes, run.x, run.y) == .running);
+    assert(aa.hit(.themes, .{}, run.x, run.y) == .running);
     // While running, taps in the top band pause, as `forward` and `back` turn
     assert(pause_tap.act.tap.y < run_mode.pause_band_px);
     assert(forward.act.tap.y >= run_mode.pause_band_px);
@@ -1772,7 +1772,7 @@ pub fn selftest() bool {
 fn selftest_files() bool {
     var ok = true;
     for (settings_model.builtin_families, 0..) |name, i| {
-        const path = fonts_db.path(i, false, false);
+        const path = (fonts_db.Offered{}).path(@intCast(i), false, false);
         const usable = if (file.map(path)) |data| usable: {
             defer file.unmap(data);
             break :usable Font.usable(data);

@@ -179,7 +179,6 @@ test "a journal that's there but can't be read is never written over" {
 }
 
 test "the longest typeface name a setting holds saves and comes back" {
-    defer settings_model.reset_families();
     var path_buffer: [64]u8 = undefined;
     const path = try test_path(&path_buffer, "settings-test");
     defer _ = calls.unlink(path); // Ignored: only /tmp is left fuller
@@ -190,12 +189,12 @@ test "the longest typeface name a setting holds saves and comes back" {
         break :blk name;
     };
     const kept = settings_model.builtin_families;
-    settings_model.offer_families(&(kept ++ .{&long}));
+    const families = settings_model.Families.offer(&(kept ++ .{&long}));
     var s = settings_model.Settings{};
     s.font = settings_model.Family.of(&long).?;
     save_settings_to(path, s);
     try std.testing.expectEqual(s.font, load_settings(path).font);
-    try std.testing.expect(s.family_index() + 1 == settings_model.families.len);
+    try std.testing.expect(s.family_index(families) + 1 == families.count());
 }
 
 test "the speed and the running pace save and come back" {

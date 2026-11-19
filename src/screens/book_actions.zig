@@ -173,7 +173,7 @@ pub const Sheet = struct {
     /// The books on this Kindle, each with its title, author and series, in the library's
     /// scratch region: null, the log saying so, when there's no room there for them all.
     fn local_books(s: *Sheet) ?[]const catalog.Entry {
-        const region = s.a.library_scratch_region;
+        const region = &s.a.regions.library_scratch;
         assert(region.empty()); // The library is read in it only between screens
         s.scratch = .{ .name = "library scratch", .region = region, .limit = region.bytes.len };
         const entries = s.lib.local_books(s.scratch.allocator()) catch |err| {

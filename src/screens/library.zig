@@ -145,8 +145,8 @@ fn show_with_covers(
     assert(page_index < library.page_count(lib.count()));
     @memcpy(a.display.screen.pixels, buffer);
     const marker = try a.display.screen.show(refresh);
-    lib.prepare_covers(a.covers, page_index + 1);
-    if (page_index > 0) lib.prepare_covers(a.covers, page_index - 1);
+    lib.prepare_covers(&a.regions.covers, page_index + 1);
+    if (page_index > 0) lib.prepare_covers(&a.regions.covers, page_index - 1);
     try a.display.screen.wait_complete(marker);
 }
 
@@ -158,8 +158,8 @@ const Next = union(enum) { nothing, page, everything, leave, open: screen.Frame 
 pub fn run_library(a: *app.App) !void {
     // The library as last drawn, its own: memory once it's first drawn
     const pixels: u32 = @intCast(a.display.screen.pixels.len);
-    const buf = try a.library_budget.untouched(u8, pixels);
-    defer a.library_budget.allocator().free(buf);
+    const buf = try a.regions.library_budget.untouched(u8, pixels);
+    defer a.regions.library_budget.allocator().free(buf);
     var b = Browser{ .a = a, .lib = try load_library(a), .buf = buf };
     defer b.lib.deinit();
     assert(b.buf.len == a.display.screen.pixels.len);
@@ -391,7 +391,7 @@ const Browser = struct {
             .count = b.count,
         };
         try library.render(
-            a.covers,
+            &a.regions.covers,
             a.ui,
             a.display.page(b.buf),
             books_shown,

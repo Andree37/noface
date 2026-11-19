@@ -5,6 +5,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const app = @import("app.zig");
+const Regions = @import("regions.zig").Regions;
 const display = @import("display.zig");
 const paths = @import("kindle/paths.zig");
 const memory = @import("base/memory.zig");
@@ -14,7 +15,6 @@ const Font = @import("gfx/font.zig").Font;
 const Fonts = @import("ui/fonts.zig").Fonts;
 const text = @import("layout/text.zig");
 const books = @import("screens/books.zig");
-const library_view = @import("library/view.zig");
 const covers = @import("ui/covers.zig");
 const book_model = @import("model/book.zig");
 const glyph_cache = @import("gfx/glyph_cache.zig");
@@ -119,23 +119,10 @@ comptime {
 /// The regions an App reads in, reserved by the first `assemble` and kept for good:
 /// the Kindle assembles one App, and the scenario tests one per scenario, in turn, each
 /// reading in the same regions.
-var reading: Reading = undefined;
+var reading: Regions = undefined;
 var reading_reserved = false;
 
-const Reading = struct {
-    library: memory.Region,
-    covers: covers.Pool, // In the library's region, for good
-    covers_bytes: u64, // What the pool and the shared buffers take of the library's budget
-    library_shared: library_view.Shared, // In the library's region, for good
-    library_budget: memory.Budget, // Shared by a library list and the one reloaded after it
-    library_scratch: memory.Region,
-    book: memory.Region,
-    pages: memory.Region,
-    pages_budget: memory.Budget, // Emptied before each layout after a settings change
-    scratch: memory.Region,
-};
-
-fn reserve_reading() !*Reading {
+fn reserve_reading() !*Regions {
     if (reading_reserved) {
         // The last App closed its book and its library, so the next starts with
         // nothing open
@@ -322,13 +309,7 @@ pub fn assemble(p: Parts) !app.App {
         .alloc = p.alloc,
         .app_budget = p.app_budget,
         .decoders_budget = p.decoders_budget,
-        .library_budget = &regions.library_budget,
-        .covers = &regions.covers,
-        .library_shared = &regions.library_shared,
-        .library_scratch_region = &regions.library_scratch,
-        .book_region = &regions.book,
-        .pages_budget = &regions.pages_budget,
-        .scratch_region = &regions.scratch,
+        .regions = regions,
         .display = try display.Display.init(p.alloc, p.screen),
         .input = p.input,
         .body = &k.body,

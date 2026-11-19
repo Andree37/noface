@@ -21,8 +21,7 @@ const aa = @import("ui/aa.zig");
 const file = @import("sys/file.zig");
 const display_mod = @import("display.zig");
 const Display = display_mod.Display;
-const covers_ui = @import("ui/covers.zig");
-const library_view = @import("library/view.zig");
+const Regions = @import("regions.zig").Regions;
 const clock = @import("sys/clock.zig");
 const jpegxr = @import("kindle/jpegxr.zig");
 const quick_model = @import("model/quick.zig");
@@ -103,17 +102,8 @@ pub const App = struct {
     alloc: std.mem.Allocator, // Lives as long as the app, counted by app_budget
     app_budget: *memory.Budget,
     decoders_budget: *memory.Budget,
-    // Reserved at startup, like the app's: the library's list and covers (a budget
-    // that outlives each list), what each EPUB is read for while the library is found,
-    // the open book's memory, and one action's
-    library_budget: *memory.Budget,
-    covers: *covers_ui.Pool, // The library's, in its region, kept for good
-    library_shared: *library_view.Shared, // The library's buffers, in its region, kept for good
-    library_scratch_region: *memory.Region,
-    book_region: *memory.Region,
-    // An open book's pages after a settings change, emptied before each layout
-    pages_budget: *memory.Budget,
-    scratch_region: *memory.Region,
+    /// The memory it reads in, reserved at startup like the app's (regions.zig).
+    regions: *Regions,
     /// The screen, the page cache and the overlay (display.zig).
     display: Display,
     input: *Input,
@@ -157,7 +147,7 @@ pub const App = struct {
     /// assemble an App for each, in turn, on the Kindle's own budget, so each gives
     /// all of it back for the next. Its book and library are closed by then.
     pub fn release(a: *App) void {
-        assert(a.book_region.empty()); // The book let go of its own first
+        assert(a.regions.book.empty()); // The book let go of its own first
         a.typefaces.release();
         for (std.enums.values(hyphen.Lang)) |lang| a.forget_dictionary(lang);
         for (&a.hyphenators) |*slot| {

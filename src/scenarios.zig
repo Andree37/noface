@@ -688,9 +688,9 @@ fn play_on_start(
     a.documents = dir;
     // Each run starts as a new reader: nothing read before, every setting as shipped,
     // and the regions' peaks its own
-    a.book_region.end_peak = 0;
-    a.pages_budget.peak = 0;
-    a.pages_budget.limit = kindle.pages_bytes;
+    a.regions.book.end_peak = 0;
+    a.regions.pages_budget.peak = 0;
+    a.regions.pages_budget.limit = kindle.pages_bytes;
     a.user.settings = .{ .bold_starts = kindle.bold_starts };
     a.user.running_pace = null;
     a.user.speed = .{};
@@ -798,8 +798,8 @@ fn play_on_outcome(
         .offers_dictionary = a.user.settings.offer_dictionary,
         .highlights = count_notes(state_path, "highlight"),
         .bookmarks = count_notes(state_path, "bookmark"),
-        .book_peak = a.book_region.end_peak,
-        .pages_peak = a.pages_budget.peak,
+        .book_peak = a.regions.book.end_peak,
+        .pages_peak = a.regions.pages_budget.peak,
         .breaks = breaks_digest(state_path),
         .notes = notes_digest(state_path),
         .unreadable_kept = try unreadable_kept(ran.alloc, kindle, ran.dir),

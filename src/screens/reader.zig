@@ -147,7 +147,7 @@ pub fn read_book(a: *app.App, entry: *catalog.Entry) !Outcome {
     const ending = try screen.run_root(a, &r);
     // A book takes the lock and leaving, so it only ever ends itself
     assert(ending == .done);
-    assert(a.book_region.empty()); // Closing, it let go of its memory
+    assert(a.regions.book.empty()); // Closing, it let go of its memory
     if (ending.done == .failed) return error.BookFailed;
     return ending.done;
 }
@@ -157,8 +157,8 @@ pub fn read_book(a: *app.App, entry: *catalog.Entry) !Outcome {
 /// shown as it opens; it ends when the reader leaves the book, or noface leaves.
 pub fn open(r: *Reader, a: *app.App, entry: *catalog.Entry) !void {
     // Only one book is open at a time, so its regions start empty
-    assert(a.book_region.empty());
-    assert(a.scratch_region.empty());
+    assert(a.regions.book.empty());
+    assert(a.regions.scratch.empty());
     r.* = .{
         .a = a,
         .entry = entry,
@@ -166,14 +166,14 @@ pub fn open(r: *Reader, a: *app.App, entry: *catalog.Entry) !void {
         // out one block after another: all emptied together on close.
         .book_budget = .{
             .name = "book",
-            .region = a.book_region,
-            .limit = a.book_region.bytes.len,
+            .region = &a.regions.book,
+            .limit = a.regions.book.bytes.len,
         },
         // What one action needs, like a Go To list or search results. Emptied after each.
         .scratch_budget = .{
             .name = "scratch",
-            .region = a.scratch_region,
-            .limit = a.scratch_region.bytes.len,
+            .region = &a.regions.scratch,
+            .limit = a.regions.scratch.bytes.len,
         },
     };
     r.alloc = r.book_budget.allocator();
@@ -243,7 +243,7 @@ fn read_book_parse(
     data: []const u8,
 ) !struct { book: book_model.Book, lang: ?hyphen.Lang } {
     const book = if (entry.is_epub())
-        try epub.parse(alloc, a.scratch_region, data)
+        try epub.parse(alloc, &a.regions.scratch, data)
     else
         try kfx.parse(alloc, data);
     // Positions are u32: a book's paragraphs fit its memory budget, far below that
@@ -708,7 +708,7 @@ pub const Reader = struct {
             wifi_saver.restore(); // Leaving the book, Wi-Fi comes back
         }
         r.release();
-        assert(r.a.book_region.empty());
+        assert(r.a.regions.book.empty());
         return .{ .done = outcome };
     }
 
@@ -722,13 +722,13 @@ pub const Reader = struct {
         // Emptied for the next book, the pages touched handed back
         r.scratch_budget.reset(.give_back);
         r.book_budget.reset(.give_back);
-        a.pages_budget.reset(.give_back); // The pages of layouts after settings changes
-        assert(a.book_region.empty());
-        assert(a.scratch_region.empty());
+        a.regions.pages_budget.reset(.give_back); // The pages of layouts after settings changes
+        assert(a.regions.book.empty());
+        assert(a.regions.scratch.empty());
         r.book_budget.report();
-        a.pages_budget.report();
+        a.regions.pages_budget.report();
         r.scratch_budget.report();
-        a.library_budget.report();
+        a.regions.library_budget.report();
         a.app_budget.report();
         a.decoders_budget.report();
     }

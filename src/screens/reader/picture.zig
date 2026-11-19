@@ -222,12 +222,12 @@ fn on_close(x: i32, y: i32) bool {
 /// let go of as the viewer closes: nothing else takes from that region while the
 /// viewer is open, so what it took is the last there.
 pub fn begin(viewer: *Viewer, a: *app.App, img: book_model.Image) !?screen.Frame {
-    assert(a.book_region.kind == .bump);
-    assert(!a.book_region.empty()); // The book the picture is in is open
+    assert(a.regions.book.kind == .bump);
+    assert(!a.regions.book.empty()); // The book the picture is in is open
     viewer.* = .{
         .a = a,
-        .budget = .{ .name = "picture", .region = a.book_region, .limit = viewer_bytes_max },
-        .book_end = a.book_region.end,
+        .budget = .{ .name = "picture", .region = &a.regions.book, .limit = viewer_bytes_max },
+        .book_end = a.regions.book.end,
         .start = undefined,
         .saved = &.{},
         .v = undefined,
@@ -448,7 +448,7 @@ pub const Viewer = struct {
     }
 
     fn release(viewer: *Viewer) void {
-        const region = viewer.a.book_region;
+        const region = &viewer.a.regions.book;
         assert(viewer.budget.live <= viewer.budget.limit);
         viewer.budget.report();
         viewer.budget.rewind(viewer.start);

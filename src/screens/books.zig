@@ -421,12 +421,12 @@ pub const Library = struct {
 };
 
 pub fn load_library(a: *app.App) !Library {
-    assert(a.library_budget.limit > 0);
-    assert(a.library_scratch_region.kind == .bump);
+    assert(a.regions.library_budget.limit > 0);
+    assert(a.regions.library_scratch.kind == .bump);
     return load(.{
-        .shared = a.library_shared,
-        .budget = a.library_budget,
-        .scratch = a.library_scratch_region,
+        .shared = &a.regions.library_shared,
+        .budget = &a.regions.library_budget,
+        .scratch = &a.regions.library_scratch,
         .catalog_path = a.library_path,
         .documents = a.documents,
         .state_dir = a.state_dir,

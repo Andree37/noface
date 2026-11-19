@@ -512,7 +512,7 @@ const pages_fallback = [_]book_model.Pos{.{}};
 /// again and again takes no more memory.
 pub fn relayout(a: *app.App, s: *Session) !void {
     assert(s.current < s.pages.len);
-    assert(a.pages_budget.region.?.kind == .bump);
+    assert(a.regions.pages_budget.region.?.kind == .bump);
     a.apply_settings() catch |err| {
         std.debug.print("settings failed: {s}\n", .{@errorName(err)});
         a.user.settings = a.user.saved_settings();
@@ -525,8 +525,8 @@ pub fn relayout(a: *app.App, s: *Session) !void {
     s.progress = null; // A layout still running was for the old settings
     s.pages = &pages_fallback;
     s.current = 0;
-    a.pages_budget.reset(.keep);
-    const alloc = a.pages_budget.allocator();
+    a.regions.pages_budget.reset(.keep);
+    const alloc = a.regions.pages_budget.allocator();
     const stored = page_store.load(alloc, s.pages_path, pages_key, s.paragraphs);
     if (stored) |pages| {
         s.pages = pages;

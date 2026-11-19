@@ -5,6 +5,8 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const app = @import("app.zig");
+const aa = @import("ui/aa.zig");
+const user_data = @import("user_data.zig");
 const fonts_db = @import("kindle/fonts.zig");
 const Regions = @import("regions.zig").Regions;
 const display = @import("display.zig");
@@ -308,6 +310,13 @@ pub fn assemble(p: Parts) !app.App {
         .indent = 60,
         .reference = &k.reference,
     };
+    const user: user_data.UserData = .load(.{
+        .settings = p.files.settings,
+        .speed = p.files.speed,
+        .journal = p.files.journal,
+    });
+    const families = p.offered.families;
+    const chosen = user.settings.family_index(families);
     return .{
         .alloc = p.alloc,
         .app_budget = p.app_budget,
@@ -328,11 +337,10 @@ pub fn assemble(p: Parts) !app.App {
         .typefaces = .{ .offered = p.offered },
         .library_path = p.library_path,
         .battery_path = p.files.battery,
-        .user = .load(.{
-            .settings = p.files.settings,
-            .speed = p.files.speed,
-            .journal = p.files.journal,
-        }),
+        .user = user,
+        // The Aa sheet opens on the page of typefaces with the one chosen, and stays on
+        // whichever the reader turns to after
+        .aa_kept = .{ .family_first = aa.family_page_of(families, chosen) },
         .utc_offset = 0,
         .layout = layout,
     };

@@ -16,12 +16,12 @@ const icons = @import("icons.zig");
 const top = toolbar.top_height;
 const tabs_height = style.fingertip;
 const tabs_gap = 16;
-/// A tab's label, down from the tabs' top: its baseline, the line under the open one,
-/// and the band the others' tint covers, in from each side of its cell.
+/// A tab's label, centred in the tabs' row: the line under the open one, below its
+/// baseline, and the band the others' tint covers, from over the baseline, in from each
+/// side of its cell.
 const tab_label = struct {
-    const label_drop = 60;
-    const underline_drop = 78;
-    const tint_drop = 20;
+    const underline_below = 18;
+    const tint_rise = 40;
     const tint_height = 54;
     const tint_inset = 8;
 };
@@ -245,10 +245,10 @@ const family_top = content_top;
 const family_height = style.fingertip;
 /// The first row's taps reach up this far into the gap under the tabs.
 const family_reach_above = 12;
-/// A typeface's name, and the line under the chosen one, down from its cell's top; the
-/// room kept right of a name, so long ones stop short of the next cell.
-const family_baseline_drop = 62;
-const family_underline_drop = 76;
+/// A typeface's name, centred in its cell in its own typeface, and the line under the
+/// chosen one, below its baseline; the room kept right of a name, so long ones stop short
+/// of the next cell.
+const family_underline_below = 14;
 const family_name_gap = 24;
 /// The pager's arrow: in from the end of its label, and how big its two strokes are.
 const pager_arrow_gap = 36;
@@ -267,8 +267,10 @@ fn family_columns(families: Families) u32 {
 /// The most cells the typefaces' grid has.
 pub const family_cells_max = 3 * family_rows;
 
-/// What the Aa sheet keeps from one book to the next, in the App: only the reader's
-/// controls use it (screens/reader/controls.zig).
+/// What the Aa sheet keeps from one book to the next, in the App: set as noface starts
+/// to the chosen typeface's page (setup.zig), then the reader's controls change the tab
+/// and the page turned to and draw from them (screens/reader/controls.zig), and the
+/// reader reads the tab open (`Reader.sheet`).
 pub const Kept = struct {
     tab: Tab = .font,
     family_first: u32 = 0, // The first typeface on the sheet's page of them
@@ -320,10 +322,9 @@ fn family_width(families: Families) u32 {
     return result;
 }
 const toggle_height = 76;
-/// A switch's parts, down from its top: its label's baseline and its pill's middle; and
-/// the pill's size.
+/// A switch's parts: its pill's middle, down from its top, which its label is centred
+/// on; and the pill's size.
 const toggle = struct {
-    const label_drop = 50;
     const middle_drop = 38;
     const width = 104;
     const radius = 26;
@@ -539,7 +540,8 @@ fn hit_family(families: Families, x: i32, y: i32) Hit {
 fn draw_toggle(fonts: Fonts, page: Page, y: u32, label: []const u8, on: bool) !void {
     assert(y >= content_top);
     assert(y + toggle_height <= max_height);
-    try fonts.small.draw(page, margin, @intCast(y + toggle.label_drop), label);
+    const baseline = fonts.small.centred_on(@intCast(y + toggle.middle_drop));
+    try fonts.small.draw(page, margin, baseline, label);
     // A rounded switch: filled with a white knob on the right when on, outlined with a
     // black knob on the left when off
     const w: f32 = toggle.width;
@@ -599,11 +601,11 @@ fn draw_tabs(fonts: Fonts, page: Page, tab: Tab) !void {
         const left: u32 = @as(u32, @intCast(i)) * cell;
         const active = i == @backingInt(tab);
         const centre: f32 = @floatFromInt(left + cell / 2);
-        const baseline = top + tab_label.label_drop;
-        const underline = top + tab_label.underline_drop;
+        const baseline = fonts.small.centred_baseline(top, tabs_height);
+        const underline: u32 = @intCast(baseline + tab_label.underline_below);
         try draw.choice(fonts, page, centre, .center, baseline, label, active, underline);
         const inset = tab_label.tint_inset;
-        const tint_top = top + tab_label.tint_drop;
+        const tint_top: u32 = @intCast(baseline - tab_label.tint_rise);
         const tint_width = cell - 2 * inset;
         const tint_height = tab_label.tint_height;
         if (!active) page.tint(left + inset, tint_top, tint_width, tint_height, style.faded);
@@ -704,9 +706,9 @@ fn draw_family_pager(fonts: Fonts, page: Page, first: u32) !void {
     try draw_family(fonts, page, per_page, label, null, false);
     const cols = family_columns(families);
     const left: f32 = @floatFromInt(margin + per_page % cols * family_width(families));
-    // The arrow's middle on the label's letters, a little above its baseline
-    const baseline = family_top + per_page / cols * family_height + family_baseline_drop;
-    const mid: f32 = @floatFromInt(baseline - 11);
+    // The arrow's middle on the label's capitals' middle, which is the cell's
+    const cell_top = family_top + per_page / cols * family_height;
+    const mid: f32 = @floatFromInt(cell_top + family_height / 2);
     const x = left + try fonts.small.measure(label) + pager_arrow_gap;
     const h = pager_arrow_half;
     page.stroke(x - h, mid - 2 * h, x + h, mid, pager_arrow_stroke);
@@ -732,16 +734,18 @@ fn draw_family(
     assert(name.len > 0);
     if (own) |font| {
         const avail: f32 = @floatFromInt(family_width(families) - family_name_gap);
-        const baseline: i32 = @intCast(y + family_baseline_drop);
+        const baseline = font.centred_baseline(@intCast(y), family_height);
         try draw.clipped(font, page, @floatFromInt(left), baseline, name, avail);
         if (chosen) {
             const width: u32 = @intFromFloat(@min(try font.measure(name), avail));
-            page.fill_rect(left, y + family_underline_drop, width, style.underline, style.black);
+            const underline: u32 = @intCast(baseline + family_underline_below);
+            page.fill_rect(left, underline, width, style.underline, style.black);
         }
     } else {
         const x: f32 = @floatFromInt(left);
-        const baseline: i32 = @intCast(y + family_baseline_drop);
-        try draw.choice(fonts, page, x, .left, baseline, name, chosen, y + family_underline_drop);
+        const baseline = fonts.small.centred_baseline(@intCast(y), family_height);
+        const underline: u32 = @intCast(baseline + family_underline_below);
+        try draw.choice(fonts, page, x, .left, baseline, name, chosen, underline);
     }
 }
 

@@ -154,10 +154,6 @@ pub const App = struct {
         a.layout.margin_x = settings_model.margins[a.user.settings.margin];
         a.layout.justify = !a.user.settings.left_align;
         a.layout.bold_starts = a.user.settings.bold_starts;
-        // The Aa sheet shows the page of typefaces with the one chosen
-        const offered = a.families();
-        const chosen = a.user.settings.family_index(offered);
-        a.aa_kept.family_first = aa.family_page_of(offered, chosen);
         assert(a.layout.margin_x > 0);
         assert(a.body.line_height > 0);
     }

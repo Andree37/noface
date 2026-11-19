@@ -55,30 +55,23 @@ pub const page_books_max: u32 = plain_rows * columns;
 const hero_title_lines = 3;
 const hero_title_step = 66;
 /// The column of text beside the hero's cover, down from the hero's top unless said:
-/// its gap from the cover, the "Continue reading" line and its tint (stopping short of
-/// the dots), the dots, the title, the author's rise above the title's next line, the
-/// line under the author, and the progress bar's rise from the cover's foot, its
-/// clearance and the percent under it.
+/// its gap from the cover, the "Continue reading" line (its fade stopping short of the
+/// dots), the dots, the title, the author's rise above the title's next line, the line
+/// under the author, and the progress bar's rise from the cover's foot, its clearance
+/// and the percent under it. The quiet lines are faded over their own line.
 const hero_text = struct {
     const gap = 48;
     const kicker_drop = 34;
-    const kicker_tint_drop = 8;
-    const kicker_tint_height = 36;
     const kicker_clear = 40;
     const dots_inset = 8;
     const dots_drop = 24;
     const title_drop = 104;
     const author_rise = 12;
-    const byline_tint_rise = 30;
-    const byline_tint_height = 44;
     const line_step = 56;
-    const caption_tint_rise = 26;
-    const caption_tint_height = 34;
     const bar_rise = 40;
     const bar_clear = 22;
     const bar_thick = 12;
     const percent_drop = 42;
-    const percent_tint_drop = 16;
 };
 /// The hero's dots take a fingertip's taps in from the right margin, near its top: down
 /// to this far under the hero's top.
@@ -136,11 +129,8 @@ const button_top = 0;
 const button_height = tabs_height;
 const icon_inset = 46; // From a button's rounded end to its icon's centre
 /// The tabs row's labels, centred in its buttons: the line under the chosen one, down
-/// from the row's top; the band the others' tint covers, and the room kept at their right.
+/// from the row's top; the others faded.
 const tab_underline = 62;
-const tab_tint_drop = 22;
-const tab_tint_height = 44;
-const tab_tint_clear = 4;
 /// The sort button's room: right of its label, its arrows' width and their gaps.
 const sort_label_pad = 32;
 const sort_arrows_width = 18;
@@ -565,8 +555,8 @@ fn draw_hero(
     const dots_x: f32 = @floatFromInt(page.width - margin - hero_text.dots_inset);
     icons.dots(page, dots_x, hero_top + hero_text.dots_drop);
     const kicker_width: u32 = @intFromFloat(avail - hero_text.kicker_clear);
-    const kicker_top = hero_top + hero_text.kicker_tint_drop;
-    page.tint(left_px, kicker_top, kicker_width, hero_text.kicker_tint_height, style.quiet);
+    const kicker_y = hero_top + hero_text.kicker_drop;
+    fonts.caption.fade(page, left_px, kicker_y, kicker_width, style.quiet);
 
     const title_y = hero_top + hero_text.title_drop;
     const step = hero_title_step;
@@ -593,9 +583,9 @@ fn draw_hero(
     progress_bar(page, left_px, bar_y, @intFromFloat(avail), e.percent, hero_text.bar_thick);
     var label: [24]u8 = undefined;
     const pct = std.fmt.bufPrint(&label, "{d}% read", .{e.percent}) catch "";
-    try fonts.caption.draw(page, left, bar_y + hero_text.percent_drop, pct);
-    const pct_top = bar_y + hero_text.percent_tint_drop;
-    page.tint(left_px, pct_top, @intFromFloat(avail), hero_text.caption_tint_height, style.faded);
+    const pct_y: i32 = @intCast(bar_y + hero_text.percent_drop);
+    try fonts.caption.draw(page, left, pct_y, pct);
+    fonts.caption.fade(page, left_px, pct_y, @intFromFloat(avail), style.faded);
 }
 
 /// The author, and the series when there is one: "Liu, Cixin  ·  Three-Body #2".
@@ -623,8 +613,7 @@ fn draw_hero_byline(
     }
     const left: f32 = @floatFromInt(left_px);
     try draw.clipped(fonts.small, page, left, author_y, byline, avail);
-    const tint_top: u32 = @intCast(author_y - hero_text.byline_tint_rise);
-    page.tint(left_px, tint_top, @intFromFloat(avail), hero_text.byline_tint_height, style.faded);
+    fonts.small.fade(page, left_px, author_y, @intFromFloat(avail), style.faded);
     return byline.len > 0;
 }
 
@@ -652,8 +641,7 @@ fn draw_hero_last_read(
     const left: f32 = @floatFromInt(left_px);
     try draw.clipped(fonts.caption, page, left, line_y, line, avail);
     // Gray, like the author
-    const tint_top: u32 = @intCast(line_y - hero_text.caption_tint_rise);
-    page.tint(left_px, tint_top, @intFromFloat(avail), hero_text.caption_tint_height, style.faded);
+    fonts.caption.fade(page, left_px, line_y, @intFromFloat(avail), style.faded);
 }
 
 fn draw_cell(
@@ -715,8 +703,8 @@ fn draw_search_header(fonts: Fonts, page: Page, query: []const u8, found: u32) !
     const left: f32 = margin;
     const avail: f32 = @floatFromInt(page.width - 2 * margin);
     try fonts.caption.draw(page, left, hero_top + hero_text.kicker_drop, "Search results");
-    const kicker_top = hero_top + hero_text.kicker_tint_drop;
-    page.tint(margin, kicker_top, @intFromFloat(avail), hero_text.kicker_tint_height, style.quiet);
+    const kicker_y = hero_top + hero_text.kicker_drop;
+    fonts.caption.fade(page, margin, kicker_y, @intFromFloat(avail), style.quiet);
     var quoted: [80]u8 = undefined;
     const shown = std.fmt.bufPrint(&quoted, "\u{201c}{s}\u{201d}", .{query}) catch query;
     try draw.clipped(fonts.hero, page, left, hero_top + search_head.query_drop, shown, avail);
@@ -766,9 +754,9 @@ fn draw_tabs(
         const active = t.filter == filter;
         const x: f32 = @floatFromInt(left);
         try draw.choice(fonts, page, x, .left, y, t.label, active, @intCast(top + tab_underline));
-        const width: u32 = @intCast(t.right - t.label_left - tab_tint_clear);
-        const tint_top: u32 = @intCast(top + tab_tint_drop);
-        if (!active) page.tint(left, tint_top, width, tab_tint_height, style.faded);
+        // Over its label alone, clear of the pill's outline round the tabs
+        const width: u32 = @intFromFloat(@ceil(try fonts.small.measure(t.label)));
+        if (!active) fonts.small.fade(page, left, y, width, style.faded);
     }
     try draw_tabs_sort(fonts, page, top, order);
 }

@@ -72,14 +72,28 @@ fn report_size(fd: i32, line_buffer: []u8) bool {
         report_line(fd, line_buffer, "screen size:  unknown (not supported yet)", .{});
         return false;
     };
-    const known = device.with_screen(size.width, size.height);
-    const name = if (known) |model| @tagName(model) else "no Kindle noface knows yet";
-    report_line(fd, line_buffer, "screen size:  {d} x {d} ({s})", .{
+    const known = device.with_screen(size.width, size.height) orelse {
+        // What it would need, for the report pasted into an issue
+        report_line(fd, line_buffer, "screen size:  {d} x {d} (not supported)", .{
+            size.width,
+            size.height,
+        });
+        for (std.enums.values(device.Model)) |model| {
+            const s = device.screen(model);
+            report_line(fd, line_buffer, "  noface runs on {d} x {d}: {s}", .{
+                s.width_px,
+                s.height_px,
+                device.name(model),
+            });
+        }
+        return false;
+    };
+    report_line(fd, line_buffer, "screen size:  {d} x {d} (supported: {s})", .{
         size.width,
         size.height,
-        name,
+        device.name(known),
     });
-    return known != null;
+    return true;
 }
 
 /// Writes the report to `fd`. Returns whether noface should be able to run here.

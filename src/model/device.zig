@@ -1,9 +1,10 @@
 //! The Kindles noface knows, and for each the facts about its screen that every layout
 //! is worked out from: its size and how densely its pixels sit. What drives a screen
 //! (its display driver and refresh modes) is kindle/'s to know; these are plain facts
-//! any folder may read. Sizes in the interface are physical, in millimetres and points,
-//! and turned into a screen's pixels here, so they come out the same size on any
-//! Kindle (style.zig).
+//! any folder may read. The interface's sizes are pixels at 300 to the inch, the
+//! density of every Kindle noface knows (style.zig, which checks it); turning
+//! millimetres and points into a screen's pixels is here for when a Kindle of another
+//! density joins them.
 const std = @import("std");
 const assert = std.debug.assert;
 
@@ -34,10 +35,17 @@ pub const Screen = struct {
 const mm_per_inch = 25.4;
 const points_per_inch = 72;
 
+/// A model's name, as a person would say it.
+pub fn name(model: Model) []const u8 {
+    return switch (model) {
+        .paperwhite_12 => "Kindle Paperwhite (12th generation)",
+    };
+}
+
 /// A model's screen, as its maker built it.
 pub fn screen(model: Model) Screen {
     const s: Screen = switch (model) {
-        // 6.8 inches across its diagonal at 300 pixels to the inch
+        // About 7.1 inches across its diagonal at 300 pixels to the inch
         .paperwhite_12 => .{ .width_px = 1272, .height_px = 1696, .dpi = 300 },
     };
     assert(s.width_px < s.height_px); // Held upright

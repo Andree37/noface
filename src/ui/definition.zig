@@ -13,35 +13,65 @@ pub const height = 860;
 pub const top = style.screen_height - height;
 const number_width = 44; // Room for "1" before a sense, so its lines hang together
 const line_step = 46;
-const actions_top = style.screen_height - 150;
+/// The word's baseline, and the first line's under it, down from the sheet's top.
+const word_drop = 104;
+const text_drop = 170;
+const text_top = top + text_drop;
+/// The text stops this far over the buttons' row's rule.
+const text_clear = 16;
+/// A part of speech: the gap over it, its gray band's rise over its baseline and its
+/// height, and how much closer the next line follows it.
+const pos_gap = 12;
+const pos_tint_rise = 26;
+const pos_tint_height = 34;
+const pos_tighter = 4;
+/// The gap over the entry for the word a held word is a form of.
+const base_gap = 20;
+
+/// The buttons' row along the sheet's foot: a rule over it, the buttons drawn a little
+/// under its top and taking taps a little round what's drawn.
+const actions_band = 150;
+const actions_top = style.screen_height - actions_band;
+const actions_rule_rise = 12;
 const button_height = 84;
 const button_width = 300;
-const text_top = top + 170; // The first line under the word
-/// The buttons' labels and the credit share one baseline.
-const actions_baseline = actions_top + 4 + button_height / 2 + 12;
+const button_drop = 4;
+const button_reach = 10;
+const row_taps_height = button_height + 2 * button_reach;
+/// The buttons' labels and the credit share one baseline, a little under the buttons'
+/// middle.
+const label_drop = 12;
+const actions_baseline = actions_top + button_drop + button_height / 2 + label_drop;
+/// The credit's gray band: its width in from the right margin, its rise and height.
+const credit_tint_width = 360;
+const credit_tint_rise = 28;
+const credit_tint_height = 36;
 
 pub const Hit = enum { close, highlight, get_dictionary, none };
 
 /// Where "Get dictionary" sits, beside Highlight, when there's none to show.
-const get_left = style.margin + button_width + 32;
+const get_gap = 32;
+const get_left = style.margin + button_width + get_gap;
 const get_width = 400;
 
 comptime {
     // The text has room under the word, above the buttons.
     assert(top > style.status_height);
     assert(text_top + line_step < actions_top);
-    // The two buttons' tap areas (each 10 px wider than drawn) don't overlap, and fit.
-    assert(style.margin + button_width + 10 <= get_left - 10);
-    assert(get_left + get_width + 10 <= style.screen_width);
-    assert(actions_top + button_height + 20 <= style.screen_height);
-    assert(button_height >= 84); // A fingertip
+    // The two buttons' tap areas (each wider than drawn) don't overlap, and fit.
+    assert(style.margin + button_width + button_reach <= get_left - button_reach);
+    assert(get_left + get_width + button_reach <= style.screen_width);
+    assert(actions_top + row_taps_height <= style.screen_height);
+    assert(row_taps_height >= style.fingertip);
+    assert(button_width >= style.fingertip);
 }
 
 pub fn hit(x: i32, y: i32) Hit {
     if (y < top) return .close;
-    const on_row = y >= actions_top and y < actions_top + button_height + 20;
-    const on_highlight = x >= style.margin - 10 and x < style.margin + button_width + 10;
-    const on_get = x >= get_left - 10 and x < get_left + get_width + 10;
+    const reach = button_reach;
+    const on_row = y >= actions_top and y < actions_top + row_taps_height;
+    const on_highlight = x >= style.margin - reach and x < style.margin + button_width + reach;
+    const on_get = x >= get_left - reach and x < get_left + get_width + reach;
     if (on_row and on_highlight) return .highlight;
     if (on_row and on_get) return .get_dictionary;
     return .none;
@@ -75,19 +105,20 @@ const Writer = struct {
     fn room(w: *const Writer) bool {
         assert(w.y >= text_top);
         assert(w.y <= actions_top + line_step); // It stops at the first line that won't fit
-        return w.y + line_step <= actions_top - 16;
+        return w.y + line_step <= actions_top - text_clear;
     }
 
     /// A part of speech, small and gray, with a little space above.
     fn pos(w: *Writer, name: []const u8) !void {
         assert(!w.full);
         assert(name.len > 0); // A line of a tokenized entry
-        w.y += 12;
+        w.y += pos_gap;
         if (!w.room()) return w.stop();
         try w.fonts.caption.draw(w.page, style.margin, w.y, name);
         const width = w.page.width - 2 * style.margin;
-        w.page.tint(style.margin, @intCast(w.y - 26), width, 34, style.faded);
-        w.y += line_step - 4;
+        const tint_top: u32 = @intCast(w.y - pos_tint_rise);
+        w.page.tint(style.margin, tint_top, width, pos_tint_height, style.faded);
+        w.y += line_step - pos_tighter;
     }
 
     /// A numbered sense, wrapped, its lines lined up after the number.
@@ -146,7 +177,7 @@ pub fn render(fonts: Fonts, page: Page, found: Found) !void {
         .found => |f| f.entry.word,
         .no_dictionary, .not_found => found.word,
     };
-    try draw.clipped(fonts.hero, page, style.margin, top + 104, shown, avail);
+    try draw.clipped(fonts.hero, page, style.margin, top + word_drop, shown, avail);
     var w = Writer{ .fonts = fonts, .page = page, .y = text_top };
     switch (found.looked_up) {
         .no_dictionary => |to_get| if (to_get) |g| {
@@ -162,7 +193,7 @@ pub fn render(fonts: Fonts, page: Page, found: Found) !void {
             try w.entry(f.entry);
             if (f.base) |b| {
                 if (!w.full and w.room()) {
-                    w.y += 20;
+                    w.y += base_gap;
                     try fonts.title.draw(page, style.margin, w.y, b.word);
                     w.y += line_step;
                     try w.entry(b);
@@ -175,12 +206,14 @@ pub fn render(fonts: Fonts, page: Page, found: Found) !void {
     }
 
     // Actions along the bottom: Highlight, and where the words come from
-    page.fill_rect(style.margin, actions_top - 12, page.width - 2 * style.margin, 1, style.rule);
-    draw.box(page, style.margin, actions_top + 4, button_width, button_height);
+    const rule_y = actions_top - actions_rule_rise;
+    page.fill_rect(style.margin, rule_y, page.width - 2 * style.margin, 1, style.rule);
+    const button_top = actions_top + button_drop;
+    draw.box(page, style.margin, button_top, button_width, button_height);
     const highlight_x = style.margin + button_width / 2;
     try draw.centered(fonts.small, page, highlight_x, actions_baseline, "Highlight");
     if (gettable(found) != null) {
-        draw.box(page, get_left, actions_top + 4, get_width, button_height);
+        draw.box(page, get_left, button_top, get_width, button_height);
         const get_x = get_left + get_width / 2;
         try draw.centered(fonts.small, page, get_x, actions_baseline, "Get dictionary");
     }
@@ -188,7 +221,9 @@ pub fn render(fonts: Fonts, page: Page, found: Found) !void {
     const right: f32 = @floatFromInt(page.width - style.margin);
     const baseline = actions_baseline; // In line with "Highlight"
     try fonts.caption.draw(page, right - try fonts.caption.measure(credit), baseline, credit);
-    page.tint(@intFromFloat(right - 360), baseline - 28, 360, 36, style.faded);
+    const tint_left: u32 = @intFromFloat(right - credit_tint_width);
+    const tint_top = baseline - credit_tint_rise;
+    page.tint(tint_left, tint_top, credit_tint_width, credit_tint_height, style.faded);
 }
 
 /// The dictionary the sheet offers to download, if it offers one.
@@ -200,10 +235,14 @@ pub fn gettable(found: Found) ?Gettable {
 }
 
 test "taps above close, the button highlights, the rest stays" {
-    try std.testing.expectEqual(Hit.close, hit(600, top - 10));
-    try std.testing.expectEqual(Hit.highlight, hit(style.margin + 50, actions_top + 50));
-    try std.testing.expectEqual(Hit.none, hit(600, top + 300));
-    try std.testing.expectEqual(Hit.get_dictionary, hit(get_left + 100, actions_top + 50));
-    try std.testing.expect(button_height >= 84);
-    try std.testing.expect(button_width >= 100);
+    const x = style.screen_width / 2;
+    const row_y = actions_top + row_taps_height / 2;
+    try std.testing.expectEqual(Hit.close, hit(x, top - 1));
+    const highlight_x = style.margin + button_width / 2;
+    try std.testing.expectEqual(Hit.highlight, hit(highlight_x, row_y));
+    try std.testing.expectEqual(Hit.none, hit(x, text_top));
+    try std.testing.expectEqual(Hit.get_dictionary, hit(get_left + get_width / 2, row_y));
+    // Between the two buttons' taps
+    const between = get_left - button_reach - 1;
+    try std.testing.expectEqual(Hit.none, hit(between, row_y));
 }

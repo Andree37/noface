@@ -38,13 +38,11 @@ comptime {
 
 /// The choices' header, over the list where the Go To sheet's tabs would be, the screen
 /// having no status strip: the back link's arrow's middle, the heading's and the book's
-/// baselines, the book's gray band's rise over its baseline and its height.
+/// baselines, the book's faded.
 const header = struct {
     const back_y = 70;
     const heading_y = goto_ui.top - 6;
     const about_y = goto_ui.list_top - 62;
-    const about_tint_rise = 28;
-    const about_tint_height = 36;
 };
 
 const Choices = struct {
@@ -72,9 +70,8 @@ const Choices = struct {
         try draw_ui.clipped(a.ui.hero, page, style.margin, heading_y, c.heading, width_available);
         const about_y = header.about_y;
         try draw_ui.clipped(a.ui.caption, page, style.margin, about_y, c.about, width_available);
-        const tint_top = about_y - header.about_tint_rise;
         const tint_width = page.width - 2 * style.margin;
-        page.tint(style.margin, tint_top, tint_width, header.about_tint_height, style.faded);
+        a.ui.caption.fade(page, style.margin, about_y, tint_width, style.faded);
         try goto_ui.render_list(a.ui, page, c.rows, null, c.pages.page, "");
         try a.display.show_band(0, a.display.screen.height);
     }

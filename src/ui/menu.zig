@@ -9,27 +9,76 @@ const icons = @import("icons.zig");
 const slider = @import("slider.zig");
 const quick_model = @import("../model/quick.zig");
 
-pub const height = 1010;
+const screen_width = style.screen_width;
 
-const slider_left = 160;
-const slider_right = 1110;
+/// The panel, top to bottom: the header, the tiles, a rule, the brightness's name and
+/// slider, the warmth's name with the schedule, its slider, and the chevron.
+pub const height = warmth_row.y + chevron_band;
+const chevron_band = 110; // Under the warmth's bar, holding the chevron
+const chevron_above_foot = 26; // The chevron's middle over the panel's foot
+const chevron_y = height - chevron_above_foot; // The chevron, which closes the panel
+const edge = 4; // The line along the panel's foot
+
+/// The header: the Kindle's name and the clock in from the left, the status cluster in
+/// from the right, on the name's line.
+const header_inset = 60;
+const header_baseline = 70;
+const clock_baseline = 120;
+const status_centre = 58;
+
+/// The rule between the tiles and the sliders, the toggles' boxes' depth under it.
+const rule_inset = 40;
+const rule_thick = 2;
+const rule_y = last_row_y + tile_box_below;
+
+/// A slider's bar in from each side; its dimmer and brighter marks centred in the room
+/// outside it, each half a mark long and stroked this thick; its level over the knob.
+const slider_inset = 160;
+const slider_left = slider_inset;
+const slider_right = screen_width - slider_inset;
+const step_mark_middle = 90; // In from the screen's side
+const step_mark_half = 20;
+const step_mark_thick = 4;
+const level_above = 40; // The level's baseline over the bar
 
 pub const Row = struct { label: []const u8, y: u32, max: u32 };
+/// The brightness's name sits under the rule, its bar under that; the warmth's a slider
+/// step lower.
+const brightness_label_below_rule = 46;
+const label_above_bar = 74;
+const brightness_label_baseline = rule_y + brightness_label_below_rule;
+const slider_step = 220;
 pub const brightness_row = Row{
     .label = "Brightness",
-    .y = 680,
+    .y = brightness_label_baseline + label_above_bar,
     .max = quick_model.max_brightness,
 };
-pub const warmth_row = Row{ .label = "Warmth", .y = 900, .max = quick_model.max_warmth };
+pub const warmth_row = Row{
+    .label = "Warmth",
+    .y = brightness_row.y + slider_step,
+    .max = quick_model.max_warmth,
+};
 const row_reach = 60; // A slider row takes taps this far above and below its bar
-/// The warmth's name and the schedule's switch, on one line between the two sliders.
-/// The schedule takes taps right of `schedule_left`, in all the room between the
-/// sliders' taps: a fingertip tall and more.
-const warmth_label_baseline = 805;
+/// The warmth's name and the schedule's switch, on one line between the two sliders,
+/// higher over its bar than the brightness's, to fit the schedule's taps. The schedule
+/// takes taps right of `schedule_left`, in all the room between the sliders' taps: a
+/// fingertip tall and more.
+const warmth_label_above_bar = 95;
+const warmth_label_baseline = warmth_row.y - warmth_label_above_bar;
 const schedule_top = brightness_row.y + row_reach;
 const schedule_bottom = warmth_row.y - row_reach;
-const schedule_left = 800;
-const chevron_y = height - 26; // The chevron at the bottom, which closes the panel
+/// The schedule's taps, in from the right: wider than its longest words and arrow.
+const schedule_reach = 472;
+const schedule_left = screen_width - schedule_reach;
+/// "Schedule: On" ends this far in from the right, then its arrow: its left in from the
+/// right, its width, and its point over the words' baseline.
+const schedule_text_inset = 96;
+const schedule_arrow_inset = 80;
+const schedule_arrow_width = 14;
+const schedule_arrow_rise = 10;
+/// How far the line's words reach above and below their baseline.
+const words_reach = 30;
+const words_below = 10;
 
 pub const Hit = enum {
     none,
@@ -106,15 +155,23 @@ const tiles = [_]Tile{
 
 const icon_radius = 52;
 const tiles_per_row = 3;
-const tile_step_x = 318; // Between tile centres along a row
+/// Between tile centres along a row: a row's tiles spread evenly across the screen.
+const tile_step_x = screen_width / (tiles_per_row + 1);
 const tile_reach_x = 120; // A tile takes taps this far either side of its centre
 const tile_reach_y = 95; // And this far above and below it
 const tile_label_below = 92; // From a tile's centre to the baseline of its word
-const first_row_y = 240;
+const first_row_y = 240; // The first row's middle, under the header
 const row_step_y = 190;
 const tile_rows = (tiles.len + tiles_per_row - 1) / tiles_per_row;
+const last_row_y = first_row_y + (tile_rows - 1) * row_step_y;
 const tile_px = 2 * icon_radius + 8;
+/// A toggle's box, redrawn alone: its icon's tile above its middle, and this far either
+/// side and below, round its word.
+const tile_box_half_width = 130;
+const tile_box_below = 130;
 
+/// Half the widest level text, and more than the knob: what a knob's move redraws round it.
+const knob_reach = 60;
 const band_above = 60;
 const band_below = 50;
 pub const band_height = band_above + band_below;
@@ -129,10 +186,9 @@ comptime {
     assert(icon_radius < tile_reach_y);
     assert(tile_label_below < tile_reach_y);
     assert(tiles_per_row * tile_step_x <= style.screen_width);
-    const last_row_y = first_row_y + (tile_rows - 1) * row_step_y;
     assert(last_row_y + tile_reach_y <= brightness_row.y - row_reach);
     // A toggle's box, redrawn alone, reaches no slider's band
-    assert(last_row_y + 130 <= brightness_row.y - band_above);
+    assert(last_row_y + tile_box_below <= brightness_row.y - band_above);
     // Sliders, the schedule and the chevron, top to bottom, inside the panel
     assert(slider_left < slider_right);
     assert(slider_right <= style.screen_width);
@@ -141,10 +197,10 @@ comptime {
     assert(schedule_bottom <= warmth_row.y - row_reach);
     // The schedule's switch a fingertip tall, its words inside its taps and above the
     // warmth's band, which is redrawn alone as its knob moves
-    assert(schedule_bottom - schedule_top >= 100);
-    assert(warmth_label_baseline - 30 >= schedule_top);
-    assert(warmth_label_baseline + 10 <= schedule_bottom);
-    assert(warmth_label_baseline + 10 <= warmth_row.y - band_above);
+    assert(schedule_bottom - schedule_top >= style.fingertip);
+    assert(warmth_label_baseline - words_reach >= schedule_top);
+    assert(warmth_label_baseline + words_below <= schedule_bottom);
+    assert(warmth_label_baseline + words_below <= warmth_row.y - band_above);
     assert(warmth_row.y + row_reach < chevron_y);
     assert(chevron_y < height);
     assert(height < style.screen_height);
@@ -271,7 +327,7 @@ pub fn knob_under(x: i32) u32 {
 /// The columns a slider frame changes when its knob moves from `from` to `to`:
 /// the knob, its level above it, and the bar between them.
 pub fn knob_span(from: u32, to: u32) struct { left: u32, width: u32 } {
-    const reach = 60; // Half the widest level text, and more than the knob
+    const reach = knob_reach;
     const left = @min(from, to) -| reach;
     const width = @max(from, to) + reach - left;
     assert(left <= @min(from, to));
@@ -297,11 +353,14 @@ pub fn draw_slider_at(
     var level: [8]u8 = undefined;
     const shown = std.fmt.bufPrint(&level, "{d}", .{value}) catch "";
     const knob_x: f32 = @floatFromInt(knob);
-    try draw.centered(fonts.small, page, knob_x, @intCast(row.y - 40), shown);
+    try draw.centered(fonts.small, page, knob_x, @intCast(row.y - level_above), shown);
     const y: f32 = @floatFromInt(row.y);
-    page.stroke(70, y, 110, y, 4);
-    page.stroke(1160, y, 1200, y, 4);
-    page.stroke(1180, y - 20, 1180, y + 20, 4);
+    const half: f32 = step_mark_half;
+    const minus: f32 = step_mark_middle;
+    const plus: f32 = screen_width - step_mark_middle;
+    page.stroke(minus - half, y, minus + half, y, step_mark_thick);
+    page.stroke(plus - half, y, plus + half, y, step_mark_thick);
+    page.stroke(plus, y - half, plus, y + half, step_mark_thick);
     slider.draw(page, bar, knob);
     if (mono) page.threshold(band_top(row), band_height);
 }
@@ -312,10 +371,10 @@ pub fn shortcut_box(choice: Hit) ?style.Rect {
         if (tiles[i].hit != choice) continue;
         const c = tile_center(@intCast(i));
         const box = style.Rect{
-            .x = @intCast(c.x - 130),
-            .y = @intCast(c.y - icon_radius - 8),
-            .w = 260,
-            .h = icon_radius + 8 + 130,
+            .x = @intCast(c.x - tile_box_half_width),
+            .y = @intCast(c.y - tile_px / 2),
+            .w = 2 * tile_box_half_width,
+            .h = tile_px / 2 + tile_box_below,
         };
         assert(box.x + box.w <= style.screen_width);
         assert(box.y + box.h <= height);
@@ -368,86 +427,105 @@ fn draw_tile(fonts: Fonts, page: Page, i: u32, quick: *const Quick) !void {
 pub fn render(fonts: Fonts, page: Page, quick: *const quick_model.Quick) !void {
     const w: f32 = @floatFromInt(page.width);
     page.fill_rect(0, 0, page.width, height, 0xff);
-    page.fill_rect(0, height - 4, page.width, 4, 0x00);
+    page.fill_rect(0, height - edge, page.width, edge, 0x00);
 
-    try fonts.title.draw(page, 60, 70, "Kindle Paperwhite");
-    try fonts.small.draw(page, 60, 120, quick.clock_text());
-    try icons.status_cluster(page, fonts.small, w - 60, 58, 70, quick, true);
+    try fonts.title.draw(page, header_inset, header_baseline, "Kindle Paperwhite");
+    try fonts.small.draw(page, header_inset, clock_baseline, quick.clock_text());
+    const status_right = w - header_inset;
+    const centre = status_centre;
+    const baseline = header_baseline;
+    try icons.status_cluster(page, fonts.small, status_right, centre, baseline, quick, true);
 
     for (0..tiles.len) |i| try draw_tile(fonts, page, @intCast(i), quick);
 
-    page.fill_rect(40, 560, page.width - 80, 2, style.panel_rule);
-    try fonts.small.draw(page, 60, 606, brightness_row.label);
+    page.fill_rect(rule_inset, rule_y, page.width - 2 * rule_inset, rule_thick, style.panel_rule);
+    try fonts.small.draw(page, header_inset, brightness_label_baseline, brightness_row.label);
     try draw_slider(fonts, page, brightness_row, quick.brightness, false);
-    try fonts.small.draw(page, 60, warmth_label_baseline, warmth_row.label);
+    try fonts.small.draw(page, header_inset, warmth_label_baseline, warmth_row.label);
     const schedule = if (quick.schedule) "Schedule: On" else "Schedule: Off";
     const schedule_w = try fonts.small.measure(schedule);
-    try fonts.small.draw(page, w - 96 - schedule_w, warmth_label_baseline, schedule);
+    const schedule_x = w - schedule_text_inset - schedule_w;
+    try fonts.small.draw(page, schedule_x, warmth_label_baseline, schedule);
     // A small arrow after it, centred on its letters
-    const arrow_y: f32 = warmth_label_baseline - 10;
-    page.stroke(w - 80, arrow_y - 14, w - 66, arrow_y, 4);
-    page.stroke(w - 66, arrow_y, w - 80, arrow_y + 14, 4);
+    const arrow_y: f32 = warmth_label_baseline - schedule_arrow_rise;
+    const arrow_left = w - schedule_arrow_inset;
+    const arrow_w: f32 = schedule_arrow_width;
+    page.stroke(arrow_left, arrow_y - arrow_w, arrow_left + arrow_w, arrow_y, step_mark_thick);
+    page.stroke(arrow_left + arrow_w, arrow_y, arrow_left, arrow_y + arrow_w, step_mark_thick);
     try draw_slider(fonts, page, warmth_row, quick.warmth, false);
     icons.chevron(page, w / 2, chevron_y);
 }
 
-test "panel maps taps like the stock layout" {
-    try std.testing.expectEqual(Hit.airplane, hit(318, 240));
-    try std.testing.expectEqual(Hit.settings, hit(636, 240)); // Wi-Fi
-    try std.testing.expectEqual(Hit.bluetooth, hit(954, 240));
-    try std.testing.expectEqual(Hit.sync, hit(477, 430));
-    try std.testing.expectEqual(Hit.kindle, hit(795, 430));
-    try std.testing.expectEqual(Hit.none, hit(954, 430));
-    try std.testing.expectEqual(Hit.dimmer, hit(90, 680));
-    try std.testing.expectEqual(Hit.brighter, hit(1180, 680));
-    try std.testing.expectEqual(Hit.slider, hit(600, 680));
-    try std.testing.expectEqual(Hit.cooler, hit(90, 900));
-    try std.testing.expectEqual(Hit.warmer, hit(1180, 900));
-    try std.testing.expectEqual(Hit.warmth, hit(600, 900));
-    try std.testing.expectEqual(Hit.schedule, hit(1000, 790));
-    try std.testing.expectEqual(Hit.close, hit(636, 984));
-    try std.testing.expectEqual(Hit.close, hit(600, 1100));
+/// Where tests tap: inside a slider row left and right of its bar and on it, and on the
+/// schedule's line.
+const test_minus_x = step_mark_middle;
+const test_plus_x = screen_width - step_mark_middle;
+const test_bar_x = screen_width / 2;
+const test_schedule_x = schedule_left + schedule_reach / 2;
+
+test "panel maps taps where it draws them" {
+    for (tiles, 0..) |t, i| {
+        const c = tile_center(@intCast(i));
+        try std.testing.expectEqual(t.hit, hit(c.x, c.y));
+    }
+    // The empty place after the last tile on its row
+    const last = tile_center(tiles.len - 1);
+    try std.testing.expectEqual(Hit.none, hit(last.x + tile_step_x, last.y));
+    const bright: i32 = brightness_row.y;
+    try std.testing.expectEqual(Hit.dimmer, hit(test_minus_x, bright));
+    try std.testing.expectEqual(Hit.brighter, hit(test_plus_x, bright));
+    try std.testing.expectEqual(Hit.slider, hit(test_bar_x, bright));
+    const warm: i32 = warmth_row.y;
+    try std.testing.expectEqual(Hit.cooler, hit(test_minus_x, warm));
+    try std.testing.expectEqual(Hit.warmer, hit(test_plus_x, warm));
+    try std.testing.expectEqual(Hit.warmth, hit(test_bar_x, warm));
+    try std.testing.expectEqual(Hit.schedule, hit(test_schedule_x, warmth_label_baseline));
+    try std.testing.expectEqual(Hit.close, hit(screen_width / 2, chevron_y));
+    try std.testing.expectEqual(Hit.close, hit(test_bar_x, height));
 }
 
 test "the schedule takes a fingertip's taps, and the sliders none of them" {
     const middle = @divExact(schedule_top + schedule_bottom, 2);
-    try std.testing.expectEqual(Hit.schedule, hit(1000, middle));
-    try std.testing.expectEqual(Hit.schedule, hit(1000, schedule_top));
-    try std.testing.expectEqual(Hit.schedule, hit(1000, schedule_bottom - 1));
+    const x = test_schedule_x;
+    try std.testing.expectEqual(Hit.schedule, hit(x, middle));
+    try std.testing.expectEqual(Hit.schedule, hit(x, schedule_top));
+    try std.testing.expectEqual(Hit.schedule, hit(x, schedule_bottom - 1));
     // Just under its words, where a tap once changed the warmth
-    try std.testing.expectEqual(Hit.schedule, hit(1000, warmth_label_baseline + 10));
-    try std.testing.expectEqual(Hit.brighter, hit(1180, schedule_top - 1));
-    try std.testing.expectEqual(Hit.warmer, hit(1180, schedule_bottom));
+    try std.testing.expectEqual(Hit.schedule, hit(x, warmth_label_baseline + words_below));
+    try std.testing.expectEqual(Hit.brighter, hit(test_plus_x, schedule_top - 1));
+    try std.testing.expectEqual(Hit.warmer, hit(test_plus_x, schedule_bottom));
     // Left of it, under the warmth's name, a tap does nothing
-    try std.testing.expectEqual(Hit.none, hit(400, middle));
+    try std.testing.expectEqual(Hit.none, hit(schedule_left - 1, middle));
 }
 
 test "knob follows the finger but stays on the bar" {
-    try std.testing.expectEqual(@as(u32, 160), knob_under(20));
-    try std.testing.expectEqual(@as(u32, 500), knob_under(500));
-    try std.testing.expectEqual(@as(u32, 1110), knob_under(1250));
+    try std.testing.expectEqual(@as(u32, slider_left), knob_under(0));
+    try std.testing.expectEqual(@as(u32, test_bar_x), knob_under(test_bar_x));
+    try std.testing.expectEqual(@as(u32, slider_right), knob_under(screen_width));
 }
 
 test "a knob move redraws only around old and new knob" {
     const span = knob_span(700, 400);
-    try std.testing.expectEqual(@as(u32, 340), span.left);
-    try std.testing.expectEqual(@as(u32, 420), span.width);
-    try std.testing.expectEqual(@as(u32, 0), knob_span(20, 30).left);
+    try std.testing.expectEqual(@as(u32, 400 - knob_reach), span.left);
+    try std.testing.expectEqual(@as(u32, 300 + 2 * knob_reach), span.width);
+    try std.testing.expectEqual(@as(u32, 0), knob_span(knob_reach / 2, knob_reach).left);
 }
 
 test "toggle boxes stay apart and on screen" {
     const a = shortcut_box(.airplane).?;
     const b = shortcut_box(.bluetooth).?;
     try std.testing.expect(a.x + a.w <= shortcut_box(.settings).?.x);
-    try std.testing.expect(b.x + b.w <= 1272);
+    try std.testing.expect(b.x + b.w <= screen_width);
     try std.testing.expect(shortcut_box(.close) == null);
 }
 
 test "sliders map position to level" {
-    try std.testing.expectEqual(@as(u32, 0), level_at(brightness_row, 160));
-    try std.testing.expectEqual(@as(u32, 24), level_at(brightness_row, 1110));
-    try std.testing.expectEqual(@as(u32, 12), level_at(warmth_row, 635));
-    try std.testing.expectEqual(@as(u32, 24), level_at(warmth_row, 1200));
+    const middle = (slider_left + slider_right) / 2;
+    try std.testing.expectEqual(@as(u32, 0), level_at(brightness_row, slider_left));
+    const brightest = level_at(brightness_row, slider_right);
+    try std.testing.expectEqual(@as(u32, brightness_row.max), brightest);
+    try std.testing.expectEqual(@as(u32, warmth_row.max / 2), level_at(warmth_row, middle));
+    try std.testing.expectEqual(@as(u32, warmth_row.max), level_at(warmth_row, screen_width));
 }
 
 test "sync and the Kindle button never show as on" {
@@ -476,17 +554,13 @@ test "bluetooth toggle shows its state" {
     try std.testing.expectEqualStrings("Off", tile_label(2, &off));
 }
 
-test "tiles sit where they always have" {
-    const want = [_][2]i32{
-        .{ 318, 240 },
-        .{ 636, 240 },
-        .{ 954, 240 },
-        .{ 477, 430 },
-        .{ 795, 430 },
-    };
-    for (want, 0..) |w, i| {
-        const c = tile_center(@intCast(i));
-        try std.testing.expectEqual(w[0], c.x);
-        try std.testing.expectEqual(w[1], c.y);
-    }
+test "a row of tiles is spread evenly, and a short row centred" {
+    const first = tile_center(0);
+    const second = tile_center(1);
+    try std.testing.expectEqual(@as(i32, tile_step_x), first.x);
+    try std.testing.expectEqual(@as(i32, tile_step_x), second.x - first.x);
+    const fourth = tile_center(3);
+    const fifth = tile_center(4);
+    try std.testing.expectEqual(@as(i32, screen_width), fourth.x + fifth.x);
+    try std.testing.expectEqual(@as(i32, first_row_y + row_step_y), fourth.y);
 }

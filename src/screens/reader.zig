@@ -926,7 +926,7 @@ pub const Reader = struct {
             .hold => |h| try r.hold_page(h.x, h.y),
             .swipe => |swipe| try r.turn_by(swipe.direction + r.a.input.take_turns(), swipe.us),
             .pull => {
-                const page = try r.s.ensure(r.s.current, r.s.current);
+                const page = try r.s.lend_current();
                 r.open_child(.{ .panel = .{ .screen = panel.open(r.a, page) } });
             },
             .drag, .drag_end, .tick, .charger, .lock, .unlock, .power, .computer, .stop => {
@@ -1189,7 +1189,7 @@ pub const Reader = struct {
         if (r.run_screen.len == 0) r.run_screen = try r.alloc.alloc(u8, a.screen.pixels.len);
         @memcpy(r.run_screen, a.screen.pixels);
         const rows = &run_mode.pause_rows;
-        const c = card_screen.over(a, r.run_screen, "Paused", note, rows, null);
+        const c = card_screen.over(a, .{ .pixels = r.run_screen }, "Paused", note, rows, null);
         r.open_child(.{ .pause = .{ .screen = c } });
     }
 
@@ -1200,7 +1200,7 @@ pub const Reader = struct {
         assert(r.run != null); // Only running opens the card
         const a = r.a;
         const run = &r.run.?;
-        try card_screen.closed(a, r.run_screen);
+        try card_screen.closed(a, .{ .pixels = r.run_screen });
         const choice: run_mode.Paused = switch (ending) {
             .done => |row| @fromBackingInt(@intCast(row)),
             .closed, .interrupted => .resume_running,

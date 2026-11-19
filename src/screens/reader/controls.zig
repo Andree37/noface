@@ -32,7 +32,7 @@ pub const Drawn = struct { sheet_open: bool, whole_page: bool };
 /// Draws the toolbar over the current page.
 pub fn draw_toolbar(a: *app.App, s: *sess.Session, book: Book, drawn: Drawn) !void {
     assert(s.current < s.pages.len);
-    @memcpy(a.overlay, try s.ensure(s.current, s.current));
+    const page = a.compose(try s.lend_current());
     // No page count until the pages are known
     const at: ?toolbar.Position =
         if (s.layout_pending()) null else .{ .index = s.current, .total = s.page_count() };
@@ -43,7 +43,7 @@ pub fn draw_toolbar(a: *app.App, s: *sess.Session, book: Book, drawn: Drawn) !vo
     }
     try toolbar.render(
         fonts,
-        a.page(a.overlay),
+        page,
         book.title,
         at,
         &a.quick,
@@ -52,7 +52,7 @@ pub fn draw_toolbar(a: *app.App, s: *sess.Session, book: Book, drawn: Drawn) !vo
         book.running,
         s.is_bookmarked(s.current),
     );
-    @memcpy(a.screen.pixels, a.overlay);
+    a.put_composed();
     if (drawn.whole_page) {
         try a.screen.wait_complete(try s.show_band(0, a.screen.height));
         return;
@@ -112,7 +112,7 @@ pub const Pending = union(enum) {
     /// A card asking about turning switch `toggle` on, over the page.
     const Ask = struct {
         toggle: u32,
-        background: []const u8, // The page under the card
+        background: app.Backdrop, // The page under the card
         card: card_screen.Card = undefined,
         ending: ?screen.Ending(u32) = null,
     };
@@ -324,7 +324,7 @@ fn ask_first(
         .autostart => ask: {
             // Turning it on needs the startup file in the system folder: ask first
             if (autostart.installed()) return null;
-            const background = try s.ensure(s.current, s.current);
+            const background = try s.lend_current();
             p.* = .{ .autostart = .{ .toggle = index, .background = background } };
             const title = "Open noface when the Kindle starts";
             const subtitle = "This adds one small startup file to the Kindle's system.";
@@ -335,7 +335,7 @@ fn ask_first(
         .lock_picture => ask: {
             // Turning it on needs a picture to show
             if (lock.has_picture(a)) return null;
-            const background = try s.ensure(s.current, s.current);
+            const background = try s.lend_current();
             p.* = .{ .lock_picture = .{ .toggle = index, .background = background } };
             const title = "Add your picture first";
             const subtitle = "Name it lockscreen.jpg or lockscreen.png, and put it in the " ++

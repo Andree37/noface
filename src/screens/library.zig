@@ -183,7 +183,7 @@ pub fn run_library(a: *app.App) !void {
 const Browser = struct {
     a: *app.App,
     lib: Library,
-    buf: []u8, // The library as last drawn
+    buf: []u8, // The library as last drawn: what a sheet over it is drawn over
     filter: catalog.Filter = .all,
     order: catalog.Order = .recent,
     query: search.Query = .{},
@@ -224,6 +224,13 @@ const Browser = struct {
 
     /// Everything drawn again with a flash (first, and back from a book or a reload),
     /// or the page alone (a new filter, a page turn, a notice).
+    /// The library as last drawn, for a sheet over it: its own, kept still while the
+    /// sheet is open.
+    fn under(b: *const Browser) app.Backdrop {
+        assert(b.buf.len == b.a.screen.pixels.len);
+        return .{ .pixels = b.buf };
+    }
+
     pub fn draw(b: *Browser, part: screen.Part) !void {
         switch (part) {
             .all => try b.show_everything(),
@@ -316,7 +323,7 @@ const Browser = struct {
             },
             .battery => {
                 b.over = .none;
-                try battery_screen.put_back(b.a);
+                try battery_screen.put_back(b.a, b.under());
                 return .stay;
             },
             .lock => |c| {
@@ -325,7 +332,7 @@ const Browser = struct {
             },
             .panel => |c| {
                 b.over = .none;
-                const leave = try panel.ended(b.a, b.buf, c.ended());
+                const leave = try panel.ended(b.a, b.under(), c.ended());
                 return step(if (leave) .leave else .nothing);
             },
             .search => |c| {
@@ -356,7 +363,7 @@ const Browser = struct {
     fn open_panel(b: *Browser) Next {
         assert(b.over == .none);
         assert(b.buf.len == b.a.screen.pixels.len);
-        b.over = .{ .panel = .{ .screen = panel.open(b.a, b.buf) } };
+        b.over = .{ .panel = .{ .screen = panel.open(b.a, b.under()) } };
         return .{ .open = b.over.panel.frame() };
     }
 
@@ -644,7 +651,7 @@ const Browser = struct {
         const next = b.over.up_next.next;
         assert(b.over.up_next.offer.ending != null);
         assert(next.is_local());
-        const chosen = try actions.up_next_closed(b.a, b.buf, &b.over.up_next.offer);
+        const chosen = try actions.up_next_closed(b.a, b.under(), &b.over.up_next.offer);
         b.over = .none;
         if (!chosen) return .everything;
         return b.open_book(next);
@@ -655,7 +662,7 @@ const Browser = struct {
         assert(b.buf.len == b.a.screen.pixels.len);
         assert(b.over == .none);
         b.over = .{ .sheet = .{ .screen = undefined } };
-        actions.begin_sheet(&b.over.sheet.screen, b.a, entry, &b.lib, b.buf);
+        actions.begin_sheet(&b.over.sheet.screen, b.a, entry, &b.lib, b.under());
         return .{ .open = b.over.sheet.frame() };
     }
 

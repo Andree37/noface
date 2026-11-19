@@ -25,7 +25,7 @@ pub fn make(
     if (reading) |r| assert(r < chapters.len);
     return .{
         .a = a,
-        .background = try s.ensure(s.current, s.current),
+        .background = try s.lend_current(),
         .contents = try contents_rows(alloc, s, chapters),
         .notes = try notes_rows(alloc, s),
         .reading = reading,
@@ -38,7 +38,7 @@ pub fn make(
 pub const GoTo = struct {
     pub const Result = u32;
     a: *app.App,
-    background: []const u8, // The page under it
+    background: app.Backdrop, // The page under it
     contents: []const goto.Row,
     notes: []const goto.Row,
     reading: ?u32, // The chapter being read, in the contents
@@ -52,13 +52,11 @@ pub const GoTo = struct {
 
     pub fn draw(go: *GoTo, _: screen.Part) !void {
         const a = go.a;
-        assert(go.background.len == a.overlay.len);
         assert(goto.top < a.screen.height);
-        @memcpy(a.overlay, go.background);
+        const page = a.compose(go.background);
         // The toolbar stays drawn above, from what's on screen now
         const toolbar_bytes = goto.top * a.screen.stride;
-        @memcpy(a.overlay[0..toolbar_bytes], a.screen.pixels[0..toolbar_bytes]);
-        const page = a.page(a.overlay);
+        @memcpy(page.buf[0..toolbar_bytes], a.screen.pixels[0..toolbar_bytes]);
         // The chapter being read is marked in the contents only
         const marked = go.tab == .contents and go.reading != null;
         try goto.render(
@@ -69,7 +67,7 @@ pub const GoTo = struct {
             if (marked) go.reading.? else null,
             go.pages.page,
         );
-        @memcpy(a.screen.pixels, a.overlay);
+        a.put_composed();
         try a.show_band(goto.top, a.screen.height - goto.top);
     }
 

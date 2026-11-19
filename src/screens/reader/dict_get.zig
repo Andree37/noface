@@ -52,11 +52,11 @@ pub const Answer = enum { download, not_now, dismissed };
 /// (`screen.open`), its text in `ask`. Once it has ended, `asked` says the answer.
 pub fn ask(
     a: *app.App,
-    background: []const u8,
+    background: app.Backdrop,
     lang: hyphen.Lang,
     asking: *Asking,
 ) card_screen.Card {
-    assert(background.len == a.screen.pixels.len);
+    assert(background.holds(a));
     const l = language_of(lang);
     const title = std.fmt.bufPrint(&asking.title_buffer, "Get the {s} dictionary?", .{
         l.name,
@@ -72,8 +72,8 @@ pub fn ask(
 
 /// The answer to the card from `ask`, which has ended. "Not now" stops the asking; the
 /// sheet still offers it.
-pub fn asked(a: *app.App, background: []const u8, ending: screen.Ending(u32)) !Answer {
-    assert(background.len == a.screen.pixels.len);
+pub fn asked(a: *app.App, background: app.Backdrop, ending: screen.Ending(u32)) !Answer {
+    assert(background.holds(a));
     try card_screen.closed(a, background);
     const picked = switch (ending) {
         .done => |picked| picked,
@@ -99,8 +99,8 @@ pub const Asking = struct {
 /// (`screen.open`), over `background`: a card saying how far it's got, connecting and
 /// then downloading, which Cancel stops, and a card saying what went wrong if it did.
 /// Done with true when the dictionary is in place and ready to use.
-pub fn begin(g: *Getting, a: *app.App, background: []const u8, lang: hyphen.Lang) void {
-    assert(background.len == a.screen.pixels.len);
+pub fn begin(g: *Getting, a: *app.App, background: app.Backdrop, lang: hyphen.Lang) void {
+    assert(background.holds(a));
     g.* = .{ .a = a, .background = background, .lang = lang, .l = language_of(lang) };
     assert(g.phase == .starting);
     assert(g.put_back == null);
@@ -109,7 +109,7 @@ pub fn begin(g: *Getting, a: *app.App, background: []const u8, lang: hyphen.Lang
 pub const Getting = struct {
     pub const Result = bool; // In place and ready
     a: *app.App,
-    background: []const u8,
+    background: app.Backdrop,
     lang: hyphen.Lang,
     l: dict_download.Language,
     phase: enum { starting, waiting, telling } = .starting,
@@ -141,7 +141,7 @@ pub const Getting = struct {
     pub fn on_open(g: *Getting) !screen.Step(bool) {
         const a = g.a;
         assert(g.phase == .starting);
-        assert(g.background.len == a.screen.pixels.len);
+        assert(g.background.holds(a));
         // The reader's own airplane mode is theirs to turn off. Unknown: tried, and the
         // connection's wait says if Wi-Fi came
         switch (wifi_saver.airplane()) {
@@ -177,7 +177,7 @@ pub const Getting = struct {
     }
 
     pub fn on_resume(g: *Getting) !screen.Step(bool) {
-        assert(g.background.len == g.a.screen.pixels.len); // What its cards sit over
+        assert(g.background.holds(g.a)); // What its cards sit over
         switch (g.phase) {
             .starting => unreachable, // Nothing is open before it starts
             .waiting => {
@@ -238,7 +238,7 @@ pub const Getting = struct {
     /// Done: Wi-Fi and the Kindle's waking put back as they were.
     fn finish(g: *Getting, ready: bool) screen.Step(bool) {
         assert(g.phase != .starting); // Something it opened has ended
-        assert(g.background.len == g.a.screen.pixels.len);
+        assert(g.background.holds(g.a));
         if (g.put_back) |back| {
             g.a.downloads_until = back.downloads_until;
             // Off again for reading, by the book's timer, which tries again until it can
@@ -263,7 +263,7 @@ const Progress = struct {
     pub const touches = input_mod.Input.Modes.sheet;
     pub const tick_us = 1_000_000;
     a: *app.App,
-    background: []const u8,
+    background: app.Backdrop,
     l: dict_download.Language,
     title_buffer: [64]u8,
     title_size: u32,
@@ -274,12 +274,11 @@ const Progress = struct {
 
     pub fn draw(p: *Progress, _: screen.Part) !void {
         const a = p.a;
-        assert(p.background.len == a.overlay.len);
-        assert(a.overlay.len == a.screen.pixels.len);
+        assert(p.background.holds(a));
         const title = p.title_buffer[0..p.title_size];
-        @memcpy(a.overlay, p.background);
-        try card.render_with(a.ui, a.page(a.overlay), title, p.subtitle(), &cancel_rows, null);
-        @memcpy(a.screen.pixels, a.overlay);
+        const page = a.compose(p.background);
+        try card.render_with(a.ui, page, title, p.subtitle(), &cancel_rows, null);
+        a.put_composed();
         try a.show_band(0, a.screen.height);
     }
 
@@ -307,7 +306,7 @@ const Progress = struct {
     pub fn on_tick(p: *Progress) !screen.Step(Waited) {
         const now = os.now_us();
         assert(p.connect_until > 0);
-        assert(p.background.len == p.a.overlay.len); // What its card is drawn over
+        assert(p.background.holds(p.a)); // What its card is drawn over
         const r = p.running orelse {
             // No answer: not yet, asked again next second until `connect_until`
             if (lipc.wifi_connected() orelse false) {

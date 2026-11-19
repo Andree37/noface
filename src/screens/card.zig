@@ -12,14 +12,14 @@ const screen = @import("screen.zig");
 /// way, `closed` puts back what was under it.
 pub fn over(
     a: *app.App,
-    background: []const u8,
+    background: app.Backdrop,
     title: []const u8,
     subtitle: []const u8,
     rows: []const card.Row,
     book_cover: ?card.Cover,
 ) Card {
-    assert(background.len == a.screen.pixels.len); // Put back over the whole screen
-    assert(a.overlay.len == a.screen.pixels.len); // The card is drawn there first
+    assert(background.holds(a)); // Put back over the whole screen
+    assert(rows.len > 0); // A card is something to choose
     return .{
         .a = a,
         .background = background,
@@ -31,17 +31,16 @@ pub fn over(
 }
 
 /// What was under a card, back on the whole screen.
-pub fn closed(a: *app.App, background: []const u8) !void {
-    assert(background.len == a.screen.pixels.len);
-    assert(background.ptr != a.screen.pixels.ptr); // Kept apart from what's shown
-    @memcpy(a.screen.pixels, background);
+pub fn closed(a: *app.App, background: app.Backdrop) !void {
+    assert(background.holds(a));
+    a.put_back(background);
     try a.show_band(0, a.screen.height);
 }
 
 /// A card of rows over a dimmed screen: the row tapped, or closed by a tap above it.
 pub const Card = struct {
     a: *app.App,
-    background: []const u8,
+    background: app.Backdrop,
     title: []const u8,
     subtitle: []const u8,
     rows: []const card.Row,
@@ -52,11 +51,11 @@ pub const Card = struct {
 
     pub fn draw(c: *Card, _: screen.Part) !void {
         const a = c.a;
-        assert(a.overlay.len == a.screen.pixels.len);
-        assert(c.background.len == a.overlay.len); // Both a whole screen
-        @memcpy(a.overlay, c.background);
-        try card.render_with(a.ui, a.page(a.overlay), c.title, c.subtitle, c.rows, c.cover);
-        @memcpy(a.screen.pixels, a.overlay);
+        assert(c.background.holds(a));
+        assert(c.rows.len > 0);
+        const page = a.compose(c.background);
+        try card.render_with(a.ui, page, c.title, c.subtitle, c.rows, c.cover);
+        a.put_composed();
         try a.show_band(0, a.screen.height); // The whole screen dims behind it
     }
 

@@ -15,19 +15,19 @@ pub fn show_note(a: *app.App, s: *sess.Session, start: book_model.Pos, fixed: ?u
     if (fixed) |height| assert(height <= a.screen.height);
     const font = a.note_font;
     const parts = s.note_parts[0..s.note_len];
-    @memcpy(a.overlay, try s.ensure(s.current, s.current));
+    const whole = a.compose(try s.lend_current());
     const stride = a.screen.stride;
     const fitted = try notes.fit(font, parts, start, a.screen.width, stride, fixed);
     assert(fitted.height <= a.screen.height);
     const top = a.screen.height - fitted.height;
     const panel = Page{
-        .buf = a.overlay[top * stride ..],
+        .buf = whole.buf[top * stride ..],
         .width = a.screen.width,
         .height = fitted.height,
         .stride = stride,
     };
     try notes.render(font, a.ui, panel, parts, start, fitted.next != null);
-    @memcpy(a.screen.pixels, a.overlay);
+    a.put_composed();
     try a.screen.wait_complete(try s.show_band(top, fitted.height));
     s.note_top = top;
     s.note_next = fitted.next;

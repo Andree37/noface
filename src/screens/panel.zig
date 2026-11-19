@@ -23,8 +23,7 @@ comptime {
 
 /// Reads the status again (about a quarter second of lipc calls), and redraws the
 /// panel only if something changed.
-fn refresh_status(a: *app.App, background: []const u8) !void {
-    assert(background.len == a.screen.pixels.len);
+fn refresh_status(a: *app.App, background: app.Backdrop) !void {
     const fresh = lipc.read(a.quick);
     if (fresh.same(&a.quick)) return;
     a.quick = fresh;
@@ -33,19 +32,17 @@ fn refresh_status(a: *app.App, background: []const u8) !void {
 }
 
 /// Draws the quick panel over `background` and shows it.
-fn draw_menu(a: *app.App, background: []const u8) !void {
-    assert(a.overlay.len == background.len);
+fn draw_menu(a: *app.App, background: app.Backdrop) !void {
+    assert(background.holds(a));
     assert(menu.height <= a.screen.height);
-    @memcpy(a.overlay, background);
-    try menu.render(a.ui, a.page(a.overlay), &a.quick);
-    @memcpy(a.screen.pixels, a.overlay);
+    try menu.render(a.ui, a.compose(background), &a.quick);
+    a.put_composed();
     try a.show_band(0, menu.height);
 }
 
-fn close_menu(a: *app.App, background: []const u8) !void {
-    assert(background.len == a.screen.pixels.len);
+fn close_menu(a: *app.App, background: app.Backdrop) !void {
     assert(menu.height <= a.screen.height);
-    @memcpy(a.screen.pixels, background);
+    a.put_back(background);
     try a.show_band(0, menu.height);
 }
 
@@ -157,12 +154,11 @@ const Control = union(enum) { not_one, ran, drag: screen.Frame };
 /// `slider`, opened over the panel.
 fn panel_control(
     a: *app.App,
-    background: []const u8,
+    background: app.Backdrop,
     choice: menu.Hit,
     x: i32,
     slider: *SliderDrag,
 ) !Control {
-    assert(background.len == a.screen.pixels.len);
     switch (choice) {
         .slider => return .{ .drag = try drag_row(a, slider, menu.brightness_row, x) },
         .warmth => return .{ .drag = try drag_row(a, slider, menu.warmth_row, x) },
@@ -256,19 +252,17 @@ fn panel_control_shortcut(a: *app.App, choice: menu.Hit) !void {
 }
 
 /// The quick panel, to open over the library or a book drawn in `background`.
-pub fn open(a: *app.App, background: []const u8) Panel {
-    assert(background.len == a.screen.pixels.len);
-    assert(a.overlay.len == background.len);
+pub fn open(a: *app.App, background: app.Backdrop) Panel {
+    assert(background.holds(a));
     return .{ .a = a, .background = background };
 }
 
 /// Once the panel has ended: true to go to the Kindle's own screens.
 pub fn ended(
     a: *app.App,
-    background: []const u8,
+    background: app.Backdrop,
     ending: screen.Ending(void),
 ) !bool {
-    assert(background.len == a.screen.pixels.len);
     switch (ending) {
         .done => return true,
         // Closed, or the Kindle locking: what was under it comes back
@@ -288,7 +282,7 @@ pub fn ended(
 pub const Panel = struct {
     pub const Result = void;
     a: *app.App,
-    background: []const u8,
+    background: app.Backdrop,
     slider: SliderDrag = .{}, // A slider followed, over it
     /// The status read again since it opened. It's drawn at once with the last one
     /// read, and read on its first tick: a screen counts as shown once it's drawn, and
@@ -303,7 +297,6 @@ pub const Panel = struct {
     }
 
     pub fn draw(p: *Panel, _: screen.Part) !void {
-        assert(p.background.len == p.a.screen.pixels.len);
         try draw_menu(p.a, p.background);
     }
 
@@ -348,7 +341,6 @@ pub const Panel = struct {
     /// The slider's drag ended.
     pub fn on_resume(p: *Panel) !screen.Step(void) {
         assert(p.slider.ending != null);
-        assert(p.background.len == p.a.screen.pixels.len);
         try slider_ended(p.a, &p.slider);
         return .stay;
     }

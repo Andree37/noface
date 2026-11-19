@@ -79,8 +79,8 @@ pub fn lines(
     return .{ .title = title, .detail = detail };
 }
 
-/// Makes the bubble in place, its lines in its own buffer, and keeps the library under
-/// it to put back (`put_back`) once it closes.
+/// Makes the bubble in place, its lines in its own buffer; `put_back` puts what was
+/// under it back once it closes.
 pub fn open(a: *app.App, bubble: *Bubble) void {
     var samples: [2048]battery.Sample = undefined;
     const log = battery_log.load(a.battery_path, &samples);
@@ -91,15 +91,12 @@ pub fn open(a: *app.App, bubble: *Bubble) void {
     assert(bubble.said.title.len > 0);
     assert(bubble.said.detail.len > 0);
     std.debug.print("battery: {s} ({d} samples)\n", .{ bubble.said.title, log.len });
-    assert(a.overlay.len == a.screen.pixels.len);
-    @memcpy(a.overlay, a.screen.pixels); // The library under it, put back after
 }
 
-/// The library as it was under the bubble, back on the screen.
-pub fn put_back(a: *app.App) !void {
-    assert(a.overlay.len == a.screen.pixels.len);
+/// The library as it was under the bubble, `under`, back on the screen.
+pub fn put_back(a: *app.App, under: app.Backdrop) !void {
     assert(left + width <= a.screen.width);
-    @memcpy(a.screen.pixels, a.overlay);
+    a.put_back(under);
     try a.show_rect(left, top, width, height);
 }
 

@@ -131,17 +131,16 @@ const View = struct {
 /// for the fast update, which leaves grays alone.
 fn draw_view(a: *app.App, v: *const View, settled: bool) !u32 {
     assert(v.step < steps.len);
-    assert(a.overlay.len >= a.screen.stride * a.screen.height);
     // Drawn in ordinary memory, then copied: the screen's own memory is slow to read
     // back, and dithering reads every pixel it writes
-    const page = a.page(a.overlay);
+    const page = a.compose_whole();
     const t0 = os.now_us();
     const zoom = v.zoom();
     const width = a.screen.width;
     const height = a.screen.height;
     image.zoomed(v.picture, v.center_x, v.center_y, zoom, page, width, height, settled);
     if (settled) {
-        const pixels = a.overlay[0 .. a.screen.stride * a.screen.height];
+        const pixels = page.buf[0 .. a.screen.stride * a.screen.height];
         image.dither(a.alloc, pixels, a.screen.stride) catch {}; // Ignored: grays still show.
     } else {
         page.threshold(0, a.screen.height);
@@ -149,7 +148,7 @@ fn draw_view(a: *app.App, v: *const View, settled: bool) !u32 {
     draw_view_close_button(page);
     // How it works, at the bottom, until the first zoom
     if (v.step == 0 and settled) try draw_view_hint(a, page);
-    @memcpy(a.screen.pixels, a.overlay);
+    a.put_composed();
     std.debug.print("picture drawn in {d} ms\n", .{(os.now_us() - t0) / 1000});
     return a.screen.show(if (settled) .screen else .quick);
 }

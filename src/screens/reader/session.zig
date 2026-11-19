@@ -551,8 +551,24 @@ pub const Session = struct {
         if (s.back != null) try s.draw_back(page);
 
         a.slots[victim].page = index;
+        // Pixels lent from this slot before now are another page's
+        a.slots[victim].drawn +%= 1;
         assert(a.slot_for(index).? == &a.slots[victim]);
         return buf;
+    }
+
+    /// The page the reader is on, drawn, lent from the page cache to a sheet drawn over
+    /// it. It stays that page while the sheet is open, as nothing under a sheet draws
+    /// another page there; if something did, the sheet's next use of it stops on it.
+    pub fn lend_current(s: *Session) !app.Backdrop {
+        const pixels = try s.ensure(s.current, s.current);
+        const a = s.app;
+        for (&a.slots, 0..) |*slot, i| {
+            if (slot.buf.ptr != pixels.ptr) continue;
+            assert(slot.page == s.current);
+            return .{ .pixels = pixels, .lent = .{ .slot = @intCast(i), .drawn = slot.drawn } };
+        }
+        unreachable; // `ensure` gives back one of the slots' pixels
     }
 
     pub fn show(s: *Session, index: u32, move: Move, touched_us: ?u64, force_clean: bool) !void {

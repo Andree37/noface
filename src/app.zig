@@ -68,7 +68,39 @@ comptime {
     assert(book_model.normal_size < book_model.size_scales.len);
 }
 
-pub const Slot = struct { page: ?u32 = null, buf: []u8, hits: text.Hits = .{} }; // Null: empty
+/// A cached page: which it is (null: none), its pixels and where its words are, and how
+/// many times a page has been drawn into it, so pixels lent from it are known stale
+/// once another is (`Backdrop`).
+pub const Slot = struct { page: ?u32 = null, buf: []u8, hits: text.Hits = .{}, drawn: u32 = 0 };
+
+/// What a sheet is drawn over, and what comes back when it closes: a whole screen of
+/// pixels the sheet doesn't own, only borrows. Pixels lent from the page cache say which
+/// slot they're in and how many times it had been drawn into, and every use checks it
+/// hasn't been since: another page drawn there would show under the sheet instead.
+pub const Backdrop = struct {
+    pixels: []const u8,
+    lent: ?Lent = null, // Null: owned by whoever opened the sheet, and kept still for it
+
+    pub const Lent = struct { slot: u32, drawn: u32 };
+
+    /// Whether it's a whole screen kept apart from what's shown, and, if lent, still
+    /// the screen it was then: no other page drawn into its slot since.
+    pub fn holds(b: Backdrop, a: *const App) bool {
+        if (b.pixels.len != a.screen.pixels.len) return false;
+        if (b.pixels.ptr == a.screen.pixels.ptr) return false;
+        const l = b.lent orelse return true;
+        if (l.slot >= a.slots.len) return false;
+        const slot = &a.slots[l.slot];
+        return slot.buf.ptr == b.pixels.ptr and slot.drawn == l.drawn;
+    }
+
+    /// The pixels, checked still the screen they were when lent.
+    pub fn get(b: Backdrop, a: *const App) []const u8 {
+        assert(b.holds(a));
+        assert(b.pixels.len == a.screen.pixels.len);
+        return b.pixels;
+    }
+};
 
 /// What the Aa sheet keeps from one book to the next: only the reader's controls use
 /// it (screens/reader/controls.zig).
@@ -122,7 +154,8 @@ pub const App = struct {
     /// what's in them: only it draws into them and reads their words).
     slots: [3]Slot,
     /// A whole screen of scratch, for composing one draw before it's copied to the
-    /// screen: a screen's while it draws, good for nothing after.
+    /// screen (`compose`, `put_composed`): a screen's while it draws, good for nothing
+    /// after, so nothing keeps anything in it.
     overlay: []u8,
     lock_kept: LockKept,
     state_dir: []const u8,
@@ -349,6 +382,34 @@ pub const App = struct {
         assert(a.layout.faces != null);
         assert(a.layout.faces.?.ctx == ctx);
         return a.face(bold, italic, size) catch a.face(false, false, size);
+    }
+
+    /// The overlay, holding `under`, for a sheet to be drawn over it before
+    /// `put_composed` puts the whole on screen.
+    pub fn compose(a: *App, under: Backdrop) Page {
+        assert(a.overlay.len == a.screen.pixels.len);
+        @memcpy(a.overlay, under.get(a));
+        return a.page(a.overlay);
+    }
+
+    /// The overlay as it is, for a draw that sets every pixel itself before
+    /// `put_composed` puts it on screen.
+    pub fn compose_whole(a: *App) Page {
+        assert(a.overlay.len == a.screen.pixels.len);
+        return a.page(a.overlay);
+    }
+
+    /// What was composed in the overlay, onto the screen; shown by the caller, over
+    /// what it changed.
+    pub fn put_composed(a: *App) void {
+        assert(a.overlay.len == a.screen.pixels.len);
+        @memcpy(a.screen.pixels, a.overlay);
+    }
+
+    /// `under` back on the whole screen, as it was before a sheet went over it; shown by
+    /// the caller, over what the sheet covered.
+    pub fn put_back(a: *App, under: Backdrop) void {
+        @memcpy(a.screen.pixels, under.get(a));
     }
 
     pub fn page(a: *App, buf: []u8) Page {

@@ -82,9 +82,9 @@ pub fn begin_sheet(
     a: *app.App,
     e: *catalog.Entry,
     lib: *books.Library,
-    background: []const u8,
+    background: app.Backdrop,
 ) void {
-    assert(background.len == a.screen.pixels.len);
+    assert(background.holds(a));
     s.* = .{ .a = a, .e = e, .lib = lib, .background = background };
     assert(s.round == 0);
     assert(s.phase == .card);
@@ -98,7 +98,7 @@ pub const Sheet = struct {
     a: *app.App,
     e: *catalog.Entry,
     lib: *books.Library,
-    background: []const u8,
+    background: app.Backdrop,
     /// The books on this Kindle, listed for the series screens in the library's
     /// scratch region, emptied when they end.
     scratch: memory.Budget = undefined,
@@ -147,7 +147,7 @@ pub const Sheet = struct {
     }
 
     pub fn on_resume(s: *Sheet) !screen.Step(Change) {
-        assert(s.background.len == s.a.screen.pixels.len); // What its cards sit over
+        assert(s.background.holds(s.a)); // What its cards sit over
         switch (s.phase) {
             .card => {
                 try card_screen.closed(s.a, s.background);
@@ -227,7 +227,7 @@ pub const Sheet = struct {
 pub fn up_next(
     a: *app.App,
     next: *const catalog.Entry,
-    background: []u8,
+    background: []u8, // The library's, written over with the page just left
     offer: *UpNext,
 ) ?screen.Frame {
     if (next.availability != .local) return null;
@@ -252,15 +252,16 @@ pub fn up_next(
         book_cover = .{ .pixels = pixels, .width = cover_width, .height = cover_height };
     }
     const rows = &up_next_rows;
-    offer.card = card_screen.over(a, background, next.title, offer.subtitle, rows, book_cover);
+    const under: app.Backdrop = .{ .pixels = background };
+    offer.card = card_screen.over(a, under, next.title, offer.subtitle, rows, book_cover);
     return screen.open(&offer.card, &offer.ending);
 }
 
 /// Once the up-next card has ended: whether to read the book now.
-pub fn up_next_closed(a: *app.App, background: []const u8, offer: *UpNext) !bool {
+pub fn up_next_closed(a: *app.App, background: app.Backdrop, offer: *UpNext) !bool {
     if (offer.small) |pixels| a.alloc.free(pixels);
     offer.small = null;
-    assert(background.len == a.screen.pixels.len);
+    assert(background.holds(a));
     try card_screen.closed(a, background);
     switch (offer.ending.?) {
         .done => |row| {

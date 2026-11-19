@@ -52,7 +52,7 @@ const Sheet = struct {
     fn get_dictionary(sh: *Sheet) screen.Step(Choice) {
         // Only where the button is drawn: a dictionary to get
         const g = definition.gettable(sh.found) orelse return .stay;
-        dict_get.begin(&sh.getting, sh.a, sh.page_copy, g.lang);
+        dict_get.begin(&sh.getting, sh.a, .{ .pixels = sh.page_copy }, g.lang);
         return .{ .push = screen.open(&sh.getting, &sh.getting_ending) };
     }
 
@@ -130,6 +130,11 @@ pub const Define = struct {
     sheet: Sheet = undefined,
     sheet_ending: ?screen.Ending(Choice) = null,
 
+    /// The page as it was, its own copy, for the cards over it.
+    fn under(d: *const Define) app.Backdrop {
+        return .{ .pixels = d.page_copy };
+    }
+
     /// Never shown itself: the sheet and the cards are.
     pub fn draw(d: *Define, part: screen.Part) !void {
         assert(part == .all);
@@ -148,7 +153,7 @@ pub const Define = struct {
         assert(d.page_copy.len == d.a.screen.pixels.len);
         if (definition.gettable(d.found)) |g| {
             if (d.a.settings.offer_dictionary) {
-                d.ask_card = dict_get.ask(d.a, d.page_copy, g.lang, &d.asking);
+                d.ask_card = dict_get.ask(d.a, d.under(), g.lang, &d.asking);
                 return .{ .push = screen.open(&d.ask_card, &d.ask_ending) };
             }
         }
@@ -159,11 +164,11 @@ pub const Define = struct {
         assert(d.page_copy.len == d.a.screen.pixels.len);
         switch (d.phase) {
             .asking => {
-                const answer = try dict_get.asked(d.a, d.page_copy, d.ask_ending.?);
+                const answer = try dict_get.asked(d.a, d.under(), d.ask_ending.?);
                 if (answer != .download) return d.show_sheet();
                 d.phase = .getting;
                 // Asked only with a dictionary to get
-                dict_get.begin(&d.getting, d.a, d.page_copy, definition.gettable(d.found).?.lang);
+                dict_get.begin(&d.getting, d.a, d.under(), definition.gettable(d.found).?.lang);
                 return .{ .push = screen.open(&d.getting, &d.getting_ending) };
             },
             .getting => {

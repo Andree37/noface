@@ -46,7 +46,7 @@ fn label(option: Option) []const u8 {
 pub fn begin(m: *More, a: *app.App, s: *sess.Session, entry: *catalog.Entry) !void {
     assert(s.pages.len > 0);
     assert(s.current < s.pages.len);
-    m.* = .{ .a = a, .s = s, .entry = entry, .background = try s.ensure(s.current, s.current) };
+    m.* = .{ .a = a, .s = s, .entry = entry, .background = try s.lend_current() };
     // No Cancel: tapping above the sheet closes it
     const read_option: Option = if (entry.is_read()) .unread else .finished;
     m.list = .{ .go_to_page, .beginning, .details, .refresh, read_option };
@@ -59,7 +59,7 @@ pub const More = struct {
     a: *app.App,
     s: *sess.Session,
     entry: *catalog.Entry,
-    background: []const u8, // The page under it
+    background: app.Backdrop, // The page under it
     phase: enum { menu, page_number, details } = .menu,
     list: [5]Option = undefined,
     rows: [5]card.Row = undefined,
@@ -87,7 +87,6 @@ pub const More = struct {
 
     pub fn on_open(m: *More) !screen.Step(Outcome) {
         assert(m.phase == .menu);
-        assert(m.background.len == m.a.screen.pixels.len);
         return m.show_card(&m.rows, m.entry.title, m.entry.author);
     }
 

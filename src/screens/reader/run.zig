@@ -21,6 +21,7 @@ const app = @import("../../app.zig");
 const sess = @import("session.zig");
 const Font = @import("../../gfx/font.zig").Font;
 const Page = @import("../../gfx/page.zig").Page;
+const style = @import("../../ui/style.zig");
 
 /// The phrase's size: nearly twice a page's, readable as it blurs, a sentence of an
 /// average length in a few lines. The lines before and after it are smaller, not bold:
@@ -30,9 +31,9 @@ const context_px = 46;
 const phrase_line_spacing = 1.35;
 /// The most lines a phrase takes: more, and the eye starts losing its line again.
 const phrase_lines_max = 6;
-/// Where the phrase sits: its middle at about the screen's, between the line before it
-/// under the map and the line after it over the footer.
-const phrase_middle_y = 860;
+/// Where the phrase sits: its middle at the screen's, between the line before it under
+/// the map and the line after it over the footer.
+const phrase_middle_y = style.screen_height / 2;
 const phrase_margin_px = 70;
 const lines_max = phrase_lines_max + 1; // One more, to tell a phrase that doesn't fit
 /// The page map, in the top right corner: the page as the reader would see it, shrunk,
@@ -41,8 +42,12 @@ const map_width_px = 180;
 const map_margin_px = 80;
 const map_top = 40;
 const map_word_px = 2;
+const map_edge_px = 2; // Its outline
+/// As tall as the page it shows, for its width.
+const map_height_px = map_width_px * style.screen_height / style.screen_width;
+const map_gap_px = 30; // Between the map and the text under it
 const map_phrase_px = 6;
-const text_top = map_top + map_width_px * 4 / 3 + 30; // Under the map
+const text_top = map_top + map_height_px + map_gap_px; // Under the map
 /// The line before the phrase and the line after it: their baselines, from the top of
 /// the text's band and from the footer's top.
 const before_below_top_px = 70;
@@ -81,10 +86,11 @@ pub const pause_band_px = 300;
 comptime {
     assert(ring_px < sweep_px);
     assert(sweep_px + arrow_half_px < dial_radius_px);
-    assert(2 * icon_reach_px >= 100); // A fingertip
+    assert(2 * icon_reach_px >= style.fingertip);
     assert(icon_reach_px > pause_radius_px);
     // The phrase at its most lines lies between the lines before and after it
-    const half_block = phrase_lines_max * phrase_px * 135 / 100 / 2;
+    const block: comptime_float = phrase_lines_max * phrase_px * phrase_line_spacing;
+    const half_block: u32 = @intFromFloat(@floor(block / 2.0));
     assert(text_top + before_below_top_px + context_px < phrase_middle_y - half_block);
     assert(map_phrase_px > map_word_px);
     assert(tick_us < phrases.phrase_us_min);
@@ -507,24 +513,20 @@ fn draw_text(a: *app.App, font: *Font, px: i32, text: []const u8, middle: i32) !
     }
 }
 
-fn map_height(a: *const app.App) u32 {
-    // The page's own shape
-    return map_width_px * a.screen.height / a.screen.width;
-}
-
 /// The page map: the page holding the reader's place, drawn as the reader would see
 /// it, shrunk to the corner, its words thin bars and `phrase`'s thick. Drawn into the
 /// screen, not shown.
 fn draw_map(a: *app.App, s: *sess.Session, phrase: ?phrases.Phrase) !void {
-    const height = map_height(a);
+    const height = map_height_px;
+    const edge = map_edge_px;
     const left = a.screen.width - map_margin_px - map_width_px;
     const page = a.page(a.screen.pixels);
-    page.fill_rect(left, map_top, map_width_px, height, 0xff);
+    page.fill_rect(left, map_top, map_width_px, height, style.white);
     // Its edge
-    page.fill_rect(left, map_top, map_width_px, 2, 0x00);
-    page.fill_rect(left, map_top + height - 2, map_width_px, 2, 0x00);
-    page.fill_rect(left, map_top, 2, height, 0x00);
-    page.fill_rect(left + map_width_px - 2, map_top, 2, height, 0x00);
+    page.fill_rect(left, map_top, map_width_px, edge, style.black);
+    page.fill_rect(left, map_top + height - edge, map_width_px, edge, style.black);
+    page.fill_rect(left, map_top, edge, height, style.black);
+    page.fill_rect(left + map_width_px - edge, map_top, edge, height, style.black);
     // The page as drawn, for where its words are
     _ = try s.ensure(s.current, s.current);
     const words = s.page_words();
@@ -539,8 +541,10 @@ fn draw_map(a: *app.App, s: *sess.Session, phrase: ?phrases.Phrase) !void {
         const y: u32 = map_top + shrink(w.y + @divTrunc(w.h, 2), scale) -| thick / 2;
         const width: u32 = @max(1, shrink(w.w, scale));
         // Inside the map's edge
-        if (x + width >= left + map_width_px - 2 or y + thick >= map_top + height - 2) continue;
-        page.fill_rect(x, @max(y, map_top + 2), width, thick, 0x00);
+        const past_right = x + width >= left + map_width_px - edge;
+        const past_foot = y + thick >= map_top + height - edge;
+        if (past_right or past_foot) continue;
+        page.fill_rect(x, @max(y, map_top + edge), width, thick, style.black);
     }
 }
 

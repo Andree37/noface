@@ -69,14 +69,6 @@ comptime {
     assert(book_model.normal_size < book_model.size_scales.len);
 }
 
-/// What the Aa sheet keeps from one book to the next: only the reader's controls use
-/// it (screens/reader/controls.zig).
-pub const AaKept = struct {
-    tab: aa.Tab = .font,
-    family_first: u32 = 0, // The first typeface on the sheet's page of them
-    family_sample_ptrs: [aa.family_cells_max]?*Font = @splat(null),
-};
-
 /// What the lock screen keeps from one lock to the next: only it uses it
 /// (screens/lock.zig).
 pub const LockKept = struct {
@@ -105,7 +97,7 @@ pub const App = struct {
     // size, and each family's name in itself for Aa: made on first use, the least used
     // given up past a fixed number
     typefaces: Typefaces = .{},
-    aa_kept: AaKept = .{},
+    aa_kept: aa.Kept = .{},
     note_font: *Font,
     footer: *Font,
     ui: Fonts,

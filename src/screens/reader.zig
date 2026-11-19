@@ -5,6 +5,7 @@ const stats = @import("../model/stats.zig");
 const epub = @import("../epub/epub.zig");
 const memory = @import("../base/memory.zig");
 const book_model = @import("../model/book.zig");
+const search_model = @import("../model/search.zig");
 const catalog = @import("../model/catalog.zig");
 const os = @import("../sys/os.zig");
 const file = @import("../sys/file.zig");
@@ -447,6 +448,7 @@ pub const Reader = struct {
     selecting: hl.Selecting = .{}, // Words being selected, or a highlight's end dragged
     picture: picture_view.Viewer = undefined, // A picture held, shown whole
     footnote: note_view.Footnote = .{}, // The note in a panel, while the view is `.note`
+    query: search_model.Query = .{}, // The last search, kept while the book is open
     /// Running mode, while it's on: the phrase on screen and its timer (reader/run.zig).
     /// The reader alone knows it's on; the toolbar and the session are told.
     run: ?run_mode.Run = null,
@@ -1200,7 +1202,8 @@ pub const Reader = struct {
                 r.open_placed();
             },
             .search => {
-                r.open_child(.{ .searching = .{ .screen = search.make(a, s, r.scratch) } });
+                const searching = search.make(a, s, &r.query, r.scratch);
+                r.open_child(.{ .searching = .{ .screen = searching } });
             },
             .goto => {
                 const going = try goto.make(a, s, r.scratch, r.chapters);

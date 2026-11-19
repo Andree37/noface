@@ -25,8 +25,6 @@ const reading_clock = @import("reading_clock.zig");
 const book_notes = @import("book_notes.zig");
 const hwtcon = @import("../../kindle/hwtcon.zig");
 
-pub const Query = @import("../../model/search.zig").Query;
-
 /// The page counter in the footer's middle: its left, this far left of the middle.
 const counter_left_of_middle_px = 50;
 /// The footer: the page number and time left, repainted alone when the count arrives.
@@ -59,7 +57,6 @@ pub const Session = struct {
     book_bytes: u64 = 0, // The book file's size, part of the saved breaks' key
     // A first open still being laid out: pages count from the reader's place until done
     progress: ?*paginate.Progressive = null,
-    query: Query = .{}, // The last search, kept while the book is open
     chapters: []const book_model.Chapter = &.{},
     words_before: []const u64 = &.{}, // Words before each paragraph, for time left
     clock: reading_clock.Clock = .{},

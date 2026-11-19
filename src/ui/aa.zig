@@ -261,6 +261,14 @@ fn family_columns(families: Families) u32 {
 /// The most cells the typefaces' grid has.
 pub const family_cells_max = 3 * family_rows;
 
+/// What the Aa sheet keeps from one book to the next, in the App: only the reader's
+/// controls use it (screens/reader/controls.zig).
+pub const Kept = struct {
+    tab: Tab = .font,
+    family_first: u32 = 0, // The first typeface on the sheet's page of them
+    family_sample_ptrs: [family_cells_max]?*Font = @splat(null),
+};
+
 /// Whether there are more typefaces than the grid has cells: then its last cell
 /// turns it to the next page of them.
 fn families_paged(families: Families) bool {

@@ -28,16 +28,24 @@ comptime {
 /// Searching the book, to open over the page (`screen.open`), its results in `alloc`:
 /// typing on the keyboard, then the results, a page of them at a time. Done with the
 /// page of the result tapped; closed when cancelled.
-pub fn make(a: *app.App, s: *sess.Session, alloc: std.mem.Allocator) Search {
+/// A search of the open book, typing into `query`, the last search, which the reader
+/// keeps while the book is open.
+pub fn make(
+    a: *app.App,
+    s: *sess.Session,
+    query: *search.Query,
+    alloc: std.mem.Allocator,
+) Search {
     assert(s.pages.len > 0);
     assert(s.current < s.pages.len);
-    return .{ .a = a, .s = s, .alloc = alloc };
+    return .{ .a = a, .s = s, .query = query, .alloc = alloc };
 }
 
 pub const Search = struct {
     pub const Result = u32;
     a: *app.App,
     s: *sess.Session,
+    query: *search.Query,
     alloc: std.mem.Allocator,
     shown: Shown = .keyboard,
 
@@ -53,7 +61,7 @@ pub const Search = struct {
         assert(a.display.screen.height > search_sheet.content_top);
         const page = a.display.on_screen();
         const top = toolbar.status_row;
-        const query = se.s.query.slice();
+        const query = se.query.slice();
         try search_sheet.render_bar(a.ui, page, top, query, "Search this book", .search);
         if (part == .all) switch (se.shown) {
             .keyboard => {
@@ -101,11 +109,11 @@ pub const Search = struct {
 
     fn on_keyboard(se: *Search, t: screen.Tap) !screen.Step(u32) {
         assert(se.shown == .keyboard);
-        switch (typing.key(&se.s.query, t, typing.anything)) {
+        switch (typing.key(se.query, t, typing.anything)) {
             .none => return .stay,
             .changed => return .{ .redraw = .changing },
             .enter => {
-                const words = se.s.query.words();
+                const words = se.query.words();
                 if (words.len == 0) return .stay;
                 const rows = try find(se.alloc, se.s, words);
                 assert(rows.len <= results_max);

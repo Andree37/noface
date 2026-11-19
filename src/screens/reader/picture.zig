@@ -25,11 +25,22 @@ const viewer_bytes_max = 64 << 20;
 /// Zoom steps after fitting the screen: twice, then four times as close.
 const steps = [_]f32{ 1, 2, 4 };
 /// The close button, top right, a fingertip across.
-const close_radius = 50;
-const close_center_x = style.screen_width - 40 - close_radius;
-const close_center_y = 40 + close_radius;
+const close_radius = style.fingertip / 2;
+const close_inset = 40; // From the screen's top and right edges
+const close_center_x = style.screen_width - close_inset - close_radius;
+const close_center_y = close_inset + close_radius;
 /// How far from the button's centre a tap still closes: a fingertip around it.
-const close_reach = close_radius + 30;
+const close_reach_extra = 30;
+const close_reach = close_radius + close_reach_extra;
+/// The cross in it: half each stroke's length across and down, and its thickness.
+const close_arm = 16;
+const close_stroke = 4;
+/// The hint along the bottom: its box's foot over the screen's, its height, its room
+/// either side of the words, and their baseline down from its top.
+const hint_rise = 120;
+const hint_height = 64;
+const hint_pad = 32;
+const hint_baseline_drop = 42;
 /// How long after a tap a second one makes it a double tap, and how near it must land.
 const double_tap_us = 300 * 1000;
 const double_tap_reach = 120;
@@ -145,27 +156,27 @@ fn draw_view(a: *app.App, v: *const View, settled: bool) !u32 {
 
 /// The close button: a white disc with a ring and a cross.
 fn draw_view_close_button(page: Page) void {
-    const arm: f32 = 16;
+    const arm: f32 = close_arm;
     const center_x: f32 = close_center_x;
     const center_y: f32 = close_center_y;
     comptime assert(arm < close_radius - style.border);
     page.disc(close_center_x, close_center_y, close_radius, 0, style.black);
     page.disc(close_center_x, close_center_y, close_radius - style.border, 0, style.white);
-    page.stroke(center_x - arm, center_y - arm, center_x + arm, center_y + arm, 4);
-    page.stroke(center_x - arm, center_y + arm, center_x + arm, center_y - arm, 4);
+    page.stroke(center_x - arm, center_y - arm, center_x + arm, center_y + arm, close_stroke);
+    page.stroke(center_x - arm, center_y + arm, center_x + arm, center_y - arm, close_stroke);
 }
 
 /// How to zoom, move and go back, in a box at the bottom of the screen.
 fn draw_view_hint(a: *app.App, page: Page) !void {
     const hint = "Tap to zoom in  \u{b7}  double-tap to zoom out" ++
         "  \u{b7}  drag to move";
-    const width: u32 = @intFromFloat(try a.ui.caption.measure(hint) + 64);
+    const width: u32 = @intFromFloat(try a.ui.caption.measure(hint) + 2 * hint_pad);
     assert(width <= a.screen.width);
-    const top = a.screen.height - 120;
+    const top = a.screen.height - hint_rise;
     assert(top < a.screen.height);
-    draw.box(page, (a.screen.width - width) / 2, top, width, 64);
+    draw.box(page, (a.screen.width - width) / 2, top, width, hint_height);
     const center_x: f32 = @floatFromInt(a.screen.width / 2);
-    try draw.centered(a.ui.caption, page, center_x, @intCast(top + 42), hint);
+    try draw.centered(a.ui.caption, page, center_x, @intCast(top + hint_baseline_drop), hint);
 }
 
 fn render(a: *app.App, v: *const View) !void {

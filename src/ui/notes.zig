@@ -9,21 +9,29 @@ const Fonts = @import("fonts.zig").Fonts;
 const text = @import("../layout/text.zig");
 
 pub const max_parts = 8;
+/// The panel's header: its height, "Note" and Close's baseline in it, the rule under it,
+/// and the black edge along the panel's top.
 const header = 84;
+const header_baseline = 62;
+const header_rule = 2;
+const edge = 4;
 const margin = 100;
 const heights = [_]u32{ 340, 560, 820 };
+/// The note's text: under the header, and over the panel's foot.
+const text_gap = 24;
+const text_room_below = 36;
 
 const layout = text.Layout{
     .margin_x = margin,
-    .margin_top = header + 24,
-    .margin_bottom = 36,
+    .margin_top = header + text_gap,
+    .margin_bottom = text_room_below,
     .indent = 0,
 };
 
 comptime {
     // Panels grow in steps, and even the smallest has room for a line under its header.
     for (heights[1..], heights[0 .. heights.len - 1]) |taller, smaller| assert(taller > smaller);
-    assert(layout.margin_top + layout.margin_bottom + 100 < heights[0]);
+    assert(layout.margin_top + layout.margin_bottom + style.fingertip < heights[0]);
     assert(heights[heights.len - 1] < style.screen_height);
     assert(2 * margin < style.screen_width);
 }
@@ -82,9 +90,12 @@ pub fn render(
     assert(panel.width > 2 * margin);
     assert(is_panel_height(panel.height)); // As `fit` chose
     _ = try text.render_page(font, panel, parts, start, &layout, null);
-    panel.fill_rect(0, 0, panel.width, 4, 0x00);
-    try fonts.title.draw(panel, margin, 62, "Note");
+    panel.fill_rect(0, 0, panel.width, edge, style.black);
+    try fonts.title.draw(panel, margin, header_baseline, "Note");
+    // Ending at the margin, whichever it says
     const right: f32 = @floatFromInt(panel.width - margin);
-    try fonts.small.draw(panel, right - 110, 62, if (more) "More >" else "Close");
-    panel.fill_rect(margin, header, panel.width - 2 * margin, 2, style.note_rule);
+    const action = if (more) "More >" else "Close";
+    const action_x = right - try fonts.small.measure(action);
+    try fonts.small.draw(panel, action_x, header_baseline, action);
+    panel.fill_rect(margin, header, panel.width - 2 * margin, header_rule, style.note_rule);
 }

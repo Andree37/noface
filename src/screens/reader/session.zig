@@ -21,6 +21,7 @@ const now_us = os.now_us;
 const unix_time = os.unix_time;
 const app = @import("../../app.zig");
 const draw = @import("../../ui/draw.zig");
+const style = @import("../../ui/style.zig");
 const Zone = @import("../../kindle/input.zig").Zone;
 const hwtcon = @import("../../kindle/hwtcon.zig");
 
@@ -35,6 +36,14 @@ const back_height_px = 84;
 const back_above_bottom_px = 112; // From the button's top to the screen's bottom
 /// A fingertip's margin around the Back button, where a touch still counts.
 const back_reach_px = 12;
+/// Inside the back button: its arrow's middle and its label's left, in from its left.
+const back_arrow_inset_px = 44;
+const back_label_inset_px = 80;
+/// The footer cleared round it: from this far over it, to this far right of it.
+const back_clear_above_px = 8;
+const back_clear_right_px = 24;
+/// The page counter in the footer's middle: its left, this far left of the middle.
+const counter_left_of_middle_px = 50;
 /// The footer: the page number and time left, repainted alone when the count arrives.
 const footer_height_px = 110;
 const footer_baseline_above_bottom_px = 60;
@@ -462,9 +471,11 @@ pub const Session = struct {
         assert(s.back != null);
         const a = s.app;
         const r = s.back_rect();
-        assert(r.y >= 8);
+        assert(r.y >= back_clear_above_px);
         // Over the footer's text there
-        page.fill_rect(0, r.y - 8, r.x + r.width + 24, a.screen.height - (r.y - 8), 0xff);
+        const clear_top = r.y - back_clear_above_px;
+        const clear_width = r.x + r.width + back_clear_right_px;
+        page.fill_rect(0, clear_top, clear_width, a.screen.height - clear_top, style.white);
         draw.box(page, r.x, r.y, r.width, r.height);
         var label_buffer: [32]u8 = undefined;
         // The page number only once the whole book is laid out
@@ -474,8 +485,10 @@ pub const Session = struct {
             label = std.fmt.bufPrint(&label_buffer, "Back to p. {d}", .{back_number}) catch "Back";
         }
         const center_y: f32 = @floatFromInt(r.y + r.height / 2);
-        icons.back(page, @floatFromInt(r.x + 44), center_y);
-        try a.ui.small.draw(page, @floatFromInt(r.x + 80), @intFromFloat(center_y + 12), label);
+        icons.back(page, @floatFromInt(r.x + back_arrow_inset_px), center_y);
+        const label_x: f32 = @floatFromInt(r.x + back_label_inset_px);
+        const baseline: i32 = @intFromFloat(center_y + draw.back_link.label_drop);
+        try a.ui.small.draw(page, label_x, baseline, label);
     }
 
     /// "12 min left in chapter" on the left of the footer, the book's on the right.
@@ -530,7 +543,7 @@ pub const Session = struct {
         if (s.progress == null) {
             counter = std.fmt.bufPrint(&label, "{d} / {d}", .{ index + 1, s.pages.len }) catch "";
         }
-        const x = @as(f32, @floatFromInt(a.screen.width)) / 2 - 50;
+        const x = @as(f32, @floatFromInt(a.screen.width / 2 - counter_left_of_middle_px));
         const y: i32 = @intCast(a.screen.height - footer_baseline_above_bottom_px);
         try a.footer.draw(page, x, y, counter);
         if (s.is_bookmarked(index)) icons.ribbon(page, a.screen.width);

@@ -1258,6 +1258,63 @@ const scenarios = [_]Scenario{
             try expect(twice.bookmarks == 0, "the bookmark stayed");
         }
     }.run },
+    .{
+        .name = "Go to page from the ⋮ menu lands on the page typed, and a page past the " ++
+            "book's end is turned down, the place kept",
+        .run = struct {
+            fn run() !void {
+                const go_to_page = [_]Step{ top, tool(.more), tap_on(more.place(.go_to_page)) };
+                const search_key = tap_on(keyboard.place(.enter));
+                const third = try play(&.{ forward, forward });
+                const typed_third = try play(&(go_to_page ++ typed("3") ++ .{search_key}));
+                try expect(same_place(typed_third.saved, third.saved), "page 3 wasn't reached");
+                const second = try play(&.{forward});
+                const past = try play(&(.{forward} ++ go_to_page ++ typed("999") ++ .{search_key}));
+                try expect(same_place(past.saved, second.saved), "a page past the end moved");
+            }
+        }.run,
+    },
+    .{
+        .name = "a theme and a switch from Aa are kept and saved, the place kept with them",
+        .run = struct {
+            fn run() !void {
+                const aa_sheet = [_]Step{ forward, forward, top, text_settings_button };
+                const compact = tap_on(aa.place(.themes, .{ .theme = 0 }));
+                const read = try play(&.{ forward, forward });
+                const themed = try play(&(aa_sheet ++ .{ themes_tab, compact }));
+                const size = aa.themes[0].size;
+                try expect(themed.settings.size == size, "the theme wasn't used");
+                try expect(themed.saved_settings.size == size, "the theme wasn't saved");
+                try expect(same_place(themed.saved, read.saved), "the theme moved the place");
+                const bold_index = comptime switch_index("bold");
+                const font_tab = tap_on(aa.place(.themes, .{ .tab = .font }));
+                const bold = tap_on(aa.place(.font, .{ .toggle = bold_index }));
+                const bolded = try play(&(aa_sheet ++ .{ font_tab, bold }));
+                try expect(bolded.settings.bold, "bold wasn't turned on");
+                try expect(bolded.saved_settings.bold, "bold wasn't saved");
+                try expect(same_place(bolded.saved, read.saved), "bold moved the place");
+            }
+
+            fn switch_index(comptime field: []const u8) u32 {
+                for (aa.switches, 0..) |sw, i| {
+                    if (std.mem.eql(u8, sw.field, field)) return i;
+                }
+                unreachable; // Every switch named here is in the table
+            }
+        }.run,
+    },
+    .{
+        .name = "the library's search finds a book by its title as it's typed, and opens it",
+        .run = struct {
+            fn run() !void {
+                const search_books = tap_on(library_ui.place(.search));
+                const first_found = tap_on(search_sheet.place_row(0));
+                const r = try play_on(.{ .library = true }, &(.{search_books} ++
+                    typed("scenario") ++ .{ first_found, wait(2_000) }));
+                try expect(r.opened[0], "the book found wasn't opened");
+            }
+        }.run,
+    },
     .{ .name = "a book opens from the library, and Home goes back", .run = struct {
         fn run() !void {
             const r = try play_on(.{ .library = true }, &.{

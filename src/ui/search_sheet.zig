@@ -103,6 +103,15 @@ pub fn hit(from: u32, x: i32, y: i32, rows: u32) Hit {
     return .none;
 }
 
+/// The middle of row `row`'s taps, on a sheet with that many rows or more.
+pub fn place_row(row: u32) style.Point {
+    assert(row < max_rows);
+    const y: i32 = @intCast(rows_top + row * row_height + row_height / 2);
+    const point: style.Point = .{ .x = style.screen_width / 2, .y = y };
+    assert(std.meta.eql(hit(top, point.x, point.y, row + 1), Hit{ .row = row }));
+    return point;
+}
+
 pub const Icon = enum { search, none };
 
 /// Clears from `from` (the bottom of the status strip above, at most `top`) down to

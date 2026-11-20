@@ -13,6 +13,7 @@ const goto = @import("../ui/goto.zig");
 const keyboard = @import("../ui/keyboard.zig");
 const library = @import("../ui/library.zig");
 const menu = @import("../ui/menu.zig");
+const search_sheet = @import("../ui/search_sheet.zig");
 const toolbar = @import("../ui/toolbar.zig");
 const catalog = @import("../model/catalog.zig");
 const running = @import("../model/running.zig");
@@ -121,6 +122,11 @@ pub const all = places: {
     for (0..goto.rows) |r| {
         const name = std.fmt.comptimePrint("goto.row.{d}", .{r});
         list = list ++ .{Place{ .name = name, .point = goto.place(.{ .row = r }) }};
+    }
+    // The books the library's search lists as it's typed into
+    for (0..search_sheet.max_rows) |r| {
+        const name = std.fmt.comptimePrint("library.found.{d}", .{r});
+        list = list ++ .{Place{ .name = name, .point = search_sheet.place_row(r) }};
     }
     for ("1234567890qwertyuiopasdfghjklzxcvbnm") |char| {
         const point = keyboard.place(.{ .char = char });

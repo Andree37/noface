@@ -9,8 +9,7 @@ const kfx = @import("../kindle/kfx.zig");
 const now_us = os.now_us;
 const app = @import("../app.zig");
 const picture = @import("../epub/picture.zig");
-const draw = @import("../ui/draw.zig");
-const style = @import("../ui/style.zig");
+const lock_ui = @import("../ui/lock.zig");
 const screen = @import("screen.zig");
 const input_mod = @import("../kindle/input.zig");
 
@@ -21,19 +20,10 @@ pub const lock_redraws = 2;
 /// Pictures of the same proportions, within this many percent, count as one shape.
 const shape_tolerance_percent = 4;
 
-/// The title drawn for a book without a cover: this far in from either side, its first
-/// line this far over the screen's middle, and the author this far under its last.
-const title_side = 120;
-const title_rise = 88;
-const title_top = style.screen_height / 2 - title_rise;
-const title_lines_max = 4;
-const author_gap = 24;
-
 comptime {
     assert(lock_redraws > 0);
     assert(lock_redraw_us > 0);
     assert(shape_tolerance_percent < 100);
-    assert(title_lines_max > 0);
 }
 
 /// `restore` puts the screen from before back on waking; a caller that redraws
@@ -142,15 +132,18 @@ pub const Lock = struct {
 /// the reader's own picture, if they chose it, it's there and it decodes; else the
 /// book's cover.
 fn draw_target(a: *app.App, entry: ?*const catalog.Entry) void {
+    // Drawn into the kept cover, a whole screen apart from the one shown
+    assert(a.lock_kept.cover.len == a.display.screen.pixels.len);
+    assert(a.lock_kept.cover.ptr != a.display.screen.pixels.ptr);
     var picture_buffer: [file.own_path_bytes_max]u8 = undefined;
     const own = if (a.user.settings.lock_picture) picture_path(a, &picture_buffer) else null;
     const own_data: ?[]const u8 = if (own) |p| file.map(p) catch null else null;
     defer if (own_data) |d| file.unmap(d);
-    const book: app.LockShown = if (entry) |e| .{ .book = key_for(e) } else .no_book;
+    const book: lock_ui.Shown = if (entry) |e| .{ .book = key_for(e) } else .no_book;
     const own_picture: ?Picture = if (own_data) |d| picture_to_try(a, d) else null;
     // A picture that didn't decode wants the book, as was drawn in its place
-    const wanted: app.LockShown = if (own_picture) |p| .{ .picture = p.key } else book;
-    if (!std.meta.eql(a.lock_kept.shown, @as(?app.LockShown, wanted))) {
+    const wanted: lock_ui.Shown = if (own_picture) |p| .{ .picture = p.key } else book;
+    if (!std.meta.eql(a.lock_kept.shown, @as(?lock_ui.Shown, wanted))) {
         lock_screen_draw(a, entry, own_picture, book);
     } else {
         std.debug.print("locked, cover kept\n", .{});
@@ -175,7 +168,7 @@ fn lock_screen_draw(
     a: *app.App,
     entry: ?*const catalog.Entry,
     own_picture: ?Picture,
-    book: app.LockShown,
+    book: lock_ui.Shown,
 ) void {
     assert(book != .picture);
     assert(a.lock_kept.cover.len == a.display.screen.pixels.len);
@@ -282,34 +275,12 @@ pub fn same_shape(x: []const u8, y: []const u8) bool {
 /// No cover: the title, wrapped, and the author under it, on white.
 fn draw_title(a: *app.App, entry: ?*const catalog.Entry, target: []u8) void {
     assert(target.len == a.display.screen.pixels.len);
-    assert(a.display.screen.width > 2 * title_side);
-    @memset(target, 0xff);
-    const e = entry orelse return;
+    assert(target.ptr != a.display.screen.pixels.ptr); // Drawn apart, shown whole after
     const page = a.display.page(target);
-    const width_available: f32 = @floatFromInt(a.display.screen.width - 2 * title_side);
-    const step = a.ui.hero.line_height;
-    const font = a.ui.hero;
-    const lines = draw.wrapped(
-        font,
-        page,
-        title_side,
-        title_top,
-        step,
-        e.title,
-        width_available,
-        title_lines_max,
-    ) catch 1;
-    assert(lines <= title_lines_max);
-    if (e.author.len > 0) {
-        const author_top = title_top + @as(i32, @intCast(lines)) * step + author_gap;
-        draw.clipped(
-            a.ui.small,
-            page,
-            title_side,
-            author_top,
-            e.author,
-            width_available,
-        ) catch {}; // Ignored: without the author, the title still says which book it is.
+    if (entry) |e| {
+        lock_ui.render_title(a.ui, page, e.title, e.author);
+    } else {
+        lock_ui.render_title(a.ui, page, null, "");
     }
 }
 

@@ -18,6 +18,7 @@ const user_data = @import("user_data.zig");
 const Fonts = @import("ui/fonts.zig").Fonts;
 const input_mod = @import("kindle/input.zig");
 const aa = @import("ui/aa.zig");
+const lock = @import("ui/lock.zig");
 const display_mod = @import("display.zig");
 const Display = display_mod.Display;
 const Regions = @import("regions.zig").Regions;
@@ -63,20 +64,6 @@ comptime {
     assert(book_model.normal_size < book_model.size_scales.len);
 }
 
-/// What the lock screen keeps from one lock to the next: only it uses it
-/// (screens/lock.zig).
-pub const LockKept = struct {
-    saved: []u8, // The screen under it, to put back on waking
-    cover: []u8, // What the lock screen last drew, full screen
-    shown: ?LockShown = null, // What `cover` holds, so it isn't drawn again; null at first
-    picture_bad: ?u64 = null, // A picture of the reader's that didn't decode, by its hash
-};
-
-/// What the lock screen shows: the reader's own picture, a book's cover (or its title,
-/// for one without), or the title on white for no book. Pictures and books are told
-/// apart by a hash, so a replaced picture or another book is drawn again.
-pub const LockShown = union(enum) { picture: u64, book: u64, no_book };
-
 pub const App = struct {
     alloc: std.mem.Allocator, // Lives as long as the app, counted by app_budget
     app_budget: *memory.Budget,
@@ -95,7 +82,8 @@ pub const App = struct {
     note_font: *Font,
     footer: *Font,
     ui: Fonts,
-    lock_kept: LockKept,
+    /// What the lock screen keeps between locks (ui/lock.zig).
+    lock_kept: lock.Kept,
     state_dir: []const u8,
     library_path: [*:0]const u8,
     battery_path: [*:0]const u8,
@@ -129,8 +117,7 @@ pub const App = struct {
         a.languages.release();
         a.pictures.clear(a.alloc);
         a.display.release(a.alloc);
-        a.alloc.free(a.lock_kept.saved);
-        a.alloc.free(a.lock_kept.cover);
+        a.lock_kept.release(a.alloc);
         a.* = undefined;
     }
 

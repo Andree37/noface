@@ -329,10 +329,7 @@ pub fn assemble(p: Parts) !app.App {
         .note_font = &k.note_font,
         .footer = &k.footer,
         .ui = ui,
-        .lock_kept = .{
-            .saved = try p.alloc.alloc(u8, pixels),
-            .cover = try p.alloc.alloc(u8, pixels),
-        },
+        .lock_kept = try .init(p.alloc, @intCast(pixels)),
         .state_dir = p.data_dir,
         .languages = .{ .dir = p.data_dir },
         .typefaces = .{ .offered = p.offered },

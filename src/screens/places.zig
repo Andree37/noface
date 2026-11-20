@@ -21,6 +21,7 @@ const gestures = @import("../kindle/input/gestures.zig");
 const run = @import("reader/run.zig");
 const run_view = @import("reader/run_view.zig");
 const back_button = @import("reader/back_button.zig");
+const more = @import("reader/more.zig");
 
 pub const Point = style.Point;
 pub const Place = struct { name: []const u8, point: Point };
@@ -95,6 +96,20 @@ pub const all = places: {
     for (std.enums.values(aa.Tab)) |t| {
         const point = aa.place(.themes, .{ .tab = t });
         list = list ++ .{Place{ .name = "aa.tab." ++ @tagName(t), .point = point }};
+    }
+    for (0..aa.themes.len) |i| {
+        const name = std.fmt.comptimePrint("aa.theme.{d}", .{i});
+        list = list ++ .{Place{ .name = name, .point = aa.place(.themes, .{ .theme = i }) }};
+    }
+    // Each switch by the setting it flips: "aa.switch.bold"
+    for (aa.switches, 0..) |sw, i| {
+        const point = aa.place(sw.tab, .{ .toggle = i });
+        list = list ++ .{Place{ .name = "aa.switch." ++ sw.field, .point = point }};
+    }
+    for (std.enums.values(more.Option)) |o| {
+        if (o == .cancel) continue; // Not on the menu: a tap above the card is
+        if (o == .unread) continue; // Where Finished is, for a finished book
+        list = list ++ .{Place{ .name = "more." ++ @tagName(o), .point = more.place(o) }};
     }
     for ([_]menu.Hit{ .close, .schedule, .airplane, .bluetooth, .settings, .kindle, .sync }) |h| {
         list = list ++ .{Place{ .name = "panel." ++ @tagName(h), .point = menu.place(h) }};

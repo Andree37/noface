@@ -452,7 +452,7 @@ fn on_toggle(y: i32, toggle_top: i32) bool {
 }
 
 /// The middle of a control's taps on tab `tab` of the sheet: its tabs, on any of them,
-/// and the Running button, on Themes.
+/// the themes and the Running button, on Themes, and a switch, on its own tab.
 pub fn place(tab: Tab, h: Hit) style.Point {
     const point: style.Point = switch (h) {
         .tab => |t| tab: {
@@ -465,10 +465,20 @@ pub fn place(tab: Tab, h: Hit) style.Point {
             const y = running_top + running_height / 2;
             break :running .{ .x = margin + themes_width / 2, .y = y };
         },
-        // Placed by tests of their own, where they're laid out for a tab and typefaces
-        .none, .theme, .family, .more_families, .text_size, .spacing, .margins, .toggle => {
-            unreachable;
+        .theme => |i| theme: {
+            assert(tab == .themes); // Only that tab has them
+            assert(i < themes.len);
+            const left: i32 = margin + @as(i32, @intCast(i)) * (theme_width + theme_gap);
+            break :theme .{ .x = left + theme_width / 2, .y = theme_top + theme_height / 2 };
         },
+        .toggle => |i| toggle_place: {
+            assert(i < switches.len);
+            assert(switches[i].tab == tab); // On the tab it's on
+            const y: i32 = @intCast(switch_top(@intCast(i)) + toggle_height / 2);
+            break :toggle_place .{ .x = screen_width / 2, .y = y };
+        },
+        // Placed by tests of their own, where they're laid out for typefaces and sizes
+        .none, .family, .more_families, .text_size, .spacing, .margins => unreachable,
     };
     assert(std.meta.eql(hit(tab, .{}, point.x, point.y), h));
     return point;

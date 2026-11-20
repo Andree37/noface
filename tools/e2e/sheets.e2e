@@ -104,6 +104,35 @@ log screen: More done
 drawn 500
 still
 
+# The ⋮ menu's Book details: a card, closed by a tap above it, back to the toolbar
+tap page.top
+drawn 200
+still
+tap toolbar.more
+log screen: More opened
+drawn 300
+still
+tap more.details
+log screen: Card opened
+drawn 300
+shot details
+tap card.above
+log screen: More done
+drawn 300
+still
+
+# The ⋮ menu's Refresh screen, from the toolbar Book details went back to: the page
+# drawn again with a flash, which a tap waits out
+tap toolbar.more
+log screen: More opened
+drawn 300
+still
+tap more.refresh
+log screen: More done
+drawn 1500
+still
+wait 1000
+
 # The ⋮ menu's Go to page: a page typed in
 tap page.top
 drawn 200

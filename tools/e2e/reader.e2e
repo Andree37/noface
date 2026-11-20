@@ -83,6 +83,17 @@ tap 1000 1300
 drawn 200
 still
 
+# Holding another word opens its sheet at once, the dictionary asked for only once;
+# its close button closes it
+hold 210 568 700
+log screen: Define opened
+drawn 300
+still
+tap define.close
+log screen: Define done
+drawn 200
+still
+
 # Holding and dragging highlights: the second paragraph's first line, selected too
 drag 210 568 1150 568 400 700
 log screen: Drag opened

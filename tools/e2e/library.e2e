@@ -147,3 +147,23 @@ tap panel.close
 log screen: Panel closed by tap
 drawn 150
 still
+
+# The battery's estimate, in a bubble by its corner, closed by any tap
+tap library.battery
+log screen: Bubble opened
+drawn 150
+shot battery
+tap screen.middle
+log screen: Bubble closed by tap
+drawn 150
+still
+
+# The hero's dots: the book's actions, as holding it opens them, closed above
+tap library.hero_dots
+log screen: Sheet opened
+drawn 150
+still
+tap card.above
+log closed by tap
+drawn 150
+still

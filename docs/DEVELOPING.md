@@ -145,11 +145,19 @@ Code is split by who owns it. `zig build check` fails if a file imports across t
   into `kindle/`.
 - `src/testing/`: the pretend Kindle the scenario tests run against.
   No other folder may import it.
-- Files at the top of `src/` may import anything: `app.zig` (what screens share),
-  `setup.zig` (putting an App together, the same way for the Kindle and the
-  tests), `main.zig` (startup), `scenarios.zig` (the
-  scenario tests, also run on the Kindle as `noface selftest`), `core.zig` (the parts
-  the tools share) and `tests.zig` (every unit test). The scenarios stay at the top because a Zig program's main file can only import files below it.
+- Files at the top of `src/`: the App (`app.zig`, what screens share) and what it's
+  made of, each owning its part: `display.zig` (the screen, the page cache and the
+  overlay sheets are composed in), `user_data.zig` (the reader's settings, speed and
+  journal, and their files), `regions.zig` (the memory read into), `languages.zig`
+  (hyphenation and dictionaries) and `typefaces.zig` (the reading fonts). These may
+  import anything but `screens/` and `testing/`, as screens build on them. The roots
+  put a program together and may import anything: `setup.zig` (assembling an App, the
+  same way for the Kindle and the tests), `main.zig` (startup), `scenarios.zig` (the
+  scenario tests, also run on the Kindle as `noface selftest`), `core.zig` (what the
+  tools share) and `tests.zig` (every unit test). The scenarios stay at the top
+  because a Zig program's main file can only import files below it.
+- What a screen keeps between openings sits beside the drawing it serves, in `ui/`
+  (`aa.Kept`, `lock.Kept`), and the App holds it.
 - Every place on the Kindle noface reads or writes is named in `src/kindle/paths.zig`,
   for the app and its launcher alike; a test checks that KPM's `launch.sh` and the
   startup file name the launcher it does.
@@ -199,8 +207,8 @@ tick change as it's used says so in `setting` (the library, a book). A screen th
 leads to others (a book's actions, setting a series, getting a dictionary) draws
 nothing itself and opens its first in `on_open`. Typing on the keyboard is
 `screens/typing.zig`, shared by every screen with a field; a list shown a page at a
-time is `goto.Pages` (`ui/goto.zig`); a card of rows is `app.card_over`; following a
-finger is `app.Drag`.
+time is `goto.Pages` (`ui/goto.zig`); a card of rows is `card.over`
+(`screens/card.zig`); following a finger is `Drag` (`screens/drag.zig`).
 
 The build checks each screen: anything else made `pub` on it, a misspelled hook
 (`onTik`), or `tick_us` without `on_tick` fails with a message saying what's wrong. The
@@ -223,12 +231,16 @@ illustrations.
 ## Tests
 
 - `zig build test`: unit tests, on this computer (GitHub runs them on Linux).
+- `zig build gates`: everything a change passes before it's committed, as one step.
+- Scripts in `tools/e2e/` play touches on the Kindle itself, against noface's own test
+  books, tapping controls by name (`screens/places.zig`), so they follow layout.
 - `zig build scenarios`: the scenario tests, which play scripted touches through the
   real app on a screen in memory, a clock it moves itself and a pretend Kindle that
   starts no programs. GitHub runs them on every push; on the Kindle they're part of
   `noface selftest`.
-- One scenario compares five screens (a page, the toolbar, Aa, a definition and the
-  library) with reference images in `src/testdata/snapshots`. When a screen changes on
+- One scenario compares nine screens (a page, the toolbar, Aa, a definition, a
+  book's search, the lock screen, running, the library and its search) with reference
+  images in `src/testdata/snapshots`. When a screen changes on
   purpose, write new ones and convert them:
 
 ```sh

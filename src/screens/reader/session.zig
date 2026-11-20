@@ -22,6 +22,7 @@ const display = @import("../../display.zig");
 const style = @import("../../ui/style.zig");
 const Zone = @import("../../kindle/input.zig").Zone;
 const back_button = @import("back_button.zig");
+const placed = @import("../placed.zig");
 const reading_clock = @import("reading_clock.zig");
 const book_notes = @import("book_notes.zig");
 const hwtcon = @import("../../kindle/hwtcon.zig");
@@ -408,6 +409,16 @@ pub const Session = struct {
         unreachable; // `ensure` gives back one of the slots' pixels
     }
 
+    /// Says in the log where the page on screen put its first footnote mark and its first
+    /// picture, for tests to tap (screens/placed.zig).
+    fn note_placed(s: *const Session, index: u32) void {
+        const slot = s.app.display.slot_for(index) orelse return;
+        assert(slot.page == index); // Just drawn: the page on screen
+        const hits = &slot.hits;
+        if (hits.len > 0) placed.note(.note, middle_of(hits.items[0]));
+        if (hits.picture_count > 0) placed.note(.picture, middle_of(hits.pictures[0]));
+    }
+
     pub fn show(s: *Session, index: u32, move: Move, touched_us: ?u64, force_clean: bool) !void {
         const a = s.app;
         s.set_page(index, move);
@@ -423,6 +434,7 @@ pub const Session = struct {
         const queued = now_us();
         try a.display.screen.wait_complete(marker);
         const done = now_us();
+        s.note_placed(index);
         if (touched_us) |t| {
             std.debug.print("turn to {d}: touch to queued {d} us, touch to done {d} ms{s}\n", .{
                 index + 1, queued -| t, (done -| t) / 1000, if (clean) " (clean)" else "",
@@ -434,6 +446,13 @@ pub const Session = struct {
         assert(s.current == index);
     }
 };
+
+/// The middle of what a hit covers.
+fn middle_of(h: text.Hit) style.Point {
+    assert(h.w > 0);
+    assert(h.h > 0);
+    return .{ .x = h.x + @divTrunc(h.w, 2), .y = h.y + @divTrunc(h.h, 2) };
+}
 
 /// Saves the reader's place, `s.anchor`, which stays what they're at even while the
 /// pages are being laid out again or failed to be. `percent` is how far in they are,

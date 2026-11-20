@@ -8,6 +8,7 @@ const style = @import("../../ui/style.zig");
 const highlights = @import("../../model/highlights.zig");
 const selection = @import("../../ui/selection.zig");
 const app = @import("../../app.zig");
+const placed = @import("../placed.zig");
 const screen = @import("../screen.zig");
 const sess = @import("session.zig");
 const records = @import("records.zig");
@@ -66,6 +67,7 @@ pub fn show_page(a: *app.App, s: *sess.Session, active: ?[]const u8) !?u32 {
             selection.draw(screen_page, chosen);
             const band = selection.band(chosen);
             delete_top = try draw_delete_bubble(a, band, words);
+            placed.note(.delete, delete_place(a, delete_top.?));
         }
     }
     try a.display.screen.wait_complete(try a.display.screen.show(.page));
@@ -173,6 +175,16 @@ const Box = struct {
         return across and down;
     }
 };
+
+/// The middle of the Delete bubble's taps, drawn with its top at `top`.
+fn delete_place(a: *app.App, top: u32) style.Point {
+    const point: style.Point = .{
+        .x = @intCast(a.display.screen.width / 2),
+        .y = @intCast(top + bubble_height / 2),
+    };
+    assert(in_delete_bubble(a, top, point.x, point.y));
+    return point;
+}
 
 pub fn in_delete_bubble(a: *app.App, top: u32, x: i32, y: i32) bool {
     // Where draw_delete_bubble put it: across the middle, inside the screen

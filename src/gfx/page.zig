@@ -255,24 +255,6 @@ pub const Page = struct {
         }
     }
 
-    /// White tick for the finished badge.
-    pub fn fill_poly_white_check(p: Page, cx: f32, cy: f32) void {
-        assert(p.holds_rows());
-        // Two lines, each from (x, y) to (x, y), around the centre
-        const lines = [_][4]f32{ .{ -11, 1, -3, 9 }, .{ -3, 9, 12, -8 } };
-        // The lines meet, so the tick has no gap
-        comptime assert(lines[0][2] == lines[1][0]);
-        comptime assert(lines[0][3] == lines[1][1]);
-        for (lines) |l| {
-            var t: f32 = 0;
-            while (t <= 1) : (t += 0.02) {
-                const x = cx + l[0] + (l[2] - l[0]) * t;
-                const y = cy + l[1] + (l[3] - l[1]) * t;
-                p.disc(@intFromFloat(x), @intFromFloat(y), 2, 0, 0xff);
-            }
-        }
-    }
-
     /// Lifts black toward `floor`, for secondary text and lines.
     pub fn tint(p: Page, x: u32, y: u32, w: u32, h: u32, floor: u8) void {
         assert(p.holds_rows());

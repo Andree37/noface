@@ -74,7 +74,20 @@ pub fn draw(page: Page, s: Slider, knob: u32) void {
     const r: f32 = half_height;
     page.pill(left, right, y, r, 0x00);
     page.pill(left, right, y, r - outline, 0xff);
-    if (knob > s.left) page.pill(left, x, y, r, 0x00);
+    // Left of the knob's ring, the bar shows only once there's room for its whole
+    // rounded end: shorter, it would peek out as a sliver beside the ring, so it's
+    // cleared, and the bar seems to start at the knob
+    const ring: f32 = knob_outer + knob_gap;
+    const stub = (x - ring) - (left - r);
+    if (stub >= 2 * r) {
+        page.pill(left, x, y, r, style.black);
+    } else if (stub > 0) {
+        const stub_left: u32 = @intFromFloat(@floor(left - r));
+        const stub_top: u32 = @intFromFloat(@floor(y - r));
+        // And the pixel rounding leaves beside the ring
+        const stub_px: u32 = @as(u32, @intFromFloat(@ceil(stub))) + 1;
+        page.fill_rect(stub_left, stub_top, stub_px, 2 * half_height + 1, style.white);
+    }
     page.pill(x, x, y, knob_outer + knob_gap, 0xff);
     page.pill(x, x, y, knob_outer, 0x00);
     page.pill(x, x, y, knob_inner, 0xff);

@@ -150,8 +150,12 @@ pub fn render_bar(
         // Its end, where letters are being typed, stays in view.
         typed = try draw.clipped_start(fonts.small, page, text_x, baseline, query, avail);
     }
-    const gap: f32 = if (query.len > 0) field.cursor_gap else 0;
-    const cursor: u32 = @intFromFloat(text_x + typed + gap);
+    // After what's typed, or, before anything is, just before the placeholder's words
+    const cursor_x = if (query.len > 0)
+        text_x + typed + field.cursor_gap
+    else
+        text_x - field.cursor_gap - field.cursor_width;
+    const cursor: u32 = @intFromFloat(cursor_x);
     const cursor_top = bar_top + field.cursor_inset;
     const cursor_height = bar_height - 2 * field.cursor_inset;
     page.fill_rect(cursor, cursor_top, field.cursor_width, cursor_height, style.black);

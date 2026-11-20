@@ -1,8 +1,10 @@
 //! Panel icons, drawn as smooth vector shapes.
 //!
 //! An icon's outline is given in its own units around its middle, as a font's glyphs
-//! are: those numbers are its shape. What every icon shares is named here: the weights
-//! its lines are drawn at, so icons drawn side by side match.
+//! are: those numbers are its shape. A unit is a 300th of an inch, the grid the icons
+//! were drawn on, and the pen turns units into the screen's pixels by its density, so
+//! an icon is the same size on every Kindle. What every icon shares is named here: the
+//! weights its lines are drawn at, so icons drawn side by side match.
 //!
 //! Every icon asserts the point it's drawn around is on the page it's drawn on: one
 //! centred off the page is a mistake in a screen's layout, and would draw nothing,
@@ -14,11 +16,23 @@ const Page = @import("../gfx/page.zig").Page;
 const Font = @import("../gfx/font.zig").Font;
 const quick_model = @import("../model/quick.zig");
 
+/// The icons' grid: units to the inch.
+const grid_dpi = 300;
+/// One unit, in the screen's pixels.
+const unit: f32 = @as(f32, @floatFromInt(style.screen.dpi)) / grid_dpi;
+
+/// `units` of the icons' grid in the screen's whole pixels, for a size another file
+/// lays out round an icon.
+fn px(comptime units: comptime_float) comptime_int {
+    return @intFromFloat(@round(units * unit));
+}
+
+/// Draws in an icon's units round its middle (`cx`, `cy`), in the screen's pixels.
 const Pen = struct {
     page: Page,
     cx: f32,
     cy: f32,
-    scale: f32 = 1,
+    scale: f32 = unit,
 
     fn x(p: Pen, v: f32) f32 {
         assert(p.scale > 0);
@@ -38,6 +52,39 @@ const Pen = struct {
         assert(width > 0);
         assert(p.scale > 0);
         p.page.stroke(p.x(x0), p.y(y0), p.x(x1), p.y(y1), width * p.scale);
+    }
+
+    fn size(p: Pen, v: f32) f32 {
+        assert(v >= 0);
+        return v * p.scale;
+    }
+
+    fn disc(p: Pen, ox: f32, oy: f32, radius: f32, value: u8) void {
+        assert(radius > 0);
+        const r: i32 = @intFromFloat(@max(@round(p.size(radius)), 1));
+        p.page.disc(@intFromFloat(p.x(ox)), @intFromFloat(p.y(oy)), r, 0, value);
+    }
+
+    fn pill(p: Pen, x0: f32, x1: f32, oy: f32, radius: f32, value: u8) void {
+        assert(x0 <= x1);
+        p.page.pill(p.x(x0), p.x(x1), p.y(oy), p.size(radius), value);
+    }
+
+    fn rect(p: Pen, ox: f32, oy: f32, w: f32, h: f32, value: u8) void {
+        assert(w > 0);
+        assert(h > 0);
+        const w_px: u32 = @intFromFloat(@max(@round(p.size(w)), 1));
+        const h_px: u32 = @intFromFloat(@max(@round(p.size(h)), 1));
+        const left: u32 = @intFromFloat(@round(p.x(ox)));
+        const top: u32 = @intFromFloat(@round(p.y(oy)));
+        p.page.fill_rect(left, top, w_px, h_px, value);
+    }
+
+    /// A filled shape through `shape`'s points, in units.
+    fn poly(p: Pen, comptime n: u32, shape: [n][2]f32) void {
+        var points: [n][2]f32 = undefined;
+        for (shape, &points) |o, *q| q.* = .{ p.x(o[0]), p.y(o[1]) };
+        p.page.fill_poly(&points);
     }
 
     fn arc(p: Pen, ox: f32, oy: f32, radius: f32, from: f32, to: f32, width: f32) void {
@@ -77,11 +124,12 @@ fn inside(at: f32, size: u32) bool {
     return at >= 0 and at <= @as(f32, @floatFromInt(size));
 }
 
+/// A ring `radius` pixels round (`cx`, `cy`), its line an icon's fine weight.
 pub fn ring(page: Page, cx: f32, cy: f32, radius: f32) void {
     assert(inside(cx, page.width));
     assert(inside(cy, page.height));
     assert(radius > 0);
-    page.arc(cx, cy, radius, 0, 2 * pi, stroke.fine);
+    page.arc(cx, cy, radius, 0, 2 * pi, stroke.fine * unit);
 }
 
 pub fn airplane(page: Page, cx: f32, cy: f32) void {
@@ -92,12 +140,12 @@ pub fn airplane(page: Page, cx: f32, cy: f32) void {
         .{ 4, 21 },  .{ 13, 29 }, .{ 13, 34 },  .{ 0, 29 },  .{ -13, 34 }, .{ -13, 29 },
         .{ -4, 21 }, .{ -5, 4 },  .{ -33, 14 }, .{ -33, 7 }, .{ -5, -11 }, .{ -4, -31 },
     };
-    var points: [outline.len][2]f32 = undefined;
+    // Drawn nose up, then turned to point up and right
+    var turned: [outline.len][2]f32 = undefined;
     const c = @cos(pi / 4);
-    for (outline, &points) |o, *r| {
-        r.* = .{ cx + (o[0] - o[1]) * c, cy + (o[0] + o[1]) * c };
-    }
-    page.fill_poly(&points);
+    for (outline, &turned) |o, *r| r.* = .{ (o[0] - o[1]) * c, (o[0] + o[1]) * c };
+    const p = Pen{ .page = page, .cx = cx, .cy = cy };
+    p.poly(outline.len, turned);
 }
 
 pub fn bluetooth(page: Page, cx: f32, cy: f32) void {
@@ -116,9 +164,8 @@ pub fn wifi(page: Page, cx: f32, cy: f32, scale: f32, bars: u32) void {
     assert(inside(cy, page.height));
     assert(scale > 0);
     // Drawn around its own middle, so it can share a line with text.
-    const p = Pen{ .page = page, .cx = cx, .cy = cy + 2 * scale, .scale = scale };
-    const dot_radius: i32 = @intFromFloat(@max(6 * scale, 2));
-    page.disc(@intFromFloat(p.x(0)), @intFromFloat(p.y(24)), dot_radius, 0, 0x00);
+    const p = Pen{ .page = page, .cx = cx, .cy = cy + 2 * scale * unit, .scale = scale * unit };
+    p.disc(0, 24, 6, 0x00);
     const radii = [_]f32{ 19, 34, 49 };
     for (radii, 0..) |r, i| {
         if (bars > 0 and i >= bars) continue;
@@ -189,11 +236,12 @@ pub const Battery = struct {
     /// Its width as the status cluster lays it out: from its left to its terminal's
     /// middle.
     pub fn span(b: Battery) f32 {
-        return b.width + b.terminal_gap;
+        return (b.width + b.terminal_gap) * unit;
     }
 };
 
 /// The quick panel's battery, and the status strips' smaller one.
+/// Sizes in the icons' units; `span` is in pixels, as the status cluster lays it out.
 pub const battery_large: Battery = .{
     .width = 78,
     .height = 36,
@@ -218,7 +266,7 @@ comptime {
     for ([_]Battery{ battery_large, battery_small }) |b| {
         assert(2 * b.fill_pad < b.height);
         assert(2 * b.terminal_inset < b.height);
-        assert(b.span() > b.width);
+        assert(b.width + b.terminal_gap > b.width);
     }
 }
 
@@ -226,40 +274,43 @@ comptime {
 pub fn battery(page: Page, size: Battery, x: f32, cy: f32, percent: u32) void {
     assert(inside(x, page.width));
     assert(inside(cy, page.height));
+    // Drawn from its left, along its middle
+    const p = Pen{ .page = page, .cx = x, .cy = cy };
     const w = size.width;
     const h = size.height;
-    const y = cy - h / 2;
-    page.stroke(x, y, x + w, y, size.line);
-    page.stroke(x, y + h, x + w, y + h, size.line);
-    page.stroke(x, y, x, y + h, size.line);
-    page.stroke(x + w, y, x + w, y + h, size.line);
-    const terminal_x = x + w + size.terminal_gap;
+    const y = -h / 2;
+    p.line(0, y, w, y, size.line);
+    p.line(0, y + h, w, y + h, size.line);
+    p.line(0, y, 0, y + h, size.line);
+    p.line(w, y, w, y + h, size.line);
+    const terminal_x = w + size.terminal_gap;
     const inset = size.terminal_inset;
-    page.stroke(terminal_x, y + inset, terminal_x, y + h - inset, size.terminal_line);
+    p.line(terminal_x, y + inset, terminal_x, y + h - inset, size.terminal_line);
     const pad: f32 = @floatFromInt(size.fill_pad);
-    const inner: u32 = @intFromFloat(w - 2 * pad);
+    const inner: u32 = @intFromFloat(@round(p.size(w - 2 * pad)));
     const fill = battery_fill(inner, percent);
-    const fill_height: u32 = @intFromFloat(h - 2 * pad);
     if (fill > 0) {
-        page.fill_rect(@intFromFloat(x + pad), @intFromFloat(y + pad), fill, fill_height, 0x00);
+        const fill_units = @as(f32, @floatFromInt(fill)) / p.scale;
+        p.rect(pad, y + pad, fill_units, h - 2 * pad, 0x00);
     }
 }
 
 pub fn back(page: Page, cx: f32, cy: f32) void {
     assert(inside(cx, page.width));
     assert(inside(cy, page.height));
-    page.stroke(cx - 18, cy, cx + 18, cy, stroke.regular);
-    page.stroke(cx - 18, cy, cx - 4, cy - 14, stroke.regular);
-    page.stroke(cx - 18, cy, cx - 4, cy + 14, stroke.regular);
+    const p = Pen{ .page = page, .cx = cx, .cy = cy };
+    p.line(-18, 0, 18, 0, stroke.regular);
+    p.line(-18, 0, -4, -14, stroke.regular);
+    p.line(-18, 0, -4, 14, stroke.regular);
 }
 
 pub fn lines(page: Page, cx: f32, cy: f32) void {
     assert(inside(cx, page.width));
     assert(inside(cy, page.height));
-    var i: f32 = -1;
-    while (i <= 1) : (i += 1) {
-        page.stroke(cx - 22, cy + i * 14, cx - 16, cy + i * 14, stroke.regular);
-        page.stroke(cx - 6, cy + i * 14, cx + 24, cy + i * 14, stroke.regular);
+    const p = Pen{ .page = page, .cx = cx, .cy = cy };
+    for ([_]f32{ -14, 0, 14 }) |row| {
+        p.line(-22, row, -16, row, stroke.regular);
+        p.line(-6, row, 24, row, stroke.regular);
     }
 }
 
@@ -268,19 +319,15 @@ pub fn lines(page: Page, cx: f32, cy: f32) void {
 pub fn bookmark_filled(page: Page, cx: f32, cy: f32) void {
     assert(inside(cx, page.width));
     assert(inside(cy, page.height));
-    const left = cx - 17;
-    const top = cy - 24;
-    const shape = [_][2]f32{
-        .{ left, top },    .{ left + 34, top }, .{ left + 34, top + 48 },
-        .{ cx, top + 33 }, .{ left, top + 48 },
-    };
-    page.fill_poly(&shape);
+    const shape = [_][2]f32{ .{ -17, -24 }, .{ 17, -24 }, .{ 17, 24 }, .{ 0, 9 }, .{ -17, 24 } };
+    const p = Pen{ .page = page, .cx = cx, .cy = cy };
+    p.poly(shape.len, shape);
 }
 
 /// The ribbon in a bookmarked page's top-right corner: its middle this far in from the
 /// right edge, and down from the top, so it hangs from the page's edge.
-const ribbon_inset = 60;
-const ribbon_middle_y = 24;
+const ribbon_inset = px(60);
+const ribbon_middle_y = px(24);
 
 /// The ribbon in a bookmarked page's top-right corner.
 pub fn ribbon(page: Page, screen_width: u32) void {
@@ -293,11 +340,12 @@ pub fn ribbon(page: Page, screen_width: u32) void {
 pub fn bookmark(page: Page, cx: f32, cy: f32) void {
     assert(inside(cx, page.width));
     assert(inside(cy, page.height));
-    page.stroke(cx - 15, cy - 22, cx + 15, cy - 22, stroke.regular);
-    page.stroke(cx - 15, cy - 22, cx - 15, cy + 22, stroke.regular);
-    page.stroke(cx + 15, cy - 22, cx + 15, cy + 22, stroke.regular);
-    page.stroke(cx - 15, cy + 22, cx, cy + 9, stroke.regular);
-    page.stroke(cx, cy + 9, cx + 15, cy + 22, stroke.regular);
+    const p = Pen{ .page = page, .cx = cx, .cy = cy };
+    p.line(-15, -22, 15, -22, stroke.regular);
+    p.line(-15, -22, -15, 22, stroke.regular);
+    p.line(15, -22, 15, 22, stroke.regular);
+    p.line(-15, 22, 0, 9, stroke.regular);
+    p.line(0, 9, 15, 22, stroke.regular);
 }
 
 pub fn search(page: Page, cx: f32, cy: f32) void {
@@ -311,18 +359,17 @@ pub fn search_scaled(page: Page, cx: f32, cy: f32, scale: f32) void {
     assert(inside(cx, page.width));
     assert(inside(cy, page.height));
     assert(scale > 0);
-    page.arc(cx - 5 * scale, cy - 5 * scale, 17 * scale, 0, 2 * pi, stroke.regular);
-    page.stroke(cx + 8 * scale, cy + 8 * scale, cx + 23 * scale, cy + 23 * scale, stroke.heavy);
+    const p = Pen{ .page = page, .cx = cx, .cy = cy, .scale = scale * unit };
+    // Its lines keep their weight at any size: the scale draws the shape
+    p.page.arc(p.x(-5), p.y(-5), p.size(17), 0, 2 * pi, stroke.regular * unit);
+    p.page.stroke(p.x(8), p.y(8), p.x(23), p.y(23), stroke.heavy * unit);
 }
 
 pub fn dots(page: Page, cx: f32, cy: f32) void {
     assert(inside(cx, page.width));
     assert(inside(cy, page.height));
-    const x: i32 = @intFromFloat(cx);
-    const y: i32 = @intFromFloat(cy);
-    page.disc(x, y - 16, 4, 0, 0x00);
-    page.disc(x, y, 4, 0, 0x00);
-    page.disc(x, y + 16, 4, 0, 0x00);
+    const p = Pen{ .page = page, .cx = cx, .cy = cy };
+    for ([_]f32{ -16, 0, 16 }) |dy| p.disc(0, dy, 4, 0x00);
 }
 
 /// A pager's arrow: a chevron pointing right when `forward`, its tip at its middle.
@@ -336,16 +383,16 @@ pub fn pager_arrow(page: Page, cx: f32, cy: f32, forward: bool) void {
 }
 
 /// How far the backspace tag reaches either side of its middle, for its key to hold it.
-pub const backspace_left = 30;
-pub const backspace_right = 26;
+pub const backspace_left = px(30);
+pub const backspace_right = px(26);
 
 /// Backspace: a tag pointing left with a cross in it.
 pub fn backspace(page: Page, cx: f32, cy: f32) void {
     assert(inside(cx, page.width));
     assert(inside(cy, page.height));
     const p: Pen = .{ .page = page, .cx = cx, .cy = cy };
-    const l = -backspace_left;
-    const r = backspace_right;
+    const l = -30;
+    const r = 26;
     p.line(l, 0, l + 16, -18, stroke.fine);
     p.line(l, 0, l + 16, 18, stroke.fine);
     p.line(l + 16, -18, r, -18, stroke.fine);
@@ -360,21 +407,20 @@ pub fn skip(page: Page, cx: f32, cy: f32, forward: bool) void {
     assert(inside(cx, page.width));
     assert(inside(cy, page.height));
     const direction: f32 = if (forward) 1 else -1;
-    const points = [_][2]f32{
-        .{ cx - 14 * direction, cy - 18 },
-        .{ cx + 12 * direction, cy },
-        .{ cx - 14 * direction, cy + 18 },
+    const p = Pen{ .page = page, .cx = cx, .cy = cy };
+    const triangle = [_][2]f32{
+        .{ -14 * direction, -18 }, .{ 12 * direction, 0 }, .{ -14 * direction, 18 },
     };
-    page.fill_poly(&points);
-    page.stroke(cx + 15 * direction, cy - 18, cx + 15 * direction, cy + 18, stroke.heavy);
+    p.poly(triangle.len, triangle);
+    p.line(15 * direction, -18, 15 * direction, 18, stroke.heavy);
 }
 
 pub fn menu(page: Page, x: f32, y: f32) void {
     assert(inside(x, page.width));
     assert(inside(y, page.height));
-    page.stroke(x, y, x + 44, y, stroke.regular);
-    page.stroke(x, y + 14, x + 44, y + 14, stroke.regular);
-    page.stroke(x, y + 28, x + 44, y + 28, stroke.regular);
+    // Drawn from its top left
+    const p = Pen{ .page = page, .cx = x, .cy = y };
+    for ([_]f32{ 0, 14, 28 }) |row| p.line(0, row, 44, row, stroke.regular);
 }
 
 /// The status cluster's spacing, large on the quick panel and small on the status
@@ -401,7 +447,7 @@ pub fn status_cluster(
     assert(inside(right, page.width));
     assert(inside(cy, page.height));
     const c = if (large) cluster_large else cluster_small;
-    const gap = c.gap;
+    const gap = c.gap * unit;
     const battery_x = right - c.battery.span();
     battery(page, c.battery, battery_x, cy, quick.battery);
     var label: [8]u8 = undefined;
@@ -410,11 +456,13 @@ pub fn status_cluster(
     try font.draw(page, percent_x, baseline, percent);
     var left = percent_x;
     if (quick.plugged) {
-        left -= c.bolt / 2 + bolt_gap;
-        bolt(page, left, cy, c.bolt);
-        left -= c.bolt / 2;
+        const bolt_px = c.bolt * unit;
+        left -= bolt_px / 2 + bolt_gap * unit;
+        bolt(page, left, cy, bolt_px);
+        left -= bolt_px / 2;
     }
-    if (quick.wifi_shown()) |bars| wifi(page, left - gap - wifi_half_width, cy, wifi_scale, bars);
+    const wifi_x = left - gap - wifi_half_width * unit;
+    if (quick.wifi_shown()) |bars| wifi(page, wifi_x, cy, wifi_scale, bars);
 }
 
 /// A lightning bolt `size` tall, centred on (`cx`, `cy`): plugged in.
@@ -422,42 +470,39 @@ pub fn bolt(page: Page, cx: f32, cy: f32, size: f32) void {
     assert(inside(cx, page.width));
     assert(inside(cy, page.height));
     assert(size > 0);
-    const s = size / 26;
+    // Drawn 26 units tall, scaled to `size` pixels
     const shape = [_][2]f32{
         .{ 3, -13 }, .{ -7, 2 }, .{ -1, 2 }, .{ -3, 13 }, .{ 7, -2 }, .{ 1, -2 },
     };
-    var points: [shape.len][2]f32 = undefined;
-    for (shape, &points) |p, *q| q.* = .{ cx + p[0] * s, cy + p[1] * s };
-    page.fill_poly(&points);
+    const p = Pen{ .page = page, .cx = cx, .cy = cy, .scale = size / 26 };
+    p.poly(shape.len, shape);
 }
 
 /// Badge for a book that isn't on the device.
 pub fn cloud(page: Page, cx: f32, cy: f32) void {
     assert(inside(cx, page.width));
     assert(inside(cy, page.height));
-    const x: i32 = @intFromFloat(cx);
-    const y: i32 = @intFromFloat(cy);
+    const p = Pen{ .page = page, .cx = cx, .cy = cy };
     // Ringed as the tick's badge is, a little larger for the cloud cut out of it
-    page.disc(x, y, cloud_badge_radius + badge_ring, 0, 0xff);
-    page.disc(x, y, cloud_badge_radius, 0, 0x00);
-    page.disc(x - 11, y + 3, 9, 0, 0xff);
-    page.disc(x + 11, y + 3, 9, 0, 0xff);
-    page.disc(x + 1, y - 4, 12, 0, 0xff);
-    page.fill_rect(@intCast(x - 11), @intCast(y + 3), 22, 9, 0xff);
+    p.disc(0, 0, cloud_badge_radius + badge_ring, 0xff);
+    p.disc(0, 0, cloud_badge_radius, 0x00);
+    p.disc(-11, 3, 9, 0xff);
+    p.disc(11, 3, 9, 0xff);
+    p.disc(1, -4, 12, 0xff);
+    p.rect(-11, 3, 22, 9, 0xff);
 }
 
 /// Highlight: a marker pen at a slant over the gray stroke it leaves.
 pub fn highlighter(page: Page, cx: f32, cy: f32) void {
     assert(inside(cx, page.width));
     assert(inside(cy, page.height));
-    page.pill(cx - 16, cx + 16, cy + 16, 6, style.rule); // The stroke
+    const p = Pen{ .page = page, .cx = cx, .cy = cy };
+    p.pill(-16, 16, 16, 6, style.rule); // The stroke
     // The pen: a slanted body with a chisel tip touching the stroke
-    const body = [_][2]f32{
-        .{ cx - 8, cy + 6 }, .{ cx + 10, cy - 14 }, .{ cx + 18, cy - 7 }, .{ cx, cy + 13 },
-    };
-    page.fill_poly(&body);
-    const tip = [_][2]f32{ .{ cx - 8, cy + 6 }, .{ cx, cy + 13 }, .{ cx - 11, cy + 14 } };
-    page.fill_poly(&tip);
+    const body = [_][2]f32{ .{ -8, 6 }, .{ 10, -14 }, .{ 18, -7 }, .{ 0, 13 } };
+    p.poly(body.len, body);
+    const tip = [_][2]f32{ .{ -8, 6 }, .{ 0, 13 }, .{ -11, 14 } };
+    p.poly(tip.len, tip);
 }
 
 /// Draws `glyph` in white, centred on (`cx`, `cy`), over a control that's filled
@@ -510,39 +555,41 @@ test "a white glyph lands centred, and only where it was drawn" {
 pub fn bar_chart(page: Page, cx: f32, cy: f32) void {
     assert(inside(cx, page.width));
     assert(inside(cy, page.height));
+    const p = Pen{ .page = page, .cx = cx, .cy = cy };
     const heights = [_]f32{ 14, 30, 22 };
     for (heights, 0..) |h, i| {
-        const x = cx - 14 + @as(f32, @floatFromInt(i)) * 14;
-        const top = cy + 14 - h + 3;
-        page.pill(x, x, top, 3, 0x00);
-        page.fill_rect(@intFromFloat(x - 3), @intFromFloat(top), 6, @intFromFloat(h - 3), 0x00);
+        const x = -14 + @as(f32, @floatFromInt(i)) * 14;
+        const top = 14 - h + 3;
+        p.pill(x, x, top, 3, 0x00);
+        p.rect(x - 3, top, 6, h - 3, 0x00);
     }
-    page.fill_rect(@intFromFloat(cx - 21), @intFromFloat(cy + 14), 42, 3, 0x00);
+    p.rect(-21, 14, 42, 3, 0x00);
 }
 
 /// Filter: a funnel.
 pub fn funnel(page: Page, cx: f32, cy: f32) void {
     assert(inside(cx, page.width));
     assert(inside(cy, page.height));
-    const points = [_][2]f32{
-        .{ cx - 15, cy - 12 }, .{ cx + 15, cy - 12 }, .{ cx + 4, cy + 1 },
-        .{ cx + 4, cy + 13 },  .{ cx - 4, cy + 9 },   .{ cx - 4, cy + 1 },
+    const shape = [_][2]f32{
+        .{ -15, -12 }, .{ 15, -12 }, .{ 4, 1 }, .{ 4, 13 }, .{ -4, 9 }, .{ -4, 1 },
     };
-    page.fill_poly(&points);
+    const p = Pen{ .page = page, .cx = cx, .cy = cy };
+    p.poly(shape.len, shape);
 }
 
 /// Sort: an arrow up beside an arrow down.
 pub fn sort_arrows(page: Page, cx: f32, cy: f32) void {
     assert(inside(cx, page.width));
     assert(inside(cy, page.height));
-    const l = cx - 7;
-    const r = cx + 7;
-    page.stroke(l, cy + 13, l, cy - 12, stroke.fine);
-    page.stroke(l, cy - 13, l - 6, cy - 6, stroke.fine);
-    page.stroke(l, cy - 13, l + 6, cy - 6, stroke.fine);
-    page.stroke(r, cy - 13, r, cy + 12, stroke.fine);
-    page.stroke(r, cy + 13, r - 6, cy + 6, stroke.fine);
-    page.stroke(r, cy + 13, r + 6, cy + 6, stroke.fine);
+    const p = Pen{ .page = page, .cx = cx, .cy = cy };
+    const l = -7;
+    const r = 7;
+    p.line(l, 13, l, -12, stroke.fine);
+    p.line(l, -13, l - 6, -6, stroke.fine);
+    p.line(l, -13, l + 6, -6, stroke.fine);
+    p.line(r, -13, r, 12, stroke.fine);
+    p.line(r, 13, r - 6, 6, stroke.fine);
+    p.line(r, 13, r + 6, 6, stroke.fine);
 }
 
 /// A badge's disc over a cover, and the white ring round it that keeps it clear of
@@ -559,16 +606,28 @@ comptime {
 pub fn check(page: Page, cx: f32, cy: f32) void {
     assert(inside(cx, page.width));
     assert(inside(cy, page.height));
-    page.disc(@intFromFloat(cx), @intFromFloat(cy), badge_radius + badge_ring, 0, 0xff);
-    page.disc(@intFromFloat(cx), @intFromFloat(cy), badge_radius, 0, 0x00);
-    page.fill_poly_white_check(cx, cy);
+    const p = Pen{ .page = page, .cx = cx, .cy = cy };
+    p.disc(0, 0, badge_radius + badge_ring, 0xff);
+    p.disc(0, 0, badge_radius, 0x00);
+    // The tick, white: two strokes that meet, each traced with small discs
+    const strokes = [_][4]f32{ .{ -11, 1, -3, 9 }, .{ -3, 9, 12, -8 } };
+    comptime assert(strokes[0][2] == strokes[1][0]);
+    comptime assert(strokes[0][3] == strokes[1][1]);
+    const steps = 50;
+    for (strokes) |l| {
+        for (0..steps + 1) |i| {
+            const t = @as(f32, @floatFromInt(i)) / steps;
+            p.disc(l[0] + (l[2] - l[0]) * t, l[1] + (l[3] - l[1]) * t, 2, 0xff);
+        }
+    }
 }
 
 pub fn chevron(page: Page, cx: f32, cy: f32) void {
     assert(inside(cx, page.width));
     assert(inside(cy, page.height));
-    page.stroke(cx - 42, cy + 13, cx, cy - 7, stroke.regular);
-    page.stroke(cx, cy - 7, cx + 42, cy + 13, stroke.regular);
+    const p = Pen{ .page = page, .cx = cx, .cy = cy };
+    p.line(-42, 13, 0, -7, stroke.regular);
+    p.line(0, -7, 42, 13, stroke.regular);
 }
 
 test "battery bar fills with charge" {

@@ -7,14 +7,17 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const Page = @import("../gfx/page.zig").Page;
+const style = @import("style.zig");
 
-pub const dial_radius_px = 22;
-const ring_px = 2;
-const sweep_px = 7; // How thick the ring is where it has swept
-const arrow_half_px = 7; // The arrow's half width, and its height
+/// Sizes in points, turned into the screen's pixels by its density as every other size
+/// is (style.zig), so the icons match their words on any Kindle.
+pub const dial_radius_px = style.pt(5.25);
+const ring_px = style.stroke;
+const sweep_px = style.pt(1.75); // How thick the ring is where it has swept
+const arrow_half_px = style.pt(1.75); // The arrow's half width, and its height
 /// Steps of the sweep, as a clock's hours: each a refresh of the dial alone.
 pub const dial_steps = 12;
-pub const pause_radius_px = 24;
+pub const pause_radius_px = style.pt(5.75);
 
 comptime {
     assert(ring_px < sweep_px);

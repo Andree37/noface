@@ -1334,6 +1334,39 @@ const scenarios = [_]Scenario{
         }
     }.run },
     .{
+        .name = "with more bookmarks than Go To's list has rows, its next page lists the " ++
+            "rest and its first row jumps to the next bookmark, and back again to the first",
+        .run = struct {
+            const marked = goto_ui.rows + 1; // One more than a page of the list holds
+            /// Each of the first `marked` pages bookmarked, ending on the page after.
+            const marking = steps: {
+                var steps: [marked * 4]Step = undefined;
+                for (0..marked) |i| {
+                    steps[i * 4 ..][0..4].* = .{ top, tool(.bookmark), page_middle, forward };
+                }
+                break :steps steps;
+            };
+            fn run() !void {
+                const all_marked = try play(&marking);
+                try expect(all_marked.bookmarks == marked, "not every page was bookmarked");
+                const notes = [_]Step{
+                    top, tool(.goto), tap_on(goto_ui.place(.{ .tab = .notes })),
+                };
+                const first_row = tap_on(goto_ui.place(.{ .row = 0 }));
+                const next_page = tap_on(goto_ui.place(.next));
+                const prev_page = tap_on(goto_ui.place(.prev));
+                // The last bookmark is on the page `marked - 1` turns on
+                const turns: [marked - 1]Step = @splat(forward);
+                const last_page = try play(&turns);
+                const on = try play(&(marking ++ notes ++ .{ next_page, first_row }));
+                try expect(same_place(on.saved, last_page.saved), "next didn't list the rest");
+                const start = try play(&.{});
+                const returned = try play(&(marking ++ notes ++ .{ next_page, prev_page, first_row }));
+                try expect(same_place(returned.saved, start.saved), "prev didn't list the first");
+            }
+        }.run,
+    },
+    .{
         .name = "Go to page from the ⋮ menu lands on the page typed, and a page past the " ++
             "book's end is turned down, the place kept",
         .run = struct {

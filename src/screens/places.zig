@@ -23,6 +23,7 @@ const run = @import("reader/run.zig");
 const run_view = @import("reader/run_view.zig");
 const back_button = @import("reader/back_button.zig");
 const more = @import("reader/more.zig");
+const picture = @import("reader/picture.zig");
 
 pub const Point = style.Point;
 pub const Place = struct { name: []const u8, point: Point };
@@ -65,6 +66,7 @@ pub const all = places: {
         .{ .name = "running.next", .point = running_mode.next },
         .{ .name = "running.pause", .point = run_view.pause_place(height) },
         .{ .name = "reader.back", .point = back_button.place(height) },
+        .{ .name = "picture.close", .point = picture.close_place() },
         .{ .name = "card.above", .point = card.place_above() },
         .{ .name = "define.highlight", .point = definition.place(.highlight) },
         .{ .name = "define.get_dictionary", .point = definition.place(.get_dictionary) },

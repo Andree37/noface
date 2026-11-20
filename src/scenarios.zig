@@ -9,6 +9,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const folders = @import("sys/dir.zig");
 const hyphen = @import("layout/hyphen.zig");
+const text_layout = @import("layout/text.zig");
 const file = @import("sys/file.zig");
 const fonts_db = @import("kindle/fonts.zig");
 const process = @import("sys/process.zig");
@@ -55,7 +56,19 @@ const search_sheet = @import("ui/search_sheet.zig");
 
 const go_regular = @embedFile("testdata/fonts/Go-Regular.ttf");
 const go_bold = @embedFile("testdata/fonts/Go-Bold.ttf");
-const book_bytes = @embedFile("testdata/scenario.epub");
+/// The test books, by what a scenario reads: three chapters of plain text, or one with a
+/// footnote and a picture.
+const TestBook = enum {
+    scenario,
+    notes,
+
+    fn bytes(b: TestBook) []const u8 {
+        return switch (b) {
+            .scenario => @embedFile("testdata/scenario.epub"),
+            .notes => @embedFile("testdata/notes.epub"),
+        };
+    }
+};
 
 const Step = input_mod.Step;
 const width = 1272;
@@ -222,8 +235,13 @@ const Outcome = struct {
     saved_settings: settings_model.Settings, // As the settings file has them
 };
 
-/// A page drawn, and its words where they were drawn.
-const Shown = struct { page: u32, words: []const book_model.Word };
+/// A page drawn, and where its words, its notes' marks and its pictures were drawn.
+const Shown = struct {
+    page: u32,
+    words: []const book_model.Word,
+    references: []const text_layout.Hit,
+    pictures: []const text_layout.Hit,
+};
 
 /// The most books a scenario puts in the documents folder.
 const books_max = 4;
@@ -236,6 +254,8 @@ const Kindle = struct {
     /// The books in the documents folder, all the scenario book under these names. A
     /// scenario that starts in a book opens the first.
     books: []const []const u8 = &.{"book.epub"},
+    /// What each of them is.
+    book: TestBook = .scenario,
     /// Starts in the library instead of the first book.
     library: bool = false,
     /// A book read a while already, so the library shows it to continue, and opens
@@ -301,6 +321,8 @@ const Snapshot = enum {
     @"library-search",
     running,
     series,
+    note,
+    picture,
 };
 
 /// Whether `pixels` match the reference image `name`, allowing for anti-aliasing:
@@ -681,7 +703,7 @@ fn play_on_folder(
     assert(std.mem.startsWith(u8, dir, "/tmp/"));
     for (kindle.books, 0..) |name, i| {
         book_paths[i] = try std.fmt.allocPrintSentinel(alloc, "{s}/{s}", .{ dir, name }, 0);
-        if (kindle.real_book == null) try write_file(book_paths[i], book_bytes);
+        if (kindle.real_book == null) try write_file(book_paths[i], kindle.book.bytes());
     }
     if (kindle.real_book) |real| book_paths[0] = real.entry.path;
     var library_buf: [128]u8 = undefined;
@@ -904,7 +926,14 @@ fn pages_shown(alloc: std.mem.Allocator, a: *const app.App) ![3]?Shown {
         const page = slot.page orelse continue;
         assert(slot.hits.word_count <= slot.hits.words.len);
         const words = slot.hits.words[0..slot.hits.word_count];
-        out.* = .{ .page = page, .words = try alloc.dupe(book_model.Word, words) };
+        const references = slot.hits.items[0..slot.hits.len];
+        const pictures = slot.hits.pictures[0..slot.hits.picture_count];
+        out.* = .{
+            .page = page,
+            .words = try alloc.dupe(book_model.Word, words),
+            .references = try alloc.dupe(text_layout.Hit, references),
+            .pictures = try alloc.dupe(text_layout.Hit, pictures),
+        };
     }
     return shown;
 }
@@ -1312,6 +1341,48 @@ const scenarios = [_]Scenario{
                 const r = try play_on(.{ .library = true }, &(.{search_books} ++
                     typed("scenario") ++ .{ first_found, wait(2_000) }));
                 try expect(r.opened[0], "the book found wasn't opened");
+            }
+        }.run,
+    },
+    .{
+        .name = "a footnote's mark opens its note in a panel and a tap above closes it, and " ++
+            "holding a picture shows it whole until its button, the book reading on after both",
+        .run = struct {
+            fn run() !void {
+                var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+                defer arena.deinit();
+                const book: Kindle = .{ .book = .notes, .pages_into = arena.allocator() };
+                const first = try play_on(book, &.{});
+                const page = first.shown[0] orelse return error.NothingShown;
+                try expect(page.references.len == 1, "the book's one note mark wasn't found");
+                try expect(page.pictures.len == 1, "the book's picture wasn't drawn");
+                const mark = tap_on(middle_of(page.references[0]));
+                const picture = middle_of(page.pictures[0]);
+                // The note's panel open over the page, then closed by a tap above it
+                const noted = try play_on(.{ .book = .notes, .snapshot = .note }, &.{mark});
+                try expect(noted.looks_right, "the note's panel looks different");
+                // Closed, the page turns again as before: a tap on an open panel would
+                // only close it
+                const turned = try play_on(.{ .book = .notes }, &.{forward});
+                try expect(!same_place(turned.saved, first.saved), "the book didn't turn");
+                const above = tap_on(places.page.top);
+                const closed = try play_on(.{ .book = .notes }, &.{ mark, above, forward });
+                try expect(same_place(closed.saved, turned.saved), "the note stayed open");
+                // The picture, whole, then closed by its button
+                const held = [_]Step{ hold(picture.x, picture.y), lift };
+                // The viewer follows a finger from its touch, and acts on its lift
+                const close = tap_on(places.find("picture.close").?);
+                const shown = try play_on(.{ .book = .notes, .snapshot = .picture }, &held);
+                try expect(shown.looks_right, "the picture shown whole looks different");
+                const closed_then_on = held ++ .{ close, lift, forward };
+                const put_back = try play_on(.{ .book = .notes }, &closed_then_on);
+                try expect(same_place(put_back.saved, turned.saved), "the picture stayed open");
+            }
+
+            fn middle_of(h: text_layout.Hit) style.Point {
+                assert(h.w > 0);
+                assert(h.h > 0);
+                return .{ .x = h.x + @divTrunc(h.w, 2), .y = h.y + @divTrunc(h.h, 2) };
             }
         }.run,
     },

@@ -209,6 +209,13 @@ const Follow = struct {
     }
 };
 
+/// The middle of the close button's taps.
+pub fn close_place() style.Point {
+    const point: style.Point = .{ .x = close_center_x, .y = close_center_y };
+    assert(on_close(point.x, point.y));
+    return point;
+}
+
 fn on_close(x: i32, y: i32) bool {
     const distance_x = x - close_center_x;
     const distance_y = y - close_center_y;

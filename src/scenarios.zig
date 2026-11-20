@@ -300,6 +300,7 @@ const Snapshot = enum {
     search,
     @"library-search",
     running,
+    series,
 };
 
 /// Whether `pixels` match the reference image `name`, allowing for anti-aliasing:
@@ -1351,7 +1352,8 @@ const scenarios = [_]Scenario{
     },
     .{
         .name = "the page, toolbar, text settings, a definition, a book's search, the " ++
-            "lock screen, running, the library and its search look as they should",
+            "lock screen, running, the library, its search and a series list look as " ++
+            "they should",
         .run = struct {
             fn run() !void {
                 const text_settings = tool(.text);
@@ -1382,6 +1384,11 @@ const scenarios = [_]Scenario{
                 const found: Kindle = .{ .library = true, .snapshot = .@"library-search" };
                 const lib_search = try play_on(found, &.{search_books});
                 try expect(lib_search.looks_right, "the library's search looks different");
+                const hold_hero = hold_in(library_ui.hero_rect(width));
+                const series_list = [_]Step{ hold_hero, lift, book_series };
+                const found_series: Kindle = .{ .library = true, .snapshot = .series };
+                const series = try play_on(found_series, &series_list);
+                try expect(series.looks_right, "the series list looks different");
             }
         }.run,
     },

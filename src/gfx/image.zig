@@ -14,11 +14,6 @@ const png_decoder = @import("png.zig");
 const scaler = @import("rows.zig");
 const workspace = @import("workspace.zig");
 
-pub const width = 252;
-pub const height = 333;
-pub const hero_width = 270;
-pub const hero_height = 357;
-
 /// The panel's grays are 16 steps of this, from black to white.
 const panel_gray_step = 17;
 /// The widest view `zoomed` draws: its column tables are this long.
@@ -26,9 +21,6 @@ const view_width_max = 2048;
 
 comptime {
     assert(panel_gray_step * 15 == 255);
-    // The hero cover, on top of the library, is the larger one
-    assert(hero_width > width);
-    assert(hero_height > height);
 }
 
 /// A size in pixels.

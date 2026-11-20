@@ -25,8 +25,15 @@ const run_icons = @import("../../ui/run_icons.zig");
 const phrase_px = style.text.phrase;
 const context_px = style.text.body;
 const phrase_line_spacing = 1.35;
-/// The most lines a phrase takes: more, and the eye starts losing its line again.
-const phrase_lines_max = 6;
+/// The most lines a phrase takes: more, and the eye starts losing its line again; on
+/// a shorter screen, as many as fit between the lines before and after it.
+const phrase_lines_max = @min(phrase_lines_most, phrase_lines_fit);
+const phrase_lines_most = 6;
+const phrase_line_px: comptime_float = phrase_px * phrase_line_spacing;
+const phrase_lines_fit: comptime_int = @intFromFloat(@floor(
+    @as(comptime_float, 2 * (phrase_middle_y - (text_top + before_below_top_px + context_px))) /
+        phrase_line_px,
+));
 /// Where the phrase sits: its middle at the screen's, between the line before it under
 /// the map and the line after it over the footer.
 pub const phrase_middle_y = style.screen_height / 2;
@@ -37,7 +44,7 @@ const lines_max = phrase_lines_max + 1; // One more, to tell a phrase that doesn
 const map_width_px = style.space.wide + style.space.tall;
 const map_margin_px = style.space.small + style.space.wider;
 const map_top = style.space.tiny + style.space.roomy;
-const map_word_px = 2;
+const map_word_px = style.stroke;
 const map_edge_px = 2; // Its outline
 /// As tall as the page it shows, for its width.
 const map_height_px = map_width_px * style.screen_height / style.screen_width;

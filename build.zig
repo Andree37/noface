@@ -44,6 +44,11 @@ pub fn build(b: *std.Build) void {
     assert(target.result.cpu.arch == .arm);
     assert(target.result.ptrBitWidth() == 32);
 
+    layout_model = b.option(
+        []const u8,
+        "layout",
+        "The Kindle to lay the interface out for, and run on (device.Model): paperwhite_12",
+    ) orelse default_layout;
     const app = build_app(b, target);
     const check = build_checks(b);
     const tools = build_tools(b, target);
@@ -52,7 +57,54 @@ pub fn build(b: *std.Build) void {
     const scenarios = build_scenarios(b, target);
     const tests = build_tests(b);
     build_clean(b);
-    build_gates(b, &.{ b.getInstallStep(), check, tools, scenarios, tests });
+    const layouts = build_layouts(b, target);
+    build_gates(b, &.{ b.getInstallStep(), check, tools, scenarios, tests, layouts });
+}
+
+/// The Kindle the interface is laid out for (src/model/device.zig `target`), set once
+/// from `-Dlayout` as the build starts: the Paperwhite noface runs on, unless asked.
+const default_layout = "paperwhite_12";
+var layout_model: []const u8 = default_layout;
+
+/// The other Kindles' screens every layout is checked against by `zig build layouts`.
+const other_layouts = [_][]const u8{ "basic_11", "scribe", "basic_10" };
+
+/// Gives `module` the layout option src/model/device.zig reads: which Kindle's screen
+/// the interface is laid out for.
+fn lay_out_for(b: *std.Build, module: *std.Build.Module, model: []const u8) void {
+    assert(model.len > 0);
+    const options = b.addOptions();
+    options.addOption([]const u8, "model", model);
+    module.addOptions("layout", options);
+    assert(module.import_table.get("layout") != null);
+}
+
+/// `zig build layouts`: the whole interface laid out for every other Kindle's screen,
+/// built but not run. Every layout checks itself as it's built (nothing overlaps,
+/// nothing runs off the screen, every control takes a fingertip, every named place is
+/// a tap on its control: screens/places.zig), so a build that passes is a layout
+/// that fits that Kindle.
+fn build_layouts(b: *std.Build, target: std.Build.ResolvedTarget) *std.Build.Step {
+    assert(target.result.cpu.arch == .arm); // For a Kindle, like the app
+    assert(other_layouts.len > 0);
+    const layouts_step = b.step("layouts", "Lay the interface out for every other Kindle's screen");
+    for (other_layouts) |model| {
+        const module = b.createModule(.{
+            .root_source_file = b.path("src/layouts.zig"),
+            .target = target,
+            .optimize = .ReleaseSafe,
+            .strip = true,
+            .link_libc = true,
+        });
+        lay_out_for(b, module, model);
+        const laid_out = b.addExecutable(.{
+            .name = b.fmt("noface-{s}", .{model}),
+            .root_module = module,
+        });
+        layouts_step.dependOn(&laid_out.step);
+    }
+    assert(layouts_step.dependencies.items.len == other_layouts.len);
+    return layouts_step;
 }
 
 /// `zig build gates`: every check a change passes before it's committed, the app and
@@ -98,6 +150,7 @@ fn build_app(b: *std.Build, target: std.Build.ResolvedTarget) App {
             .link_libc = true,
         }),
     });
+    lay_out_for(b, noface.root_module, layout_model);
     b.installArtifact(noface);
 
     // The launcher: starts the app and always puts the Kindle's own screens back.
@@ -111,6 +164,7 @@ fn build_app(b: *std.Build, target: std.Build.ResolvedTarget) App {
             .strip = true,
         }),
     });
+    lay_out_for(b, launcher.root_module, layout_model);
     b.installArtifact(launcher);
 
     // The picture helper. Built against the Kindle's own glibc, because it loads the
@@ -283,6 +337,7 @@ fn build_tools(b: *std.Build, target: std.Build.ResolvedTarget) *std.Build.Step 
         .optimize = .ReleaseFast,
         .link_libc = true,
     });
+    lay_out_for(b, core, layout_model);
 
     const tools_step = b.step("tools", "Build the development tools in tools/");
     for (tool_names) |name| {
@@ -349,6 +404,7 @@ fn build_tests(b: *std.Build) *std.Build.Step {
         .target = b.graph.host,
         .link_libc = true,
     });
+    lay_out_for(b, core, layout_model);
     for (tool_names) |name| {
         const tool_tests = b.addTest(.{ .root_module = b.createModule(.{
             .root_source_file = b.path(b.fmt("tools/{s}.zig", .{name})),
@@ -373,6 +429,7 @@ fn unit_tests(b: *std.Build, target: std.Build.ResolvedTarget) *std.Build.Step.C
             .link_libc = true,
         }),
     });
+    lay_out_for(b, tests.root_module, layout_model);
     // So src/kindle/paths.zig can check that what starts the launcher names it
     tests.root_module.addAnonymousImport("launch_sh", .{
         .root_source_file = b.path("device/kpm/launch.sh"),
@@ -401,5 +458,6 @@ fn scenario_exe(
             .link_libc = true,
         }),
     });
+    lay_out_for(b, exe.root_module, layout_model);
     return exe;
 }

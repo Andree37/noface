@@ -2,6 +2,7 @@
 //! and how they're saved.
 const std = @import("std");
 const assert = std.debug.assert;
+const device = @import("device.zig");
 const check = @import("../base/check.zig");
 
 /// The Kindle's typefaces, by name. kindle/fonts.zig has their files, in the same order.
@@ -42,11 +43,25 @@ pub const Families = struct {
     }
 };
 
-pub const sizes = [_]f32{ 36, 40, 46, 52, 58, 66 };
+/// The reading text's sizes, smallest to largest, in points and so in the screen's
+/// pixels by its density: the same printed size on every Kindle.
+pub const sizes = in_pixels(f32, .{ 8.75, 9.5, 11, 12.5, 14, 15.75 });
 
 pub const spacings = [_]f32{ 1.2, 1.35, 1.5, 1.7 };
 
-pub const margins = [_]i32{ 60, 100, 150, 210 };
+/// The page's margins, narrowest to widest, in points, as the sizes are.
+pub const margins = in_pixels(i32, .{ 14.5, 24, 36, 50.5 });
+
+/// `points`, each in the screen's pixels: the Kindle this build is laid out for.
+fn in_pixels(comptime T: type, comptime points: anytype) [points.len]T {
+    const screen = device.screen(device.target);
+    var result: [points.len]T = undefined;
+    inline for (points, &result) |p, *r| {
+        const px = screen.px_from_pt(p);
+        r.* = if (T == f32) @floatFromInt(px) else @intCast(px);
+    }
+    return result;
+}
 
 /// Settings that don't move where pages break. Every other one does: the saved page
 /// breaks are keyed by all the rest (screens/reader/page_store.zig), so a new setting

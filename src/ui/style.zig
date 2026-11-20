@@ -16,7 +16,7 @@ comptime {
 
 /// The screen every layout is worked out for. For now, the one Kindle noface knows;
 /// its size comes from the device's own facts (model/device.zig), never typed in here.
-pub const screen = device.screen(.paperwhite_12);
+pub const screen = device.screen(device.target);
 /// As untyped numbers, as layout arithmetic takes them in signed and unsigned alike.
 pub const screen_width: comptime_int = screen.width_px;
 pub const screen_height: comptime_int = screen.height_px;
@@ -69,6 +69,20 @@ pub fn line_step(comptime size: comptime_int) comptime_int {
 pub const margin = pt(17.25); // Left and right edge of interface text
 /// The least a control takes taps across: about 8.5 mm, a fingertip.
 pub const fingertip = space.band;
+/// A book's cover as the library shows it, in the grid and as the book to continue,
+/// which is the larger: covers are decoded at these sizes (ui/covers.zig).
+pub const cover = struct {
+    pub const width = pt(60.5);
+    pub const height = pt(80);
+    pub const hero_width = pt(64.75);
+    pub const hero_height = pt(85.75);
+
+    comptime {
+        assert(hero_width > width);
+        assert(hero_height > height);
+    }
+};
+
 /// A button with a word or two on it: an inch across.
 pub const button_width = pt(72);
 /// A slider's bar runs this far in from each edge of the screen.

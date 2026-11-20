@@ -17,8 +17,17 @@ const header_baseline = style.space.wider;
 const header_rule = 2;
 const edge = style.space.hair;
 const margin = style.space.band;
-/// The panel's heights, smallest first, from the screen's: the least a note takes.
-const heights = [_]u32{ style.screen_height / 5, style.screen_height / 3, style.screen_height / 2 };
+/// The panel's heights, smallest first, from the screen's; the smallest has room for a
+/// line of the largest text under its header, whatever the screen.
+const heights = [_]u32{
+    @max(style.screen_height / 5, least_height),
+    style.screen_height / 3,
+    style.screen_height / 2,
+};
+const least_height: u32 = layout.margin_top + layout.margin_bottom +
+    @as(u32, @intFromFloat(line_most)) + 1;
+const line_most = settings_model.sizes[settings_model.sizes.len - 1] *
+    settings_model.spacings[settings_model.spacings.len - 1];
 /// The note's text: under the header, and over the panel's foot.
 const text_gap = style.space.medium;
 const text_room_below = style.space.roomy;
@@ -33,8 +42,6 @@ const layout = text.Layout{
 comptime {
     // Panels grow in steps, and even the smallest has room for a line under its header.
     for (heights[1..], heights[0 .. heights.len - 1]) |taller, smaller| assert(taller > smaller);
-    const line_most = settings_model.sizes[settings_model.sizes.len - 1] *
-        settings_model.spacings[settings_model.spacings.len - 1];
     assert(layout.margin_top + layout.margin_bottom + line_most < heights[0]);
     assert(heights[heights.len - 1] < style.screen_height);
     assert(2 * margin < style.screen_width);

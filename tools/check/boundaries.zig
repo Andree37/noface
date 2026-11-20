@@ -51,7 +51,9 @@ const app_parts = .{ "", "sys", "model", "gfx", "layout", "ui", "kindle", "epub"
 /// The files at the top of src/ that put a program together: a program's start, the
 /// App's assembly with what the library needs reserved, the tests' lists, and what the
 /// tools in tools/ reach src/ through.
-const roots = [_][]const u8{ "main.zig", "setup.zig", "scenarios.zig", "tests.zig", "core.zig" };
+const roots = [_][]const u8{
+    "main.zig", "setup.zig", "scenarios.zig", "tests.zig", "core.zig", "layouts.zig",
+};
 
 const import_prefix = "@import(\"";
 /// The longest path inside src/ an import may resolve to.

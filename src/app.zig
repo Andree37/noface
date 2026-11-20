@@ -37,18 +37,17 @@ const unix_time = os.unix_time;
 /// Lines for noface's log, which the tests keep quiet (main.zig's `std_options`).
 const log = std.log.scoped(.app);
 
-pub const clock_top_px = 16;
-
-pub const clock_height_px = 56;
-
-pub const clock_width_px = 160;
+/// The clock over the page: its band's top, height and width, its text inside.
+pub const clock_top_px = style.space.snug;
+pub const clock_height_px = style.space.wide;
+pub const clock_width_px = style.button_width / 2;
 
 pub const notice_ms = 1800;
 /// The notice's box over the page, its text centred in it: its size, and its top from
 /// the screen's bottom.
-const notice_width_px = 760;
-const notice_height_px = 100;
-const notice_above_bottom_px = 260;
+const notice_width_px = style.screen_width - 2 * style.space.band - 2 * style.margin;
+const notice_height_px = style.fingertip;
+const notice_above_bottom_px = 2 * style.space.tall;
 
 comptime {
     // The clock's text is drawn inside the band its partial refresh covers.

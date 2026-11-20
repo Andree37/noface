@@ -34,13 +34,15 @@ const tile_label_width = (style.screen_width - 2 * style.margin) / tiles - style
 const tiles = 3; // Today, the last seven days, the streak
 const chart_title_y = tiles_top + style.space.band + style.space.tall;
 const chart_top = chart_title_y + style.space.roomy;
-const chart_baseline = chart_top + 2 * style.space.tall + style.space.roomy;
+/// The rows and the note under them sit at the screen's foot, and the chart takes the
+/// room between them and the tiles: taller on a taller screen.
+const rows_bottom = style.screen_height - note_room;
+const rows_top = rows_bottom - row_count * row_height;
+const day_label_y = rows_top - style.space.wide;
+const chart_baseline = day_label_y - style.space.wide;
 const bar_room = chart_baseline - chart_top - style.space.wide; // Room for a label above
-const day_label_y = chart_baseline + style.space.wide;
-const rows_top = day_label_y + style.space.wide;
 const row_height = style.space.band;
 const row_count = 4;
-const rows_bottom = rows_top + row_count * row_height;
 
 const bar_width = style.space.wide; // Thin bars with air between, rounded at the top only
 const bar_least = style.space.hair; // The sliver that shows any reading at all
@@ -67,6 +69,7 @@ comptime {
     assert(days_shown * bar_width < style.screen_width - 2 * style.margin);
     assert(2 * bar_corner <= bar_width);
     assert(bar_room >= bar_least);
+    assert(bar_room >= style.fingertip); // A day's reading can be told from another's
     // A letter for every day the chart shows.
     assert(day_letters.len == days_shown);
     // The three tiles' labels sit side by side without overlapping.

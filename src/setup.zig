@@ -85,16 +85,12 @@ const library_covers: u32 = covers.bytes + 2 * memory.unit_bytes;
 const library_slack: u32 = 4 << 20;
 
 comptime {
-    // Every Kindle whose screen noface knows is one it starts on (hwtcon.supported_size),
-    // and every layout is worked out for one screen (style.screen): until the layout
-    // follows the screen it runs on, each known Kindle must have that screen, so adding
-    // one with another stops the build here rather than drawing it the wrong size.
-    for (std.enums.values(device.Model)) |model| {
-        const s = device.screen(model);
-        assert(s.width_px == style.screen.width_px);
-        assert(s.height_px == style.screen.height_px);
-        assert(s.dpi == style.screen.dpi);
-    }
+    // The screen this build starts on (hwtcon.supported_size) is the one every layout is
+    // worked out for (style.screen)
+    const runs_on = device.screen(device.target);
+    assert(runs_on.width_px == style.screen.width_px);
+    assert(runs_on.height_px == style.screen.height_px);
+    assert(runs_on.dpi == style.screen.dpi);
 }
 
 comptime {

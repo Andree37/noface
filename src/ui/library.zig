@@ -18,11 +18,11 @@ const margin = style.margin;
 const whole_percent = 100; // A book read through
 const screen_width = style.screen_width;
 const gutter = style.space.tiny + style.space.roomy;
-const cell_step = cover.width + gutter;
+const cell_step = style.cover.width + gutter;
 /// As many covers as fit across between the margins.
 const columns = (screen_width - 2 * margin + gutter) / cell_step;
 /// A cover, its bar and its title under it, and a gap before the next row.
-const row_height = cover.height + style.space.wide + cell_title_below;
+const row_height = style.cover.height + style.space.wide + cell_title_below;
 const cell_title_below = style.space.roomy; // From the bar under a cover to its title's baseline
 /// A grid cell's parts: the bar's gap under its cover and its drop and thickness, the
 /// title's line step, and the corner icons' middles in from the cover's corners.
@@ -42,7 +42,7 @@ pub const status_height = style.status_height;
 const hero_gap = style.space.snug; // Above the hero, and between its place and the tabs row
 const hero_pad_below = style.space.roomy; // Under the hero's cover, inside its place
 const hero_top = status_height + hero_gap;
-const hero_bottom = hero_top + cover.hero_height + hero_pad_below;
+const hero_bottom = hero_top + style.cover.hero_height + hero_pad_below;
 const hero_tabs_top = hero_bottom + hero_gap;
 const plain_tabs_gap = style.space.hair; // Above the tabs row on later pages
 const plain_tabs_top = status_height + plain_tabs_gap;
@@ -200,11 +200,11 @@ comptime {
     // The grid's four columns between the margins
     assert(margin + columns * cell_step - gutter <= style.screen_width - margin);
     // A cover, its progress bar and its title fit in a row
-    assert(cover.height + cell.bar_gap + cell_title_below < row_height);
+    assert(style.cover.height + cell.bar_gap + cell_title_below < row_height);
     // The strips, top to bottom, with page one's hero above its tabs
     assert(status_height <= plain_tabs_top);
     assert(status_height <= hero_top);
-    assert(hero_top + cover.hero_height <= hero_bottom);
+    assert(hero_top + style.cover.hero_height <= hero_bottom);
     assert(hero_bottom <= hero_tabs_top);
     assert(hero_tabs_top + tabs_height <= hero_grid_top);
     assert(plain_tabs_top + tabs_height <= plain_grid_top);
@@ -235,7 +235,7 @@ comptime {
     for (tabs) |t| assert(t.label_left < t.right);
     // On a cover set in type, the title's last line, its rule and the author never
     // meet, on the grid's covers and the hero's
-    for ([_]u32{ cover.height, cover.hero_height }) |h| {
+    for ([_]u32{ style.cover.height, style.cover.hero_height }) |h| {
         const lines = type_title_lines(h);
         assert(lines >= 3);
         const rule_bottom = type_title_top + lines * type_title_step + type_rule_height;
@@ -396,7 +396,7 @@ pub fn place(h: Hit) style.Point {
 
 /// Screen area of the hero, for tap feedback.
 pub fn hero_rect(width: u32) Rect {
-    return .{ .x = margin, .y = hero_top, .w = width - 2 * margin, .h = cover.hero_height };
+    return .{ .x = margin, .y = hero_top, .w = width - 2 * margin, .h = style.cover.hero_height };
 }
 
 /// Where the `slot`th cover on a page of the grid sits (counting along rows).
@@ -405,7 +405,7 @@ fn cell_origin(slot: u32, with_hero: bool) struct { x: u32, y: u32 } {
     const top: u32 = @intCast(grid_top(with_hero));
     const x = margin + slot % columns * cell_step;
     const y = top + slot / columns * row_height;
-    assert(x + cover.width <= style.screen_width - margin);
+    assert(x + style.cover.width <= style.screen_width - margin);
     assert(y + row_height < message_baseline);
     return .{ .x = x, .y = y };
 }
@@ -415,7 +415,7 @@ pub fn book_rect(index: u32, page: u32) Rect {
     const first = first_book(page);
     assert(index >= first);
     const at = cell_origin(index - first, page == 0);
-    return .{ .x = at.x, .y = at.y, .w = cover.width, .h = cover.height };
+    return .{ .x = at.x, .y = at.y, .w = style.cover.width, .h = style.cover.height };
 }
 
 /// A thin gray track with a thick rounded black fill. Any progress at all shows as
@@ -436,7 +436,7 @@ fn progress_bar(page: Page, x: u32, y: u32, w: u32, percent: u32, thick: f32) vo
 /// "32%" in a small white pill over a cover's bottom left corner.
 fn percent_badge(font: *Font, page: Page, x: u32, y: u32, percent: u32) !void {
     assert(x >= margin);
-    assert(y >= plain_grid_top + cover.height);
+    assert(y >= plain_grid_top + style.cover.height);
     var label: [8]u8 = undefined;
     const s = std.fmt.bufPrint(&label, "{d}%", .{@min(percent, whole_percent)}) catch return;
     const r: f32 = badge.radius;
@@ -531,10 +531,10 @@ fn draw_cover(
 ) !void {
     assert(x >= margin);
     if (pool.grid_cover(e.thumbnail)) |c| {
-        assert(c.len == cover.width * cover.height);
-        page.copy_image(x, y, c, cover.width, cover.height);
+        assert(c.len == style.cover.width * style.cover.height);
+        page.copy_image(x, y, c, style.cover.width, style.cover.height);
     } else {
-        try type_cover(fonts, page, x, y, cover.width, cover.height, e);
+        try type_cover(fonts, page, x, y, style.cover.width, style.cover.height, e);
     }
 }
 
@@ -548,14 +548,14 @@ fn draw_hero(
     now: Moment,
 ) !void {
     if (pool.hero_cover(e.thumbnail)) |c| {
-        assert(c.len == cover.hero_width * cover.hero_height);
-        page.copy_image(margin, hero_top, c, cover.hero_width, cover.hero_height);
+        assert(c.len == style.cover.hero_width * style.cover.hero_height);
+        page.copy_image(margin, hero_top, c, style.cover.hero_width, style.cover.hero_height);
     } else {
-        const h = cover.hero_height;
-        try type_cover(fonts, page, margin, hero_top, cover.hero_width, h, e);
+        const h = style.cover.hero_height;
+        try type_cover(fonts, page, margin, hero_top, style.cover.hero_width, h, e);
     }
 
-    const left_px: u32 = margin + cover.hero_width + hero_text.gap;
+    const left_px: u32 = margin + style.cover.hero_width + hero_text.gap;
     const left: f32 = @floatFromInt(left_px);
     const avail: f32 = @floatFromInt(page.width - left_px - margin);
     try fonts.caption.draw(page, left, hero_top + hero_text.kicker_drop, "Continue reading");
@@ -573,7 +573,7 @@ fn draw_hero(
     const below_title: i32 = @as(i32, @intCast(used)) * hero_title_step - hero_text.author_rise;
     const author_y: i32 = title_y + below_title;
     const has_byline = try draw_hero_byline(fonts, page, e, left_px, author_y, avail);
-    const bar_y = hero_top + cover.hero_height - hero_text.bar_rise;
+    const bar_y = hero_top + style.cover.hero_height - hero_text.bar_rise;
     // The author, even under the longest title, is clear of the bar
     assert(author_y < bar_y);
     // Under the author (or the title, when there's no author): when it was last read,
@@ -605,7 +605,7 @@ fn draw_hero_byline(
     author_y: i32,
     avail: f32,
 ) !bool {
-    assert(left_px > margin + cover.hero_width);
+    assert(left_px > margin + style.cover.hero_width);
     assert(author_y > hero_top);
     var byline_buf: [256]u8 = undefined;
     var series_buf: [160]u8 = undefined;
@@ -662,26 +662,26 @@ fn draw_cell(
     assert(x >= margin);
     assert(y >= plain_grid_top);
     try draw_cover(pool, fonts, page, e, x, y);
-    const bar_y = y + cover.height + cell.bar_gap;
+    const bar_y = y + style.cover.height + cell.bar_gap;
     const title_y: i32 = @intCast(bar_y + cell_title_below);
-    const title_width: f32 = cover.width;
+    const title_width: f32 = style.cover.width;
     const left: f32 = @floatFromInt(x);
     if (!e.is_local()) {
-        page.tint(x, y, cover.width, cover.height, style.finished_cover);
-        const cloud_x: f32 = @floatFromInt(x + cover.width - cell.cloud_inset);
-        icons.cloud(page, cloud_x, @floatFromInt(y + cover.height - cell.cloud_inset));
+        page.tint(x, y, style.cover.width, style.cover.height, style.finished_cover);
+        const cloud_x: f32 = @floatFromInt(x + style.cover.width - cell.cloud_inset);
+        icons.cloud(page, cloud_x, @floatFromInt(y + style.cover.height - cell.cloud_inset));
         const label = if (e.availability == .downloading) "Downloading" else e.title;
         const step = cell.title_step;
         _ = try draw.wrapped(fonts.caption, page, left, title_y, step, label, title_width, 1);
         return;
     }
     if (e.in_progress()) {
-        progress_bar(page, x, bar_y + cell.bar_drop, cover.width, e.percent, cell.bar_thick);
-        try percent_badge(fonts.caption, page, x, y + cover.height, e.percent);
+        progress_bar(page, x, bar_y + cell.bar_drop, style.cover.width, e.percent, cell.bar_thick);
+        try percent_badge(fonts.caption, page, x, y + style.cover.height, e.percent);
     }
     if (e.is_read()) {
         const tick = cell.tick_inset;
-        icons.check(page, @floatFromInt(x + cover.width - tick), @floatFromInt(y + tick));
+        icons.check(page, @floatFromInt(x + style.cover.width - tick), @floatFromInt(y + tick));
     }
     if (e.series) |s| try series_badge(fonts.caption, page, x, y, s.index);
     const step = cell.title_step;
@@ -847,7 +847,7 @@ pub fn render(
 /// tabs row, of each pager arrow, and inside the hero's place clear of its dots.
 fn test_book(slot: u32, hero: bool) [2]i32 {
     const at = cell_origin(slot, hero);
-    return .{ @intCast(at.x + cover.width / 2), @intCast(at.y + cover.height / 2) };
+    return .{ @intCast(at.x + style.cover.width / 2), @intCast(at.y + style.cover.height / 2) };
 }
 fn test_tab_x(t: Tab) i32 {
     return @divTrunc(t.label_left + t.right, 2);
@@ -858,7 +858,7 @@ fn test_tabs_y(hero: bool) i32 {
 const test_pager_y = (footer.top + footer.bottom) / 2;
 const test_prev_x = draw.Pager.prev_left + 1;
 const test_next_x = draw.Pager.next_left + 1;
-const test_hero_x = margin + cover.hero_width;
+const test_hero_x = margin + style.cover.hero_width;
 const test_hero_y = (hero_top + hero_bottom) / 2;
 const test_dots_x = screen_width - margin - 1;
 const test_books = 79; // More than fill page one
@@ -950,7 +950,7 @@ test "search button sits beside the filter, and the search takes the hero's plac
 
 test "a book's title is part of the book, and the hero keeps its dots" {
     const at = cell_origin(0, true);
-    const title_y: i32 = @intCast(at.y + cover.height + cell.bar_gap + cell_title_below);
+    const title_y: i32 = @intCast(at.y + style.cover.height + cell.bar_gap + cell_title_below);
     const left_x: i32 = @intCast(at.x);
     try std.testing.expectEqual(Hit{ .book = 0 }, hit(left_x, title_y, 0, test_books, false));
     const dots_y = hero_top + hero_text.dots_drop;
@@ -988,6 +988,6 @@ test "the tabs row takes taps just off its pills, and the filter's from its funn
 
 test "a cover set in type has room for its title's lines above the author" {
     // A long title's four lines at least, on a grid cover and the hero's
-    try std.testing.expect(type_title_lines(cover.height) >= 4);
-    try std.testing.expect(type_title_lines(cover.hero_height) >= 4);
+    try std.testing.expect(type_title_lines(style.cover.height) >= 4);
+    try std.testing.expect(type_title_lines(style.cover.hero_height) >= 4);
 }

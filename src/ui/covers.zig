@@ -4,6 +4,7 @@
 //! paged through, every book shows its own cover, in the same memory.
 const std = @import("std");
 const assert = std.debug.assert;
+const style = @import("style.zig");
 const image = @import("../gfx/image.zig");
 const memory = @import("../base/memory.zig");
 
@@ -15,8 +16,8 @@ pub const hero_slots: u32 = 4;
 
 /// What the pool takes, in the library's region.
 pub const bytes: u64 = grid_slots * grid_cover_bytes + hero_slots * hero_cover_bytes;
-const grid_cover_bytes: u32 = image.width * image.height;
-const hero_cover_bytes: u32 = image.hero_width * image.hero_height;
+const grid_cover_bytes: u32 = style.cover.width * style.cover.height;
+const hero_cover_bytes: u32 = style.cover.hero_width * style.cover.hero_height;
 
 comptime {
     // The page shown and both sides fit, with room to spare
@@ -26,8 +27,8 @@ comptime {
 }
 
 pub const Pool = struct {
-    grid: Shelf(grid_slots, image.width, image.height),
-    hero: Shelf(hero_slots, image.hero_width, image.hero_height),
+    grid: Shelf(grid_slots, style.cover.width, style.cover.height),
+    hero: Shelf(hero_slots, style.cover.hero_width, style.cover.hero_height),
 
     /// A pool whose pixels come from `budget`, kept for good, and memory only once a
     /// cover is drawn into them.

@@ -7,9 +7,17 @@
 //! density joins them.
 const std = @import("std");
 const assert = std.debug.assert;
+/// Which Kindle this build is laid out for (`zig build -Dlayout=<model>`).
+const layout = @import("layout");
 
-/// A Kindle noface runs on.
-pub const Model = enum { paperwhite_12 };
+/// The Kindles noface knows the screens of.
+pub const Model = enum { paperwhite_12, basic_11, scribe, basic_10 };
+
+/// The Kindle this build is laid out for, and so the one it runs on: the Paperwhite,
+/// unless the build asks for another. The others are known so `zig build layouts` can
+/// lay every screen out for each and check it fits.
+pub const target: Model = std.meta.stringToEnum(Model, layout.model) orelse
+    @compileError("-Dlayout names no Kindle in device.Model");
 
 /// A screen's size in pixels, and its density in pixels to the inch.
 pub const Screen = struct {
@@ -37,9 +45,14 @@ const points_per_inch = 72;
 
 /// A model's name, as a person would say it.
 pub fn name(model: Model) []const u8 {
-    return switch (model) {
+    const result = switch (model) {
         .paperwhite_12 => "Kindle Paperwhite (12th generation)",
+        .basic_11 => "Kindle (11th generation)",
+        .scribe => "Kindle Scribe",
+        .basic_10 => "Kindle (10th generation)",
     };
+    assert(result.len > 0);
+    return result;
 }
 
 /// A model's screen, as its maker built it.
@@ -47,28 +60,36 @@ pub fn screen(model: Model) Screen {
     const s: Screen = switch (model) {
         // About 7.1 inches across its diagonal at 300 pixels to the inch
         .paperwhite_12 => .{ .width_px = 1272, .height_px = 1696, .dpi = 300 },
+        // About 6 inches at 300 to the inch
+        .basic_11 => .{ .width_px = 1072, .height_px = 1448, .dpi = 300 },
+        // About 10.2 inches at 300 to the inch
+        .scribe => .{ .width_px = 1860, .height_px = 2480, .dpi = 300 },
+        // About 6 inches at 167 to the inch
+        .basic_10 => .{ .width_px = 600, .height_px = 800, .dpi = 167 },
     };
     assert(s.width_px < s.height_px); // Held upright
     assert(s.dpi > 0);
     return s;
 }
 
-/// The model with a screen of this size, as its display driver reports it; null for
-/// one noface doesn't know, which it doesn't start on.
+/// The Kindle this build runs on, if its display driver reports that screen's size;
+/// null for any other, which this build isn't laid out for and doesn't start on.
 pub fn with_screen(width_px: u32, height_px: u32) ?Model {
-    for (std.enums.values(Model)) |model| {
-        const s = screen(model);
-        if (s.width_px == width_px and s.height_px == height_px) return model;
-    }
+    const s = screen(target);
+    assert(s.width_px < s.height_px); // Asked of a screen held upright
+    if (s.width_px == width_px and s.height_px == height_px) return target;
     return null;
 }
 
-test "every model's screen is told by its size, and no other size is taken for one" {
+test "the screen this build is laid out for is told by its size, and no other" {
+    const s = screen(target);
+    try std.testing.expectEqual(@as(?Model, target), with_screen(s.width_px, s.height_px));
     for (std.enums.values(Model)) |model| {
-        const s = screen(model);
-        try std.testing.expectEqual(@as(?Model, model), with_screen(s.width_px, s.height_px));
+        if (model == target) continue;
+        const other = screen(model);
+        const found = with_screen(other.width_px, other.height_px);
+        try std.testing.expectEqual(@as(?Model, null), found);
     }
-    try std.testing.expectEqual(@as(?Model, null), with_screen(1072, 1448));
     try std.testing.expectEqual(@as(?Model, null), with_screen(1696, 1272)); // On its side
 }
 

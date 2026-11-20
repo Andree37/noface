@@ -15,6 +15,7 @@ const series_screen = @import("series.zig");
 const books = @import("books.zig");
 const memory = @import("../base/memory.zig");
 const cover_image = @import("../gfx/image.zig");
+const style = @import("../ui/style.zig");
 const screen = @import("screen.zig");
 const input_mod = @import("../kindle/input.zig");
 
@@ -24,8 +25,8 @@ const sheet_rounds_max = 2;
 
 comptime {
     // The card's small cover is half the grid's, so it's never empty
-    assert(cover_image.width / 2 > 0);
-    assert(cover_image.height / 2 > 0);
+    assert(style.cover.width / 2 > 0);
+    assert(style.cover.height / 2 > 0);
 }
 
 /// Marks a book read or unread, from its sheet here or the reader's menu. The Kindle
@@ -242,8 +243,8 @@ pub fn up_next(
     assert(background.len == a.display.screen.pixels.len);
     @memcpy(background, a.display.screen.pixels);
     // Its cover beside the title, half the grid's size, when it has one
-    const cover_width = cover_image.width / 2;
-    const cover_height = cover_image.height / 2;
+    const cover_width = style.cover.width / 2;
+    const cover_height = style.cover.height / 2;
     offer.small = null;
     if (next.thumbnail) |t| {
         offer.small = cover_image.load(a.alloc, t, cover_width, cover_height);

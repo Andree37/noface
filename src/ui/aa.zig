@@ -112,7 +112,10 @@ pub const switches = [_]Switch{
     .{
         .tab = .more,
         .field = "refresh",
-        .label = "Page refresh every 20 pages",
+        .label = std.fmt.comptimePrint(
+            "Page refresh every {d} pages",
+            .{settings_model.clean_every_pages},
+        ),
         .effect = .nothing,
     },
     .{ .tab = .more, .field = "time_left", .label = "Show time left", .effect = .footer },

@@ -7,6 +7,7 @@ const check = @import("../../base/check.zig");
 const Page = @import("../../gfx/page.zig").Page;
 const book_model = @import("../../model/book.zig");
 const stats = @import("../../model/stats.zig");
+const settings_model = @import("../../model/settings.zig");
 const Words = @import("words.zig").Words;
 const bookmarks = @import("../../model/bookmarks.zig");
 const icons = @import("../../ui/icons.zig");
@@ -30,9 +31,6 @@ const counter_left_of_middle_px = 50;
 /// The footer: the page number and time left, repainted alone when the count arrives.
 const footer_height_px = 110;
 const footer_baseline_above_bottom_px = 60;
-/// With "clean refresh" on in Aa, every this many pages is shown with a flash, clearing
-/// the panel's ghosting.
-const clean_every_turns = 20;
 
 comptime {
     assert(footer_baseline_above_bottom_px < footer_height_px);
@@ -65,7 +63,7 @@ pub const Session = struct {
     clock: reading_clock.Clock = .{},
     /// Where the reader was before jumping elsewhere, for the Back button.
     back: back_button.Back = .{},
-    turns: u32 = 0, // Pages shown, for a clean refresh every `clean_every_turns`
+    turns: u32 = 0, // Pages shown, for the clean refresh (`settings_model.clean_every_pages`)
 
     /// How many pages there are so far: a page per break, which a book's paragraphs bound.
     pub fn page_count(s: *const Session) u32 {
@@ -418,7 +416,8 @@ pub const Session = struct {
         @memcpy(a.display.screen.pixels, buf);
         a.stamp_clock();
         s.turns += 1;
-        const clean = force_clean or (a.user.settings.refresh and s.turns % clean_every_turns == 0);
+        const due = s.turns % settings_model.clean_every_pages == 0;
+        const clean = force_clean or (a.user.settings.refresh and due);
         const refresh: hwtcon.Refresh = if (clean) .flash else .page;
         const marker = try a.display.screen.show(refresh);
         const queued = now_us();

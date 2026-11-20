@@ -103,6 +103,10 @@ pub const Family = struct {
     }
 };
 
+/// With `refresh` on, every this many pages is shown with a flash, clearing the panel's
+/// ghosting.
+pub const clean_every_pages = 20;
+
 pub const Settings = struct {
     size: u32 = 2,
     spacing: u32 = 1,
@@ -111,7 +115,7 @@ pub const Settings = struct {
     bold: bool = false,
     left_align: bool = false,
     clock: bool = true,
-    refresh: bool = false,
+    refresh: bool = false, // A clean refresh every `clean_every_pages` pages
     time_left: bool = true,
     /// Open noface when the Kindle starts: the launcher reads it (src/kindle/boot.zig).
     autostart: bool = false,

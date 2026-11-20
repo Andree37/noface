@@ -131,9 +131,9 @@ fn open_book(r: *Reader) !void {
     std.debug.print("open {s}: {d} pages, parsed in {d} ms, {s} in {d} ms\n", .{
         entry.title,
         opened.pages.len,
-        (t1 - t0) / 1000,
+        (t1 - t0) / std.time.us_per_ms,
         @tagName(opened.source),
-        (now_us() - t1) / 1000,
+        (now_us() - t1) / std.time.us_per_ms,
     });
     assert(opened.start < opened.pages.len);
     a.layout.marks = &.{};
@@ -598,7 +598,7 @@ pub const Reader = struct {
             if (r.run != null and r.reading()) try r.tick_running();
             return;
         }
-        const minute = unix_time() / 60;
+        const minute = unix_time() / std.time.s_per_min;
         if (minute != r.battery_minute) { // In every view
             r.battery_minute = minute;
             a.note_battery();
@@ -607,7 +607,7 @@ pub const Reader = struct {
         if (!r.reading()) return; // The rest only while the page alone is up
         if (r.run != null) try r.tick_running();
         r.pause_wifi();
-        if (unix_time() / 60 != a.clock_minute) try a.update_clock();
+        if (unix_time() / std.time.s_per_min != a.clock_minute) try a.update_clock();
     }
 
     /// A couple of minutes into the book, and again after a dictionary's download,

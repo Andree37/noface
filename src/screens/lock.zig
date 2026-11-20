@@ -213,11 +213,15 @@ pub fn has_picture(a: *const app.App) bool {
     return picture_path(a, &buffer) != null;
 }
 
+/// How much of a picture's start its key is made from, with its length: enough to tell
+/// pictures apart without reading a large one whole on every lock.
+const picture_key_bytes = 4096;
+
 /// Tells pictures apart for the kept lock screen, so a replaced one is drawn again.
 fn picture_key(data: []const u8) u64 {
     assert(data.len > 0); // A mapped file is never empty
     var h = std.hash.Wyhash.init(1);
-    h.update(data[0..@min(data.len, 4096)]);
+    h.update(data[0..@min(data.len, picture_key_bytes)]);
     h.update(std.mem.asBytes(&data.len));
     return h.final();
 }

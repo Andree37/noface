@@ -10,6 +10,7 @@ const goto_ui = @import("../ui/goto.zig");
 const keyboard = @import("../ui/keyboard.zig");
 const search_sheet = @import("../ui/search_sheet.zig");
 const draw_ui = @import("../ui/draw.zig");
+const Font = @import("../gfx/font.zig").Font;
 const style = @import("../ui/style.zig");
 const files = @import("../library/files.zig");
 const input_mod = @import("../kindle/input.zig");
@@ -36,13 +37,27 @@ comptime {
     assert(keyboard.top < style.screen_height);
 }
 
-/// The choices' header, over the list where the Go To sheet's tabs would be, the screen
-/// having no status strip: the back link's arrow's middle, the heading's and the book's
-/// baselines, the book's faded.
+/// The choices' header, the screen having no status strip: the heading standing on the
+/// band where the Go To sheet's tabs would be, the book it's for centred in that band,
+/// faded, and the back link centred between the screen's top and the heading's
+/// capitals.
 const header = struct {
-    const back_y = 70;
-    const heading_y = goto_ui.top - 6;
-    const about_y = goto_ui.list_top - 62;
+    fn heading_y(heading: *const Font) i32 {
+        const baseline = goto_ui.top - heading.descent; // Its lowest letters on the band
+        assert(baseline > heading.cap_height);
+        return baseline;
+    }
+
+    fn about_y(about: *const Font) i32 {
+        // As Go To centres its tabs in the band
+        return about.centred_baseline(goto_ui.top, goto_ui.list_top - goto_ui.top);
+    }
+
+    fn back_y(heading: *const Font) u32 {
+        const capitals_top = heading_y(heading) - heading.cap_height;
+        assert(capitals_top > 0);
+        return @intCast(@divTrunc(capitals_top, 2));
+    }
 };
 
 const Choices = struct {
@@ -64,11 +79,11 @@ const Choices = struct {
         page.fill_rect(0, 0, page.width, page.height, style.white);
         // Back to the library along the top, as the stats screen has it, then what's
         // being chosen and the book it's for, over the list
-        try draw_ui.draw_back_link(a.ui.small, page, header.back_y, "Library");
+        try draw_ui.draw_back_link(a.ui.small, page, header.back_y(a.ui.hero), "Library");
         const width_available: f32 = @floatFromInt(page.width - 2 * style.margin);
-        const heading_y = header.heading_y;
+        const heading_y = header.heading_y(a.ui.hero);
         try draw_ui.clipped(a.ui.hero, page, style.margin, heading_y, c.heading, width_available);
-        const about_y = header.about_y;
+        const about_y = header.about_y(a.ui.caption);
         try draw_ui.clipped(a.ui.caption, page, style.margin, about_y, c.about, width_available);
         const tint_width = page.width - 2 * style.margin;
         a.ui.caption.fade(page, style.margin, about_y, tint_width, style.faded);

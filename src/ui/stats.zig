@@ -73,9 +73,10 @@ comptime {
 
 /// Minutes, to the nearest, in `seconds`.
 fn nearest_minute(seconds: u64) u64 {
-    const minutes = (seconds + 30) / 60;
-    assert(minutes * 60 <= seconds + 30);
-    assert(seconds + 30 < minutes * 60 + 60);
+    const half = std.time.s_per_min / 2;
+    const minutes = (seconds + half) / std.time.s_per_min;
+    assert(minutes * std.time.s_per_min <= seconds + half);
+    assert(seconds + half < (minutes + 1) * std.time.s_per_min);
     return minutes;
 }
 
@@ -83,7 +84,7 @@ fn nearest_minute(seconds: u64) u64 {
 /// half a minute.
 fn minutes_text(buffer: []u8, seconds: u64, none: []const u8) []const u8 {
     assert(none.len > 0);
-    if (seconds < 30) return none;
+    if (seconds < std.time.s_per_min / 2) return none;
     const minutes = nearest_minute(seconds);
     assert(minutes > 0);
     return stats_model.format_minutes(buffer, minutes);

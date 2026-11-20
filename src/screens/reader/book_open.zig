@@ -7,7 +7,6 @@ const assert = std.debug.assert;
 const app = @import("../../app.zig");
 const book_model = @import("../../model/book.zig");
 const catalog = @import("../../model/catalog.zig");
-const stats = @import("../../model/stats.zig");
 const epub = @import("../../epub/epub.zig");
 const kfx = @import("../../kindle/kfx.zig");
 const hyphen = @import("../../layout/hyphen.zig");
@@ -182,13 +181,8 @@ pub fn read_notes(
 ) !void {
     const paragraphs = session.paragraphs;
     assert(paragraphs.len > 0); // Parsing refuses a book without any
-    const words_before = try alloc.alloc(u64, paragraphs.len + 1);
-    words_before[0] = 0;
-    for (paragraphs, 0..) |p, i| {
-        words_before[i + 1] = words_before[i] + (if (p.note) 0 else stats.count_words(p.text));
-    }
-    session.words_before = words_before;
-    assert(session.words_before.len == paragraphs.len + 1);
+    session.words = try .count(alloc, paragraphs);
+    assert(session.words.before.len == paragraphs.len + 1);
     try session.notes.load(alloc, entry, state_path, paragraphs);
     try hl.refresh_marks(a, session, alloc);
 }

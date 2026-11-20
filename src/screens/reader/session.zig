@@ -7,6 +7,7 @@ const check = @import("../../base/check.zig");
 const Page = @import("../../gfx/page.zig").Page;
 const book_model = @import("../../model/book.zig");
 const stats = @import("../../model/stats.zig");
+const Words = @import("words.zig").Words;
 const bookmarks = @import("../../model/bookmarks.zig");
 const icons = @import("../../ui/icons.zig");
 const catalog = @import("../../model/catalog.zig");
@@ -57,7 +58,7 @@ pub const Session = struct {
     // A first open still being laid out: pages count from the reader's place until done
     progress: ?*paginate.Progressive = null,
     chapters: []const book_model.Chapter = &.{},
-    words_before: []const u64 = &.{}, // Words before each paragraph, for time left
+    words: Words = .{}, // Counted as the book opens, for time left and the speed
     clock: reading_clock.Clock = .{},
     /// Where the reader was before jumping elsewhere, for the Back button.
     back: back_button.Back = .{},
@@ -134,52 +135,30 @@ pub const Session = struct {
     }
 
     /// Words from the start of the book to a position.
-    pub fn words_at(s: *const Session, p: book_model.Pos) u64 {
-        assert(s.words_before.len == s.paragraphs.len + 1);
-        check.that(p.para < s.paragraphs.len, "position inside the book");
-        check.that(p.para + 1 < s.words_before.len, "position inside the counted words");
-        const para = s.paragraphs[p.para];
-        if (para.note) return s.words_before[p.para];
-        const before = para.text[0..@min(p.byte, para.text.len)];
-        return s.words_before[p.para] + stats.count_words(before);
-    }
-
     fn words_on_page(s: *const Session, index: u32) u64 {
         assert(index < s.pages.len);
-        assert(s.words_before.len > 0);
-        const total = s.words_before[s.words_before.len - 1];
-        const end = if (s.page_end(index)) |e| s.words_at(e) else total;
-        return end -| s.words_at(s.pages[index]);
+        const end = if (s.page_end(index)) |e| s.words.at(s.paragraphs, e) else s.words.total();
+        return end -| s.words.at(s.paragraphs, s.pages[index]);
     }
 
     /// Minutes left in the chapter and in the book from a page, once speed is known.
     pub fn time_left(s: *const Session, index: u32) struct { chapter: ?u64, book: ?u64 } {
         assert(index < s.pages.len);
-        assert(s.words_before.len == s.paragraphs.len + 1);
-        const here = s.words_at(s.pages[index]);
-        const total = s.words_before[s.words_before.len - 1];
+        const here = s.words.at(s.paragraphs, s.pages[index]);
         const speed = s.app.user.speed;
-        const book_minutes = speed.minutes_for(total -| here);
+        const book_minutes = speed.minutes_for(s.words.total() -| here);
         // Past the last chapter's start, the chapter runs to the book's end
         const chapter_minutes: ?u64 = if (s.chapters.len == 0)
             null
         else
-            speed.minutes_for(s.chapter_words_left(s.pages[index]));
+            speed.minutes_for(s.words.chapter_left(s.chapters, here));
         return .{ .chapter = chapter_minutes, .book = book_minutes };
     }
 
     /// The words from `at` to its chapter's end, for running's minutes left
     /// (reader/run.zig). A book without chapters is one.
     pub fn chapter_words_left(s: *const Session, at: book_model.Pos) u64 {
-        assert(s.words_before.len == s.paragraphs.len + 1);
-        const here = s.words_at(at);
-        var end: u64 = s.words_before[s.words_before.len - 1];
-        for (s.chapters) |c| {
-            const w = s.words_before[c.para];
-            if (w > here and w < end) end = w;
-        }
-        assert(here <= end);
-        return end - here;
+        return s.words.chapter_left(s.chapters, s.words.at(s.paragraphs, at));
     }
 
     /// The page being left: its time goes to the book and the day's journal, and a

@@ -21,6 +21,8 @@ const app = @import("../../app.zig");
 const sess = @import("session.zig");
 const view = @import("run_view.zig");
 const lipc = @import("../../kindle/lipc.zig");
+const card_screen = @import("../card.zig");
+const screen = @import("../screen.zig");
 
 /// A touch while running: when the panel says it came down, and how long it stayed
 /// (null for a hold or a swipe, down long already).
@@ -77,6 +79,30 @@ pub const Run = struct {
     /// What a move did: the place of what's on screen now, to follow and show
     /// (`show_moved`), or null when nothing moved.
     pub const Moved = ?book_model.Pos;
+
+    /// Running on, from `now`: at the running pace, the first time one from the
+    /// reader's speed, and the session no longer learning the reader's speed from page
+    /// turns, as running isn't reading.
+    pub fn begin(a: *app.App, s: *sess.Session, now: u64) Run {
+        assert(s.learns_speed); // Only running stops it
+        const user = &a.user;
+        if (user.running_pace == null) user.running_pace = running_model.first_pace(user.speed);
+        s.learns_speed = false;
+        std.debug.print("running: on, {d:.0} words a minute\n", .{user.running_pace.?});
+        assert(user.running_pace != null);
+        return .{ .started_us = now };
+    }
+
+    /// Running off: the Kindle free to sleep, the session learning the reader's speed
+    /// again, and the pace saved.
+    pub fn end(run: *Run, a: *app.App, s: *sess.Session) void {
+        assert(!s.learns_speed); // Stopped as running began
+        run.release_awake();
+        s.learns_speed = true;
+        std.debug.print("running: off\n", .{});
+        a.user.save_speed();
+        assert(!run.awake);
+    }
 
     /// The whole screen: the phrase at `from`, or the first after it, the clock above
     /// and the footer below, cleanly, with a flash.
@@ -324,6 +350,43 @@ pub const pause_rows = [_]card.Row{
     .{ .label = "Stop running" },
 };
 pub const Paused = enum { resume_running, text_settings, stop };
+
+/// The pause card's own: its line saying how long the run has been, and the phrase
+/// screen kept under it, made in the book's memory the first time the card opens and
+/// kept while the book is open.
+pub const Pause = struct {
+    note: [48]u8 = undefined,
+    under: []u8 = &.{},
+
+    /// The card over the phrase screen as it is, kept here to show under the card and
+    /// put back after; the run `minutes` long so far.
+    pub fn open(
+        p: *Pause,
+        a: *app.App,
+        alloc: std.mem.Allocator,
+        minutes_run: u64,
+    ) !card_screen.Card {
+        const pixels = a.display.screen.pixels.len;
+        if (p.under.len == 0) p.under = try alloc.alloc(u8, pixels);
+        assert(p.under.len == pixels);
+        @memcpy(p.under, a.display.screen.pixels);
+        const note = std.fmt.bufPrint(&p.note, "Running for {d} min", .{minutes_run}) catch "";
+        return card_screen.over(a, .{ .pixels = p.under }, "Paused", note, &pause_rows, null);
+    }
+
+    /// The card closed: the phrase screen back as it was, and what was chosen, carrying
+    /// on for a card closed without a choice.
+    pub fn closed(p: *Pause, a: *app.App, ending: screen.Ending(u32)) !Paused {
+        assert(p.under.len == a.display.screen.pixels.len); // Kept as the card opened
+        try card_screen.closed(a, .{ .pixels = p.under });
+        const choice: Paused = switch (ending) {
+            .done => |row| @fromBackingInt(@intCast(row)),
+            .closed, .interrupted => .resume_running,
+        };
+        std.debug.print("running: {s}\n", .{@tagName(choice)});
+        return choice;
+    }
+};
 
 comptime {
     assert(pause_rows.len == std.enums.values(Paused).len);

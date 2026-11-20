@@ -38,7 +38,6 @@ const View = view_rules.View;
 const note_view = @import("reader/note.zig");
 const controls = @import("reader/controls.zig");
 const run_mode = @import("reader/run.zig");
-const running_model = @import("../model/running.zig");
 const card_screen = @import("card.zig");
 
 pub const save_every = 10;
@@ -201,10 +200,8 @@ pub const Reader = struct {
     /// Running mode, while it's on: the phrase on screen and its timer (reader/run.zig).
     /// The reader alone knows it's on; the toolbar and the session are told.
     run: ?run_mode.Run = null,
-    pause_note: [48]u8 = undefined, // The pause card's line: how long the run has been
-    /// The phrase screen as running last left it, under its card: running's own, made
-    /// in the book's memory the first time the card opens, kept while the book is.
-    run_screen: []u8 = &.{},
+    /// Running's pause card: its line, and the phrase screen kept under it.
+    pause: run_mode.Pause = .{},
 
     /// The screens a book opens over itself.
     const Over = union(enum) {
@@ -779,13 +776,7 @@ pub const Reader = struct {
     fn start_running(r: *Reader) !void {
         assert(r.run == null);
         const a = r.a;
-        assert(r.s.learns_speed); // Only running stops it
-        // Running moves on at a pace: the first time, one from the reader's speed
-        const user = &a.user;
-        if (user.running_pace == null) user.running_pace = running_model.first_pace(user.speed);
-        r.run = .{ .started_us = now_us() };
-        r.s.learns_speed = false;
-        std.debug.print("running: on, {d:.0} words a minute\n", .{a.user.running_pace.?});
+        r.run = .begin(a, r.s, now_us());
         r.view = .page; // Before the input's modes, which follow the view
         a.input.apply(r.setting(), false);
         try r.run.?.show_all(a, r.s, r.s.anchor, now_us());
@@ -805,14 +796,9 @@ pub const Reader = struct {
 
     /// Running's state let go of: the pace saved, and the Kindle free to sleep.
     fn leave_running(r: *Reader) void {
-        const a = r.a;
-        assert(!r.s.learns_speed); // Stopped as running began
-        r.run.?.release_awake();
+        r.run.?.end(r.a, r.s);
         r.run = null;
-        r.s.learns_speed = true;
-        std.debug.print("running: off\n", .{});
-        a.user.save_speed();
-        assert(r.run == null);
+        assert(r.s.learns_speed);
     }
 
     /// The phrase's timer: the next phrase when it's up, the reader's place following.
@@ -859,15 +845,7 @@ pub const Reader = struct {
         // under the card; Resume carries on from there
         if (!run.stopped()) try run.pause_or_resume(a, r.s, now_us());
         r.run.?.sync_awake(); // The card may stay up a while: the Kindle may sleep meanwhile
-        const minutes = run.minutes(now_us());
-        const note = std.fmt.bufPrint(&r.pause_note, "Running for {d} min", .{minutes}) catch "";
-        // The phrase screen as it is, kept in running's own buffer to show under the
-        // card and put back after
-        const pixels = a.display.screen.pixels.len;
-        if (r.run_screen.len == 0) r.run_screen = try r.alloc.alloc(u8, pixels);
-        @memcpy(r.run_screen, a.display.screen.pixels);
-        const rows = &run_mode.pause_rows;
-        const c = card_screen.over(a, .{ .pixels = r.run_screen }, "Paused", note, rows, null);
+        const c = try r.pause.open(a, r.alloc, run.minutes(now_us()));
         r.open_child(.{ .pause = .{ .screen = c } });
     }
 
@@ -878,12 +856,7 @@ pub const Reader = struct {
         assert(r.run != null); // Only running opens the card
         const a = r.a;
         const run = &r.run.?;
-        try card_screen.closed(a, .{ .pixels = r.run_screen });
-        const choice: run_mode.Paused = switch (ending) {
-            .done => |row| @fromBackingInt(@intCast(row)),
-            .closed, .interrupted => .resume_running,
-        };
-        std.debug.print("running: {s}\n", .{@tagName(choice)});
+        const choice = try r.pause.closed(a, ending);
         // Resuming carries on, a stop made by the pause button too
         switch (choice) {
             .resume_running => {

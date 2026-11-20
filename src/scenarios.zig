@@ -1386,6 +1386,25 @@ const scenarios = [_]Scenario{
             }
         }.run,
     },
+    .{
+        .name = "after a book's series list is left, the library's next tap opens a book",
+        .run = struct {
+            fn run() !void {
+                const hold_hero = hold_in(library_ui.hero_rect(width));
+                const hero = tap_on(library_ui.place(.hero));
+                const r = try play_on(.{ .library = true }, &.{
+                    hold_hero,
+                    lift,
+                    book_series,
+                    list_back_to_library,
+                    wait(1_000),
+                    hero,
+                    wait(2_000),
+                });
+                try expect(r.opened[0], "the tap after the series list was dropped");
+            }
+        }.run,
+    },
     .{ .name = "a book opens from the library, and Home goes back", .run = struct {
         fn run() !void {
             const r = try play_on(.{ .library = true }, &.{

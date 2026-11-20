@@ -111,6 +111,13 @@ fn wait(ms: u64) Step {
     return .{ .wait_ms = ms };
 }
 const lock_it: Step = .{ .act = .lock };
+
+/// Taps on the keyboard typing `word`, its letters' keys.
+fn typed(comptime word: []const u8) [word.len]Step {
+    var steps: [word.len]Step = undefined;
+    for (word, &steps) |char, *step| step.* = tap_on(keyboard.place(.{ .char = char }));
+    return steps;
+}
 const wake: Step = .{ .act = .unlock };
 /// The quick panel pulled down from the top, and its Kindle button, which leaves noface.
 const pull_down: Step = .{ .act = .pull };
@@ -283,7 +290,16 @@ fn reference_image(comptime name: []const u8) []const u8 {
 }
 
 /// The screens compared with a reference image, each src/testdata/snapshots/<name>.png.
-const Snapshot = enum { page, toolbar, @"aa-font", definition, library };
+const Snapshot = enum {
+    page,
+    toolbar,
+    @"aa-font",
+    definition,
+    library,
+    lock,
+    search,
+    @"library-search",
+};
 
 /// Whether `pixels` match the reference image `name`, allowing for anti-aliasing:
 /// pixels more than a few grays apart may be at most 1 in 5,000 (about 430), fewer
@@ -1214,9 +1230,7 @@ const scenarios = [_]Scenario{
                 const over_field = tap(width / 4, (toolbar.status_row + search_sheet.top) / 2);
                 assert(over_field.act.tap.y >= toolbar.status_row);
                 assert(over_field.act.tap.y < search_sheet.top);
-                const garden = [_]Step{
-                    key('g'), key('a'), key('r'), key('d'), key('e'), key('n'),
-                };
+                const garden = typed("garden");
                 const read_on = try play(&.{ forward, forward, forward, forward, forward });
                 const searched = try play(&(.{ forward, forward, forward, forward, forward } ++
                     .{ top, search } ++ garden ++ .{ enter, first_result }));
@@ -1230,10 +1244,6 @@ const scenarios = [_]Scenario{
                     same_place(searched.saved, over.saved),
                     "a tap just over the field closed the search",
                 );
-            }
-
-            fn key(char: u8) Step {
-                return tap_on(keyboard.place(.{ .char = char }));
             }
         }.run,
     },
@@ -1339,8 +1349,8 @@ const scenarios = [_]Scenario{
         }.run,
     },
     .{
-        .name = "the page, toolbar, text settings, a definition and the library " ++
-            "look as they should",
+        .name = "the page, toolbar, text settings, a definition, a book's search, the " ++
+            "lock screen, the library and its search look as they should",
         .run = struct {
             fn run() !void {
                 const text_settings = tool(.text);
@@ -1353,6 +1363,11 @@ const scenarios = [_]Scenario{
                         &[_]Step{ forward, top, text_settings, font_tab },
                     },
                     .{ Snapshot.definition, &[_]Step{ forward, a_word, lift } },
+                    // A book without a cover: its title on white
+                    .{ Snapshot.lock, &[_]Step{ forward, lock_it, wait(3_000) } },
+                    .{ Snapshot.search, &(.{ top, tool(.search) } ++ typed("garden") ++ .{
+                        tap_on(keyboard.place(.enter)),
+                    }) },
                 };
                 inline for (shots) |shot| {
                     const r = try play_on(.{ .dictionary = true, .snapshot = shot[0] }, shot[1]);
@@ -1360,6 +1375,10 @@ const scenarios = [_]Scenario{
                 }
                 const lib = try play_on(.{ .library = true, .snapshot = .library }, &.{});
                 try expect(lib.looks_right, "library looks different");
+                const search_books = tap_on(library_ui.place(.search));
+                const found: Kindle = .{ .library = true, .snapshot = .@"library-search" };
+                const lib_search = try play_on(found, &.{search_books});
+                try expect(lib_search.looks_right, "the library's search looks different");
             }
         }.run,
     },

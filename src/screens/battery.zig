@@ -19,8 +19,11 @@ const top = style.status_height + top_gap;
 const left = style.screen_width - style.margin - width;
 /// Days of reading averaged for "your usual".
 const usual_days = 14;
-/// The part of `lines`' buffer the title is written into; the detail gets the rest.
+/// The part of `lines`' buffer the title is written into, and the detail's after it.
 const title_size = 64;
+const detail_size = 96;
+/// What `lines` writes into: room for both.
+const lines_size = title_size + detail_size;
 /// The text inside the bubble: this far in from either side.
 const text_inset = 36;
 /// The title's and the faded detail's baselines, down from the bubble's top.
@@ -106,7 +109,7 @@ pub const Bubble = struct {
     pub const touches = input_mod.Input.Modes.sheet;
     a: *app.App,
     said: Lines, // In `buffer`, so the bubble stays where `open` made it
-    buffer: [160]u8,
+    buffer: [lines_size]u8,
 
     pub fn draw(b: *Bubble, _: screen.Part) !void {
         assert(b.said.title.len > 0);
@@ -131,7 +134,7 @@ pub const Bubble = struct {
 };
 
 test "the bubble says what it knows" {
-    var buffer: [160]u8 = undefined;
+    var buffer: [lines_size]u8 = undefined;
     const d = 86400;
     const t = 1_790_000_000;
     const log = [_]battery.Sample{

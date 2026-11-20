@@ -160,6 +160,17 @@ pub fn close_under_sheet() style.Point {
     return point;
 }
 
+/// Where on the scrubber's bar a finger asks for `part` of `parts` of the way through
+/// the book: 0 its start, `parts` its end.
+pub fn scrub_place(part: u32, parts: u32) style.Point {
+    assert(parts > 0);
+    assert(part <= parts);
+    const x = slider.knob_at(scrub, part, parts);
+    const point: style.Point = .{ .x = @intCast(x), .y = @intCast(scrub.y) };
+    assert(hit(point.x, point.y, null) == .scrub);
+    return point;
+}
+
 /// The middle of a control's taps, with the Aa sheet closed. The scrubber's is its
 /// middle, a page halfway through the book.
 pub fn place(h: Hit) style.Point {

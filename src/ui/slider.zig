@@ -9,11 +9,17 @@ const half_height = 7;
 const outline = 2;
 const knob_outer = 27;
 const knob_inner = 21;
+/// White kept clear around the knob, so the bar never touches its ring.
+const knob_gap = 3;
+/// A step's dot, inside the bar.
+const tick_radius = 3;
 
 comptime {
     // The outline leaves the bar a white middle, and the knob a white hole.
     assert(outline < half_height);
     assert(knob_inner < knob_outer);
+    // A dot fits inside the bar's white middle
+    assert(tick_radius < half_height);
 }
 
 /// Knob position for `value` out of `max`.
@@ -48,8 +54,10 @@ pub fn draw_ticks(page: Page, s: Slider, max: u32, knob: u32) void {
     while (i < max) : (i += 1) {
         const x = knob_at(s, i, max);
         const from_knob = @abs(@as(i32, @intCast(x)) - @as(i32, @intCast(knob)));
-        if (from_knob < knob_outer + 6) continue; // Under the knob
-        page.pill(@floatFromInt(x), @floatFromInt(x), y, 3, if (x < knob) 0xff else 0x00);
+        // Under the knob or its gap: a dot there would stick out of it
+        if (from_knob < knob_outer + knob_gap + tick_radius) continue;
+        const shade: u8 = if (x < knob) 0xff else 0x00;
+        page.pill(@floatFromInt(x), @floatFromInt(x), y, tick_radius, shade);
     }
 }
 
@@ -66,7 +74,7 @@ pub fn draw(page: Page, s: Slider, knob: u32) void {
     page.pill(left, right, y, r, 0x00);
     page.pill(left, right, y, r - outline, 0xff);
     if (knob > s.left) page.pill(left, x, y, r, 0x00);
-    page.pill(x, x, y, knob_outer + 3, 0xff); // A clear gap around the knob
+    page.pill(x, x, y, knob_outer + knob_gap, 0xff);
     page.pill(x, x, y, knob_outer, 0x00);
     page.pill(x, x, y, knob_inner, 0xff);
 }

@@ -15,6 +15,7 @@ const process = @import("sys/process.zig");
 const image = @import("gfx/image.zig");
 const app = @import("app.zig");
 const hwtcon = @import("kindle/hwtcon.zig");
+const touch_zones = @import("kindle/touch.zig");
 const input_mod = @import("kindle/input.zig");
 const Font = @import("gfx/font.zig").Font;
 const decoder_memory = @import("gfx/decoder_memory.zig");
@@ -72,11 +73,8 @@ const TestBook = enum {
 };
 
 const Step = input_mod.Step;
-const width = 1272;
-const height = 1696;
-
-/// Where the page scrubber is touched, on its bar: along it, a value.
-const scrubber_y = toolbar.place(.scrub).y;
+const width = style.screen_width;
+const height = style.screen_height;
 
 /// Row `i` of a card of `rows`.
 fn card_row(rows: u32, i: u32) Step {
@@ -155,13 +153,11 @@ const forward = tap_on(places.page.forward);
 const back = tap_on(places.page.back);
 const top = tap_on(places.page.top);
 const page_middle = tap_on(places.page.middle);
-/// A tap on the page clear of `a_word` and the handles of its highlight, which lets the
-/// highlight go: it's the page's text that says where, not a control.
-const away_from_word = tap(636, 1000);
+/// A tap on the page clear of a held word near its top and the handles of its
+/// highlight, which lets the highlight go: the page's middle (checked by `word_held`).
+const away_from_word = page_middle;
 /// The middle column while running, which pauses and carries on.
 const running_middle = tap_on(places.running_mode.middle);
-/// A hold on a word of the first page.
-const a_word = hold(600, 700);
 /// Running mode on, from the page: the toolbar, its Aa sheet, the Themes tab, and the
 /// Running button under its tiles. Then, while running, a tap in the pause band and the
 /// pause card's rows.
@@ -176,24 +172,13 @@ const pause_resume = card_row(3, 0);
 const pause_stop = card_row(3, 2);
 
 comptime {
-    // The pretend screen is the one the interface is laid out for
-    assert(width == style.screen_width);
-    assert(height == style.screen_height);
     // A tap on the left third of a page goes back, the rest forward
     assert(back.act.tap.x < width / 3);
     assert(forward.act.tap.x >= width / 3);
     // `top` opens the toolbar; the middle of the page is outside it, and closes it
     assert(top.act.tap.y < toolbar.top_height);
-    // The scrubber takes touches along its whole bar
-    assert(toolbar.hit(400, scrubber_y, null) == .scrub);
-    assert(toolbar.hit(1100, scrubber_y, null) == .scrub);
     assert(page_middle.act.tap.y > toolbar.top_height);
     assert(page_middle.act.tap.y < toolbar.bottom_top);
-    // Clear of the held word's line, and the handles under it
-    assert(away_from_word.act.tap.y > a_word.act.hold.y + 2 * style.fingertip);
-    // A word is held in the page's text, clear of the toolbar's two parts
-    assert(a_word.act.hold.y > toolbar.top_height);
-    assert(a_word.act.hold.y < toolbar.bottom_top);
     // A tap above a card of up to two rows closes it
     assert(above_sheet.act.tap.y < card.top(2));
     // The panel's Kindle button is where the scenarios tap it
@@ -1076,6 +1061,7 @@ const scenarios = [_]Scenario{
         .name = "common actions on a page run and leave the place alone",
         .run = struct {
             fn run() !void {
+                const a_word = try word_held(.{}, &.{forward});
                 const plain = try play(&.{forward});
                 const busy = try play(&.{
                     forward,
@@ -1251,6 +1237,7 @@ const scenarios = [_]Scenario{
         .name = "holding a word looks it up, and its Highlight button highlights it",
         .run = struct {
             fn run() !void {
+                const a_word = try word_held(.{ .dictionary = true }, &.{});
                 const r = try play_on(.{ .dictionary = true }, &.{
                     a_word, lift, highlight_button, away_from_word,
                 });
@@ -1264,6 +1251,7 @@ const scenarios = [_]Scenario{
             "and Not now stops the asking",
         .run = struct {
             fn run() !void {
+                const a_word = try word_held(.{}, &.{});
                 const r = try play(&.{
                     // Asked: Not now, then the sheet closed
                     a_word,
@@ -1286,6 +1274,7 @@ const scenarios = [_]Scenario{
             "and the word can still be highlighted",
         .run = struct {
             fn run() !void {
+                const a_word = try word_held(.{}, &.{});
                 // The pretend Kindle starts no programs, so curl never runs
                 const r = try play(&.{
                     a_word,         lift,             card_row(2, 0),
@@ -1501,6 +1490,7 @@ const scenarios = [_]Scenario{
             "it, and its Delete bubble removes it",
         .run = struct {
             fn run() !void {
+                const a_word = try word_held(.{ .dictionary = true }, &.{forward});
                 const held_at = a_word.act.hold;
                 const highlight_it = [_]Step{ a_word, lift, highlight_button, away_from_word };
                 const highlighted = [_]Step{forward} ++ highlight_it;
@@ -1704,6 +1694,7 @@ const scenarios = [_]Scenario{
             "they should",
         .run = struct {
             fn run() !void {
+                const a_word = try word_held(.{}, &.{forward});
                 const text_settings = tool(.text);
                 const font_tab = tap_on(aa.place(.themes, .{ .tab = .font }));
                 const shots = .{
@@ -1783,18 +1774,25 @@ const scenarios = [_]Scenario{
             }
         }.run,
     },
-    .{ .name = "a scrub cut short by the lock leaves the place where it was", .run = struct {
-        fn run() !void {
-            const along: Step = .{ .act = .{ .drag = .{ .x = 1100, .y = scrubber_y } } };
-            const plain = try play(&.{forward});
-            const lifted = try play(&.{ forward, top, tap(400, scrubber_y), along, lift });
-            try expect(!same_place(plain.saved, lifted.saved), "the scrubber didn't jump");
-            const locked = try play(&.{
-                forward, top, tap(400, scrubber_y), along, lock_it, wait(3_000), wake,
-            });
-            try expect(same_place(plain.saved, locked.saved), "the lock jumped the book");
-        }
-    }.run },
+    .{
+        .name = "a scrub cut short by the lock leaves the place where it was",
+        .run = struct {
+            fn run() !void {
+                // A quarter of the way through the book, then dragged on to three quarters
+                const quarter = tap_on(toolbar.scrub_place(1, 4));
+                const three_quarters = toolbar.scrub_place(3, 4);
+                const to: input_mod.Point = .{ .x = three_quarters.x, .y = three_quarters.y };
+                const along: Step = .{ .act = .{ .drag = to } };
+                const plain = try play(&.{forward});
+                const lifted = try play(&.{ forward, top, quarter, along, lift });
+                try expect(!same_place(plain.saved, lifted.saved), "the scrubber didn't jump");
+                const locked = try play(&.{
+                    forward, top, quarter, along, lock_it, wait(3_000), wake,
+                });
+                try expect(same_place(plain.saved, locked.saved), "the lock jumped the book");
+            }
+        }.run,
+    },
     .{
         .name = "a text size drag cut short by the lock leaves the size as it was",
         .run = struct {
@@ -1863,11 +1861,12 @@ const scenarios = [_]Scenario{
             fn run() !void {
                 var arena = std.heap.ArenaAllocator.init(std.heap.smp_allocator);
                 defer arena.deinit();
-                const held_at = a_word.act.hold;
-                const highlighted = [_]Step{ a_word, lift, highlight_button, away_from_word };
                 // Read before, so it opens with its first pages and lays out the rest on
                 // ticks, as a book opened again after a layout change does
                 const read: Kindle = .{ .dictionary = true, .read_before = .{} };
+                const a_word = try word_held(read, &.{});
+                const held_at = a_word.act.hold;
+                const highlighted = [_]Step{ a_word, lift, highlight_button, away_from_word };
                 var looked = read;
                 looked.pages_into = arena.allocator();
                 // Where the word held and the one after it were drawn on the first page
@@ -1944,6 +1943,7 @@ const scenarios = [_]Scenario{
         .name = "while running, holding a word neither looks it up nor highlights it",
         .run = struct {
             fn run() !void {
+                const a_word = try word_held(.{ .dictionary = true }, &.{});
                 const steps = start_running ++ [_]Step{ wait(2_000), a_word, lift };
                 const held = try play_on(.{ .dictionary = true }, &steps);
                 try expect(!held.looked_up, "a hold looked a word up");
@@ -2076,6 +2076,20 @@ fn drag_to(word: book_model.Word) Step {
     const x = word.x + @divTrunc(word.w, 2);
     const y = word.y + @divTrunc(word.h, 2);
     return .{ .act = .{ .drag = .{ .x = x, .y = y } } };
+}
+
+/// A hold on the first word of the page `before` leaves the book on, where the app's
+/// log says it drew it (screens/placed.zig): a word wherever the layout puts it.
+fn word_held(kindle: Kindle, before: []const Step) !Step {
+    const shown = try play_on(kindle, before);
+    const at = shown.placed[@backingInt(placed.What.word)] orelse return error.WordNotPlaced;
+    // Below the top edge's strip, where a touch reaches words, and far enough above
+    // `away_from_word` that a tap there misses its line and the handles under it
+    try expect(at.y >= touch_zones.top_zone, "the word is in the top edge's strip");
+    try expect(at.y < toolbar.bottom_top, "the word is under the toolbar's bottom");
+    const clear = away_from_word.act.tap.y > at.y + 2 * style.fingertip;
+    try expect(clear, "a tap away from the word would land on it");
+    return hold(at.x, at.y);
 }
 
 /// The word drawn at a point, if any.

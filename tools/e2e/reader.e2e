@@ -60,8 +60,8 @@ log screen: Panel closed
 drawn 200
 still
 
-# Holding a word: "reader", on the first page's second line
-hold 160 318 700
+# Holding a word: the page's first, held where noface drew it
+hold placed word 700
 drawn 200
 shot held
 log screen: Card opened
@@ -78,14 +78,14 @@ log words, saved true
 drawn 500
 shot highlighted
 
-# A tap away lets it go
-tap 1000 1300
+# A tap away from it lets it go: the page's middle, far below its line
+tap page.middle
 drawn 200
 still
 
-# Holding another word opens its sheet at once, the dictionary asked for only once;
-# its close button closes it
-hold 210 568 700
+# Holding another word, the second paragraph's first, opens its sheet at once, the
+# dictionary asked for only once; its close button closes it
+hold placed paragraph 700
 log screen: Define opened
 drawn 300
 still
@@ -94,8 +94,9 @@ log screen: Define done
 drawn 200
 still
 
-# Holding and dragging highlights: the second paragraph's first line, selected too
-drag 210 568 1150 568 400 700
+# Holding and dragging highlights: the second paragraph's first line, from its first
+# word to its last, selected too
+drag placed paragraph placed paragraph_end 400 700
 log screen: Drag opened
 log words, saved true
 drawn 500
@@ -107,7 +108,7 @@ log highlight removed: true
 drawn 200
 still
 
-# Turning away from the page with "reader" still highlighted, and back to it: both
+# Turning away from the page with its first word still highlighted, and back: both
 # turns take the gray-safe refresh, without a flash
 tap page.forward
 log turn to 2
@@ -118,7 +119,7 @@ log turn to 1
 drawn 500
 still
 
-# The highlight left on "reader", chosen from Go To's notes: its page again, after
+# The highlight left on the first word, chosen from Go To's notes: its page again, after
 # turning away. A tap on it selects it, and its delete bubble removes it
 tap page.forward
 log turn to 2
@@ -138,7 +139,7 @@ tap goto.row.0
 log screen: GoTo done
 drawn 500
 still
-tap 160 318
+tap placed word
 log placed delete
 drawn 300
 shot selected

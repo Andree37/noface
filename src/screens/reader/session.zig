@@ -26,6 +26,7 @@ const placed = @import("../placed.zig");
 const reading_clock = @import("reading_clock.zig");
 const book_notes = @import("book_notes.zig");
 const hwtcon = @import("../../kindle/hwtcon.zig");
+const touch_zones = @import("../../kindle/touch.zig");
 
 /// The page counter in the footer's middle: its left, this far left of the middle.
 const counter_left_of_middle_px = 50;
@@ -417,6 +418,7 @@ pub const Session = struct {
         const hits = &slot.hits;
         if (hits.len > 0) placed.note(.note, middle_of(hits.items[0]));
         if (hits.picture_count > 0) placed.note(.picture, middle_of(hits.pictures[0]));
+        note_placed_words(hits.words[0..hits.word_count]);
     }
 
     pub fn show(s: *Session, index: u32, move: Move, touched_us: ?u64, force_clean: bool) !void {
@@ -448,6 +450,41 @@ pub const Session = struct {
 };
 
 /// The middle of what a hit covers.
+/// Logs where a page's words a test holds or drags across were drawn, from `words`, as
+/// the page's layout put them in reading order: the first a touch reaches as a word,
+/// below the top edge's strip, which opens the toolbar, and the first and last of the
+/// first line of the next paragraph after it, when there is one.
+fn note_placed_words(words: []const book_model.Word) void {
+    // Bounded by the page's words
+    const first = for (words, 0..) |w, i| {
+        if (middle_of_word(w).y >= touch_zones.top_zone) break i;
+    } else return; // None below the strip, or a page of only a picture
+    placed.note(.word, middle_of_word(words[first]));
+    // Bounded by the page's words
+    const second = for (words[first..], first..) |w, i| {
+        if (w.para != words[first].para) break i;
+    } else return; // One paragraph only
+    const line_y = words[second].y;
+    const para = words[second].para;
+    var last = second;
+    // Bounded by the page's words: the line ends where a word starts lower down, or
+    // another paragraph does
+    while (last + 1 < words.len) : (last += 1) {
+        const next = words[last + 1];
+        if (next.y != line_y or next.para != para) break;
+    }
+    assert(last >= second);
+    assert(words[last].para == para);
+    placed.note(.paragraph, middle_of_word(words[second]));
+    placed.note(.paragraph_end, middle_of_word(words[last]));
+}
+
+fn middle_of_word(w: book_model.Word) style.Point {
+    assert(w.w > 0);
+    assert(w.h > 0);
+    return .{ .x = w.x + @divTrunc(w.w, 2), .y = w.y + @divTrunc(w.h, 2) };
+}
+
 fn middle_of(h: text.Hit) style.Point {
     assert(h.w > 0);
     assert(h.h > 0);

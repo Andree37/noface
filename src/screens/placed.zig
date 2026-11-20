@@ -1,5 +1,7 @@
 //! Where a control that moves with the page was put: a footnote's mark, a picture, a
-//! highlight's Delete bubble. Unlike the controls `places.zig` names, these sit where
+//! highlight's Delete bubble, and the words a test holds or drags across: the page's
+//! first below its top edge's strip, and the first and last of the first line of the
+//! next paragraph after it. Unlike the controls `places.zig` names, these sit where
 //! the text puts them, which differs with the font, so noface says in its log where it
 //! drew each ("placed note at 412,318"), and a test taps where the log says: it follows
 //! the layout, and never taps blind. The device tests read it from noface's log
@@ -11,7 +13,14 @@ const style = @import("../ui/style.zig");
 const log = std.log.scoped(.placed);
 
 /// What's logged as placed, by the name a test asks for it by.
-pub const What = enum { note, picture, delete };
+pub const What = enum {
+    note, // A footnote's mark, the page's first
+    picture, // The page's first
+    delete, // A selected highlight's Delete bubble
+    word, // The page's first word a touch reaches, below the top edge's strip
+    paragraph, // The first word of the next paragraph after it
+    paragraph_end, // The last word on that paragraph's first line
+};
 
 const prefix = "placed ";
 const middle = " at ";
@@ -27,6 +36,7 @@ pub fn note(what: What, point: style.Point) void {
 pub fn find(text: []const u8, what: []const u8) ?style.Point {
     assert(what.len > 0);
     assert(std.mem.indexOf(u8, what, middle) == null); // A name, never its line's rest
+    assert(std.mem.indexOfScalar(u8, what, ' ') == null); // One word, as names are
     var found: ?style.Point = null;
     var lines = std.mem.splitScalar(u8, text, '\n');
     // Bounded by the log's lines
@@ -35,6 +45,7 @@ pub fn find(text: []const u8, what: []const u8) ?style.Point {
         const rest = line[start + prefix.len ..];
         if (!std.mem.startsWith(u8, rest, what)) continue;
         const after = rest[what.len..];
+        // "paragraph" is the start of "paragraph_end": a name ends where " at " starts
         if (!std.mem.startsWith(u8, after, middle)) continue;
         found = parse_point(after[middle.len..]) orelse found;
     }
@@ -59,10 +70,14 @@ test "the last place logged for a name is found, and no other name's" {
         \\placed picture at 636,900
         \\placed note at 100,200
         \\placed noted at 1,1
+        \\placed paragraph_end at 1150,568
         \\placed delete at bad
     ;
     try std.testing.expectEqual(style.Point{ .x = 100, .y = 200 }, find(text, "note").?);
     try std.testing.expectEqual(style.Point{ .x = 636, .y = 900 }, find(text, "picture").?);
     try std.testing.expectEqual(@as(?style.Point, null), find(text, "delete"));
     try std.testing.expectEqual(@as(?style.Point, null), find(text, "lock"));
+    try std.testing.expectEqual(@as(?style.Point, null), find(text, "paragraph"));
+    const end = find(text, "paragraph_end").?;
+    try std.testing.expectEqual(style.Point{ .x = 1150, .y = 568 }, end);
 }

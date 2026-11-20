@@ -11,15 +11,18 @@
 //! "14", so the library has two pages, and notes/, whose documents/ hold "Notes and
 //! Pictures.epub". It plays them all, says how each went, and exits 1 if any failed.
 //! Given a script instead, it plays that one on a test folder whose documents/ already
-//! hold its books, such as one `all` made. Each run
-//! makes data/ (noface's) and out/ (the shots) in its test folder anew.
+//! hold its books, such as one `all` made. Each run makes data/ (noface's) and out/
+//! (the shots) in its test folder anew.
 //!
 //! Each line of the script is a step; `#` starts a comment.
-//!   tap <point>                     A finger down and up.
-//!   hold <point> <ms>               A finger down for <ms>.
-//!   drag <point> <point> <ms> [<hold ms>]
+//!   tap <target>                    A finger down and up.
+//!   hold <target> <ms>              A finger down for <ms>.
+//!   drag <target> <target> <ms> [<hold ms>]
 //!                                   A finger moved from one point to the other over <ms>,
 //!                                   held still first for <hold ms> if given.
+//! A target is a point, or "placed <what>": where noface's log says it last drew what
+//! moves with the text (screens/placed.zig), such as a footnote's mark or the page's
+//! first word, read as the step is played.
 //! A point is a control by name, as screens/places.zig lists them ("toolbar.bookmark",
 //! "key.s", "card.3.0"), so a script follows layout as it moves, or "<x> <y>" for what
 //! isn't a control, like a word on the page. Every name is checked before the first
@@ -600,10 +603,10 @@ const Touch = union(enum) {
     power,
     tap: Target,
     hold: struct { at: Target, ms: u32 },
-    drag: struct { from: Point, to: Point, ms: u32, hold_ms: u32 },
+    drag: struct { from: Target, to: Target, ms: u32, hold_ms: u32 },
 };
 
-/// Where a tap or a hold lands: a point known before the run (a control by name, or
+/// Where a touch lands: a point known before the run (a control by name, or
 /// "<x> <y>"), or what noface placed with the page, by "placed <what>", found in its log
 /// as the step is played (screens/placed.zig).
 const Target = union(enum) {
@@ -636,8 +639,8 @@ fn parse_touch(verb: []const u8, words: *Words) Failure!?Touch {
         return .{ .hold = .{ .at = at, .ms = try number(words) } };
     }
     if (std.mem.eql(u8, verb, "drag")) {
-        const from = try point(words);
-        const to = try point(words);
+        const from = try target(words);
+        const to = try target(words);
         const ms = try number(words);
         // A hold first, for selecting: a word that isn't a number is a mistake, not none
         const hold_ms: u32 = if (words.peek() != null) try number(words) else 0;
@@ -664,7 +667,7 @@ fn touch(run: *Run, t: Touch) Failure!void {
             sleep_ms(h.ms);
             run.panel.up();
         },
-        .drag => |d| drag(run, d.from, d.to, d.ms, d.hold_ms),
+        .drag => |d| drag(run, try d.from.resolve(run), try d.to.resolve(run), d.ms, d.hold_ms),
     }
     run.lifted();
 }
@@ -787,6 +790,7 @@ test "every script reads, each place it names found" {
     try std.testing.expect(script_reads("tap 10 20 # A word\ntap page.forward\n"));
     try std.testing.expect(script_reads("tap placed note\nhold placed picture 700\n"));
     try std.testing.expect(!script_reads("tap placed nothing\n"));
+    try std.testing.expect(script_reads("drag placed paragraph placed paragraph_end 400 700\n"));
 }
 
 test "a shelf's books are named as a reader's copies would be, the first by its title" {

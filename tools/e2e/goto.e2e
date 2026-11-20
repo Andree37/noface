@@ -1,0 +1,255 @@
+# Go To's list paged with its arrows, on the test book (tools/e2e.zig plays it). Start
+# from a fresh test folder: noface on its library, the book not opened before. Twelve
+# pages are bookmarked, one more than the list's 11 rows (ui/goto.zig `rows`), so the
+# twelfth bookmark is alone on the list's second page. Where a row jumps to is read
+# from the turn after it: "turn to 13:" is the turn from page 12.
+
+# Opening the book from the library's hero
+tap library.hero
+log screen: Reader opened
+drawn 600
+still
+
+# Page 1 bookmarked, then on to page 2
+tap page.top
+drawn 200
+still
+tap toolbar.bookmark
+log bookmark added
+drawn 200
+still
+tap toolbar.close
+drawn 200
+still
+tap page.forward
+log turn to 2:
+drawn 500
+still
+
+# Page 2 bookmarked, then on to page 3
+tap page.top
+drawn 200
+still
+tap toolbar.bookmark
+log bookmark added
+drawn 200
+still
+tap toolbar.close
+drawn 200
+still
+tap page.forward
+log turn to 3:
+drawn 500
+still
+
+# Page 3 bookmarked, then on to page 4
+tap page.top
+drawn 200
+still
+tap toolbar.bookmark
+log bookmark added
+drawn 200
+still
+tap toolbar.close
+drawn 200
+still
+tap page.forward
+log turn to 4:
+drawn 500
+still
+
+# Page 4 bookmarked, then on to page 5
+tap page.top
+drawn 200
+still
+tap toolbar.bookmark
+log bookmark added
+drawn 200
+still
+tap toolbar.close
+drawn 200
+still
+tap page.forward
+log turn to 5:
+drawn 500
+still
+
+# Page 5 bookmarked, then on to page 6
+tap page.top
+drawn 200
+still
+tap toolbar.bookmark
+log bookmark added
+drawn 200
+still
+tap toolbar.close
+drawn 200
+still
+tap page.forward
+log turn to 6:
+drawn 500
+still
+
+# Page 6 bookmarked, then on to page 7
+tap page.top
+drawn 200
+still
+tap toolbar.bookmark
+log bookmark added
+drawn 200
+still
+tap toolbar.close
+drawn 200
+still
+tap page.forward
+log turn to 7:
+drawn 500
+still
+
+# Page 7 bookmarked, then on to page 8
+tap page.top
+drawn 200
+still
+tap toolbar.bookmark
+log bookmark added
+drawn 200
+still
+tap toolbar.close
+drawn 200
+still
+tap page.forward
+log turn to 8:
+drawn 500
+still
+
+# Page 8 bookmarked, then on to page 9
+tap page.top
+drawn 200
+still
+tap toolbar.bookmark
+log bookmark added
+drawn 200
+still
+tap toolbar.close
+drawn 200
+still
+tap page.forward
+log turn to 9:
+drawn 500
+still
+
+# Page 9 bookmarked, then on to page 10
+tap page.top
+drawn 200
+still
+tap toolbar.bookmark
+log bookmark added
+drawn 200
+still
+tap toolbar.close
+drawn 200
+still
+tap page.forward
+log turn to 10:
+drawn 500
+still
+
+# Page 10 bookmarked, then on to page 11
+tap page.top
+drawn 200
+still
+tap toolbar.bookmark
+log bookmark added
+drawn 200
+still
+tap toolbar.close
+drawn 200
+still
+tap page.forward
+log turn to 11:
+drawn 500
+still
+
+# Page 11 bookmarked, then on to page 12
+tap page.top
+drawn 200
+still
+tap toolbar.bookmark
+log bookmark added
+drawn 200
+still
+tap toolbar.close
+drawn 200
+still
+tap page.forward
+log turn to 12:
+drawn 500
+still
+
+# Page 12 bookmarked, then on to page 13
+tap page.top
+drawn 200
+still
+tap toolbar.bookmark
+log bookmark added
+drawn 200
+still
+tap toolbar.close
+drawn 200
+still
+tap page.forward
+log turn to 13:
+drawn 500
+still
+
+# Go To's notes from page 13: the list's next page has the twelfth bookmark
+# alone, and its row jumps to page 12; the turn after it is to 13, where
+# a jump that failed would have stayed, turning to 14
+tap page.top
+drawn 200
+still
+tap toolbar.goto
+log screen: GoTo opened
+drawn 300
+still
+tap goto.tab.notes
+drawn 300
+still
+tap goto.next
+drawn 300
+shot goto-next
+tap goto.row.0
+log screen: GoTo done
+drawn 500
+still
+tap page.forward
+log turn to 13:
+drawn 500
+still
+
+# On to the list's second page and back to its first, whose first row is page 1: the
+# turn after it is to 2
+tap page.top
+drawn 200
+still
+tap toolbar.goto
+log screen: GoTo opened
+drawn 300
+still
+tap goto.tab.notes
+drawn 300
+still
+tap goto.next
+drawn 300
+still
+tap goto.prev
+drawn 300
+still
+tap goto.row.0
+log screen: GoTo done
+drawn 500
+still
+tap page.forward
+log turn to 2:
+drawn 500
+still

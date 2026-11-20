@@ -3,10 +3,16 @@
 //! own books (`noface-launch e2e <folder>`), and stops it after, so the reader's books,
 //! places and settings stay as they are; the reader's noface is started again by
 //! whoever stopped it.
-//! Usage: e2e <script> <test folder>
-//! The test folder holds documents/, the test books: "Scenario Book.epub" and "Scenario
-//! Book 02.epub" to "14", copies of src/testdata/scenario.epub. Each run makes data/
-//! (noface's) and out/ (the shots) in it anew.
+//! Usage: e2e all <folder>
+//!        e2e <script> <test folder>
+//! `all` plays every script in tools/e2e/, built in, each on the test folder it needs,
+//! which it makes in <folder> with the test books built in too (src/testdata/books.zig):
+//! books/, whose documents/ hold "Scenario Book.epub" and "Scenario Book 02.epub" to
+//! "14", so the library has two pages, and notes/, whose documents/ hold "Notes and
+//! Pictures.epub". It plays them all, says how each went, and exits 1 if any failed.
+//! Given a script instead, it plays that one on a test folder whose documents/ already
+//! hold its books, such as one `all` made. Each run
+//! makes data/ (noface's) and out/ (the shots) in its test folder anew.
 //!
 //! Each line of the script is a step; `#` starts a comment.
 //!   tap <point>                     A finger down and up.
@@ -107,6 +113,12 @@ pub const Screen = struct {
         assert(screen.fd >= 0);
         assert(screen.width <= row_size_max);
         return screen;
+    }
+
+    pub fn close(screen: *Screen) void {
+        assert(screen.fd >= 0);
+        _ = linux.close(screen.fd); // Only read from
+        screen.fd = -1;
     }
 
     /// Where the shown screen starts in the framebuffer: it may flip between two.
@@ -234,18 +246,138 @@ const Point = core.places.Point;
 pub fn main(init: std.process.Init.Minimal) !void {
     const argv = init.args.vector;
     if (argv.len != 3) return error.Usage;
+    const folder = std.mem.sliceTo(argv[2], 0);
+    if (folder.len == 0) return error.Usage;
+    if (std.mem.eql(u8, std.mem.sliceTo(argv[1], 0), "all")) {
+        if (!try play_all(folder)) std.process.exit(1);
+        return;
+    }
     const script = try core.file.map(argv[1]);
     defer core.file.unmap(script);
     if (!script_reads(script)) std.process.exit(1);
     var buffers: Folder.Buffers = undefined;
-    const folder = try Folder.in(&buffers, std.mem.sliceTo(argv[2], 0));
+    if (!try play_on(script, try Folder.in(&buffers, folder))) std.process.exit(1);
+}
+
+/// The scripts `all` plays, built in, and the test folder each plays on.
+const suite = [_]Script{
+    .{ .name = "library", .text = @embedFile("e2e/library.e2e"), .shelf = .books },
+    .{ .name = "reader", .text = @embedFile("e2e/reader.e2e"), .shelf = .books },
+    .{ .name = "running", .text = @embedFile("e2e/running.e2e"), .shelf = .books },
+    .{ .name = "sheets", .text = @embedFile("e2e/sheets.e2e"), .shelf = .books },
+    .{ .name = "goto", .text = @embedFile("e2e/goto.e2e"), .shelf = .books },
+    .{ .name = "notes", .text = @embedFile("e2e/notes.e2e"), .shelf = .notes },
+};
+const Script = struct { name: []const u8, text: []const u8, shelf: Shelf };
+
+/// The test folders `all` makes, by their folder's name, each with the books it holds.
+const Shelf = enum {
+    books, // The scenario book and 13 copies: a library of two pages
+    notes, // The book with a footnote and a picture
+
+    /// How many copies of its book it holds: one, or enough to fill two library pages.
+    fn copies(shelf: Shelf) u32 {
+        return switch (shelf) {
+            .books => scenario_copies,
+            .notes => 1,
+        };
+    }
+
+    fn book(shelf: Shelf) []const u8 {
+        return switch (shelf) {
+            .books => core.test_books.scenario,
+            .notes => core.test_books.notes,
+        };
+    }
+
+    fn title(shelf: Shelf) []const u8 {
+        return switch (shelf) {
+            .books => "Scenario Book",
+            .notes => "Notes and Pictures",
+        };
+    }
+};
+
+/// Copies of the scenario book on the books shelf: more than a library page holds.
+const scenario_copies = 14;
+
+comptime {
+    // Two pages of the library, so its scripts can turn on and back
+    assert(core.library.page_count(scenario_copies) == 2);
+}
+
+/// Plays every script in `suite` on its shelf in `root`, made first, and says whether
+/// all of them passed. One that fails doesn't stop the rest.
+fn play_all(root: []const u8) !bool {
+    assert(root.len > 0);
+    for (suite) |script| {
+        if (!script_reads(script.text)) return false;
+    }
+    var failed: u32 = 0;
+    for (suite) |script| {
+        std.debug.print("== {s}\n", .{script.name});
+        var path_buffer: [core.file.own_path_bytes_max]u8 = undefined;
+        const shelf_root = try std.fmt.bufPrint(
+            &path_buffer,
+            "{s}/{s}",
+            .{ root, @tagName(script.shelf) },
+        );
+        try shelve(shelf_root, script.shelf);
+        var buffers: Folder.Buffers = undefined;
+        if (!try play_on(script.text, try Folder.in(&buffers, shelf_root))) failed += 1;
+    }
+    assert(failed <= suite.len);
+    const passed = suite.len - failed;
+    std.debug.print("e2e: {d} of {d} scripts passed\n", .{ passed, suite.len });
+    return failed == 0;
+}
+
+/// Makes the test folder `shelf_root` for `shelf`, its documents/ holding its books.
+/// Books already there are kept: written again, they'd count as just added, and the
+/// library's order by date added would change from one run to the next.
+fn shelve(shelf_root: []const u8, shelf: Shelf) !void {
+    assert(shelf_root.len > 0);
+    var path_buffer: [core.file.own_path_bytes_max]u8 = undefined;
+    for ([_][]const u8{ "", "/documents" }) |under| {
+        const folder = try std.fmt.bufPrintSentinel(&path_buffer, "{s}{s}", .{
+            shelf_root, under,
+        }, 0);
+        const rc = core.calls.mkdir(folder, 0o755);
+        if (core.os.failed(rc) and !core.file.exists(folder)) return error.CantShelve;
+    }
+    for (0..shelf.copies()) |i| {
+        const book = try book_path(&path_buffer, shelf_root, shelf, @intCast(i));
+        if (core.file.exists(book)) continue;
+        core.file.write_small(book, shelf.book());
+        if (core.file.size_of(book) != shelf.book().len) return error.CantShelve;
+    }
+}
+
+/// Copy `i` of `shelf`'s book in `shelf_root`'s documents: the first by the book's
+/// title, the rest numbered from 02, as a reader's copies would be.
+fn book_path(
+    buffer: *[core.file.own_path_bytes_max]u8,
+    shelf_root: []const u8,
+    shelf: Shelf,
+    i: u32,
+) ![:0]const u8 {
+    assert(i < shelf.copies());
+    const documents = .{ shelf_root, shelf.title() };
+    if (i == 0) return std.fmt.bufPrintSentinel(buffer, "{s}/documents/{s}.epub", documents, 0);
+    const copy_number = i + 1; // The first copy is the book's second
+    return std.fmt.bufPrintSentinel(buffer, "{s}/documents/{s} {d:0>2}.epub", .{
+        shelf_root, shelf.title(), copy_number,
+    }, 0);
+}
+
+/// Starts noface on `folder`, plays `script` against it, and stops it again, whatever
+/// the script did: a failed step leaves no noface on the test folder for the reader's
+/// own to start beside. Says whether every step passed.
+fn play_on(script: []const u8, folder: Folder) !bool {
+    assert(script.len > 0);
     try start_noface(folder);
-    // Stopped whatever the script does, so a failed step leaves no noface on the test
-    // folder for the reader's own to start beside
-    assert(script.len > 0); // A mapped file is never empty
-    const passed = play(script, folder);
-    stop_noface();
-    if (!passed) std.process.exit(1);
+    defer stop_noface();
+    return play(script, folder);
 }
 
 /// Plays every step of `script` against noface on `folder`, saying how each went:
@@ -259,6 +391,8 @@ fn play(script: []const u8, folder: Folder) bool {
         .log_path = folder.log,
         .out_dir = folder.out,
     };
+    defer run.panel.close();
+    defer run.screen.close();
     var lines = std.mem.splitScalar(u8, script, '\n');
     var line_number: u32 = 0;
     var passed: u32 = 0;
@@ -317,8 +451,10 @@ const Folder = struct {
 
 /// Longest wait for noface to start on the test folder and log its library.
 const start_ms_max = 40_000;
-/// Then this long more, for the library's first refreshes to finish before a touch.
-const settle_after_start_ms = 3_000;
+/// Then, once the library's screen is still, this long more for the panel's own
+/// refresh of it to finish: `still` sees the framebuffer, and noface drops a touch
+/// that lands before the panel's done.
+const panel_refresh_ms = 1_000;
 /// Longest wait for noface and its launcher to stop.
 const stop_ms_max = 20_000;
 /// A Kindle woken from its screensaver takes this long to show what's under it.
@@ -350,7 +486,10 @@ fn start_noface(folder: Folder) !void {
         if (now_us() >= deadline) return error.CantStart;
         sleep_ms(check_ms);
     }
-    sleep_ms(settle_after_start_ms);
+    var screen = Screen.open() catch return error.CantStart;
+    defer screen.close();
+    if (!screen.settle()) return error.CantStart;
+    sleep_ms(panel_refresh_ms);
 }
 
 /// Stops noface, its launcher with it, and lets the Kindle sleep again.
@@ -643,16 +782,21 @@ fn number(words: *Words) Failure!u32 {
 }
 
 test "every script reads, each place it names found" {
-    const scripts = [_][]const u8{
-        @embedFile("e2e/library.e2e"),
-        @embedFile("e2e/reader.e2e"),
-        @embedFile("e2e/running.e2e"),
-        @embedFile("e2e/sheets.e2e"),
-        @embedFile("e2e/notes.e2e"),
-    };
-    for (scripts) |script| try std.testing.expect(script_reads(script));
+    for (suite) |script| try std.testing.expect(script_reads(script.text));
     try std.testing.expect(!script_reads("tap toolbar.nothing\n"));
     try std.testing.expect(script_reads("tap 10 20 # A word\ntap page.forward\n"));
     try std.testing.expect(script_reads("tap placed note\nhold placed picture 700\n"));
     try std.testing.expect(!script_reads("tap placed nothing\n"));
+}
+
+test "a shelf's books are named as a reader's copies would be, the first by its title" {
+    var buffer: [core.file.own_path_bytes_max]u8 = undefined;
+    const first = try book_path(&buffer, "t/books", .books, 0);
+    try std.testing.expectEqualStrings("t/books/documents/Scenario Book.epub", first);
+    const second = try book_path(&buffer, "t/books", .books, 1);
+    try std.testing.expectEqualStrings("t/books/documents/Scenario Book 02.epub", second);
+    const last = try book_path(&buffer, "t/books", .books, scenario_copies - 1);
+    try std.testing.expectEqualStrings("t/books/documents/Scenario Book 14.epub", last);
+    const notes = try book_path(&buffer, "t/notes", .notes, 0);
+    try std.testing.expectEqualStrings("t/notes/documents/Notes and Pictures.epub", notes);
 }

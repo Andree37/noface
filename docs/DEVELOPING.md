@@ -68,24 +68,32 @@ Go to page, Aa's tabs, themes and switches). Every control is tapped by its name
 (`screens/places.zig`); what moves with the text, a footnote's mark, a picture, a
 highlight's Delete bubble, is tapped where noface's log says it drew it
 (`tap placed note`, `screens/placed.zig`); only words on a page are tapped where they
-are. `tools/e2e/notes.e2e` plays on a folder of its own holding
-`src/testdata/notes.epub` as `Notes and Pictures.epub` (a footnote's panel, a picture
-shown whole and closed). The others play on
-`documents` holding `src/testdata/scenario.epub` as `Scenario Book.epub` and 13 copies
-beside it (`Scenario Book 02.epub` to `14`), so the library has two pages. Copy the
-tool and the scripts into the test folder (on `/mnt/us`: a file made executable in
-`/tmp` can't be run) and play one, with the reader's own noface stopped first and
-started again after:
+are. `tools/e2e/goto.e2e` bookmarks one page more than Go To's list holds and pages
+the list on and back, and `tools/e2e/notes.e2e` opens a footnote's panel and shows a
+picture whole.
+
+`e2e all <folder>` plays every script, built into the tool, each on the test folder it
+needs, which it makes in `<folder>` with the test books built in too
+(`src/testdata/books.zig`): `books/`, holding `Scenario Book.epub` and 13 copies
+(`Scenario Book 02.epub` to `14`), so the library has two pages, and `notes/`,
+holding `Notes and Pictures.epub`. Copy the tool to `/mnt/us` (a file made executable
+in `/tmp` can't be run) and play them all, with the reader's own noface stopped first
+and started again after:
 
 ```sh
 kill -TERM $(pidof noface)                       # the reader's noface, stopped
-/mnt/us/noface-e2e/e2e /mnt/us/noface-e2e/reader.e2e /mnt/us/noface-e2e
+/mnt/us/noface-e2e/e2e all /mnt/us/noface-e2e
 /mnt/us/noface/noface-launch now &              # and started again
 ```
 
-The tool wakes the Kindle and holds it awake, makes the folder's `data` fresh, starts
-noface on its books, waits for the library, plays the script, and stops noface, also
-when a step fails. Each step prints `ok` or `FAIL`; `drawn` steps print what they
+`e2e <script> <test folder>` plays one script, while one is being written, on a test
+folder whose `documents/` already hold its books, such as one `all` made
+(`/mnt/us/noface-e2e/books`).
+
+For each script the tool wakes the Kindle and holds it awake, makes the folder's
+`data` fresh, starts noface on its books, waits for the library to be shown, plays the
+script, and stops noface, also when a step fails; one script failing doesn't stop the
+rest. Each step prints `ok` or `FAIL`; `drawn` steps print what they
 measured, and `shot` steps leave PGM screenshots in `out`.
 
 ## Packaging and releases

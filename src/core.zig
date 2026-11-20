@@ -41,3 +41,5 @@ pub const toolbar = @import("ui/toolbar.zig");
 /// Every control a script taps, by name, for the device tests (tools/e2e.zig).
 pub const places = @import("screens/places.zig");
 pub const placed = @import("screens/placed.zig");
+/// The test books, which the device tests' runner puts in its test folders.
+pub const test_books = @import("testdata/books.zig");

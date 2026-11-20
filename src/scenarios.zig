@@ -54,6 +54,7 @@ const definition_ui = @import("ui/definition.zig");
 const keyboard = @import("ui/keyboard.zig");
 const search_sheet = @import("ui/search_sheet.zig");
 
+const test_books = @import("testdata/books.zig");
 const go_regular = @embedFile("testdata/fonts/Go-Regular.ttf");
 const go_bold = @embedFile("testdata/fonts/Go-Bold.ttf");
 /// The test books, by what a scenario reads: three chapters of plain text, or one with a
@@ -64,8 +65,8 @@ const TestBook = enum {
 
     fn bytes(b: TestBook) []const u8 {
         return switch (b) {
-            .scenario => @embedFile("testdata/scenario.epub"),
-            .notes => @embedFile("testdata/notes.epub"),
+            .scenario => test_books.scenario,
+            .notes => test_books.notes,
         };
     }
 };

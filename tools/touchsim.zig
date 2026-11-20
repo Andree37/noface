@@ -51,6 +51,13 @@ pub const Panel = struct {
         return panel;
     }
 
+    pub fn close(panel: *Panel) void {
+        assert(panel.fd >= 0);
+        assert(!panel.finger_down); // Never left pressed
+        _ = linux.close(panel.fd); // Only written to
+        panel.fd = -1;
+    }
+
     fn send(panel: *const Panel, kind: u16, code: u16, value: i32) void {
         assert(panel.fd >= 0);
         assert(kind == ev_syn or kind == ev_key or kind == ev_abs);

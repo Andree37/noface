@@ -234,6 +234,9 @@ const Outcome = struct {
     /// Where the app last placed what moves with the page, by `placed.What`: a note's
     /// mark, a picture, a highlight's Delete bubble.
     placed: [placed_kinds]?style.Point,
+    /// Every "service property value" noface set on the Kindle, in order, as
+    /// `Kindle.sets_into` asks; none otherwise.
+    sets: []const []const u8,
     settings: settings_model.Settings, // In use at the end
     saved_settings: settings_model.Settings, // As the settings file has them
 };
@@ -258,6 +261,9 @@ const Kindle = struct {
     books: []const []const u8 = &.{"book.epub"},
     /// What each of them is.
     book: TestBook = .scenario,
+    /// Keeps every "service property value" noface set on the Kindle, in this memory,
+    /// for the outcome's `sets`.
+    sets_into: ?std.mem.Allocator = null,
     /// Starts in the library instead of the first book.
     library: bool = false,
     /// A book read a while already, so the library shows it to continue, and opens
@@ -830,6 +836,35 @@ const Ran = struct {
 };
 
 /// What a finished run left: in the App, its folder and the pretend Kindle.
+/// Where the app last placed what moves with the page, by `placed.What`, as the log it
+/// wrote in the scenario's folder `dir` says.
+fn placed_logged(dir: []const u8) ![placed_kinds]?style.Point {
+    assert(dir.len > 0);
+    var placed_at: [placed_kinds]?style.Point = @splat(null);
+    var log_buffer: [file.own_path_bytes_max]u8 = undefined;
+    const log_path = try std.fmt.bufPrintSentinel(&log_buffer, "{s}/{s}", .{ dir, app_log }, 0);
+    // An empty log placed nothing; one that can't be read fails the scenario
+    const logged: ?[]const u8 = file.map(log_path) catch |err| switch (err) {
+        error.EmptyFile => null,
+        else => return err,
+    };
+    const text = logged orelse return placed_at;
+    defer file.unmap(text);
+    assert(text.len > 0);
+    for (std.enums.values(placed.What), &placed_at) |what, *at| {
+        at.* = placed.find(text, @tagName(what));
+    }
+    return placed_at;
+}
+
+/// What the pretend Kindle was set to, copied into `into` to outlive it.
+fn sets_kept(into: std.mem.Allocator, fake: *const FakeKindle) ![]const []const u8 {
+    const copied = try into.alloc([]const u8, fake.sets.items.len);
+    for (copied, fake.sets.items) |*c, set| c.* = try into.dupe(u8, set);
+    assert(copied.len == fake.sets.items.len);
+    return copied;
+}
+
 fn play_on_outcome(
     a: *app.App,
     kindle: Kindle,
@@ -855,22 +890,9 @@ fn play_on_outcome(
         looks_right = try matches_reference(ran.alloc, name, ran.last_screen);
     }
     const wifi_key = "com.lab126.cmd wirelessEnable";
-    var placed_at: [placed_kinds]?style.Point = @splat(null);
-    var log_buffer: [file.own_path_bytes_max]u8 = undefined;
-    const log_path = try std.fmt.bufPrintSentinel(&log_buffer, "{s}/{s}", .{ ran.dir, app_log }, 0);
-    // An empty log placed nothing; one that can't be read fails the scenario
-    const logged: ?[]const u8 = file.map(log_path) catch |err| switch (err) {
-        error.EmptyFile => null,
-        else => return err,
-    };
-    if (logged) |text| {
-        defer file.unmap(text);
-        for (std.enums.values(placed.What), &placed_at) |what, *at| {
-            at.* = placed.find(text, @tagName(what));
-        }
-    }
     return .{
-        .placed = placed_at,
+        .sets = if (kindle.sets_into) |into| try sets_kept(into, ran.fake) else &.{},
+        .placed = try placed_logged(ran.dir),
         .ms = ran.ms,
         .looks_right = looks_right,
         .opened = opened,
@@ -1437,6 +1459,72 @@ const scenarios = [_]Scenario{
                     wait(2_000),
                 });
                 try expect(r.opened[0], "the tap after the series list was dropped");
+            }
+        }.run,
+    },
+    .{
+        .name = "the quick panel's controls each ask the Kindle for what they show: a " ++
+            "step of brightness and of warmth, the warmth's schedule, airplane mode, " ++
+            "Bluetooth and a sync",
+        .run = struct {
+            fn run() !void {
+                var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+                defer arena.deinit();
+                const panel = struct {
+                    fn tap_panel(h: menu_ui.Hit) Step {
+                        return tap_on(menu_ui.place(h));
+                    }
+                }.tap_panel;
+                const r = try play_on(.{ .sets_into = arena.allocator() }, &.{
+                    pull_down,
+                    panel(.brighter),
+                    panel(.dimmer),
+                    panel(.warmer),
+                    panel(.cooler),
+                    panel(.schedule),
+                    panel(.airplane),
+                    panel(.airplane),
+                    panel(.bluetooth),
+                    panel(.sync),
+                    tap_on(menu_ui.place(.close)),
+                });
+                // Brightness and warmth a step up, then back down, each
+                for ([_][]const u8{ "flIntensity", "currentAmberLevel" }) |level| {
+                    const steps = try levels_set(arena.allocator(), r.sets, level);
+                    try expect(steps.len == 2, "a level wasn't stepped twice");
+                    try expect(steps[0] > steps[1], "a level didn't step up, then down");
+                }
+                // The rest in order, from the pretend Kindle's readings: the schedule off,
+                // Wi-Fi on, Bluetooth off
+                const asked = [_][]const u8{
+                    "com.lab126.powerd amberSchedEnable 1",
+                    "com.lab126.cmd wirelessEnable 0",
+                    "com.lab126.cmd wirelessEnable 1",
+                    "com.lab126.btfd BTenable 1:2",
+                    "com.lab126.quickactions syncAndCheck 1",
+                };
+                var at: u32 = 0;
+                for (r.sets) |set| {
+                    if (at < asked.len and std.mem.eql(u8, set, asked[at])) at += 1;
+                }
+                try expect(at == asked.len, "a control didn't ask the Kindle, or not in turn");
+            }
+
+            /// The values a powerd level was set to, in order.
+            fn levels_set(
+                alloc: std.mem.Allocator,
+                sets: []const []const u8,
+                level: []const u8,
+            ) ![]const u32 {
+                var values: std.ArrayList(u32) = .empty;
+                for (sets) |set| {
+                    var words = std.mem.tokenizeScalar(u8, set, ' ');
+                    const service = words.next() orelse continue;
+                    if (!std.mem.eql(u8, service, "com.lab126.powerd")) continue;
+                    if (!std.mem.eql(u8, words.next() orelse continue, level)) continue;
+                    try values.append(alloc, try std.fmt.parseInt(u32, words.next().?, 10));
+                }
+                return values.items;
             }
         }.run,
     },

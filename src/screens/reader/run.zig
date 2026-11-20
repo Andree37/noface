@@ -20,6 +20,7 @@ const card = @import("../../ui/card.zig");
 const app = @import("../../app.zig");
 const sess = @import("session.zig");
 const view = @import("run_view.zig");
+const run_icons = @import("../../ui/run_icons.zig");
 const lipc = @import("../../kindle/lipc.zig");
 const card_screen = @import("../card.zig");
 const screen = @import("../screen.zig");
@@ -69,7 +70,8 @@ pub const Run = struct {
     /// The Kindle held awake, as running last asked (lipc.hold_awake).
     awake: bool = false,
 
-    pub const Pace = enum { up, down };
+    /// The pace just moved, shown as the dial's arrow.
+    pub const Pace = run_icons.Arrow;
 
     /// What a tap asks of the reader, beyond what running did itself: nothing more,
     /// the pause card, or the reader's place to follow the phrase it brought up before

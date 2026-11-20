@@ -12,6 +12,7 @@ test {
     _ = @import("screens/reader/session.zig");
     _ = @import("screens/reader/view.zig");
     _ = @import("screens/reader/words.zig");
+    _ = @import("ui/run_icons.zig");
     _ = @import("screens/reader/back_button.zig");
     _ = @import("screens/reader/reading_clock.zig");
     _ = @import("library/view.zig");

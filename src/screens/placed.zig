@@ -24,6 +24,13 @@ pub const What = enum {
 
 const prefix = "placed ";
 const middle = " at ";
+/// Starts what a page shown placed: what was placed before it was another page's.
+const page_marker = prefix ++ "on page ";
+
+/// Says in the log that page `index` was shown: what's placed after it is its own.
+pub fn shown(index: u32) void {
+    log.info(page_marker ++ "{d}", .{index + 1});
+}
 
 /// Says in the log that `what` was drawn with its middle at `point`.
 pub fn note(what: What, point: style.Point) void {
@@ -32,9 +39,12 @@ pub fn note(what: What, point: style.Point) void {
     log.info(prefix ++ "{s}" ++ middle ++ "{d},{d}", .{ @tagName(what), point.x, point.y });
 }
 
-/// Where `what` was last placed, in a log's text, or null when it never was.
-pub fn find(text: []const u8, what: []const u8) ?style.Point {
+/// Where `what` was last placed on the page shown last, in a log's text, or null when
+/// it wasn't: what an earlier page placed is never taken for this one's.
+pub fn find(log_text: []const u8, what: []const u8) ?style.Point {
     assert(what.len > 0);
+    const page_start = std.mem.lastIndexOf(u8, log_text, page_marker) orelse 0;
+    const text = log_text[page_start..];
     assert(std.mem.indexOf(u8, what, middle) == null); // A name, never its line's rest
     assert(std.mem.indexOfScalar(u8, what, ' ') == null); // One word, as names are
     var found: ?style.Point = null;
@@ -61,6 +71,20 @@ fn parse_point(text: []const u8) ?style.Point {
         return null;
     if (x < 0 or y < 0) return null;
     return .{ .x = x, .y = y };
+}
+
+test "what an earlier page placed isn't found once another page is shown" {
+    const text =
+        \\placed on page 1
+        \\placed paragraph at 210,568
+        \\placed word at 160,318
+        \\placed on page 2
+        \\placed word at 300,400
+        \\placed delete at 636,714
+    ;
+    try std.testing.expectEqual(style.Point{ .x = 300, .y = 400 }, find(text, "word").?);
+    try std.testing.expectEqual(style.Point{ .x = 636, .y = 714 }, find(text, "delete").?);
+    try std.testing.expectEqual(@as(?style.Point, null), find(text, "paragraph"));
 }
 
 test "the last place logged for a name is found, and no other name's" {

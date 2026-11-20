@@ -319,15 +319,12 @@ fn play_all(root: []const u8) !bool {
     var failed: u32 = 0;
     for (suite) |script| {
         std.debug.print("== {s}\n", .{script.name});
-        var path_buffer: [core.file.own_path_bytes_max]u8 = undefined;
-        const shelf_root = try std.fmt.bufPrint(
-            &path_buffer,
-            "{s}/{s}",
-            .{ root, @tagName(script.shelf) },
-        );
-        try shelve(shelf_root, script.shelf);
-        var buffers: Folder.Buffers = undefined;
-        if (!try play_on(script.text, try Folder.in(&buffers, shelf_root))) failed += 1;
+        // A script that can't even start counts as failed, and the rest still play
+        const passed = play_shelved(root, script) catch |err| fail: {
+            std.debug.print("FAIL: {s}\n", .{@errorName(err)});
+            break :fail false;
+        };
+        if (!passed) failed += 1;
     }
     assert(failed <= suite.len);
     const passed = suite.len - failed;
@@ -335,11 +332,28 @@ fn play_all(root: []const u8) !bool {
     return failed == 0;
 }
 
+/// Plays `script` on its shelf in `root`, made first, and says whether it passed.
+fn play_shelved(root: []const u8, script: Script) !bool {
+    assert(root.len > 0);
+    var path_buffer: [core.file.own_path_bytes_max]u8 = undefined;
+    const shelf_root = try std.fmt.bufPrint(&path_buffer, "{s}/{s}", .{
+        root, @tagName(script.shelf),
+    });
+    // Inside the folder given, never beside or above it
+    assert(std.mem.startsWith(u8, shelf_root, root));
+    assert(shelf_root.len > root.len);
+    try shelve(shelf_root, script.shelf);
+    var buffers: Folder.Buffers = undefined;
+    return play_on(script.text, try Folder.in(&buffers, shelf_root));
+}
+
 /// Makes the test folder `shelf_root` for `shelf`, its documents/ holding its books.
-/// Books already there are kept: written again, they'd count as just added, and the
-/// library's order by date added would change from one run to the next.
+/// A book already there as built in is kept: written again, it would count as just
+/// added, and the library's order by date added would change from one run to the next.
+/// One that differs, from an older build, is written over.
 fn shelve(shelf_root: []const u8, shelf: Shelf) !void {
     assert(shelf_root.len > 0);
+    assert(shelf.copies() > 0); // A shelf holds its book at least once
     var path_buffer: [core.file.own_path_bytes_max]u8 = undefined;
     for ([_][]const u8{ "", "/documents" }) |under| {
         const folder = try std.fmt.bufPrintSentinel(&path_buffer, "{s}{s}", .{
@@ -350,10 +364,20 @@ fn shelve(shelf_root: []const u8, shelf: Shelf) !void {
     }
     for (0..shelf.copies()) |i| {
         const book = try book_path(&path_buffer, shelf_root, shelf, @intCast(i));
-        if (core.file.exists(book)) continue;
+        if (holds(book, shelf.book())) continue;
         core.file.write_small(book, shelf.book());
         if (core.file.size_of(book) != shelf.book().len) return error.CantShelve;
     }
+}
+
+/// Whether the file at `path` holds exactly `bytes`.
+fn holds(path: [*:0]const u8, bytes: []const u8) bool {
+    assert(path[0] != 0);
+    assert(bytes.len > 0);
+    if (core.file.size_of(path) != bytes.len) return false;
+    const there = core.file.map(path) catch return false;
+    defer core.file.unmap(there);
+    return std.mem.eql(u8, there, bytes);
 }
 
 /// Copy `i` of `shelf`'s book in `shelf_root`'s documents: the first by the book's
@@ -365,6 +389,7 @@ fn book_path(
     i: u32,
 ) ![:0]const u8 {
     assert(i < shelf.copies());
+    assert(shelf_root.len > 0);
     const documents = .{ shelf_root, shelf.title() };
     if (i == 0) return std.fmt.bufPrintSentinel(buffer, "{s}/documents/{s}.epub", documents, 0);
     const copy_number = i + 1; // The first copy is the book's second
@@ -388,12 +413,18 @@ fn play_on(script: []const u8, folder: Folder) !bool {
 fn play(script: []const u8, folder: Folder) bool {
     assert(script.len > 0);
     assert(folder.out.len > 0);
+    var panel = touchsim.Panel.open() catch return false;
+    const screen = Screen.open() catch {
+        panel.close(); // Opened, and never used
+        return false;
+    };
     var run = Run{
-        .panel = touchsim.Panel.open() catch return false,
-        .screen = Screen.open() catch return false,
+        .panel = panel,
+        .screen = screen,
         .log_path = folder.log,
         .out_dir = folder.out,
     };
+    // The run's own, which know whether a finger is still down
     defer run.panel.close();
     defer run.screen.close();
     var lines = std.mem.splitScalar(u8, script, '\n');
@@ -477,12 +508,16 @@ fn start_noface(folder: Folder) !void {
         sleep_ms(wake_ms);
     }
     core.lipc.hold_awake(true);
+    errdefer core.lipc.hold_awake(false);
     var out: [64]u8 = undefined;
     const remove = [_:null]?[*:0]const u8{ "/bin/rm", "-rf", folder.data, folder.out };
     _ = core.process.run(&remove, &out) orelse return error.CantClear;
     if (core.os.failed(core.calls.mkdir(folder.out, 0o755))) return error.CantClear;
     const launch = [_:null]?[*:0]const u8{ core.paths.launcher, "e2e", folder.root };
     _ = core.process.run(&launch, &out) orelse return error.CantStart;
+    // Started, or starting: stopped again if it never gets ready, so no noface is left
+    // on the test folder for the reader's own to start beside
+    errdefer stop_noface();
     const deadline = now_us() + start_ms_max * 1000;
     // Bounded by the deadline
     while (!(log_has(folder.log, 0, "library") catch false)) {
@@ -613,17 +648,20 @@ const Target = union(enum) {
     at: Point,
     placed: core.placed.What,
 
-    /// The point, looked up in the log for what noface placed: where it last drew it.
+    /// The point, looked up in the log for what noface placed: where it drew it on the
+    /// page shown last, or NotPlaced when that page placed none.
     fn resolve(t: Target, run: *const Run) Failure!Point {
         assert(run.log_path[0] != 0);
         const what = switch (t) {
             .at => |p| return p,
             .placed => |w| w,
         };
-        const text = core.file.map(run.log_path) catch return error.NoLog;
-        defer core.file.unmap(text);
-        assert(text.len > 0); // A mapped file is never empty
-        return core.placed.find(text, @tagName(what)) orelse error.NotPlaced;
+        const at = core.placed.find(try log_tail(run.log_path), @tagName(what)) orelse
+            return error.NotPlaced;
+        // Read back as `placed.note` wrote it: on the screen, never off its top or left
+        assert(at.x >= 0);
+        assert(at.y >= 0);
+        return at;
     }
 };
 
@@ -737,21 +775,34 @@ var log_buffer: [log_read_max]u8 = undefined;
 /// Whether the log, from byte `from` on, has `wanted` in it.
 fn log_has(path: [*:0]const u8, from: u64, wanted: []const u8) Failure!bool {
     assert(wanted.len > 0);
+    // A log started again since (shorter than the mark) is read from its start
+    const start = if (core.file.size_of(path) < from) 0 else from;
+    return std.mem.indexOf(u8, try read_log(path, start), wanted) != null;
+}
+
+/// The last `log_read_max` bytes of the log, or all of it when shorter: what was placed
+/// on the page shown last is near its end.
+fn log_tail(path: [*:0]const u8) Failure![]const u8 {
+    const size = core.file.size_of(path);
+    return read_log(path, size -| log_read_max);
+}
+
+/// The log from byte `from` on, as much as `log_buffer` holds. Read, not mapped: noface
+/// writes it as it's read, and starts it over when it grows long, which would pull a
+/// mapping out from under its reader.
+fn read_log(path: [*:0]const u8, from: u64) Failure![]const u8 {
+    assert(path[0] != 0);
     const rc = linux.open(path, .{ .ACCMODE = .RDONLY }, 0);
     if (core.os.failed(rc)) return error.NoLog;
     const fd: i32 = @intCast(rc);
-    defer _ = linux.close(fd);
-    // A log started again since (shorter than the mark) is read from its start
-    const start: i64 = if (core.file.size_of(path) < from) 0 else @intCast(from);
-    const read = linux.pread(fd, &log_buffer, log_buffer.len, start);
+    defer _ = linux.close(fd); // Only read from
+    const read = linux.pread(fd, &log_buffer, log_buffer.len, @intCast(from));
     if (core.os.failed(read)) return error.NoLog;
     assert(read <= log_buffer.len);
-    return std.mem.indexOf(u8, log_buffer[0..read], wanted) != null;
+    return log_buffer[0..read];
 }
 
-/// The next point: a place by name (screens/places.zig), or "<x> <y>" for what isn't a
-/// control, like a word on the page.
-/// A tap's or a hold's target: "placed <what>", or a point.
+/// A touch's target: "placed <what>", or a point.
 fn target(words: *Words) Failure!Target {
     if (words.peek()) |word| if (std.mem.eql(u8, word, "placed")) {
         _ = words.next(); // The word just looked at
@@ -767,6 +818,8 @@ fn target(words: *Words) Failure!Target {
     return .{ .at = at };
 }
 
+/// The next point: a place by name (screens/places.zig), or "<x> <y>" for what isn't a
+/// control, like a word on the page.
 fn point(words: *Words) Failure!Point {
     const word = words.next() orelse return error.Usage;
     assert(word.len > 0);

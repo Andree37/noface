@@ -15,6 +15,9 @@ pub const data_dir = "/mnt/us/noface-data";
 pub const documents = "/mnt/us/documents";
 /// Typefaces the reader adds.
 pub const own_fonts = "/mnt/us/fonts";
+/// The variable naming a test run's books (`noface-launch e2e`): set only for a run on
+/// a test folder, never the reader's own.
+pub const test_documents_env = "NOFACE_DOCUMENTS";
 
 /// The app itself.
 pub const reader = app_dir ++ "/noface";

@@ -410,14 +410,21 @@ pub const Session = struct {
         unreachable; // `ensure` gives back one of the slots' pixels
     }
 
-    /// Says in the log where the page on screen put its first footnote mark and its first
-    /// picture, for tests to tap (screens/placed.zig).
+    /// Says in the log, on a test run, where the page on screen put its first footnote
+    /// mark and its first picture, and the words a test holds, for tests to tap
+    /// (screens/placed.zig). The reader's own runs log none of it.
     fn note_placed(s: *const Session, index: u32) void {
+        if (!s.app.logs_placed) return;
         const slot = s.app.display.slot_for(index) orelse return;
         assert(slot.page == index); // Just drawn: the page on screen
+        placed.shown(index);
         const hits = &slot.hits;
-        if (hits.len > 0) placed.note(.note, middle_of(hits.items[0]));
-        if (hits.picture_count > 0) placed.note(.picture, middle_of(hits.pictures[0]));
+        if (hits.len > 0 and has_room(hits.items[0])) {
+            placed.note(.note, middle_of(hits.items[0]));
+        }
+        if (hits.picture_count > 0 and has_room(hits.pictures[0])) {
+            placed.note(.picture, middle_of(hits.pictures[0]));
+        }
         note_placed_words(hits.words[0..hits.word_count]);
     }
 
@@ -449,34 +456,80 @@ pub const Session = struct {
     }
 };
 
-/// The middle of what a hit covers.
-/// Logs where a page's words a test holds or drags across were drawn, from `words`, as
-/// the page's layout put them in reading order: the first a touch reaches as a word,
-/// below the top edge's strip, which opens the toolbar, and the first and last of the
-/// first line of the next paragraph after it, when there is one.
+/// Logs where a page's words a test holds or drags across were drawn (`words_placed`).
 fn note_placed_words(words: []const book_model.Word) void {
+    const found = words_placed(words);
+    if (found.word) |at| placed.note(.word, at);
+    if (found.paragraph) |at| placed.note(.paragraph, at);
+    if (found.paragraph_end) |at| placed.note(.paragraph_end, at);
+}
+
+/// Where a page's words a test holds or drags across are; null for one it hasn't.
+const WordsPlaced = struct {
+    word: ?style.Point = null,
+    paragraph: ?style.Point = null,
+    paragraph_end: ?style.Point = null,
+};
+
+/// From `words`, as the page's layout put them in reading order: the first a touch
+/// reaches as a word, below the top edge's strip, which opens the toolbar, and the first
+/// and last of the first line of the next paragraph after it, when there is one. Only
+/// words a finger can land on are taken.
+fn words_placed(words: []const book_model.Word) WordsPlaced {
+    var result: WordsPlaced = .{};
     // Bounded by the page's words
     const first = for (words, 0..) |w, i| {
+        if (!touchable(w)) continue;
         if (middle_of_word(w).y >= touch_zones.top_zone) break i;
-    } else return; // None below the strip, or a page of only a picture
-    placed.note(.word, middle_of_word(words[first]));
+    } else return result; // None below the strip, or a page of only a picture
+    result.word = middle_of_word(words[first]);
     // Bounded by the page's words
     const second = for (words[first..], first..) |w, i| {
-        if (w.para != words[first].para) break i;
-    } else return; // One paragraph only
+        if (touchable(w) and w.para != words[first].para) break i;
+    } else return result; // One paragraph only
     const line_y = words[second].y;
     const para = words[second].para;
     var last = second;
     // Bounded by the page's words: the line ends where a word starts lower down, or
-    // another paragraph does
-    while (last + 1 < words.len) : (last += 1) {
-        const next = words[last + 1];
+    // another paragraph does; the last there is the last a finger can find
+    for (words[second + 1 ..], second + 1..) |next, i| {
         if (next.y != line_y or next.para != para) break;
+        if (touchable(next)) last = i;
     }
     assert(last >= second);
-    assert(words[last].para == para);
-    placed.note(.paragraph, middle_of_word(words[second]));
-    placed.note(.paragraph_end, middle_of_word(words[last]));
+    assert(touchable(words[last]));
+    result.paragraph = middle_of_word(words[second]);
+    result.paragraph_end = middle_of_word(words[last]);
+    return result;
+}
+
+test "the words placed skip what a finger can't land on, and the top edge's strip" {
+    const top = touch_zones.top_zone;
+    const line = top + 100;
+    const words = [_]book_model.Word{
+        // In the strip, then a zero-width space starting the first paragraph below it
+        .{ .x = 100, .y = 0, .w = 50, .h = 40, .para = 0, .start = 0, .end = 4 },
+        .{ .x = 100, .y = top, .w = 0, .h = 40, .para = 0, .start = 5, .end = 8 },
+        .{ .x = 160, .y = top, .w = 60, .h = 40, .para = 0, .start = 8, .end = 12 },
+        // The next paragraph's first line, ending in a zero-width word
+        .{ .x = 100, .y = line, .w = 80, .h = 40, .para = 1, .start = 0, .end = 5 },
+        .{ .x = 200, .y = line, .w = 40, .h = 40, .para = 1, .start = 6, .end = 9 },
+        .{ .x = 260, .y = line, .w = 0, .h = 40, .para = 1, .start = 9, .end = 12 },
+        .{ .x = 100, .y = line + 50, .w = 40, .h = 40, .para = 1, .start = 13, .end = 16 },
+    };
+    const found = words_placed(&words);
+    try std.testing.expectEqual(style.Point{ .x = 190, .y = top + 20 }, found.word.?);
+    try std.testing.expectEqual(style.Point{ .x = 140, .y = line + 20 }, found.paragraph.?);
+    try std.testing.expectEqual(style.Point{ .x = 220, .y = line + 20 }, found.paragraph_end.?);
+    // A page of words no finger can land on places none
+    const empty = [_]book_model.Word{words[1]};
+    try std.testing.expectEqual(@as(?style.Point, null), words_placed(&empty).word);
+}
+
+/// Whether a word takes up room a finger can land on: one drawn narrower than a pixel,
+/// like a zero-width space or a soft hyphen, doesn't.
+fn touchable(w: book_model.Word) bool {
+    return w.w > 0 and w.h > 0;
 }
 
 fn middle_of_word(w: book_model.Word) style.Point {
@@ -485,6 +538,12 @@ fn middle_of_word(w: book_model.Word) style.Point {
     return .{ .x = w.x + @divTrunc(w.w, 2), .y = w.y + @divTrunc(w.h, 2) };
 }
 
+/// Whether a hit takes up room a finger can land on, as `touchable` for a word.
+fn has_room(h: text.Hit) bool {
+    return h.w > 0 and h.h > 0;
+}
+
+/// The middle of what a hit covers.
 fn middle_of(h: text.Hit) style.Point {
     assert(h.w > 0);
     assert(h.h > 0);

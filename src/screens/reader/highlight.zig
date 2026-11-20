@@ -67,7 +67,7 @@ pub fn show_page(a: *app.App, s: *sess.Session, active: ?[]const u8) !?u32 {
             selection.draw(screen_page, chosen);
             const band = selection.band(chosen);
             delete_top = try draw_delete_bubble(a, band, words);
-            placed.note(.delete, delete_place(a, delete_top.?));
+            if (a.logs_placed) placed.note(.delete, delete_place(a, delete_top.?));
         }
     }
     try a.display.screen.wait_complete(try a.display.screen.show(.page));

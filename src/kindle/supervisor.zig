@@ -47,7 +47,7 @@ const Paths = struct {
     attempts: [:0]const u8 = "",
     library: [:0]const u8 = "",
     data: [:0]const u8 = "",
-    documents_env: ?[:0]const u8 = null, // NOFACE_DOCUMENTS=<folder>, for a test's books
+    documents_env: ?[:0]const u8 = null, // `paths.test_documents_env`=<folder>, a test's books
 
     fn make(p: *Paths, folders: Folders) !void {
         assert(folders.data.len > 0);
@@ -64,7 +64,8 @@ const Paths = struct {
         p.library = try std.fmt.bufPrintSentinel(&b[3], "{s}", .{folders.library}, 0);
         p.data = try std.fmt.bufPrintSentinel(&b[4], "{s}", .{folders.data}, 0);
         if (folders.documents) |d| {
-            p.documents_env = try std.fmt.bufPrintSentinel(&b[5], "NOFACE_DOCUMENTS={s}", .{d}, 0);
+            const env = paths.test_documents_env ++ "={s}";
+            p.documents_env = try std.fmt.bufPrintSentinel(&b[5], env, .{d}, 0);
         }
         assert(std.mem.startsWith(u8, p.log, folders.data));
     }

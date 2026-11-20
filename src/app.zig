@@ -88,6 +88,9 @@ pub const App = struct {
     library_path: [*:0]const u8,
     battery_path: [*:0]const u8,
     documents: []const u8 = paths.documents, // Where EPUBs copied over USB are found
+    /// A test run, on a test folder's books: where what moves with the text was drawn
+    /// goes in the log for its tests to tap (screens/placed.zig). Never the reader's own.
+    logs_placed: bool = false,
     battery_last: ?battery_model.Sample = null, // Last level noted, so only changes are logged
     downloads_until: u64 = 0, // A download may still be running until then (now_us)
     dictionary_base: []const u8 = dict_download.default_base, // Where dictionaries download from

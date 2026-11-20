@@ -139,7 +139,7 @@ fn main_reader(init: std.process.Init.Minimal) !void {
     var files: setup.DataFiles = .{};
     try files.init(state_dir);
     assert(files.settings.len > state_dir.len); // The data folder, then the file's name
-    const offered = fonts_db.find_own(alloc, sets_text);
+    const offered = main_reader_offered(init, alloc);
     var shared = try setup.assemble(.{
         .alloc = alloc,
         .app_budget = &app_budget,
@@ -188,6 +188,20 @@ fn main_reader_fonts(argv: []const [*:0]const u8) !setup.FontFiles {
     return files;
 }
 
+/// The typefaces offered: the Kindle's, then the reader's own. A test run offers the
+/// Kindle's alone: its tests tap them where they are with none of the reader's own
+/// (screens/places.zig), whatever this Kindle has.
+fn main_reader_offered(init: std.process.Init.Minimal, alloc: std.mem.Allocator) fonts_db.Offered {
+    if (test_run(init)) return .{};
+    return fonts_db.find_own(alloc, sets_text);
+}
+
+/// Whether noface runs on a test folder's books rather than the reader's own: it then
+/// keeps to what its tests expect (the Kindle's typefaces alone) and logs what they tap.
+fn test_run(init: std.process.Init.Minimal) bool {
+    return init.environ.getPosix(paths.test_documents_env) != null;
+}
+
 /// What differs on the Kindle from an App as assembled: where books and dictionaries
 /// come from, the clock's offset, and the settings brought up to date.
 fn main_reader_configure(
@@ -197,7 +211,9 @@ fn main_reader_configure(
 ) !void {
     assert(shared.user.files.settings == files.settings.ptr); // Assembled from these files
     // A different folder for EPUBs, for a demo or test run beside the real library
-    shared.documents = if (init.environ.getPosix("NOFACE_DOCUMENTS")) |d| d else paths.documents;
+    const documents = init.environ.getPosix(paths.test_documents_env);
+    shared.documents = documents orelse paths.documents;
+    shared.logs_placed = test_run(init);
     shared.dictionary_base = init.environ.getPosix("NOFACE_DICT_URL") orelse
         dict_download.default_base;
     shared.utc_offset = clock.utc_offset();

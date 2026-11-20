@@ -750,6 +750,7 @@ fn play_on_start(
     assert(a.display.screen.width == width);
     assert(a.display.screen.height == height);
     a.documents = dir;
+    a.logs_placed = true; // The scenarios tap what moves with the text where it's logged
     // Each run starts as a new reader: nothing read before, every setting as shipped,
     // and the regions' peaks its own
     a.regions.book.end_peak = 0;
@@ -830,7 +831,6 @@ const Ran = struct {
     dir: []const u8, // The scenario's folder
 };
 
-/// What a finished run left: in the App, its folder and the pretend Kindle.
 /// Where the app last placed what moves with the page, by `placed.What`, as the log it
 /// wrote in the scenario's folder `dir` says.
 fn placed_logged(dir: []const u8) ![placed_kinds]?style.Point {
@@ -860,6 +860,7 @@ fn sets_kept(into: std.mem.Allocator, fake: *const FakeKindle) ![]const []const 
     return copied;
 }
 
+/// What a finished run left: in the App, its folder and the pretend Kindle.
 fn play_on_outcome(
     a: *app.App,
     kindle: Kindle,

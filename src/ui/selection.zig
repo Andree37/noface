@@ -1,6 +1,7 @@
 //! Text selection on a page: which words a finger covers, and how they look.
 const std = @import("std");
 const assert = std.debug.assert;
+const style = @import("style.zig");
 const book_model = @import("../model/book.zig");
 const Page = @import("../gfx/page.zig").Page;
 
@@ -38,10 +39,13 @@ pub fn word_at(words: []const book_model.Word, x: i32, y: i32) ?u32 {
     return found;
 }
 
-const underline = 5;
-const handle_radius = 13;
-const handle_reach = 30; // Above the first line and below the last
-pub const grab_distance = 70; // How near a finger counts as grabbing a handle
+const underline = style.space.hair;
+const handle_radius = style.space.small;
+const handle_reach = style.space.roomy; // Above the first line and below the last
+pub const grab_distance = style.space.wider; // How near a finger counts as grabbing a handle
+/// A handle's stem, and how far out from its word's edge it stands.
+const stem = style.space.hair;
+const handle_outset = style.border;
 
 comptime {
     // A finger anywhere on a handle's disc grabs it, and the disc clears the line.
@@ -55,13 +59,13 @@ pub const Handle = struct { x: i32, y: i32 };
 pub fn start_handle(selected: []const book_model.Word) Handle {
     assert(selected.len > 0);
     const w = selected[0];
-    return .{ .x = w.x - 3, .y = w.y - handle_reach + @divTrunc(w.h, 4) };
+    return .{ .x = w.x - handle_outset, .y = w.y - handle_reach + @divTrunc(w.h, 4) };
 }
 
 pub fn end_handle(selected: []const book_model.Word) Handle {
     assert(selected.len > 0);
     const w = selected[selected.len - 1];
-    return .{ .x = w.x + w.w + 3, .y = w.y + w.h + handle_reach - @divTrunc(w.h, 4) };
+    return .{ .x = w.x + w.w + handle_outset, .y = w.y + w.h + handle_reach - @divTrunc(w.h, 4) };
 }
 
 pub fn near_handle(h: Handle, x: i32, y: i32) bool {
@@ -90,12 +94,16 @@ pub fn draw(page: Page, selected: []const book_model.Word) void {
     // Each handle's stem runs from the handle to its word, downward.
     assert(start.y <= first.y + first.h);
     const start_stem = first.y + first.h - start.y;
-    page.fill_rect(@intCast(start.x - 2), @intCast(start.y), 4, @intCast(start_stem), 0x00);
+    const stem_left = start.x - stem / 2;
+    page.fill_rect(@intCast(stem_left), @intCast(start.y), stem, @intCast(start_stem), style.black);
     page.disc(start.x, start.y, handle_radius, 0, 0x00);
     const final = selected[selected.len - 1];
     const end = end_handle(selected);
     assert(end.y >= final.y);
-    page.fill_rect(@intCast(end.x - 2), @intCast(final.y), 4, @intCast(end.y - final.y), 0x00);
+    const end_stem_left = end.x - stem / 2;
+    const end_stem = end.y - final.y;
+    const end_top: u32 = @intCast(final.y);
+    page.fill_rect(@intCast(end_stem_left), end_top, stem, @intCast(end_stem), style.black);
     page.disc(end.x, end.y, handle_radius, 0, 0x00);
 }
 
@@ -115,7 +123,9 @@ pub fn band(selected: []const book_model.Word) Band {
 fn word(x: i32, y: i32) book_model.Word {
     assert(x >= 0);
     assert(y >= 0);
-    return .{ .x = x, .y = y, .w = 50, .h = 40, .para = 0, .start = 0, .end = 1 };
+    const w = style.space.wide;
+    const h = style.space.roomy;
+    return .{ .x = x, .y = y, .w = w, .h = h, .para = 0, .start = 0, .end = 1 };
 }
 
 test "finds the word under a finger" {

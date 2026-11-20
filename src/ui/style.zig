@@ -55,11 +55,22 @@ pub const text = struct {
     pub const sample = pt(8.75); // A typeface's name in itself, a note's text
     pub const body = pt(11);
     pub const hero = pt(13.5);
+    pub const phrase = pt(20.25); // Running mode's phrase, read from a stride away
 };
+
+/// The interface's lines, as a share of their text's size: a line of `size` text and
+/// the next are this far apart.
+pub const leading = 1.2;
+pub fn line_step(comptime size: comptime_int) comptime_int {
+    comptime assert(size > 0);
+    return @intFromFloat(@round(size * leading));
+}
 
 pub const margin = pt(17.25); // Left and right edge of interface text
 /// The least a control takes taps across: about 8.5 mm, a fingertip.
 pub const fingertip = space.band;
+/// A button with a word or two on it: an inch across.
+pub const button_width = pt(72);
 /// A slider's bar runs this far in from each edge of the screen.
 pub const slider_inset = pt(26.5);
 

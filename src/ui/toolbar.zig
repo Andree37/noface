@@ -18,44 +18,49 @@ const margin = style.margin;
 
 // The top bar, three bands down from the screen's top: the status strip (the clock and
 // battery), the tools' row, and the book's title under them.
-const status_band = 66;
-const tools_band = 90;
-const title_band = 72;
+const status_band = style.space.wider;
+const tools_band = style.space.band;
+const title_band = style.space.wider;
 pub const status_row = status_band;
 const tool_row = status_row + tools_band;
 pub const top_height = tool_row + title_band;
 /// The tools' icons' middles, on Home's line, which sits under the status line as every
 /// back link sits under the strip above it.
 const tool_icon_y = status_row + draw.back_link.drop;
-const tool_reach = 56; // Taps this far either side of a tool's centre
+const tool_reach = style.space.wide; // Taps this far either side of a tool's centre
 /// The tools take taps this far into the title's band under them.
-const tool_taps_below = 12;
+const tool_taps_below = style.space.small;
 /// The clock's baseline and the status icons' middle, down from the screen's top.
-const status_text_y = 54;
-const status_icons_y = 45;
+const status_text_y = style.space.wide;
+const status_icons_y = style.space.wide;
 /// The book's title, faded: its baseline, down from the title band's top.
-const title_baseline_drop = 54;
-const tool_spacing = 120; // From one tool's centre to the next
+const title_baseline_drop = style.space.wide;
+const tool_spacing = style.space.tall; // From one tool's centre to the next
+/// The black edge along each bar, where it meets the page.
+const edge = style.space.hair;
 /// The last tool's centre, in from the screen's right edge past the margin.
-const last_tool_inset = margin + 24;
-const home_right = 300; // Home takes taps left of here
+const last_tool_inset = margin + style.space.medium;
+/// Home takes taps left of here: its arrow, and its label with room either side.
+const home_right = margin + draw.back_link.label_inset + 2 * style.fingertip;
 
 // The bottom bar, up from the screen's foot: the chapter buttons' band, then the
 // scrubber's under it.
-const bottom_band = 286;
-const chapters_band = 90;
+const bottom_band = chapters_band + scrub_drop + scrub_room_below;
+/// Under the scrubber's bar, to the screen's foot: its taps reach all the way down.
+const scrub_room_below = style.space.wider;
+const chapters_band = style.space.band;
 pub const bottom_top = screen_height - bottom_band;
 pub const scrub_top = bottom_top + chapters_band;
 /// The chapter buttons' icons' middles, down from the bottom bar's top.
-const chapter_icon_drop = 46;
+const chapter_icon_drop = style.space.wide;
 /// From each edge to the middle of a chapter button's icon, and to an end of the
 /// scrubber's bar under it; the buttons take taps out to twice that from each edge.
 const skip_inset = style.slider_inset;
 const chapter_prev_right = 2 * skip_inset;
 const chapter_next_left = screen_width - 2 * skip_inset;
 /// The scrubber's bar and its label, down from the scrubber's band's top.
-const scrub_drop = 110;
-const scrub_label_drop = 56;
+const scrub_drop = style.space.band;
+const scrub_label_drop = style.space.wide;
 const scrub = slider.Slider{
     .left = skip_inset,
     .right = screen_width - skip_inset,
@@ -63,7 +68,7 @@ const scrub = slider.Slider{
 };
 /// The scrubber takes taps this far above its bar, and all the way below it: a tap
 /// meant for a chapter button that lands a little low must not jump the book.
-const scrub_reach = 60;
+const scrub_reach = style.space.wider;
 
 pub const Hit = enum {
     close,
@@ -296,11 +301,11 @@ pub fn render(
     const title_y = tool_row + title_baseline_drop;
     try draw.clipped(fonts.caption, page, margin, title_y, title, w - 2 * margin);
     fonts.caption.fade(page, margin, title_y, page.width - 2 * margin, style.faded);
-    page.fill_rect(0, top_height - 4, page.width, 4, 0x00);
+    page.fill_rect(0, top_height - edge, page.width, edge, style.black);
     if (sheet) |tab| try aa.render(fonts, page, tab, chosen, running);
 
     page.fill_rect(0, bottom_top, page.width, screen_height - bottom_top, 0xff);
-    page.fill_rect(0, bottom_top, page.width, 4, 0x00);
+    page.fill_rect(0, bottom_top, page.width, edge, style.black);
     icons.skip(page, skip_inset, bottom_top + chapter_icon_drop, false);
     icons.skip(page, w - skip_inset, bottom_top + chapter_icon_drop, true);
     try draw_scrub(fonts, page, at, false);

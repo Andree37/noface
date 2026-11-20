@@ -36,7 +36,7 @@ const height = style.screen_height;
 /// the top, which opens the toolbar, and the middle, which closes what's over the page.
 /// Each halfway down, clear of the thumbs' strip along the bottom.
 pub const page = struct {
-    pub const forward: Point = .{ .x = width * 5 / 6, .y = height / 2 };
+    pub const forward: Point = .{ .x = width - width / 6, .y = height / 2 };
     pub const back: Point = .{ .x = width / 6, .y = height / 2 };
     pub const top: Point = .{ .x = width / 2, .y = touch.top_zone / 2 };
     pub const middle: Point = .{ .x = width / 2, .y = height / 2 };
@@ -48,7 +48,7 @@ pub const running_mode = struct {
     pub const top: Point = .{ .x = width / 2, .y = run.pause_band_px / 2 };
     pub const back: Point = .{ .x = width / 6, .y = height / 2 };
     pub const middle: Point = .{ .x = width / 2, .y = height / 2 };
-    pub const next: Point = .{ .x = width * 5 / 6, .y = height / 2 };
+    pub const next: Point = .{ .x = width - width / 6, .y = height / 2 };
 };
 
 /// Every place by name, worked out as noface is built.

@@ -10,15 +10,18 @@ const icons = @import("icons.zig");
 const centered = draw.centered; // Named apart from the label's own draw method
 
 const rows = [_][]const u8{ "1234567890", "qwertyuiop", "asdfghjkl", "zxcvbnm" };
-const key_width = 116;
-const key_height = 112;
-const gap = 8;
+/// The widest row of keys fills the screen's width inside the tray's edge, so the keys
+/// grow with the screen; each takes a fingertip's height.
+const widest_row: comptime_int = rows[0].len;
+const key_width = (style.screen_width - 2 * tray_pad - (widest_row - 1) * gap) / widest_row;
+const key_height = style.fingertip;
+const gap = style.space.tiny;
 const row_step = key_height + gap;
 /// The letter rows, then a row with space and Search.
 const row_count: u32 = rows.len + 1;
 /// The tray's edge round the keys: over the first row, under the last, and right of
 /// backspace.
-const tray_pad = 16;
+const tray_pad = style.space.snug;
 /// The keys' first row, and the keyboard's top: its tray's edge over them. Everything
 /// from `top` down is the keyboard's to draw.
 const keys_top = style.screen_height - row_count * row_step - tray_pad;
@@ -37,11 +40,11 @@ fn row_left(row: u32) i32 {
 
 /// The special keys: backspace beside the last letter row, then space and Search,
 /// centred like the rows above, a wider gap between them.
-const backspace_width = 180;
+const backspace_width = key_width + key_width / 2; // A key and a half
 const backspace_x = style.screen_width - tray_pad - backspace_width;
-const space_width = 640;
-const enter_width = 300;
-const enter_gap = 3 * gap;
+const space_width = style.screen_width / 2;
+const enter_width = 2 * key_width + gap; // Two keys wide
+const enter_gap = style.space.medium;
 const space_left = (style.screen_width - space_width - enter_gap - enter_width) / 2;
 const enter_left = space_left + space_width + enter_gap;
 const last_letters: u32 = rows.len - 1;
@@ -54,7 +57,7 @@ comptime {
     // Backspace sits clear of the last letter row.
     assert(row_left(last_letters) + rows[last_letters].len * (key_width + gap) < backspace_x);
     // A key's face, shadow and all, fits inside its tap area.
-    assert(key_height > 2 * inset + 3);
+    assert(key_height > 2 * inset + shadow_drop);
     assert(key_width > 2 * inset);
 }
 
@@ -119,9 +122,9 @@ const shadow = 0xa8;
 const special = 0xc4; // Delete and space: a step darker than letters
 const corner = style.key_corner;
 // Drawn a little inside their tap area, so neighbours have a clear gap
-const inset = 3;
+const inset = style.space.hair;
 /// How far a key's shadow shows under its face.
-const shadow_drop = 3;
+const shadow_drop = style.space.hair;
 
 comptime {
     // The backspace tag stays inside its key

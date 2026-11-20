@@ -11,11 +11,11 @@ const Fonts = @import("fonts.zig").Fonts;
 
 /// The title drawn for a book without a cover: this far in from either side, its first
 /// line this far over the screen's middle, and the author this far under its last.
-const title_side = 120;
-const title_rise = 88;
+const title_side = style.space.tall;
+const title_rise = style.space.band;
 const title_top = style.screen_height / 2 - title_rise;
 const title_lines_max = 4;
-const author_gap = 24;
+const author_gap = style.space.medium;
 
 comptime {
     assert(title_lines_max > 0);

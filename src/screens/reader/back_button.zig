@@ -16,18 +16,18 @@ const Zone = @import("../../kindle/input.zig").Zone;
 /// Turns from a jump after which the button goes: the reader is reading there.
 const turns_max = 10;
 /// The button, at the bottom left over the footer.
-const x_px = 40;
-const width_px = 330;
-const height_px = 84;
-pub const above_bottom_px = 112; // From the button's top to the screen's bottom
+const x_px = style.space.tiny + style.space.roomy;
+const width_px = style.button_width + style.space.roomy; // "Back to p. 123" and its arrow
+const height_px = style.space.snug + style.space.wider;
+pub const above_bottom_px = style.space.band; // From the button's top to the screen's bottom
 /// A fingertip's margin around the button, where a touch still counts.
-const reach_px = 12;
+const reach_px = style.space.small;
 /// Inside the button: its arrow's middle and its label's left, in from its left.
-const arrow_inset_px = 44;
-const label_inset_px = 80;
+const arrow_inset_px = style.space.wide;
+const label_inset_px = style.space.small + style.space.wider;
 /// The footer cleared round it: from this far over it, to this far right of it.
-pub const clear_above_px = 8;
-const clear_right_px = 24;
+pub const clear_above_px = style.space.tiny;
+const clear_right_px = style.space.medium;
 
 comptime {
     assert(turns_max > 0);

@@ -11,11 +11,11 @@ const icons = @import("icons.zig");
 /// toolbar, Library on the screens over the library. Its arrow's middle and its label's
 /// left in from the margin; the label is centred on the arrow's middle.
 pub const back_link = struct {
-    pub const arrow_inset = 18;
-    pub const label_inset = 56;
+    pub const arrow_inset = style.space.snug;
+    pub const label_inset = style.space.wide;
     /// Its arrow's middle under the strip above it: the reader's status line on the
     /// toolbar, the library's status strip on the screens over the library.
-    pub const drop = 52;
+    pub const drop = style.space.wide;
 };
 
 /// The back link, the arrow's middle at `centre_y`.
@@ -178,9 +178,9 @@ pub fn sheet(page: Page, top: u32) void {
 
 /// A sheet's black edge along its top, and the grab bar in its middle, down from its top.
 const sheet_edge = 2;
-const grab_bar_width = 72;
-const grab_bar_height = 8;
-const grab_bar_drop = 18;
+const grab_bar_width = style.space.wider;
+const grab_bar_height = style.space.tiny;
+const grab_bar_drop = style.space.snug;
 
 pub const Align = enum { left, center };
 
@@ -215,9 +215,10 @@ pub const Pager = struct {
     bottom: u32,
     reach: ?u32 = null, // Taps count down to here, past `bottom`; else to `bottom`
 
-    const button = 200;
-    /// Each arrow's middle, this far either side of the screen's middle.
-    const arrow_offset = 196;
+    /// An arrow's taps, two fingertips across, and its middle a button's width either
+    /// side of the screen's middle, clear of the count between them.
+    const button = 2 * style.fingertip;
+    const arrow_offset = button;
     pub const prev_left = style.screen_width / 2 - arrow_offset - button / 2;
     pub const next_left = style.screen_width / 2 + arrow_offset - button / 2;
 
@@ -273,9 +274,10 @@ pub const bottom_pager = Pager{
     .bottom = style.screen_height - pager_bottom_above_bottom,
     .reach = style.screen_height,
 };
-/// The pager's band, its top and its foot up from the screen's.
-const pager_above_bottom = 166;
-const pager_bottom_above_bottom = 46;
+/// The pager's band, its top and its foot up from the screen's: a fingertip and more
+/// tall, a thumb's reach above the edge.
+const pager_above_bottom = style.space.band + style.space.wider;
+const pager_bottom_above_bottom = style.space.wide;
 
 comptime {
     // The arrows' tap areas don't overlap, and both sit on the screen.

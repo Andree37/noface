@@ -12,9 +12,9 @@ const app = @import("../app.zig");
 const display = @import("../display.zig");
 const input_mod = @import("../kindle/input.zig");
 
-const width = 640;
-const height = 176;
-const top_gap = 4; // Under the status row
+const width = style.screen_width / 2;
+const height = style.space.wide + style.space.tall;
+const top_gap = style.space.hair; // Under the status row
 const top = style.status_height + top_gap;
 const left = style.screen_width - style.margin - width;
 /// Days of reading averaged for "your usual".
@@ -25,10 +25,10 @@ const detail_size = 96;
 /// What `lines` writes into: room for both.
 const lines_size = title_size + detail_size;
 /// The text inside the bubble: this far in from either side.
-const text_inset = 36;
+const text_inset = style.space.roomy;
 /// The title's and the faded detail's baselines, down from the bubble's top.
-const title_drop = 72;
-const detail_drop = 128;
+const title_drop = style.space.wider;
+const detail_drop = style.space.tall;
 
 comptime {
     // The bubble sits by the battery: inside the margin on the right, under the status row

@@ -22,48 +22,48 @@ const run_icons = @import("../../ui/run_icons.zig");
 /// The phrase's size: nearly twice a page's, readable as it blurs, a sentence of an
 /// average length in a few lines. The lines before and after it are smaller, not bold:
 /// there to place it, not to read.
-const phrase_px = 84;
-const context_px = 46;
+const phrase_px = style.text.phrase;
+const context_px = style.text.body;
 const phrase_line_spacing = 1.35;
 /// The most lines a phrase takes: more, and the eye starts losing its line again.
 const phrase_lines_max = 6;
 /// Where the phrase sits: its middle at the screen's, between the line before it under
 /// the map and the line after it over the footer.
 pub const phrase_middle_y = style.screen_height / 2;
-const phrase_margin_px = 70;
+const phrase_margin_px = style.space.wider;
 const lines_max = phrase_lines_max + 1; // One more, to tell a phrase that doesn't fit
 /// The page map, in the top right corner: the page as the reader would see it, shrunk,
 /// its words as bars and the phrase's thick.
-const map_width_px = 180;
-const map_margin_px = 80;
-const map_top = 40;
+const map_width_px = style.space.wide + style.space.tall;
+const map_margin_px = style.space.small + style.space.wider;
+const map_top = style.space.tiny + style.space.roomy;
 const map_word_px = 2;
 const map_edge_px = 2; // Its outline
 /// As tall as the page it shows, for its width.
 const map_height_px = map_width_px * style.screen_height / style.screen_width;
-const map_gap_px = 30; // Between the map and the text under it
-const map_phrase_px = 6;
+const map_gap_px = style.space.roomy; // Between the map and the text under it
+const map_phrase_px = style.space.hair;
 const text_top = map_top + map_height_px + map_gap_px; // Under the map
 /// The line before the phrase and the line after it: their baselines, from the top of
 /// the text's band and from the footer's top.
-const before_below_top_px = 70;
-const after_above_footer_px = 60;
+const before_below_top_px = style.space.wider;
+const after_above_footer_px = style.space.wider;
 /// The footer: the pause button on the left, the dial and the minutes left on the right.
-const footer_height_px = 140;
-const footer_baseline_above_bottom_px = 60;
-const footer_margin_px = 80;
+const footer_height_px = style.space.tall;
+const footer_baseline_above_bottom_px = style.space.wider;
+const footer_margin_px = style.space.small + style.space.wider;
 /// The dial and the pause button are ui/run_icons.zig's.
 const dial_radius_px = run_icons.dial_radius_px;
-const dial_gap_px = 22; // From the dial to the minutes left beside it
+const dial_gap_px = style.space.medium; // From the dial to the minutes left beside it
 /// The dial's and the button's centre, up from the footer's baseline to its text's middle.
-const icons_above_baseline_px = 11;
+const icons_above_baseline_px = style.space.small;
 pub const dial_steps = run_icons.dial_steps;
 /// From the pause button to the pace beside it.
-const pace_gap_px = 20;
+const pace_gap_px = style.space.snug;
 const pause_radius_px = run_icons.pause_radius_px;
 const pause_x = footer_margin_px + pause_radius_px;
 /// A tap this near the button's centre is on it: a fingertip around it.
-const icon_reach_px = 60;
+const icon_reach_px = style.space.wider;
 comptime {
     assert(2 * icon_reach_px >= style.fingertip);
     assert(icon_reach_px > pause_radius_px);

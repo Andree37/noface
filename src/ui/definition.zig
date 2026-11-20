@@ -9,42 +9,42 @@ const hyphen = @import("../layout/hyphen.zig");
 const dictionary = @import("../model/dictionary.zig");
 const Fonts = @import("fonts.zig").Fonts;
 
-pub const height = 860;
+pub const height = style.screen_height / 2;
 pub const top = style.screen_height - height;
-const number_width = 44; // Room for "1" before a sense, so its lines hang together
-const line_step = 46;
+const number_width = style.space.wide; // Room for "1" before a sense, so its lines hang together
+const line_step = style.space.wide;
 /// The word's baseline, and the first line's under it, down from the sheet's top.
-const word_drop = 104;
-const text_drop = 170;
+const word_drop = style.space.band;
+const text_drop = style.space.roomy + style.space.tall;
 const text_top = top + text_drop;
 /// The text stops where its next line's baseline would come within this of the buttons'
 /// row's top (under its rule).
-const text_clear = 16;
+const text_clear = style.space.snug;
 /// A part of speech, faded: the gap over it, and how much closer the next line follows it.
-const pos_gap = 12;
-const pos_tighter = 4;
+const pos_gap = style.space.small;
+const pos_tighter = style.space.hair;
 /// The gap over the entry for the word a held word is a form of.
-const base_gap = 20;
+const base_gap = style.space.snug;
 
 /// The buttons' row along the sheet's foot: a rule over it, the buttons drawn a little
 /// under its top and taking taps a little round what's drawn.
-const actions_band = 150;
+const actions_band = style.space.tall;
 const actions_top = style.screen_height - actions_band;
-const actions_rule_rise = 12;
-const button_height = 84;
-const button_width = 300;
-const button_drop = 4;
-const button_reach = 10;
+const actions_rule_rise = style.space.small;
+const button_height = style.space.snug + style.space.wider;
+const button_width = style.button_width;
+const button_drop = style.space.hair;
+const button_reach = style.space.tiny;
 const row_taps_height = button_height + 2 * button_reach;
 /// The credit, faded: as far in from the right margin as it fades.
-const credit_tint_width = 360;
+const credit_tint_width = style.button_width + style.space.wide;
 
 pub const Hit = enum { close, highlight, get_dictionary, none };
 
 /// Where "Get dictionary" sits, beside Highlight, when there's none to show.
-const get_gap = 32;
+const get_gap = style.space.roomy;
 const get_left = style.margin + button_width + get_gap;
-const get_width = 400;
+const get_width = style.button_width + style.space.band;
 
 comptime {
     // The text has room under the word, above the buttons.

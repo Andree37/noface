@@ -1,18 +1,19 @@
 //! The one slider used everywhere.
 const std = @import("std");
 const assert = std.debug.assert;
+const style = @import("style.zig");
 const Page = @import("../gfx/page.zig").Page;
 
 pub const Slider = struct { left: u32, right: u32, y: u32 };
 
-const half_height = 7;
-const outline = 2;
-const knob_outer = 27;
-const knob_inner = 21;
+const half_height = style.space.tiny;
+const outline = style.stroke;
+const knob_outer = style.space.medium;
+const knob_inner = knob_outer - 2 * style.border; // A ring as thick as two borders
 /// White kept clear around the knob, so the bar never touches its ring.
-const knob_gap = 3;
+const knob_gap = style.border;
 /// A step's dot, inside the bar.
-const tick_radius = 3;
+const tick_radius = style.border;
 
 comptime {
     // The outline leaves the bar a white middle, and the knob a white hole.

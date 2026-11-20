@@ -13,6 +13,7 @@
 //! back, the pace and what a tap means; how it looks is run_view.zig's.
 const std = @import("std");
 const assert = std.debug.assert;
+const style = @import("../../ui/style.zig");
 const running_model = @import("../../model/running.zig");
 const phrases = @import("../../model/phrases.zig");
 const book_model = @import("../../model/book.zig");
@@ -35,7 +36,7 @@ const history_max = 32;
 pub const tick_us = 100 * std.time.us_per_ms;
 /// The band at the top of the screen whose taps pause: bigger than the toolbar's, as a
 /// hand mid-stride lands less precisely.
-pub const pause_band_px = 300;
+pub const pause_band_px = 2 * style.fingertip + style.fingertip; // Three fingertips
 
 comptime {
     assert(tick_us < phrases.phrase_us_min);

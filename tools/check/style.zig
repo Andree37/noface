@@ -11,7 +11,9 @@
 //!   `// Ignored: …`     on the line of an error that may be ignored;
 //!   `// usize: …`       on a line (or just above it) whose usize the language, C or
 //!                       the kernel's ABI needs;
-//!   `// Assertions: …`  just above a function that can't honestly make two assertions.
+//!   `// Assertions: …`  just above a function that can't honestly make two assertions;
+//!   `// Not a size: …`  on a line of the screens' code (or just above it) whose number
+//!                       isn't a length: a step of a setting, a row's place in a list.
 //!
 //! A marker with nothing to excuse is a break too, so none outlives its reason.
 const std = @import("std");
@@ -70,6 +72,13 @@ pub const Rule = enum {
     import_inline,
     /// A file's import that nothing in it uses.
     import_unused,
+    /// A bare number of 3 or more for a size in the screens' code (src/ui/, src/screens/):
+    /// in a declaration named like one (a width, a gap, an inset…), or given to a drawing
+    /// call. Sizes come from style.zig's scale, in points, so they're the same on every
+    /// Kindle; there, and in the icons' own grid, numbers are the point. A divisor
+    /// (sharing room), a number in an assertion, and one marked `// Not a size: …` are
+    /// left alone.
+    layout_number,
 };
 
 pub const rule_count = @typeInfo(Rule).@"enum".field_names.len;
@@ -235,6 +244,114 @@ fn count_assertions(code: []const u8, expects_assert: bool) u32 {
     return count_token(code, "assert(") + count_token(code, "that(") +
         count_token(code, "thatf(") + count_token(code, "@compileError(") +
         count_token(code, "invariants()") + expects;
+}
+
+/// Whether `path` lays out the screen: the code in src/ui/ and src/screens/, but for
+/// the scale itself and the icons, whose shapes are drawn in a grid of their own.
+fn is_layout(path: []const u8) bool {
+    assert(path.len > 0);
+    const screens = std.mem.startsWith(u8, path, "src/ui/") or
+        std.mem.startsWith(u8, path, "src/screens/");
+    if (!screens) return false;
+    for (layout_exempt) |exempt| {
+        if (std.mem.eql(u8, path, exempt)) return false;
+    }
+    return true;
+}
+
+const layout_exempt = [_][]const u8{
+    "src/ui/style.zig",
+    "src/ui/icons.zig",
+    "src/ui/run_icons.zig",
+};
+
+/// The words that name a size, as the last part of a declaration's name: `row_gap`,
+/// `title_y`; `step_pages` counts pages.
+const size_words = [_][]const u8{
+    "width",  "height", "top",    "bottom",  "left",     "right",    "inset",  "gap",
+    "drop",   "rise",   "reach",  "radius",  "band",     "pad",      "margin", "step",
+    "thick",  "stroke", "offset", "below",   "above",    "clear",    "corner", "edge",
+    "indent", "outset", "arm",    "spacing", "baseline", "distance", "half",   "px",
+    "x",      "y",      "w",      "h",
+};
+
+/// The drawing calls a size is given to.
+const draw_calls = [_][]const u8{
+    "fill_rect(", "pill(", "disc(", "round_rect(", "box_with(", "tint(",
+};
+
+/// How many bare sizes a line of the screens' code writes: numbers of 3 or more in a
+/// declaration named like a size, or given to a drawing call. A divisor, an array's
+/// length and a number in an assertion aren't sizes.
+fn bare_sizes(code: []const u8) u32 {
+    assert(std.mem.indexOfScalar(u8, code, '\n') == null); // One line
+    if (std.mem.indexOf(u8, code, "assert(") != null) return 0;
+    if (std.mem.indexOf(u8, code, "parseInt(") != null) return 0; // A number's base
+    var draws = false;
+    for (draw_calls) |call| draws = draws or std.mem.indexOf(u8, code, call) != null;
+    if (!draws and !declares_size(code)) return 0;
+    return big_numbers(code);
+}
+
+/// Whether a line declares a constant or variable named like a size: `const row_gap =`.
+fn declares_size(code: []const u8) bool {
+    const trimmed = std.mem.trimStart(u8, code, " ");
+    const after_pub = if (std.mem.startsWith(u8, trimmed, "pub ")) trimmed[4..] else trimmed;
+    var rest: []const u8 = after_pub;
+    if (std.mem.startsWith(u8, rest, "const ")) {
+        rest = rest["const ".len..];
+    } else if (std.mem.startsWith(u8, rest, "var ")) {
+        rest = rest["var ".len..];
+    } else {
+        return false;
+    }
+    var end: u32 = 0;
+    while (end < rest.len and is_word(rest[end])) end += 1;
+    assert(end <= rest.len);
+    const name = rest[0..end];
+    const last_start = if (std.mem.lastIndexOfScalar(u8, name, '_')) |at| at + 1 else 0;
+    return is_size_word(name[last_start..]);
+}
+
+fn is_size_word(word: []const u8) bool {
+    for (size_words) |size_word| {
+        if (std.mem.eql(u8, word, size_word)) return true;
+    }
+    return false;
+}
+
+/// The decimal numbers of 3 or more on a line that aren't a divisor or an array's
+/// length: `[16]u8` and `/ 4` share out or count, they don't size.
+fn big_numbers(code: []const u8) u32 {
+    var count: u32 = 0;
+    var i: u32 = 0;
+    // Each pass moves on by a character at least
+    while (i < code.len) {
+        const c = code[i];
+        const after_word = i > 0 and (is_word(code[i - 1]) or code[i - 1] == '.');
+        if (!std.ascii.isDigit(c) or after_word) {
+            i += 1;
+            continue;
+        }
+        var end = i;
+        while (end < code.len and (is_word(code[end]) or code[end] == '.')) end += 1;
+        assert(end > i);
+        const literal = code[i..end];
+        // A tone or a flag, in hex, isn't a size
+        const hex = std.mem.startsWith(u8, literal, "0x");
+        const value = if (hex) 0 else std.fmt.parseFloat(f64, literal) catch 0;
+        const before = std.mem.trimEnd(u8, code[0..i], " ");
+        const divided = before.len > 0 and before[before.len - 1] == '/';
+        // `@divTrunc(x, 3)` and its kind divide too
+        const div_call = before.len > 0 and before[before.len - 1] == ',' and
+            std.mem.lastIndexOf(u8, before, "@div") != null;
+        const divisor = divided or div_call;
+        const length = before.len > 0 and before[before.len - 1] == '[' and
+            end < code.len and code[end] == ']';
+        if (value >= 3 and !divisor and !length) count += 1;
+        i = end;
+    }
+    return count;
 }
 
 /// Whether a line imports somewhere other than at the file's top: an `@import` in
@@ -492,6 +609,7 @@ const Said = struct {
     unbounded_at: ?u32 = null,
     assertions_at: ?u32 = null,
     usize_at: ?u32 = null,
+    not_size_at: ?u32 = null,
 };
 
 /// What `check_zig` carries from one line to the next.
@@ -519,6 +637,7 @@ const Scan = struct {
     assertions: u32 = 0,
     light: std.ArrayList(u32) = .empty, // Where each function with fewer than two starts
     expects_assert: bool, // In the scenarios, where `expect(` is the assertion
+    lays_out: bool, // In the screens' code, where a size comes from style.zig's scale
 
     /// A function being read: its name, first line, depth outside it, the assertions
     /// made in it so far, and the line of the `// Assertions:` marker above it, if any.
@@ -548,6 +667,7 @@ pub fn check_zig(path: []const u8, source: []const u8, gpa: std.mem.Allocator) !
     var scan: Scan = .{
         .gpa = gpa,
         .expects_assert = is_scenarios(path),
+        .lays_out = is_layout(path),
     };
     errdefer scan.breaks.deinit(gpa);
     defer scan.light.deinit(gpa);
@@ -638,7 +758,9 @@ fn is_marker(comment: []const u8, prefix: []const u8) bool {
 /// Notes every marker that reached no line of code for it to excuse.
 fn marked_for_nothing(scan: *Scan, said: Said) !void {
     assert(scan.open_count <= Scan.open_max);
-    const lines = [_]?u32{ said.unbounded_at, said.assertions_at, said.usize_at };
+    const lines = [_]?u32{
+        said.unbounded_at, said.assertions_at, said.usize_at, said.not_size_at,
+    };
     comptime assert(lines.len == @typeInfo(Said).@"struct".field_names.len);
     for (lines) |marker_line| {
         if (marker_line) |at| try scan.note(.marker_unused, at, 1);
@@ -664,6 +786,7 @@ fn check_zig_text(scan: *Scan, line: *const Line, line_number: u32) !?Said {
         if (is_marker(line.comment, "// Unbounded: ")) scan.said.unbounded_at = line_number;
         if (is_marker(line.comment, "// Assertions: ")) scan.said.assertions_at = line_number;
         if (usize_marker) scan.said.usize_at = line_number;
+        if (is_marker(line.comment, "// Not a size: ")) scan.said.not_size_at = line_number;
         return null;
     }
     const above = scan.said;
@@ -783,6 +906,18 @@ fn check_zig_statement(scan: *Scan, line: *const Line, line_number: u32, said: S
     } else {
         try scan.note(.loop_unbounded, line_number, loops);
     }
+    // A size in the screens' code comes from the scale, or says why it isn't one
+    if (scan.lays_out) {
+        const bare = bare_sizes(code);
+        const marked = is_marker(line.comment, "// Not a size: ") or said.not_size_at != null;
+        if (marked) {
+            if (bare == 0) try scan.note(.marker_unused, said.not_size_at orelse line_number, 1);
+        } else {
+            try scan.note(.layout_number, line_number, bare);
+        }
+    } else if (said.not_size_at) |at| {
+        try scan.note(.marker_unused, at, 1);
+    }
     // A usize the language, C or the kernel needs says so on its line or just above
     const sizes = count_token(code, "usize");
     const usize_here = is_marker(line.comment, "// usize: ");
@@ -839,6 +974,8 @@ fn advice(rule: Rule) []const u8 {
         .marker_unused => "the marker excuses nothing: remove it",
         .import_inline => "move the import to the top of the file",
         .import_unused => "remove the import",
+        .layout_number => "take it from style.zig's scale (style.space, style.text, " ++
+            "style.fingertip…) or work it out from the parts it sits by",
     };
 }
 
@@ -1367,4 +1504,35 @@ test "an error dropped by an empty else capture is ignored unless it says why" {
         \\}
     ;
     try std.testing.expectEqual(@as(u32, 1), try count_in(source, .error_ignored));
+}
+
+test "a size in the screens' code comes from the scale, and a marked number may stay" {
+    const source =
+        \\const style = @import("style.zig");
+        \\const row_gap = 24;
+        \\const row_height = style.space.band;
+        \\const half_width = style.screen_width / 4;
+        \\const tries_max = 40;
+        \\fn draw(page: Page) void {
+        \\    page.fill_rect(0, 0, 4, 4, style.black);
+        \\    page.fill_rect(0, 0, style.border, 2, style.black);
+        \\    var label: [16]u8 = undefined;
+        \\    // Not a size: the fourth row
+        \\    row(page, 3);
+        \\    assert(row_gap >= 3);
+        \\}
+    ;
+    const in_ui = try check_zig("src/ui/menu.zig", source, std.testing.allocator);
+    defer std.testing.allocator.free(in_ui);
+    var bare: u32 = 0;
+    var unused: u32 = 0;
+    for (in_ui) |b| {
+        if (b.rule == .layout_number) bare += 1;
+        if (b.rule == .marker_unused) unused += 1;
+    }
+    try std.testing.expectEqual(@as(u32, 3), bare); // 24, and the two 4s
+    try std.testing.expectEqual(@as(u32, 1), unused); // `row(page, 3)` writes no size
+    const in_style = try check_zig("src/ui/style.zig", source, std.testing.allocator);
+    defer std.testing.allocator.free(in_style);
+    for (in_style) |b| try std.testing.expect(b.rule != .layout_number);
 }

@@ -15,15 +15,15 @@ const icons = @import("icons.zig");
 /// The sheet hangs under the toolbar: its tabs, then, a gap under them, its controls.
 const top = toolbar.top_height;
 const tabs_height = style.fingertip;
-const tabs_gap = 16;
+const tabs_gap = style.space.snug;
 /// A tab's label, centred in the tabs' row: the line under the open one, below its
 /// baseline, and the others faded, in from each side of their cell.
 const tab_label = struct {
-    const underline_below = 18;
-    const tint_inset = 8;
+    const underline_below = style.space.snug;
+    const tint_inset = style.space.tiny;
 };
 /// Under a tab's last control, before the sheet's edge.
-const foot_pad = 32;
+const foot_pad = style.space.roomy;
 
 /// Where the sheet ends on screen: a padding under its tab's last control.
 pub fn height_for(tab: Tab) u32 {
@@ -188,7 +188,7 @@ const switch_step = style.fingertip; // A switch's taps, and so the next one's p
 /// Between the typefaces' grid and the switches under it, the first switch's reach so
 /// the grid's taps end where the switch's begin; and above More's switches.
 const family_gap = toggle_reach;
-const more_gap = 8;
+const more_gap = style.space.tiny;
 
 /// Where switch `i` sits: a step under the switches before it on its tab.
 pub fn switch_top(i: u32) u32 {
@@ -229,7 +229,7 @@ pub const margin_row = Row{
     .top = content_top + row_height, // Under the spacing's row
     .steps = settings_model.margins.len,
 };
-pub const row_height = 146;
+pub const row_height = style.space.tall;
 
 /// The tab a slider row is on.
 fn slider_tab(s: Slider) Tab {
@@ -238,27 +238,30 @@ fn slider_tab(s: Slider) Tab {
         .spacing, .margins => .layout,
     };
 }
-const row_baseline = 48; // From a slider row's top to its label's baseline
-const row_bar = 92; // From a slider row's top to its bar
+const row_baseline = style.space.wide; // From a slider row's top to its label's baseline
+const row_bar = style.space.band; // From a slider row's top to its bar
 
 const family_top = content_top;
 const family_height = style.fingertip;
 /// The first row's taps reach up this far into the gap under the tabs.
-const family_reach_above = 12;
+const family_reach_above = style.space.small;
 /// A typeface's name, centred in its cell in its own typeface, and the line under the
 /// chosen one, below its baseline; the room kept right of a name, so long ones stop short
 /// of the next cell.
-const family_underline_below = 14;
-const family_name_gap = 24;
+const family_underline_below = style.space.small;
+const family_name_gap = style.space.medium;
 /// The pager's arrow: in from the end of its label, and how big its two strokes are.
-const pager_arrow_gap = 36;
-const pager_arrow_half = 9;
-const pager_arrow_stroke = 4;
+const pager_arrow_gap = style.space.roomy;
+const pager_arrow_half = style.space.tiny;
+const pager_arrow_stroke = style.space.hair;
 const family_rows = 2;
+const family_columns_builtin = 2;
+const family_columns_with_own = family_columns_builtin + 1;
 
 /// Two columns for the Kindle's four typefaces; three once the reader's own join them.
 fn family_columns(families: Families) u32 {
-    const result: u32 = if (families.count() > settings_model.builtin_families.len) 3 else 2;
+    const own = families.count() > settings_model.builtin_families.len;
+    const result: u32 = if (own) family_columns_with_own else family_columns_builtin;
     assert(families.count() >= settings_model.builtin_families.len);
     assert(result * family_rows <= family_cells_max);
     return result;
@@ -321,55 +324,63 @@ fn family_width(families: Families) u32 {
     assert(result * family_columns(families) <= screen_width - 2 * margin);
     return result;
 }
-const toggle_height = 76;
+const toggle_height = style.fingertip - 2 * toggle_reach; // Its taps a fingertip
 /// A switch's parts: its pill's middle, down from its top, which its label is centred
 /// on; and the pill's size.
 const toggle = struct {
-    const middle_drop = 38;
-    const width = 104;
-    const radius = 26;
+    const middle_drop = style.space.small + style.space.medium;
+    const width = style.space.band;
+    const radius = style.space.medium;
 };
-const toggle_reach = 12; // Taps reach this far above and below a switch's drawn height
+/// A switch's taps reach this far above and below its drawn height.
+const toggle_reach = style.space.snug;
 
-const theme_width = 340;
-const theme_gap = 34;
+/// The tiles share the width between the margins, a gap between each two.
+const theme_count: comptime_int = themes.len;
+const theme_width = (screen_width - 2 * margin - (theme_count - 1) * theme_gap) / theme_count;
+const theme_gap = style.space.roomy;
 /// A theme's tile, down from its top: the band its sample lines fill, its label's
 /// baseline; the tick's middle in from its corner; and its lines' gap, margin and
 /// thickness before a step of spacing, margins or size adds to them.
 const tile = struct {
-    const lines_top = 44;
-    const lines_bottom = 204;
-    const label_drop = 264;
-    const tick_inset = 38;
-    const line_gap = 16;
-    const line_gap_step = 8;
-    const lines_inset = 28;
-    const lines_inset_step = 16;
-    const line_thick = 5;
+    const lines_top = style.space.wide;
+    const lines_bottom = 2 * style.space.band;
+    const label_drop = theme_height - style.space.roomy;
+    const tick_inset = style.space.small + style.space.medium;
+    const line_gap = style.space.snug;
+    const line_gap_step = style.space.tiny;
+    const lines_inset = style.space.medium;
+    const lines_inset_step = style.space.snug;
+    const line_thick = style.space.hair;
 };
 const theme_top = content_top + theme_gap_above;
-const theme_gap_above = 20; // Between the tabs and the tiles
-const theme_height = 300;
+const theme_gap_above = style.space.snug; // Between the tabs and the tiles
+const theme_height = 2 * style.space.tall + style.space.roomy;
 /// The note under the tiles when none is in use, faded: its baseline, down from the
 /// tiles' foot.
-const theme_note_drop = 52;
+const theme_note_drop = style.space.wide;
 const theme_note_baseline = theme_top + theme_height + theme_note_drop;
 /// The Running button, across the sheet under the tiles and their note.
 const running_top = theme_note_baseline + running_gap;
-const running_gap = 26; // Between the note's baseline and the Running button
+const running_gap = style.space.medium; // Between the note's baseline and the Running button
 /// The tiles side by side, from the left margin.
 const themes_width = themes.len * theme_width + (themes.len - 1) * theme_gap;
-const running_height = 112;
+const running_height = style.space.band;
+/// A tile's or the Running button's edge when it's what's in use, and the sheet's black
+/// edge along its foot.
+const chosen_edge = 2 * style.border;
+const sheet_edge = style.space.hair;
 /// The Running button's label and the line under it: in from its left, and their
 /// baselines down from its top.
-const running_text_inset = 32;
-const running_label_drop = 50;
-const running_note_drop = 90;
+const running_text_inset = style.space.roomy;
+const running_label_drop = style.space.wide;
+const running_note_drop = style.space.band;
 
 pub const Theme = struct { label: []const u8, size: u32, spacing: u32, margin: u32 };
 pub const themes = [_]Theme{
     .{ .label = "Compact", .size = 1, .spacing = 0, .margin = 0 },
     .{ .label = "Standard", .size = 2, .spacing = 1, .margin = 1 },
+    // The steps of the reader's own scales (model/settings.zig)
     .{ .label = "Large", .size = 4, .spacing = 2, .margin = 2 },
 };
 
@@ -483,7 +494,7 @@ fn within(y: i32, from: i32, size: i32) bool {
     return y >= from and y < from + size;
 }
 
-/// A switch row's taps: its 76 px drawn height grown to a fingertip (100 px), half
+/// A switch row's taps: its drawn height grown to a fingertip, half
 /// above and half below.
 fn on_toggle(y: i32, toggle_top: i32) bool {
     assert(toggle_top >= content_top);
@@ -596,17 +607,21 @@ fn draw_toggle(fonts: Fonts, page: Page, y: u32, label: []const u8, on: bool) !v
     const right: f32 = @floatFromInt(page.width - margin);
     const ends = [2]f32{ right - w + r, right - r };
     const cy: f32 = @floatFromInt(y + toggle.middle_drop);
-    // Cleared first: a knob's smooth edge outside the pill, and a pixel's slack each side
-    const clear_top = y + toggle.middle_drop - @as(u32, @intFromFloat(r)) - 2;
-    const clear_height: u32 = @intFromFloat(2 * r + 4);
-    const clear_left: u32 = @intFromFloat(ends[0] - r - 2);
-    page.fill_rect(clear_left, clear_top, @intFromFloat(w + 4), clear_height, 0xff);
-    page.pill(ends[0], ends[1], cy, r, 0x00);
+    // Cleared first: a knob's smooth edge outside the pill, and some slack each side
+    const slack = style.stroke;
+    const clear_top = y + toggle.middle_drop - @as(u32, @intFromFloat(r)) - slack;
+    const clear_height: u32 = @intFromFloat(2 * r + 2 * slack);
+    const clear_left: u32 = @intFromFloat(ends[0] - r - slack);
+    page.fill_rect(clear_left, clear_top, @intFromFloat(w + 2 * slack), clear_height, style.white);
+    page.pill(ends[0], ends[1], cy, r, style.black);
+    // On: a white knob inside the black pill. Off: an outlined pill, its knob black
+    const outline: f32 = style.border;
+    const knob_gap: f32 = 2 * style.border;
     if (on) {
-        page.pill(ends[1], ends[1], cy, r - 6, 0xff);
+        page.pill(ends[1], ends[1], cy, r - knob_gap, style.white);
     } else {
-        page.pill(ends[0], ends[1], cy, r - 3, 0xff);
-        page.pill(ends[0], ends[0], cy, r - 9, 0x00);
+        page.pill(ends[0], ends[1], cy, r - outline, style.white);
+        page.pill(ends[0], ends[0], cy, r - outline - knob_gap, style.black);
     }
 }
 
@@ -682,7 +697,7 @@ fn draw_themes(fonts: Fonts, page: Page, chosen: settings_model.Settings) !void 
 /// The Running button: running mode on, or, while it's on, off again.
 fn draw_running(fonts: Fonts, page: Page, running: bool) !void {
     const width = themes_width; // Lined up with the tiles above
-    const edge: u32 = if (running) 6 else 2;
+    const edge: u32 = if (running) chosen_edge else style.stroke;
     draw.box_with(page, margin, running_top, width, running_height, edge, style.button_corner);
     const label = if (running) "Stop running" else "Running";
     const note = if (running)
@@ -698,7 +713,7 @@ fn draw_running(fonts: Fonts, page: Page, running: bool) !void {
 fn draw_themes_tile(fonts: Fonts, page: Page, t: Theme, left: u32, active: bool) !void {
     assert(left >= margin);
     assert(left + theme_width <= screen_width - margin);
-    const edge: u32 = if (active) 6 else 2;
+    const edge: u32 = if (active) chosen_edge else style.stroke;
     draw.box_with(page, left, theme_top, theme_width, theme_height, edge, style.button_corner);
     const tick = tile.tick_inset;
     if (active) icons.check(page, @floatFromInt(left + theme_width - tick), theme_top + tick);
@@ -804,7 +819,7 @@ pub fn render(
     const height = height_for(tab);
     assert(height > top);
     page.fill_rect(0, top, page.width, height - top, 0xff);
-    page.fill_rect(0, height - 4, page.width, 4, 0x00);
+    page.fill_rect(0, height - sheet_edge, page.width, sheet_edge, style.black);
     try draw_tabs(fonts, page, tab);
     switch (tab) {
         .themes => {

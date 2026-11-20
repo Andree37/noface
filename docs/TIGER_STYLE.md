@@ -20,9 +20,9 @@ in any file, fails the check, which lists each one by file and line. Code follow
 rule from its first line.
 
 The few genuine exceptions are marked in the code, at the exact spot, with the reason.
-The check accepts these four markers and nothing else, and a marker with nothing to
+The check accepts these five markers and nothing else, and a marker with nothing to
 excuse is itself a break, so none outlives its reason. A reviewer finds them all with
-`grep -rn "// usize:\|// Assertions:\|// Unbounded:\|// Ignored:" src tools build.zig`.
+`grep -rn "// usize:\|// Assertions:\|// Unbounded:\|// Ignored:\|// Not a size:" src tools build.zig`.
 
 | Marker | Where | Allowed only for |
 |---|---|---|
@@ -30,6 +30,7 @@ excuse is itself a break, so none outlives its reason. A reviewer finds them all
 | `// Ignored: <why>` | on the line | an error whose only effect is something missing, nothing worse |
 | `// usize: <why>` | on the line, or just above it | a `usize` the language, C or the kernel's ABI requires: a syscall's signature, C's `size_t`, the panic handler's or `std.mem.Allocator`'s interface |
 | `// Assertions: <why>` | just above the function (with its doc comment) | a function that can't honestly make two assertions, when its file's average needs it: it only reads outside data, or is a one-line call to C or lipc, or reads or sets fields every value of which is valid |
+| `// Not a size: <why>` | on the line, or just above it | a number in the screens' code that the size check takes for a length but isn't one |
 
 An `// Assertions:` function is left out of its file's average, its assertions with
 it. Never pad a function with assertions that check nothing to avoid one; never assert
@@ -206,6 +207,15 @@ doesn't look at, so the rules for the code it tests (assertions, ignored errors,
 - **At most 100 columns per line [checked]**, no exceptions. Add a trailing comma and
   let `zig fmt` wrap.
 - Braces on an `if` unless it fits on one line **[checked]**.
+- **No bare sizes in the screens' code [checked]** (`src/ui/`, `src/screens/`): every
+  width, gap, inset and band comes from `src/ui/style.zig`, where sizes are written in
+  points and turned into the screen's pixels by its density (`style.space`,
+  `style.text`, `style.fingertip`, `style.button_width`), or is worked out from the
+  parts it sits by or the screen's size (a share of the width, rows that fit the
+  height). So a layout is the same physical size on any Kindle and fills a bigger
+  screen with more, not with bigger gaps. The check flags a number of 3 or more in a
+  declaration named like a size or given to a drawing call; a divisor, an array's
+  length and a number in an assertion are left alone. The icons draw in their own grid.
 
 ## Dependencies and tooling
 

@@ -26,24 +26,24 @@ const viewer_bytes_max = 64 << 20;
 const steps = [_]f32{ 1, 2, 4 };
 /// The close button, top right, a fingertip across.
 const close_radius = style.fingertip / 2;
-const close_inset = 40; // From the screen's top and right edges
+const close_inset = style.space.tiny + style.space.roomy; // From the screen's top and right edges
 const close_center_x = style.screen_width - close_inset - close_radius;
 const close_center_y = close_inset + close_radius;
 /// How far from the button's centre a tap still closes: a fingertip around it.
-const close_reach_extra = 30;
+const close_reach_extra = style.space.roomy;
 const close_reach = close_radius + close_reach_extra;
 /// The cross in it: half each stroke's length across and down, and its thickness.
-const close_arm = 16;
-const close_stroke = 4;
+const close_arm = style.space.snug;
+const close_stroke = style.space.hair;
 /// The hint along the bottom: its box's top over the screen's foot, its height, its room
 /// either side of the words, and their baseline down from its top.
-const hint_rise = 120;
-const hint_height = 64;
-const hint_pad = 32;
-const hint_baseline_drop = 42;
+const hint_rise = style.space.tall;
+const hint_height = style.space.wider;
+const hint_pad = style.space.roomy;
+const hint_baseline_drop = style.space.snug + style.space.medium;
 /// How long after a tap a second one makes it a double tap, and how near it must land.
 const double_tap_us = 300 * 1000;
-const double_tap_reach = 120;
+const double_tap_reach = style.space.tall;
 
 comptime {
     // A picture worth decoding fits a 32-bit size, as the Kindle's usize is

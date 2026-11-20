@@ -18,41 +18,42 @@ const Font = @import("../gfx/font.zig").Font;
 /// the bar's too, so the same `from` goes to `bar_hit` and `hit`.
 pub const top = style.status_height;
 
-const bar_gap = 16; // Over the bar, under the status strip
+const bar_gap = style.space.snug; // Over the bar, under the status strip
 const bar_top = top + bar_gap;
 const bar_height = style.fingertip;
 /// The bar takes taps this far under what's drawn of it.
-const bar_reach_below = 12;
-const cancel_width = 170; // Room for "Cancel" and a fingertip either side of it
+const bar_reach_below = style.space.small;
+/// Room for "Cancel" and a fingertip either side of it.
+const cancel_width = style.space.roomy + style.space.tall;
 const field_right = style.screen_width - style.margin - cancel_width;
 /// The field's pill stops this far short of Cancel's room.
-const field_gap = 8;
+const field_gap = style.space.tiny;
 /// Inside the field, its text centred on its middle: the magnifier's middle and the
 /// text's start in from its left, the text's start with no magnifier, the cursor in
 /// from the field's top and bottom, the cursor's width and its gap after the typed
 /// text, and how far the placeholder is faded.
 const field = struct {
-    const icon_inset = 52;
+    const icon_inset = style.space.wide;
     const icon_scale = 0.8;
-    const text_inset = 96;
-    const text_inset_plain = 44;
-    const cursor_inset = 26;
-    const cursor_width = 3;
-    const cursor_gap = 4;
+    const text_inset = style.space.band;
+    const text_inset_plain = style.space.wide;
+    const cursor_inset = style.space.medium;
+    const cursor_width = style.space.hair;
+    const cursor_gap = style.space.hair;
     const placeholder_shade = 0x90;
 };
 
-const rows_gap = 24; // Between the bar and the rows
+const rows_gap = style.space.medium; // Between the bar and the rows
 const rows_top = bar_top + bar_height + rows_gap;
 /// Where what's under the bar starts: a note line, then a list.
 pub const content_top = rows_top;
-const row_height = 112;
+const row_height = style.space.band;
 const rows_bottom = keyboard.top; // Down to the keyboard's tray
 /// A row's title's and quiet author's baselines, down from its top.
-const row_title_drop = 50;
-const row_author_drop = 88;
+const row_title_drop = style.space.wide;
+const row_author_drop = style.space.band;
 /// "Press Search to see them all.", quiet, over the rows' foot: its baseline's rise.
-const more_rise = 12;
+const more_rise = style.space.small;
 
 /// The note line under the bar, the first row's band: a hint, "No books match.", a
 /// search's count, a page that isn't there.

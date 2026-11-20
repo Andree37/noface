@@ -8,14 +8,14 @@ const draw = @import("draw.zig");
 const style = @import("style.zig");
 const Fonts = @import("fonts.zig").Fonts;
 
-const header = 176;
-const cover_header = 260; // Room for a small cover beside the title
-const cover_gap = 32;
-const cover_top = 52; // From the sheet's top to a cover's
-const title_baseline = 92; // From the sheet's top, without a cover
-const subtitle_gap = 48; // From the title's baseline to the subtitle's
-const row_height = 112; // A fingertip and some
-const bottom_pad = 40;
+const header = style.space.wide + style.space.tall;
+const cover_header = 2 * style.space.tall; // Room for a small cover beside the title
+const cover_gap = style.space.roomy;
+const cover_top = style.space.wide; // From the sheet's top to a cover's
+const title_baseline = style.space.band; // From the sheet's top, without a cover
+const subtitle_gap = style.space.wide; // From the title's baseline to the subtitle's
+const row_height = style.space.band; // A fingertip and some
+const bottom_pad = style.space.tiny + style.space.roomy;
 /// The most rows a sheet is laid out for.
 pub const rows_longest = 6;
 

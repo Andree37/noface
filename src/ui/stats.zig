@@ -25,34 +25,36 @@ pub const Summary = struct {
 };
 
 const header_top = style.status_height;
-const back_height = 110; // The strip under the status bar, where Back is drawn
-const title_y = header_top + back_height + 70;
-const tiles_top = title_y + 60;
-const tile_value_y = tiles_top + 116;
-const tile_label_width = 330; // The gray behind a tile's label
-const chart_title_y = tiles_top + 230;
-const chart_top = chart_title_y + 40;
-const chart_baseline = chart_top + 300;
-const bar_room = chart_baseline - chart_top - 50; // Leaves space for a label above
-const day_label_y = chart_baseline + 46;
-const rows_top = day_label_y + 50;
-const row_height = 112;
+const back_height = style.space.band; // The strip under the status bar, where Back is drawn
+const title_y = header_top + back_height + style.space.wider;
+const tiles_top = title_y + style.space.wider;
+const tile_value_y = tiles_top + style.space.band;
+/// The gray behind a tile's label: most of a tile's third of the width.
+const tile_label_width = (style.screen_width - 2 * style.margin) / tiles - style.space.wide;
+const tiles = 3; // Today, the last seven days, the streak
+const chart_title_y = tiles_top + style.space.band + style.space.tall;
+const chart_top = chart_title_y + style.space.roomy;
+const chart_baseline = chart_top + 2 * style.space.tall + style.space.roomy;
+const bar_room = chart_baseline - chart_top - style.space.wide; // Room for a label above
+const day_label_y = chart_baseline + style.space.wide;
+const rows_top = day_label_y + style.space.wide;
+const row_height = style.space.band;
 const row_count = 4;
 const rows_bottom = rows_top + row_count * row_height;
 
-const bar_width = 56; // Thin bars with air between, rounded at the top only
-const bar_least = 6; // The sliver that shows any reading at all
-const bar_label_rise = 14; // A bar's minutes' baseline over its top
+const bar_width = style.space.wide; // Thin bars with air between, rounded at the top only
+const bar_least = style.space.hair; // The sliver that shows any reading at all
+const bar_label_rise = style.space.small; // A bar's minutes' baseline over its top
 const bar_shade = 0x90; // Days before today, in gray
 const chart_rule_thick = 2;
 const days_shown = @typeInfo(@FieldType(Summary, "last7")).array.len;
 
 /// A tile's label over its number, faded: its baseline, down from the tiles' top.
-const tile_label_drop = 40;
+const tile_label_drop = style.space.tiny + style.space.roomy;
 /// The note under the rows, faded: its baseline, down from the last rule; and the room
 /// kept under it.
-const note_drop = 56;
-const note_room = 70;
+const note_drop = style.space.wide;
+const note_room = style.space.wider;
 const bar_corner = style.bar_corner;
 
 const day_letters = [_][]const u8{ "M", "T", "W", "T", "F", "S", "S" };
@@ -134,7 +136,7 @@ pub fn render(fonts: Fonts, page: Page, s: Summary) !void {
 
 /// Three headline numbers: today, the last seven days and the streak.
 fn render_tiles(fonts: Fonts, page: Page, s: *const Summary) !void {
-    const third: f32 = @floatFromInt((page.width - 2 * style.margin) / 3);
+    const third: f32 = @floatFromInt((page.width - 2 * style.margin) / tiles);
     assert(third >= tile_label_width);
     var today_buffer: [32]u8 = undefined;
     var week_buffer: [32]u8 = undefined;

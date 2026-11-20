@@ -29,10 +29,10 @@ const hwtcon = @import("../../kindle/hwtcon.zig");
 const touch_zones = @import("../../kindle/touch.zig");
 
 /// The page counter in the footer's middle: its left, this far left of the middle.
-const counter_left_of_middle_px = 50;
+const counter_left_of_middle_px = style.space.wide;
 /// The footer: the page number and time left, repainted alone when the count arrives.
-const footer_height_px = 110;
-const footer_baseline_above_bottom_px = 60;
+const footer_height_px = style.space.band;
+const footer_baseline_above_bottom_px = style.space.wider;
 
 comptime {
     assert(footer_baseline_above_bottom_px < footer_height_px);

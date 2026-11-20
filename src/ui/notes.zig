@@ -12,15 +12,16 @@ const text = @import("../layout/text.zig");
 pub const max_parts = 8;
 /// The panel's header: its height, "Note" and Close's baseline in it, the rule under it,
 /// and the black edge along the panel's top.
-const header = 84;
-const header_baseline = 62;
+const header = style.space.snug + style.space.wider;
+const header_baseline = style.space.wider;
 const header_rule = 2;
-const edge = 4;
-const margin = 100;
-const heights = [_]u32{ 340, 560, 820 };
+const edge = style.space.hair;
+const margin = style.space.band;
+/// The panel's heights, smallest first, from the screen's: the least a note takes.
+const heights = [_]u32{ style.screen_height / 5, style.screen_height / 3, style.screen_height / 2 };
 /// The note's text: under the header, and over the panel's foot.
-const text_gap = 24;
-const text_room_below = 36;
+const text_gap = style.space.medium;
+const text_room_below = style.space.roomy;
 
 const layout = text.Layout{
     .margin_x = margin,

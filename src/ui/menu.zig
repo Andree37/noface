@@ -14,42 +14,43 @@ const screen_width = style.screen_width;
 /// The panel, top to bottom: the header, the tiles, a rule, the brightness's name and
 /// slider, the warmth's name with the schedule, its slider, and the chevron.
 pub const height = warmth_row.y + chevron_band;
-const chevron_band = 110; // Under the warmth's bar, holding the chevron
-const chevron_above_foot = 26; // The chevron's middle over the panel's foot
+const chevron_band = style.space.band; // Under the warmth's bar, holding the chevron
+const chevron_above_foot = style.space.medium; // The chevron's middle over the panel's foot
 const chevron_y = height - chevron_above_foot; // The chevron, which closes the panel
-const edge = 4; // The line along the panel's foot
+const edge = style.space.hair; // The line along the panel's foot
 
 /// The header: the Kindle's name and the clock in from the left, the status cluster in
 /// from the right, on the name's line.
-const header_inset = 60;
-const header_baseline = 70;
-const clock_baseline = 120;
-const status_centre = 58;
+const header_inset = style.space.wider;
+const header_baseline = style.space.wider;
+const clock_baseline = style.space.tall;
+const status_centre = style.space.tiny + style.space.wide;
 
 /// The rule between the tiles and the sliders, the toggles' boxes' depth under it.
-const rule_inset = 40;
+const rule_inset = style.space.tiny + style.space.roomy;
 const rule_thick = 2;
 const rule_y = last_row_y + tile_box_below;
 
 /// A slider's bar in from each side; its dimmer and brighter marks centred in the room
 /// outside it, each half a mark long and stroked this thick; its level over the knob.
-const slider_inset = 160;
+const slider_inset = style.space.medium + style.space.tall;
 const slider_left = slider_inset;
 const slider_right = screen_width - slider_inset;
 const step_mark_middle = slider_inset / 2; // In from the screen's side
-const step_mark_half = 20;
-const step_mark_thick = 4;
-const level_above = 40; // The level's baseline over the bar
+const step_mark_half = style.space.snug;
+const step_mark_thick = style.space.hair;
+const level_above = style.space.tiny + style.space.roomy; // The level's baseline over the bar
 /// How high the level's digits reach over their baseline, smooth edges and all.
-const level_reach = 24;
+const level_reach = style.space.medium;
 
 pub const Row = struct { label: []const u8, y: u32, max: u32 };
 /// The brightness's name sits under the rule, its bar under that; the warmth's a slider
 /// step lower.
-const brightness_label_below_rule = 46;
-const label_above_bar = 74;
+const brightness_label_below_rule = style.space.wide;
+/// The label's words end just over what a slider's move redraws.
+const label_above_bar = band_above + words_below;
 const brightness_label_baseline = rule_y + brightness_label_below_rule;
-const slider_step = 220;
+const slider_step = style.space.band + style.space.tall;
 pub const brightness_row = Row{
     .label = "Brightness",
     .y = brightness_label_baseline + label_above_bar,
@@ -60,27 +61,27 @@ pub const warmth_row = Row{
     .y = brightness_row.y + slider_step,
     .max = quick_model.max_warmth,
 };
-const row_reach = 60; // A slider row takes taps this far above and below its bar
+const row_reach = style.fingertip / 2; // A slider row takes a fingertip's taps round its bar
 /// The warmth's name and the schedule's switch, on one line between the two sliders,
 /// higher over its bar than the brightness's, to fit the schedule's taps. The schedule
 /// takes taps right of `schedule_left`, in all the room between the sliders' taps: a
 /// fingertip tall and more.
-const warmth_label_above_bar = 95;
+const warmth_label_above_bar = style.space.band;
 const warmth_label_baseline = warmth_row.y - warmth_label_above_bar;
 const schedule_top = brightness_row.y + row_reach;
 const schedule_bottom = warmth_row.y - row_reach;
 /// The schedule's taps, in from the right: wider than its longest words and arrow.
-const schedule_reach = 472;
+const schedule_reach = screen_width / 2 - style.space.wider;
 const schedule_left = screen_width - schedule_reach;
 /// "Schedule: On" ends this far in from the right, then its arrow: its left in from the
 /// right, its width, and its point over the words' baseline.
-const schedule_text_inset = 96;
-const schedule_arrow_inset = 80;
-const schedule_arrow_width = 14;
-const schedule_arrow_rise = 10;
+const schedule_text_inset = style.space.band;
+const schedule_arrow_inset = style.space.small + style.space.wider;
+const schedule_arrow_width = style.space.small;
+const schedule_arrow_rise = style.space.tiny;
 /// How far the line's words reach above and below their baseline.
-const words_reach = 30;
-const words_below = 10;
+const words_reach = style.space.roomy;
+const words_below = style.space.tiny;
 
 pub const Hit = enum {
     none,
@@ -155,29 +156,34 @@ const tiles = [_]Tile{
     .{ .hit = .kindle, .glyph = .smile, .label_on = "Kindle", .label_off = "Kindle" },
 };
 
-const icon_radius = 52;
+const icon_radius = style.space.wide;
+/// The Wi-Fi glyph, drawn smaller than the others and raised to sit as high as they do.
+const wifi_scale = 0.8;
+const wifi_rise = style.space.hair;
 const tiles_per_row = 3;
 /// Between tile centres along a row: a row's tiles spread evenly across the screen.
 const tile_step_x = screen_width / (tiles_per_row + 1);
-const tile_reach_x = 120; // A tile takes taps this far either side of its centre
-const tile_reach_y = 95; // And this far above and below it
-const tile_label_below = 92; // From a tile's centre to the baseline of its word
-const first_row_y = 240; // The first row's middle, under the header
-const row_step_y = 190;
+/// A tile takes taps halfway to the next either side of its centre, and above and below
+/// it; its word's baseline sits under its icon.
+const tile_reach_x = tile_step_x / 2;
+const tile_reach_y = row_step_y / 2;
+const tile_label_below = icon_radius + style.space.roomy;
+const first_row_y = style.space.band + style.space.tall; // The first row's middle, under the header
+const row_step_y = style.space.wide + style.space.tall;
 const tile_rows = (tiles.len + tiles_per_row - 1) / tiles_per_row;
 const last_row_y = first_row_y + (tile_rows - 1) * row_step_y;
-const tile_px = 2 * icon_radius + 8;
+const tile_px = 2 * icon_radius + style.space.tiny;
 /// A toggle's box, redrawn alone: its icon's tile above its middle, and this far either
 /// side and below, round its word.
-const tile_box_half_width = 130;
-const tile_box_below = 130;
+const tile_box_half_width = style.space.tall;
+const tile_box_below = style.space.tall;
 
 /// Half the widest level text, and more than the knob: what a knob's move redraws round it.
-const knob_reach = 60;
+const knob_reach = style.space.wider;
 /// A slider's band, redrawn alone as its knob moves: from over its level's digits to under
 /// its knob.
 const band_above = level_above + level_reach;
-const band_below = 50;
+const band_below = style.space.wide;
 pub const band_height = band_above + band_below;
 
 comptime {
@@ -245,7 +251,7 @@ fn draw_glyph(page: Page, quick: *const Quick, glyph: Glyph, x: f32, y: f32) voi
     assert(y > 0);
     switch (glyph) {
         .airplane => icons.airplane(page, x, y),
-        .wifi => icons.wifi(page, x, y - 4, 0.8, quick.wifi_shown() orelse 0),
+        .wifi => icons.wifi(page, x, y - wifi_rise, wifi_scale, quick.wifi_shown() orelse 0),
         .bluetooth => icons.bluetooth(page, x, y),
         .sync => icons.sync(page, x, y),
         .smile => icons.smile(page, x, y),
@@ -540,7 +546,7 @@ test "panel maps taps where it draws them" {
 }
 
 test "the schedule takes a fingertip's taps, and the sliders none of them" {
-    const middle = @divExact(schedule_top + schedule_bottom, 2);
+    const middle = @divTrunc(schedule_top + schedule_bottom, 2);
     const x = test_schedule_x;
     try std.testing.expectEqual(Hit.schedule, hit(x, middle));
     try std.testing.expectEqual(Hit.schedule, hit(x, schedule_top));

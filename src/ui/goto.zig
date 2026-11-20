@@ -13,28 +13,28 @@ const Fonts = @import("fonts.zig").Fonts;
 pub const top = toolbar.top_height; // Under the toolbar, which stays visible above
 /// The tabs' band over the list, or the query field's in search, its labels centred in
 /// it; and the line under the open one, under their baseline.
-const header_band = 112;
-const tabs_underline_drop = 14;
+const header_band = style.space.band + style.space.small;
+const tabs_underline_drop = style.space.small;
 pub const list_top = top + header_band;
 /// The rule over the list, this far over its first row.
-const list_rule_rise = 12;
+const list_rule_rise = style.space.small;
 const row_height = style.fingertip;
 /// As many rows as fit between the header and the pager.
 pub const rows = (pager.top - list_top) / row_height;
 /// "No bookmarks or highlights yet.", down from the list's top.
-const empty_drop = 200;
+const empty_drop = 2 * style.space.band;
 /// A bookmark's or highlight's sign: its middle in from where the row's text would start.
-const mark_middle_inset = 17;
-/// The bar left of the row being read: in from the margin's edge, its top down from the
-/// row's, and its size.
-const reading_bar_outset = 28;
-const reading_bar_drop = 22;
-const reading_bar_width = 8;
-const reading_bar_height = 56;
-const indent = 48; // Per level of nesting
+const mark_middle_inset = style.space.snug;
+/// The bar left of the row being read: in from the margin's edge, its size, and its top
+/// down from the row's, centring it on the row.
+const reading_bar_outset = style.space.medium;
+const reading_bar_width = style.space.tiny;
+const reading_bar_height = style.space.wide;
+const reading_bar_drop = (row_height - reading_bar_height) / 2;
+const indent = style.space.wide; // Per level of nesting
 const depth_shown_max = 4; // Deeper rows are indented no further
-const mark_width = 56; // Room for a bookmark or highlight sign before the text
-const page_label_width = 140;
+const mark_width = style.space.wide; // Room for a bookmark or highlight sign before the text
+const page_label_width = style.space.tall;
 const pager = draw.bottom_pager;
 
 comptime {
@@ -47,6 +47,8 @@ comptime {
 }
 
 pub const Tab = enum { contents, notes };
+const tab_count: comptime_int = @typeInfo(Tab).@"enum".field_names.len;
+const tab_width = style.screen_width / tab_count;
 const empty_contents = "This book has no contents list.";
 const empty_notes = "No bookmarks or highlights yet.";
 
@@ -103,10 +105,8 @@ pub fn place(h: Hit) style.Point {
     const point: style.Point = switch (h) {
         .close => .{ .x = style.screen_width / 2, .y = top / 2 },
         .tab => |t| .{
-            .x = switch (t) {
-                .contents => style.screen_width / 4,
-                .notes => style.screen_width * 3 / 4,
-            },
+            // Each tab centred in its share of the width
+            .x = tab_width * @as(i32, @intCast(@backingInt(t))) + tab_width / 2,
             .y = (top + list_top) / 2,
         },
         .row => |r| .{
@@ -135,7 +135,10 @@ test "every control's place is a tap on it" {
 
 pub fn hit(x: i32, y: i32, list_page: u32, count: u32) Hit {
     if (y < top) return .close;
-    if (y < list_top) return .{ .tab = if (x < style.screen_width / 2) .contents else .notes };
+    if (y < list_top) {
+        const at = std.math.clamp(@divTrunc(x, tab_width), 0, tab_count - 1);
+        return .{ .tab = @fromBackingInt(@intCast(at)) };
+    }
     if (pager.hit(x, y)) |h| return if (h == .prev) .prev else .next;
     assert(y >= list_top);
     const row: u32 = @intCast(@divTrunc(y - list_top, row_height));

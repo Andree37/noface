@@ -13,18 +13,18 @@ const screen = @import("../screen.zig");
 const sess = @import("session.zig");
 const records = @import("records.zig");
 
-pub const bubble_width = 240;
-pub const bubble_height = 96;
+pub const bubble_width = style.space.band + style.space.tall;
+pub const bubble_height = style.space.band;
 /// Between the selection and the Delete bubble.
-const bubble_gap = 12;
+const bubble_gap = style.space.small;
 /// The white edge cleared around the bubble, so it stands off the text under it.
-const bubble_border = 4;
+const bubble_border = style.space.hair;
 /// Where "Delete" sits, down from the bubble's top.
 /// How far a glyph may reach past its word's box, at either side.
-const glyph_overhang = 4;
+const glyph_overhang = style.space.hair;
 /// Kept clear at the bottom of the screen: a bubble that would reach into it goes
 /// above the selection instead.
-const bubble_bottom_clear = 130;
+const bubble_bottom_clear = style.space.tall;
 
 comptime {
     assert(bubble_width + 2 * bubble_border <= style.screen_width);

@@ -230,7 +230,7 @@ pub const Kit = struct {
     /// note's a little closer, the interface's closer still.
     const body_leading = 1.35;
     const note_leading = 1.3;
-    const ui_leading = 1.2;
+    const ui_leading = style.leading;
 
     pub fn init(files: FontFiles) !Kit {
         const kit: Kit = .{

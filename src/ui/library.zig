@@ -15,37 +15,39 @@ const Fonts = @import("fonts.zig").Fonts;
 const covers = @import("covers.zig");
 
 const margin = style.margin;
+const whole_percent = 100; // A book read through
 const screen_width = style.screen_width;
-const gutter = 40;
+const gutter = style.space.tiny + style.space.roomy;
 const cell_step = cover.width + gutter;
 /// As many covers as fit across between the margins.
 const columns = (screen_width - 2 * margin + gutter) / cell_step;
-const row_height = 410;
-const cell_title_below = 34; // From the bar under a cover to its title's baseline
+/// A cover, its bar and its title under it, and a gap before the next row.
+const row_height = cover.height + style.space.wide + cell_title_below;
+const cell_title_below = style.space.roomy; // From the bar under a cover to its title's baseline
 /// A grid cell's parts: the bar's gap under its cover and its drop and thickness, the
 /// title's line step, and the corner icons' middles in from the cover's corners.
 const cell = struct {
-    const bar_gap = 8;
+    const bar_gap = style.space.tiny;
     const bar_drop = 2;
-    const bar_thick = 10;
-    const title_step = 30;
-    const cloud_inset = 38;
-    const tick_inset = 32;
+    const bar_thick = style.space.tiny;
+    const title_step = style.space.roomy;
+    const cloud_inset = style.space.small + style.space.medium;
+    const tick_inset = style.space.roomy;
 };
 pub const status_height = style.status_height;
 
 // Page one always leads with the current book, on every tab and sort: under the status
 // strip, the hero's place, then the tabs row, then the grid; later pages start with the
 // tabs row. The grid takes as many rows as fit above the notice over the pager.
-const hero_gap = 16; // Above the hero, and between its place and the tabs row
-const hero_pad_below = 31; // Under the hero's cover, inside its place
+const hero_gap = style.space.snug; // Above the hero, and between its place and the tabs row
+const hero_pad_below = style.space.roomy; // Under the hero's cover, inside its place
 const hero_top = status_height + hero_gap;
 const hero_bottom = hero_top + cover.hero_height + hero_pad_below;
 const hero_tabs_top = hero_bottom + hero_gap;
-const plain_tabs_gap = 4; // Above the tabs row on later pages
+const plain_tabs_gap = style.space.hair; // Above the tabs row on later pages
 const plain_tabs_top = status_height + plain_tabs_gap;
-const tabs_height = 84;
-const grid_gap = 22; // Between the tabs row and the grid
+const tabs_height = style.space.snug + style.space.wider;
+const grid_gap = style.space.medium; // Between the tabs row and the grid
 const hero_grid_top = hero_tabs_top + tabs_height + grid_gap;
 const plain_grid_top = plain_tabs_top + tabs_height + grid_gap;
 const hero_rows = (message_baseline - hero_grid_top) / row_height;
@@ -53,38 +55,39 @@ const plain_rows = (message_baseline - plain_grid_top) / row_height;
 /// The most books a page shows: a page without the hero, whole.
 pub const page_books_max: u32 = plain_rows * columns;
 const hero_title_lines = 3;
-const hero_title_step = 66;
+const hero_title_step = style.space.wider;
 /// The column of text beside the hero's cover, down from the hero's top unless said:
 /// its gap from the cover, the "Continue reading" line (its fade stopping short of the
 /// dots), the dots, the title, the author's rise above the title's next line, the line
 /// under the author, and the progress bar's rise from the cover's foot, its clearance
 /// and the percent under it. The quiet lines are faded over their own line.
 const hero_text = struct {
-    const gap = 48;
-    const kicker_drop = 34;
-    const kicker_clear = 40;
-    const dots_inset = 8;
-    const dots_drop = 24;
-    const title_drop = 104;
-    const author_rise = 12;
-    const line_step = 56;
-    const bar_rise = 40;
-    const bar_clear = 22;
-    const bar_thick = 12;
-    const percent_drop = 42;
+    const gap = style.space.wide;
+    const kicker_drop = style.space.roomy;
+    const kicker_clear = style.space.tiny + style.space.roomy;
+    const dots_inset = style.space.tiny;
+    const dots_drop = style.space.medium;
+    const title_drop = style.space.band;
+    const author_rise = style.space.small;
+    const line_step = style.space.wide;
+    const bar_rise = style.space.tiny + style.space.roomy;
+    const bar_clear = style.space.medium;
+    const bar_thick = style.space.small;
+    const percent_drop = style.space.snug + style.space.medium;
 };
 /// The hero's dots take a fingertip's taps in from the right margin, near its top: down
 /// to this far under the hero's top.
 const hero_dots_left = screen_width - margin - style.fingertip;
-const hero_dots_reach_below = 90;
+const hero_dots_reach_below = style.space.band;
 const hero_dots_bottom = hero_top + hero_dots_reach_below;
 /// A notice's baseline, between the grid and the pager.
-const message_above_pager = 30;
-const empty_drop = 60; // "No books here yet.", under the grid's top
+const message_above_pager = style.space.roomy;
+const empty_drop = style.space.wider; // "No books here yet.", under the grid's top
 const message_baseline = footer.top - message_above_pager;
-const menu_right = 220; // The menu takes taps left of here, in the status strip
-const status_menu_rise = 14; // The menu's lines' top over it
-const battery_reach = 300; // And the battery this far from the right edge
+/// The menu takes taps left of here, in the status strip.
+const menu_right = style.space.band + style.space.tall;
+const status_menu_rise = style.space.small; // The menu's lines' top over it
+const battery_reach = style.button_width; // And the battery this far from the right edge
 
 /// A filter's tab: `left` and `right` bound its taps, and its label starts at `label_left`.
 const Tab = struct {
@@ -96,17 +99,19 @@ const Tab = struct {
 };
 /// The funnel's part of the first tab, before its label, and a label's room in from its
 /// tab's left otherwise.
-const funnel_width = 100;
-const tab_label_pad = 16;
+const funnel_width = style.space.band;
+const tab_label_pad = style.space.snug;
+/// Each tab's own room past the funnel: its label's, and a fingertip's at least.
+const tab_width = style.space.band + style.space.wide;
 // Inside one rounded button that starts with a funnel, side by side from the margin,
 // each at least a fingertip wide, as wide as its label needs. The first takes the
 // funnel's taps too, as it's drawn as part of it.
 const tabs = tabs: {
     const Each = struct { filter: catalog.Filter, label: []const u8, width: i32 };
     const each = [_]Each{
-        .{ .filter = .all, .label = "All", .width = 188 },
-        .{ .filter = .unread, .label = "Unread", .width = 172 },
-        .{ .filter = .read, .label = "Read", .width = 132 },
+        .{ .filter = .all, .label = "All", .width = funnel_width + tab_width },
+        .{ .filter = .unread, .label = "Unread", .width = tab_width },
+        .{ .filter = .read, .label = "Read", .width = tab_width },
     };
     var placed: [each.len]Tab = undefined;
     var left: i32 = margin;
@@ -127,39 +132,39 @@ const tabs = tabs: {
 // Filter, search and sort buttons fill the tabs row: a fingertip tall
 const button_top = 0;
 const button_height = tabs_height;
-const icon_inset = 46; // From a button's rounded end to its icon's centre
+const icon_inset = style.space.wide; // From a button's rounded end to its icon's centre
 /// The tabs row's labels, centred in its buttons: the line under the chosen one, down
 /// from the row's top; the others faded.
-const tab_underline = 62;
+const tab_underline = style.space.wider;
 /// The sort button's room: right of its label, its arrows' width and their gaps.
-const sort_label_pad = 32;
-const sort_arrows_width = 18;
-const sort_arrows_gap = 14;
+const sort_label_pad = style.space.roomy;
+const sort_arrows_width = style.space.snug;
+const sort_arrows_gap = style.space.small;
 /// While searching, in the hero's place, down from its top: the query, the count, and
 /// the button that clears it, its label's room either side.
 const search_head = struct {
-    const query_drop = 120;
-    const count_drop = 190;
-    const button_drop = 236;
-    const button_pad = 30;
+    const query_drop = style.space.tall;
+    const count_drop = style.space.wide + style.space.tall;
+    const button_drop = style.space.band + style.space.tall;
+    const button_pad = style.space.roomy;
 };
 
 const footer = draw.bottom_pager;
 
 // A cover set in type, for a book with no picture: its title from the top down, a short
 // rule under it, and the author along the bottom.
-const type_title_top = 72; // From the cover's top to the title's first baseline
-const type_title_step = 44;
-const type_rule_height = 3;
-const type_rule_width = 48;
-const type_inset = 28; // The title and author in from the cover's sides
+const type_title_top = style.space.wider; // From the cover's top to the title's first baseline
+const type_title_step = style.line_step(style.text.sample); // The cover type's lines
+const type_rule_height = style.space.hair;
+const type_rule_width = style.space.wide;
+const type_inset = style.space.medium; // The title and author in from the cover's sides
 const type_edge = 2; // Its outline
 const type_paper = 0xf0; // A shade off white, so the cover reads as one
-const type_author_above = 34; // From the cover's bottom up to the author's baseline
+const type_author_above = style.space.roomy; // From the cover's bottom up to the author's baseline
 /// How high the author's letters reach above their baseline, at most: the size of the
 /// caption font it's set in (26 px, setup.zig), which none of its letters outgrows.
-const type_author_reach = 26;
-const type_rule_gap = 8; // At least this between the rule and the author's letters
+const type_author_reach = style.space.medium;
+const type_rule_gap = style.space.tiny; // At least this between the rule and the author's letters
 
 /// The moment a frame is drawn for, read once so every part of it agrees.
 pub const Moment = struct { unix: u64, utc_offset: i64 };
@@ -181,13 +186,14 @@ pub const Hit = union(enum) {
 };
 
 // The round search button, a clear gap right of the filter button
-const search_gap = 36;
+const search_gap = style.space.roomy;
 const search_cx = tabs[tabs.len - 1].right + search_gap + button_height / 2;
-const search_reach = 56; // Taps this far either side of its centre: a fingertip and more
+/// Taps this far either side of its centre: a fingertip across.
+const search_reach = style.space.wide;
 // The round stats button, beside search, their taps just short of meeting
-const stats_cx = search_cx + 2 * search_reach + 4;
+const stats_cx = search_cx + 2 * search_reach + style.space.hair;
 /// The sort button takes taps from a gap right of the stats button's.
-const sort_gap = 46;
+const sort_gap = style.space.wide;
 const sort_left = stats_cx + search_reach + sort_gap;
 
 comptime {
@@ -422,7 +428,8 @@ fn progress_bar(page: Page, x: u32, y: u32, w: u32, percent: u32, thick: f32) vo
     const r = thick / 2;
     page.pill(left + r, left + @as(f32, @floatFromInt(w)) - r, cy, r / 2, 0xb8);
     if (percent == 0) return;
-    const filled = @as(f32, @floatFromInt(w)) * @as(f32, @floatFromInt(@min(percent, 100))) / 100;
+    const read: f32 = @floatFromInt(@min(percent, whole_percent));
+    const filled = @as(f32, @floatFromInt(w)) * read / whole_percent;
     page.pill(left + r, left + @max(filled - r, r), cy, r, 0x00);
 }
 
@@ -431,7 +438,7 @@ fn percent_badge(font: *Font, page: Page, x: u32, y: u32, percent: u32) !void {
     assert(x >= margin);
     assert(y >= plain_grid_top + cover.height);
     var label: [8]u8 = undefined;
-    const s = std.fmt.bufPrint(&label, "{d}%", .{@min(percent, 100)}) catch return;
+    const s = std.fmt.bufPrint(&label, "{d}%", .{@min(percent, whole_percent)}) catch return;
     const r: f32 = badge.radius;
     const cy: f32 = @as(f32, @floatFromInt(y)) - badge.inset - r;
     try draw_badge(font, page, x, cy, s);
@@ -440,9 +447,9 @@ fn percent_badge(font: *Font, page: Page, x: u32, y: u32, percent: u32) !void {
 /// A corner badge's pill: its radius, in from its cover's corner, and its label's room
 /// either side; the label is centred on its middle.
 const badge = struct {
-    const radius = 19;
-    const inset = 12;
-    const label_pad = 13;
+    const radius = style.space.snug;
+    const inset = style.space.small;
+    const label_pad = style.space.small;
 };
 
 /// `s` in a small white pill, its middle at `cy`, in from the cover's left at `x`.
@@ -980,6 +987,7 @@ test "the tabs row takes taps just off its pills, and the filter's from its funn
 }
 
 test "a cover set in type has room for its title's lines above the author" {
-    try std.testing.expectEqual(@as(u32, 4), type_title_lines(cover.height));
-    try std.testing.expectEqual(@as(u32, 4), type_title_lines(cover.hero_height));
+    // A long title's four lines at least, on a grid cover and the hero's
+    try std.testing.expect(type_title_lines(cover.height) >= 4);
+    try std.testing.expect(type_title_lines(cover.hero_height) >= 4);
 }

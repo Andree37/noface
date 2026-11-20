@@ -299,6 +299,7 @@ const Snapshot = enum {
     lock,
     search,
     @"library-search",
+    running,
 };
 
 /// Whether `pixels` match the reference image `name`, allowing for anti-aliasing:
@@ -1350,7 +1351,7 @@ const scenarios = [_]Scenario{
     },
     .{
         .name = "the page, toolbar, text settings, a definition, a book's search, the " ++
-            "lock screen, the library and its search look as they should",
+            "lock screen, running, the library and its search look as they should",
         .run = struct {
             fn run() !void {
                 const text_settings = tool(.text);
@@ -1365,6 +1366,8 @@ const scenarios = [_]Scenario{
                     .{ Snapshot.definition, &[_]Step{ forward, a_word, lift } },
                     // A book without a cover: its title on white
                     .{ Snapshot.lock, &[_]Step{ forward, lock_it, wait(3_000) } },
+                    // A phrase partway, the dial swept part of the way round
+                    .{ Snapshot.running, &(start_running ++ [_]Step{wait(2_500)}) },
                     .{ Snapshot.search, &(.{ top, tool(.search) } ++ typed("garden") ++ .{
                         tap_on(keyboard.place(.enter)),
                     }) },

@@ -275,6 +275,16 @@ fn row_slider(row: Row) slider.Slider {
 }
 
 /// Level for a tap at `x` on a row's slider.
+/// Where a finger sets a slider row to `level`: on its bar, at that level's place.
+pub fn level_place(row: Row, level: u32) style.Point {
+    assert(level <= row.max);
+    const x = slider.knob_at(row_slider(row), level, row.max);
+    const point: style.Point = .{ .x = @intCast(x), .y = @intCast(row.y) };
+    assert(level_at(row, point.x) == level);
+    assert(hit(point.x, point.y) == if (row.y == brightness_row.y) Hit.slider else Hit.warmth);
+    return point;
+}
+
 pub fn level_at(row: Row, x: i32) u32 {
     const level = slider.value_at(row_slider(row), x, row.max);
     assert(level <= row.max);

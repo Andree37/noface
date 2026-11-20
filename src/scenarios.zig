@@ -261,6 +261,9 @@ const Kindle = struct {
     sets_into: ?std.mem.Allocator = null,
     /// Starts in the library instead of the first book.
     library: bool = false,
+    /// Typefaces of the reader's own offered after the Kindle's, as from its fonts
+    /// folder: each the test font under its own name ("Own 1", "Own 2", ...).
+    own_typefaces: u32 = 0,
     /// A book read a while already, so the library shows it to continue, and opens
     /// at its place.
     read_before: ?ReadBefore = null,
@@ -520,6 +523,7 @@ fn play_on_app(kindle: Kindle, steps: []const Step, stage: Stage) !Outcome {
         .data_dir = stage.dir,
         .files = kept.files,
         .library_path = stage.library_path,
+        .offered = try own_offered(stage.harness, stage.dir, kindle.own_typefaces),
     });
     const outcome = outcome: {
         defer a.release();
@@ -653,6 +657,31 @@ fn play_on_devices(
         .last_screen = last_screen,
         .keep = keep,
     };
+}
+
+/// The most typefaces of the reader's own a scenario offers.
+const own_typefaces_max = 16;
+
+/// The Kindle's typefaces, then `count` of the reader's own, each the test font written
+/// into the scenario's folder `dir`, under its own name. Kept in `alloc`, which outlives
+/// the App, as main.zig keeps the ones it finds.
+fn own_offered(alloc: std.mem.Allocator, dir: []const u8, count: u32) !fonts_db.Offered {
+    assert(count <= own_typefaces_max);
+    if (count == 0) return .{};
+    const regular = try std.fmt.allocPrintSentinel(alloc, "{s}/own-regular.ttf", .{dir}, 0);
+    const bold = try std.fmt.allocPrintSentinel(alloc, "{s}/own-bold.ttf", .{dir}, 0);
+    file.write_small(regular, go_regular);
+    file.write_small(bold, go_bold);
+    const names = try alloc.alloc([]const u8, settings_model.builtin_families.len + count);
+    @memcpy(names[0..settings_model.builtin_families.len], &settings_model.builtin_families);
+    const own = try alloc.alloc([4][:0]const u8, count);
+    for (names[settings_model.builtin_families.len..], own, 1..) |*name, *files, n| {
+        name.* = try std.fmt.allocPrint(alloc, "Own {d}", .{n});
+        files.* = .{ regular, bold, regular, bold }; // Regular, bold, italic, bold italic
+    }
+    const offered: fonts_db.Offered = .{ .families = .offer(names), .own = own };
+    assert(offered.families.count() == settings_model.builtin_families.len + count);
+    return offered;
 }
 
 /// What an App points at for as long as it lives: its fonts and data file paths.
@@ -1435,6 +1464,38 @@ const scenarios = [_]Scenario{
         }.run,
     },
     .{
+        .name = "with more typefaces than the Aa grid has cells, its last cell turns it to " ++
+            "the next page, whose typefaces are chosen and saved like the first's",
+        .run = struct {
+            const own = 10; // With the Kindle's four, more than two pages of five
+            fn run() !void {
+                const families = comptime offered_families();
+                const per_page = aa.families_per_page(families);
+                // The grid's last cell turns the page; the next page's first is chosen
+                const pager = tap_on(aa.family_place(families, per_page));
+                const first_of_next = tap_on(aa.family_place(families, 0));
+                const kindle: Kindle = .{ .own_typefaces = own };
+                const aa_sheet = [_]Step{ top, text_settings_button };
+                const r = try play_on(kindle, &(aa_sheet ++ .{ pager, first_of_next }));
+                const expected = families.names[per_page];
+                try expect(std.mem.eql(u8, r.settings.font.name(), expected), "not chosen");
+                try expect(std.mem.eql(u8, r.saved_settings.font.name(), expected), "not saved");
+            }
+
+            /// The typefaces the scenario offers, by name, as `own_offered` names them.
+            fn offered_families() settings_model.Families {
+                const builtin = settings_model.builtin_families;
+                var names: [builtin.len + own][]const u8 = undefined;
+                for (builtin, names[0..builtin.len]) |b, *n| n.* = b;
+                for (names[builtin.len..], 1..) |*n, i| {
+                    n.* = std.fmt.comptimePrint("Own {d}", .{i});
+                }
+                const final = names;
+                return .offer(&final);
+            }
+        }.run,
+    },
+    .{
         .name = "the library's search finds a book by its title as it's typed, and opens it",
         .run = struct {
             fn run() !void {
@@ -1535,6 +1596,35 @@ const scenarios = [_]Scenario{
         }.run,
     },
     .{
+        .name = "the quick panel's sliders, each dragged from its start to its end, set " ++
+            "the Kindle's brightness and warmth to their highest",
+        .run = struct {
+            fn run() !void {
+                var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+                defer arena.deinit();
+                const r = try play_on(.{ .sets_into = arena.allocator() }, &(.{pull_down} ++
+                    along(menu_ui.brightness_row) ++ along(menu_ui.warmth_row) ++
+                    .{tap_on(menu_ui.place(.close))}));
+                const rows = [_]struct { []const u8, menu_ui.Row }{
+                    .{ "flIntensity", menu_ui.brightness_row },
+                    .{ "currentAmberLevel", menu_ui.warmth_row },
+                };
+                for (rows) |row| {
+                    const levels = try levels_set(arena.allocator(), r.sets, row[0]);
+                    try expect(levels.len > 0, "a slider set no level");
+                    try expect(levels[levels.len - 1] == row[1].max, "a drag stopped short");
+                }
+            }
+
+            /// A finger down at a slider's start, moved along to its end, and lifted.
+            fn along(row: menu_ui.Row) [3]Step {
+                const end = menu_ui.level_place(row, row.max);
+                const to: input_mod.Point = .{ .x = end.x, .y = end.y };
+                return .{ tap_on(menu_ui.level_place(row, 0)), .{ .act = .{ .drag = to } }, lift };
+            }
+        }.run,
+    },
+    .{
         .name = "the quick panel's controls each ask the Kindle for what they show: a " ++
             "step of brightness and of warmth, the warmth's schedule, airplane mode, " ++
             "Bluetooth and a sync",
@@ -1580,23 +1670,6 @@ const scenarios = [_]Scenario{
                     if (at < asked.len and std.mem.eql(u8, set, asked[at])) at += 1;
                 }
                 try expect(at == asked.len, "a control didn't ask the Kindle, or not in turn");
-            }
-
-            /// The values a powerd level was set to, in order.
-            fn levels_set(
-                alloc: std.mem.Allocator,
-                sets: []const []const u8,
-                level: []const u8,
-            ) ![]const u32 {
-                var values: std.ArrayList(u32) = .empty;
-                for (sets) |set| {
-                    var words = std.mem.tokenizeScalar(u8, set, ' ');
-                    const service = words.next() orelse continue;
-                    if (!std.mem.eql(u8, service, "com.lab126.powerd")) continue;
-                    if (!std.mem.eql(u8, words.next() orelse continue, level)) continue;
-                    try values.append(alloc, try std.fmt.parseInt(u32, words.next().?, 10));
-                }
-                return values.items;
             }
         }.run,
     },
@@ -2091,6 +2164,23 @@ fn word_held(kindle: Kindle, before: []const Step) !Step {
     const clear = away_from_word.act.tap.y > at.y + 2 * style.fingertip;
     try expect(clear, "a tap away from the word would land on it");
     return hold(at.x, at.y);
+}
+
+/// The values a powerd level was set to, in order.
+fn levels_set(
+    alloc: std.mem.Allocator,
+    sets: []const []const u8,
+    level: []const u8,
+) ![]const u32 {
+    var values: std.ArrayList(u32) = .empty;
+    for (sets) |set| {
+        var words = std.mem.tokenizeScalar(u8, set, ' ');
+        const service = words.next() orelse continue;
+        if (!std.mem.eql(u8, service, "com.lab126.powerd")) continue;
+        if (!std.mem.eql(u8, words.next() orelse continue, level)) continue;
+        try values.append(alloc, try std.fmt.parseInt(u32, words.next().?, 10));
+    }
+    return values.items;
 }
 
 /// The word drawn at a point, if any.

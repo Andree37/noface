@@ -237,12 +237,6 @@ fn count_assertions(code: []const u8, expects_assert: bool) u32 {
         count_token(code, "invariants()") + expects;
 }
 
-/// The scenarios (src/scenarios.zig) are tests that also ship, as `noface selftest`:
-/// each is a function, not a test block, and states what must hold with `expect`,
-/// which reports a failure and goes on to the next scenario, where an assertion would
-/// stop the Kindle's selftest at the first. There, `expect(` is the assertion, and
-/// counts as one, its conditions split as an assertion's are; a scenario that checks
-/// nothing still counts as a function without any.
 /// Whether a line imports somewhere other than at the file's top: an `@import` in
 /// its code (strings are blanked in it), on an indented line or after other code on a
 /// top-level one. `_ = @import(…)` lists a file's tests, and is left alone.
@@ -314,7 +308,18 @@ fn note_unused_imports(scan: *Scan, source: []const u8, code: []const u8) !void 
     assert(line_number > 1);
 }
 
-const expects_assert_path = "src/scenarios.zig";
+/// The scenarios (src/scenarios.zig and the files in src/scenarios/) are tests that
+/// also ship, as `noface selftest`: each is a function, not a test block, and states
+/// what must hold with `expect`, which reports a failure and goes on to the next
+/// scenario, where an assertion would stop the Kindle's selftest at the first. There,
+/// `expect(` is the assertion, and counts as one, its conditions split as an
+/// assertion's are; a scenario that checks nothing still counts as a function without
+/// any.
+fn is_scenarios(path: []const u8) bool {
+    assert(path.len > 0);
+    return std.mem.eql(u8, path, "src/scenarios.zig") or
+        std.mem.startsWith(u8, path, "src/scenarios/");
+}
 
 /// How many times a line calls the function `name` itself: not a method or field of
 /// the same name.
@@ -542,7 +547,7 @@ pub fn check_zig(path: []const u8, source: []const u8, gpa: std.mem.Allocator) !
     assert(path.len > 0);
     var scan: Scan = .{
         .gpa = gpa,
-        .expects_assert = std.mem.eql(u8, path, expects_assert_path),
+        .expects_assert = is_scenarios(path),
     };
     errdefer scan.breaks.deinit(gpa);
     defer scan.light.deinit(gpa);
@@ -1079,10 +1084,12 @@ test "in the scenarios, and only there, `expect(` is an assertion" {
         \\    work();
         \\}
     ;
-    const in_scenarios = try check_zig("src/scenarios.zig", source, std.testing.allocator);
-    defer std.testing.allocator.free(in_scenarios);
-    try std.testing.expect(in_scenarios.len == 1);
-    try std.testing.expectEqual(Rule.compound_assertion, in_scenarios[0].rule);
+    for ([_][]const u8{ "src/scenarios.zig", "src/scenarios/reading.zig" }) |path| {
+        const in_scenarios = try check_zig(path, source, std.testing.allocator);
+        defer std.testing.allocator.free(in_scenarios);
+        try std.testing.expect(in_scenarios.len == 1);
+        try std.testing.expectEqual(Rule.compound_assertion, in_scenarios[0].rule);
+    }
     try std.testing.expectEqual(@as(u32, 1), try count_in(source, .assertion_density));
     try std.testing.expectEqual(@as(u32, 0), try count_in(source, .compound_assertion));
 }

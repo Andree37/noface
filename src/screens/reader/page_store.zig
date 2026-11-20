@@ -21,7 +21,7 @@ const magic = "NFPG";
 /// out again; the scenario that checks `breaks_digest` says when.
 const layout_version: u64 = 3;
 
-/// Where the test book's pages break today (scenarios.zig's `breaks_digest`), as
+/// Where the test book's pages break today (scenarios/harness.zig's `breaks_digest`), as
 /// shipped and with bold word starts on, which set words in other widths.
 pub const breaks_digest: u64 = 0xd0b0973931a2e843;
 pub const breaks_digest_bold_starts: u64 = 0x589ad40798b38fc5;

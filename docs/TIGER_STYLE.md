@@ -66,7 +66,7 @@ doesn't look at, so the rules for the code it tests (assertions, ignored errors,
   there mostly repeats its line. Never pad a function to meet the average; an
   assertion states something that would be a bug if false. Counted as assertions: `assert`, `check.that`,
   `check.thatf`, `@compileError`, and a call to `invariants()`, a struct's method that
-  asserts what holds of it between calls. In `src/scenarios.zig`, `expect` too: the
+  asserts what holds of it between calls. In `src/scenarios.zig` and `src/scenarios/`, `expect` too: the
   scenarios are tests that also ship as `noface selftest`, so a failed check reports
   and goes on to the next scenario instead of stopping, and `expect` is their
   assertion. `std.debug.assert` for invariants; `check.that` / `check.thatf` (`src/base/check.zig`)

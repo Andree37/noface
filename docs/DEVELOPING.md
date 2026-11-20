@@ -173,7 +173,9 @@ Code is split by who owns it. `zig build check` fails if a file imports across t
   import anything but `screens/` and `testing/`, as screens build on them. The roots
   put a program together and may import anything: `setup.zig` (assembling an App, the
   same way for the Kindle and the tests), `main.zig` (startup), `scenarios.zig` (the
-  scenario tests, also run on the Kindle as `noface selftest`), `core.zig` (what the
+  scenario tests, also run on the Kindle as `noface selftest`; the scenarios
+  themselves are in `scenarios/`, by what they're about, with `harness.zig`, which
+  plays them, and `taps.zig`, their touches by name), `core.zig` (what the
   tools share) and `tests.zig` (every unit test). The scenarios stay at the top
   because a Zig program's main file can only import files below it.
 - What a screen keeps between openings sits beside the drawing it serves, in `ui/`

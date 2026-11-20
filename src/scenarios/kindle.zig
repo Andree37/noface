@@ -1,0 +1,150 @@
+//! What noface asks of the Kindle itself: Wi-Fi while reading, airplane mode, Bluetooth, and the
+//! quick panel's controls.
+const std = @import("std");
+const input_mod = @import("../kindle/input.zig");
+const menu_ui = @import("../ui/menu.zig");
+const harness = @import("harness.zig");
+const Scenario = harness.Scenario;
+const expect = harness.expect;
+const levels_set = harness.levels_set;
+const play = harness.play;
+const play_on = harness.play_on;
+const same_place = harness.same_place;
+const taps = @import("taps.zig");
+const Step = taps.Step;
+const forward = taps.forward;
+const lift = taps.lift;
+const panel_kindle = taps.panel_kindle;
+const pull_down = taps.pull_down;
+const tap_on = taps.tap_on;
+const wait = taps.wait;
+
+pub const all = [_]Scenario{
+    .{ .name = "leaving noface from the quick panel mid-book keeps the place", .run = struct {
+        fn run() !void {
+            const plain = try play(&.{ forward, forward });
+            const left = try play(&.{ forward, forward, pull_down, panel_kindle });
+            try expect(same_place(plain.saved, left.saved), "the place was lost");
+        }
+    }.run },
+    .{
+        .name = "a couple of minutes into a book Wi-Fi goes off, and comes back on leaving",
+        .run = struct {
+            fn run() !void {
+                const r = try play(&.{ wait(150_000), forward });
+                try expect(r.airplane_asked_on, "airplane mode wasn't turned on");
+                try expect(!r.airplane_at_end, "Wi-Fi wasn't put back");
+                try expect(!r.wifi_note_left, "the note was left behind");
+            }
+        }.run,
+    },
+    .{
+        .name = "Wi-Fi comes back even when the Kindle was slow to say it went off",
+        .run = struct {
+            fn run() !void {
+                const r = try play_on(.{ .radio_slow = true }, &.{ wait(150_000), forward });
+                try expect(r.airplane_asked_on, "airplane mode wasn't turned on");
+                try expect(!r.airplane_at_end, "Wi-Fi was left off");
+                // The note may stay, as Wi-Fi coming back went unconfirmed too: the
+                // launcher or the next start checks again, so it's kept until Wi-Fi is seen on
+            }
+        }.run,
+    },
+    .{ .name = "a quick look into a book leaves Wi-Fi alone", .run = struct {
+        fn run() !void {
+            const r = try play(&.{ wait(60_000), forward });
+            try expect(!r.airplane_asked_on, "airplane mode was turned on");
+        }
+    }.run },
+    .{ .name = "airplane mode the reader turned on stays on", .run = struct {
+        fn run() !void {
+            const r = try play_on(.{ .airplane = true }, &.{ wait(150_000), forward });
+            try expect(r.airplane_at_end, "noface turned the reader's airplane mode off");
+            try expect(!r.wifi_note_left, "noface claimed the reader's airplane mode");
+        }
+    }.run },
+    .{ .name = "with Bluetooth on, Wi-Fi is left alone", .run = struct {
+        fn run() !void {
+            const r = try play_on(.{ .bluetooth = true }, &.{ wait(150_000), forward });
+            try expect(!r.airplane_asked_on, "airplane mode could cut Bluetooth off");
+        }
+    }.run },
+    .{
+        .name = "the quick panel's sliders, each dragged from its start to its end, set " ++
+            "the Kindle's brightness and warmth to their highest",
+        .run = struct {
+            fn run() !void {
+                var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+                defer arena.deinit();
+                const r = try play_on(.{ .sets_into = arena.allocator() }, &(.{pull_down} ++
+                    along(menu_ui.brightness_row) ++ along(menu_ui.warmth_row) ++
+                    .{tap_on(menu_ui.place(.close))}));
+                const rows = [_]struct { []const u8, menu_ui.Row }{
+                    .{ "flIntensity", menu_ui.brightness_row },
+                    .{ "currentAmberLevel", menu_ui.warmth_row },
+                };
+                for (rows) |row| {
+                    const levels = try levels_set(arena.allocator(), r.sets, row[0]);
+                    try expect(levels.len > 0, "a slider set no level");
+                    try expect(levels[levels.len - 1] == row[1].max, "a drag stopped short");
+                }
+            }
+
+            /// A finger down at a slider's start, moved along to its end, and lifted.
+            fn along(row: menu_ui.Row) [3]Step {
+                const end = menu_ui.level_place(row, row.max);
+                const to: input_mod.Point = .{ .x = end.x, .y = end.y };
+                return .{ tap_on(menu_ui.level_place(row, 0)), .{ .act = .{ .drag = to } }, lift };
+            }
+        }.run,
+    },
+    .{
+        .name = "the quick panel's controls each ask the Kindle for what they show: a " ++
+            "step of brightness and of warmth, the warmth's schedule, airplane mode, " ++
+            "Bluetooth and a sync",
+        .run = struct {
+            fn run() !void {
+                var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+                defer arena.deinit();
+                const panel = struct {
+                    fn tap_panel(h: menu_ui.Hit) Step {
+                        return tap_on(menu_ui.place(h));
+                    }
+                }.tap_panel;
+                const r = try play_on(.{ .sets_into = arena.allocator() }, &.{
+                    pull_down,
+                    panel(.brighter),
+                    panel(.dimmer),
+                    panel(.warmer),
+                    panel(.cooler),
+                    panel(.schedule),
+                    panel(.airplane),
+                    panel(.airplane),
+                    panel(.bluetooth),
+                    panel(.sync),
+                    tap_on(menu_ui.place(.close)),
+                });
+                // Brightness and warmth a step up, then back down, each
+                for ([_][]const u8{ "flIntensity", "currentAmberLevel" }) |level| {
+                    const steps = try levels_set(arena.allocator(), r.sets, level);
+                    try expect(steps.len == 2, "a level wasn't stepped twice");
+                    try expect(steps[0] > steps[1], "a level didn't step up, then down");
+                }
+                // The rest in order, from the pretend Kindle's readings: the schedule off,
+                // Wi-Fi on, Bluetooth off
+                const asked = [_][]const u8{
+                    "com.lab126.powerd amberSchedEnable 1",
+                    "com.lab126.cmd wirelessEnable 0",
+                    "com.lab126.cmd wirelessEnable 1",
+                    "com.lab126.btfd BTenable 1:2",
+                    "com.lab126.quickactions syncAndCheck 1",
+                };
+                var at: u32 = 0;
+                for (r.sets) |set| {
+                    if (at < asked.len and std.mem.eql(u8, set, asked[at])) at += 1;
+                }
+                try expect(at == asked.len, "a control didn't ask the Kindle, or not in turn");
+            }
+        }.run,
+    },
+};

@@ -226,17 +226,23 @@ pub const Kit = struct {
     hero: Font,
     cover_type: Font,
 
+    /// Line heights, as a share of the text's size: the page's open for reading, a
+    /// note's a little closer, the interface's closer still.
+    const body_leading = 1.35;
+    const note_leading = 1.3;
+    const ui_leading = 1.2;
+
     pub fn init(files: FontFiles) !Kit {
         const kit: Kit = .{
-            .body = try Font.init(files.book, 46, 1.35),
-            .note_font = try Font.init(files.book, 36, 1.3),
-            .footer = try Font.init(files.ui, 28, 1.2),
-            .reference = try Font.init(files.book, 28, 1.2),
-            .title = try Font.init(files.ui_bold, 34, 1.2),
-            .small = try Font.init(files.ui, 34, 1.2),
-            .caption = try Font.init(files.ui, 26, 1.2),
-            .hero = try Font.init(files.book_bold, 56, 1.2),
-            .cover_type = try Font.init(files.book_bold, 36, 1.2),
+            .body = try Font.init(files.book, style.text.body, body_leading),
+            .note_font = try Font.init(files.book, style.text.sample, note_leading),
+            .footer = try Font.init(files.ui, style.text.footer, ui_leading),
+            .reference = try Font.init(files.book, style.text.footer, ui_leading),
+            .title = try Font.init(files.ui_bold, style.text.title, ui_leading),
+            .small = try Font.init(files.ui, style.text.small, ui_leading),
+            .caption = try Font.init(files.ui, style.text.caption, ui_leading),
+            .hero = try Font.init(files.book_bold, style.text.hero, ui_leading),
+            .cover_type = try Font.init(files.book_bold, style.text.sample, ui_leading),
         };
         // Line heights come from the sizes above: a note sets smaller than the page,
         // and the footer smaller still

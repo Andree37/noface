@@ -5,6 +5,7 @@
 //! unmapped only when no font kept uses them and the room is wanted. However many
 //! typefaces there are, and however often the reader changes them, this holds no more.
 const std = @import("std");
+const style = @import("ui/style.zig");
 const assert = std.debug.assert;
 const Font = @import("gfx/font.zig").Font;
 const fonts_db = @import("kindle/fonts.zig");
@@ -23,8 +24,9 @@ const phrase_faces_kept = 2;
 /// Files kept: one for each font kept, at most (running's phrase fonts too), and one
 /// more, so there's always one to give up when another is needed.
 const files_kept = faces_kept + samples_kept + phrase_faces_kept + 1;
-/// The size a typeface's name is shown in, on the Aa sheet.
-const sample_px = 36;
+/// The size a typeface's name is shown in, on the Aa sheet, and how close its lines.
+const sample_px = style.text.sample;
+const sample_leading = 1.2;
 
 comptime {
     // Four faces at every book size, the most one page can set text in
@@ -105,7 +107,8 @@ pub const Typefaces = struct {
             return &kept.font;
         }
         const file_at = t.file_for(family, 0) catch return null;
-        const font = Font.init(t.files[file_at].?.data, sample_px, 1.2) catch return null;
+        const data = t.files[file_at].?.data;
+        const font = Font.init(data, sample_px, sample_leading) catch return null;
         const at = least_used(SampleSlot, &t.samples, null);
         if (t.samples[at]) |old| t.give_up_file(old.file);
         t.files[file_at].?.fonts += 1;

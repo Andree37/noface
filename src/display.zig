@@ -7,6 +7,7 @@ const Page = @import("gfx/page.zig").Page;
 const hwtcon = @import("kindle/hwtcon.zig");
 const text = @import("layout/text.zig");
 const library = @import("ui/library.zig");
+const style = @import("ui/style.zig");
 
 /// How many pages the cache keeps drawn: the one on screen and one each side.
 pub const slots_count = 3;
@@ -58,8 +59,12 @@ pub const Display = struct {
     /// after, so nothing keeps anything in it.
     overlay: []u8,
 
-    /// A display for `screen`, its page cache and overlay made in `alloc`.
+    /// A display for `screen`, its page cache and overlay made in `alloc`. The screen
+    /// is the one every layout is worked out for (style.screen): checked here, where the
+    /// real screen meets the layout, so code may read its size from either.
     pub fn init(alloc: std.mem.Allocator, screen: *hwtcon.Screen) !Display {
+        assert(screen.width == style.screen_width);
+        assert(screen.height == style.screen_height);
         const pixels = screen.pixels.len;
         assert(pixels > 0);
         var slots: [slots_count]Slot = undefined;

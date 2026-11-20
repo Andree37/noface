@@ -115,7 +115,10 @@ pub const all = places: {
         if (o == .unread) continue; // Where Finished is, for a finished book
         list = list ++ .{Place{ .name = "more." ++ @tagName(o), .point = more.place(o) }};
     }
-    for ([_]menu.Hit{ .close, .schedule, .airplane, .bluetooth, .settings, .kindle, .sync }) |h| {
+    for ([_]menu.Hit{
+        .close, .schedule, .airplane, .bluetooth, .settings, .kindle,
+        .sync,  .dimmer,   .brighter, .cooler,    .warmer,
+    }) |h| {
         list = list ++ .{Place{ .name = "panel." ++ @tagName(h), .point = menu.place(h) }};
     }
     for (std.enums.values(goto.Tab)) |t| {

@@ -302,12 +302,18 @@ pub fn hit(x: i32, y: i32) Hit {
     return .none;
 }
 
-/// The middle of a tile's taps, and for closing, of the page under the panel.
+/// The middle of a tile's or a slider end's taps, and for closing, of the page under the
+/// panel.
 pub fn place(h: Hit) style.Point {
     const point: style.Point = switch (h) {
         .close => .{ .x = style.screen_width / 2, .y = (height + style.screen_height) / 2 },
-        // The sliders and their ends take a level, by where along them: not a place
-        .none, .dimmer, .brighter, .slider, .cooler, .warmer, .warmth => unreachable,
+        // Each slider's ends step it down and up, either side of its bar
+        .dimmer => .{ .x = slider_left / 2, .y = brightness_row.y },
+        .brighter => .{ .x = (slider_right + style.screen_width) / 2, .y = brightness_row.y },
+        .cooler => .{ .x = slider_left / 2, .y = warmth_row.y },
+        .warmer => .{ .x = (slider_right + style.screen_width) / 2, .y = warmth_row.y },
+        // The sliders take a level, by where along them: not a place
+        .none, .slider, .warmth => unreachable,
         .schedule => .{
             .x = @divTrunc(schedule_left + style.screen_width, 2),
             .y = @divTrunc(schedule_top + schedule_bottom, 2),

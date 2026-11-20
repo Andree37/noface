@@ -16,6 +16,7 @@ const menu = @import("../ui/menu.zig");
 const search_sheet = @import("../ui/search_sheet.zig");
 const toolbar = @import("../ui/toolbar.zig");
 const catalog = @import("../model/catalog.zig");
+const settings_model = @import("../model/settings.zig");
 const running = @import("../model/running.zig");
 const touch = @import("../kindle/touch.zig");
 const gestures = @import("../kindle/input/gestures.zig");
@@ -110,6 +111,21 @@ pub const all = places: {
         const point = aa.place(sw.tab, .{ .toggle = i });
         list = list ++ .{Place{ .name = "aa.switch." ++ sw.field, .point = point }};
     }
+    // Each of the Kindle's typefaces by its name, "aa.family.bookerly": where the grid
+    // puts them with no typefaces of the reader's own, as the tests' Kindles have none
+    for (settings_model.builtin_families, 0..) |family, i| {
+        const name = "aa.family." ++ lower(family);
+        list = list ++ .{Place{ .name = name, .point = aa.family_place(.{}, i) }};
+    }
+    // Each step of each slider, from the first: "aa.size.0", "aa.margins.3"
+    for ([_]struct { []const u8, aa.Row }{
+        .{ "size", aa.size_row },
+        .{ "spacing", aa.spacing_row },
+        .{ "margins", aa.margin_row },
+    }) |named| for (0..named[1].steps) |step| {
+        const name = std.fmt.comptimePrint("aa.{s}.{d}", .{ named[0], step });
+        list = list ++ .{Place{ .name = name, .point = aa.step_place(named[1], step) }};
+    };
     for (std.enums.values(more.Option)) |o| {
         if (o == .cancel) continue; // Not on the menu: a tap above the card is
         if (o == .unread) continue; // Where Finished is, for a finished book
@@ -160,6 +176,16 @@ comptime {
     }
 }
 
+/// `name` in lower case, as names are: "Bookerly" is "bookerly".
+fn lower(comptime name: []const u8) []const u8 {
+    comptime {
+        var buf: [name.len]u8 = undefined;
+        _ = std.ascii.lowerString(&buf, name);
+        const result = buf;
+        return &result;
+    }
+}
+
 /// The point named `name`, or null for a name no place has.
 pub fn find(name: []const u8) ?Point {
     assert(name.len > 0);
@@ -198,5 +224,7 @@ test "names find their places, and no other name finds one" {
     try std.testing.expectEqual(toolbar.place(.bookmark), find("toolbar.bookmark").?);
     try std.testing.expectEqual(card.place(3, 0), find("card.3.0").?);
     try std.testing.expectEqual(keyboard.place(.{ .char = 's' }), find("key.s").?);
+    try std.testing.expectEqual(aa.family_place(.{}, 1), find("aa.family.bookerly").?);
+    try std.testing.expectEqual(aa.step_place(aa.margin_row, 3), find("aa.margins.3").?);
     try std.testing.expectEqual(@as(?Point, null), find("toolbar.nothing"));
 }

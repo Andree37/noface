@@ -432,6 +432,45 @@ fn row_slider(r: Row) slider.Slider {
     return .{ .left = inset, .right = screen_width - inset, .y = r.top + row_bar };
 }
 
+/// Where a tap sets a row's slider to `step`: on its tick, down the row's middle.
+pub fn step_place(r: Row, step: u32) style.Point {
+    assert(step < r.steps);
+    const x = slider.knob_at(row_slider(r), step, r.steps - 1);
+    const point: style.Point = .{ .x = @intCast(x), .y = row_middle(r) };
+    assert(step_at(r, point.x) == step);
+    assert(std.meta.eql(hit(slider_tab(r.slider), .{}, point.x, point.y), slider_hit(r.slider)));
+    return point;
+}
+
+fn slider_hit(s: Slider) Hit {
+    return switch (s) {
+        .text_size => .text_size,
+        .spacing => .spacing,
+        .margins => .margins,
+    };
+}
+
+/// The middle of the typefaces' grid's cell `cell`, counted from its page's first, on
+/// the Font tab: with `families` that page, the cell after a page's last typeface turns
+/// the grid to its next page.
+pub fn family_place(families: Families, cell: u32) style.Point {
+    const cols = family_columns(families);
+    assert(cell < cols * family_rows);
+    const width: i32 = @intCast(family_width(families));
+    const col: i32 = @intCast(cell % cols);
+    const row: i32 = @intCast(cell / cols);
+    const point: style.Point = .{
+        .x = margin + col * width + @divTrunc(width, 2),
+        .y = family_top + row * family_height + family_height / 2,
+    };
+    const expected: Hit = if (families_paged(families) and cell == families_per_page(families))
+        .more_families
+    else
+        .{ .family = cell };
+    assert(std.meta.eql(hit(.font, families, point.x, point.y), expected));
+    return point;
+}
+
 /// Step for a finger at `x` on a row's slider.
 pub fn step_at(r: Row, x: i32) u32 {
     const step = slider.value_at(row_slider(r), x, r.steps - 1);
@@ -529,10 +568,12 @@ pub fn hit(tab: Tab, families: Families, x: i32, y: i32) Hit {
 /// Which cell of the typefaces' grid a tap is on, if one of them is there, or the cell
 /// that turns it to the next page.
 fn hit_family(families: Families, x: i32, y: i32) Hit {
-    const row_reached: u32 = @intCast(@divTrunc(@max(y - family_top, 0), family_height));
+    const below_top: i32 = @max(y - family_top, 0);
+    const row_reached: u32 = @intCast(@divTrunc(below_top, family_height));
     const row = @min(row_reached, family_rows - 1);
     const cols = family_columns(families);
-    const col = @min(@as(u32, @intCast(@max(x - margin, 0))) / family_width(families), cols - 1);
+    const in_from_margin: i32 = @max(x - margin, 0);
+    const col = @min(@as(u32, @intCast(in_from_margin)) / family_width(families), cols - 1);
     assert(row < family_rows);
     assert(col < cols);
     const i = row * cols + col;
@@ -784,14 +825,6 @@ pub fn render(
     }
 }
 
-/// The middle of typeface cell `cell` of the grid, as it's laid out now.
-fn test_family_middle(families: Families, cell: u32) [2]i32 {
-    const cols = family_columns(families);
-    const x = margin + cell % cols * family_width(families) + family_width(families) / 2;
-    const y = family_top + cell / cols * family_height + family_height / 2;
-    return .{ @intCast(x), @intCast(y) };
-}
-
 /// The middle of switch `i`.
 fn test_switch_middle(i: u32) i32 {
     return @intCast(switch_top(i) + toggle_height / 2);
@@ -802,25 +835,27 @@ const test_x = screen_width / 2; // Across the sheet, clear of anything at its s
 test "with the reader's own typefaces, three to a row" {
     const families = Families.offer(&(settings_model.builtin_families ++ .{"Literata"}));
     for (0..5) |cell| {
-        const at = test_family_middle(families, @intCast(cell));
+        const at = family_place(families, @intCast(cell));
         try std.testing.expectEqual(
             Hit{ .family = @intCast(cell) },
-            hit(.font, families, at[0], at[1]),
+            hit(.font, families, at.x, at.y),
         );
     }
     // No sixth
-    const sixth = test_family_middle(families, 5);
-    try std.testing.expectEqual(Hit.none, hit(.font, families, sixth[0], sixth[1]));
+    // The second row's third cell: the first row's third, down to the second row
+    const sixth_x = family_place(families, 2).x;
+    const sixth_y = family_place(families, 3).y;
+    try std.testing.expectEqual(Hit.none, hit(.font, families, sixth_x, sixth_y));
     try std.testing.expectEqual(@as(u32, 6), families_per_page(families));
 }
 
 test "with more typefaces than cells, the last cell turns the page, round to the first" {
     const own = .{ "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K" };
     const families = Families.offer(&(settings_model.builtin_families ++ own));
-    const last = test_family_middle(families, 5);
-    try std.testing.expectEqual(Hit.more_families, hit(.font, families, last[0], last[1]));
-    const fifth = test_family_middle(families, 4);
-    try std.testing.expectEqual(Hit{ .family = 4 }, hit(.font, families, fifth[0], fifth[1]));
+    const last = family_place(families, 5);
+    try std.testing.expectEqual(Hit.more_families, hit(.font, families, last.x, last.y));
+    const fifth = family_place(families, 4);
+    try std.testing.expectEqual(Hit{ .family = 4 }, hit(.font, families, fifth.x, fifth.y));
     try std.testing.expectEqual(@as(u32, 5), families_per_page(families));
     // Fifteen typefaces, five a page
     try std.testing.expectEqual(@as(u32, 5), next_family_page(families, 0));
@@ -859,10 +894,10 @@ test "each tab maps its own controls" {
         try std.testing.expectEqual(Hit{ .theme = @intCast(i) }, hit(.themes, families, x, y));
     }
     for (0..4) |cell| {
-        const at = test_family_middle(families, @intCast(cell));
+        const at = family_place(families, @intCast(cell));
         try std.testing.expectEqual(
             Hit{ .family = @intCast(cell) },
-            hit(.font, families, at[0], at[1]),
+            hit(.font, families, at.x, at.y),
         );
     }
     try std.testing.expectEqual(
@@ -911,9 +946,9 @@ test "switches and fonts take a fingertip of height" {
     const clock_top: i32 = @intCast(switch_top(clock));
     const clock_reach = clock_top - reach + 1;
     try std.testing.expectEqual(Hit{ .toggle = clock }, hit(.more, families, test_x, clock_reach));
-    const first = test_family_middle(families, 0);
+    const first = family_place(families, 0);
     const above: i32 = family_top - family_reach_above + 1;
-    try std.testing.expectEqual(Hit{ .family = 0 }, hit(.font, families, first[0], above));
+    try std.testing.expectEqual(Hit{ .family = 0 }, hit(.font, families, first.x, above));
 }
 
 test "sliders say what they're set to" {

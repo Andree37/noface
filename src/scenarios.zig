@@ -93,6 +93,11 @@ fn tool(h: toolbar.Hit) Step {
 }
 const highlight_button = tap_on(definition_ui.place(.highlight)); // On the definition sheet
 const above_sheet = tap_on(card.place_above());
+/// A tap on the Aa sheet's text size slider, on step `step`; the Font tab's open.
+fn size_step(comptime step: u32) Step {
+    return tap_on(aa.step_place(aa.size_row, step));
+}
+const largest_size = size_step(aa.size_row.steps - 1);
 
 fn tap(x: i32, y: i32) Step {
     // A tap the script makes lands on the screen
@@ -1370,6 +1375,34 @@ const scenarios = [_]Scenario{
         }.run,
     },
     .{
+        .name = "a typeface, line spacing and margins chosen in Aa are kept and saved, " ++
+            "the place kept with them",
+        .run = struct {
+            fn run() !void {
+                // The sheet opens on its Font tab, with the typefaces' grid
+                const aa_sheet = [_]Step{ forward, forward, top, text_settings_button };
+                const read = try play(&.{ forward, forward });
+                const bookerly = comptime settings_model.Families.named(.{}, "Bookerly").?;
+                const typeface = tap_on(aa.family_place(.{}, bookerly));
+                const chosen = try play(&(aa_sheet ++ .{typeface}));
+                try expect(std.mem.eql(u8, chosen.settings.font.name(), "Bookerly"), "not chosen");
+                const saved = chosen.saved_settings.font.name();
+                try expect(std.mem.eql(u8, saved, "Bookerly"), "the typeface wasn't saved");
+                try expect(same_place(chosen.saved, read.saved), "the typeface moved the place");
+                const layout_tab = tap_on(aa.place(.themes, .{ .tab = .layout }));
+                const widest = aa.spacing_row.steps - 1;
+                const spaced = tap_on(aa.step_place(aa.spacing_row, widest));
+                const narrow = tap_on(aa.step_place(aa.margin_row, 0));
+                const laid = try play(&(aa_sheet ++ .{ layout_tab, spaced, lift, narrow, lift }));
+                try expect(laid.settings.spacing == widest, "the spacing wasn't set");
+                try expect(laid.saved_settings.spacing == widest, "the spacing wasn't saved");
+                try expect(laid.settings.margin == 0, "the margins weren't set");
+                try expect(laid.saved_settings.margin == 0, "the margins weren't saved");
+                try expect(same_place(laid.saved, read.saved), "the layout moved the place");
+            }
+        }.run,
+    },
+    .{
         .name = "the library's search finds a book by its title as it's typed, and opens it",
         .run = struct {
             fn run() !void {
@@ -1608,10 +1641,7 @@ const scenarios = [_]Scenario{
             fn run() !void {
                 const sheet = [_]Step{ top, tool(.text) };
                 // The slider's smallest step, then its largest, each a tap and a lift
-                const change = [_]Step{
-                    tap(100, aa.row_middle(aa.size_row)),  lift,
-                    tap(1172, aa.row_middle(aa.size_row)), lift,
-                };
+                const change = [_]Step{ size_step(0), lift, largest_size, lift };
                 const twice = try play(&(sheet ++ change));
                 const often = try play(&(sheet ++ change ++ change ++ change ++ change));
                 try expect(often.book_peak == twice.book_peak, "the book's memory grew");
@@ -1687,7 +1717,7 @@ const scenarios = [_]Scenario{
                 const hero = tap_in(library_ui.hero_rect(width));
                 const home = tool(.home);
                 const bigger = [_]Step{
-                    top, tool(.text), tap(1172, aa.row_middle(aa.size_row)), lift,
+                    top, tool(.text), largest_size, lift,
                 };
                 const before: ReadBefore = .{ .para = 6, .byte = 120 };
                 const kept_on = try play_on(.{ .library = true, .read_before = before }, &.{
@@ -1722,9 +1752,9 @@ const scenarios = [_]Scenario{
         .run = struct {
             fn run() !void {
                 // The Aa sheet opens on its Font tab, with the text size's slider
-                const slider_y = aa.row_middle(aa.size_row);
-                const along: Step = .{ .act = .{ .drag = .{ .x = 1172, .y = slider_y } } };
-                const begin = [_]Step{ top, text_settings_button, tap(400, slider_y), along };
+                const largest = aa.step_place(aa.size_row, aa.size_row.steps - 1);
+                const along: Step = .{ .act = .{ .drag = .{ .x = largest.x, .y = largest.y } } };
+                const begin = [_]Step{ top, text_settings_button, size_step(1), along };
                 const lifted = try play(&(begin ++ [_]Step{lift}));
                 const own: settings_model.Settings = .{};
                 try expect(lifted.settings.size != own.size, "the slider didn't change the size");

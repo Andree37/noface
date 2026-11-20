@@ -123,7 +123,8 @@ log screen: PageEntry done
 drawn 500
 still
 
-# Aa: each tab, Compact and back to Standard, and switches flipped and back
+# Aa: each tab, a typeface, spacing and margins, Compact and back to Standard, and
+# switches flipped and back
 tap page.top
 drawn 200
 still
@@ -137,8 +138,28 @@ still
 tap aa.switch.bold
 drawn 600
 still
+# A typeface and back, each laying the book out again like a theme
+tap aa.family.bookerly
+drawn 1500
+still
+tap aa.family.ember
+drawn 1500
+still
 tap aa.tab.layout
 drawn 200
+still
+# The widest line spacing and the narrowest margins, and each back to Standard's
+tap aa.spacing.3
+drawn 1500
+still
+tap aa.spacing.1
+drawn 1500
+still
+tap aa.margins.0
+drawn 1500
+still
+tap aa.margins.1
+drawn 1500
 still
 tap aa.tab.more
 drawn 200

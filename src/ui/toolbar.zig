@@ -148,6 +148,18 @@ pub fn hit(x: i32, y: i32, sheet: ?aa.Tab) Hit {
     return .stay;
 }
 
+/// Where a tap closes the toolbar with the Aa sheet open on any tab: between the sheet's
+/// foot, at its tallest, and the bottom bar.
+pub fn close_under_sheet() style.Point {
+    var sheet_foot: u32 = 0;
+    for (std.enums.values(aa.Tab)) |tab| sheet_foot = @max(sheet_foot, aa.height_for(tab));
+    assert(sheet_foot < bottom_top);
+    const middle: i32 = @intCast((sheet_foot + bottom_top) / 2);
+    const point: style.Point = .{ .x = screen_width / 2, .y = middle };
+    for (std.enums.values(aa.Tab)) |tab| assert(hit(point.x, point.y, tab) == .close);
+    return point;
+}
+
 /// The middle of a control's taps, with the Aa sheet closed. The scrubber's is its
 /// middle, a page halfway through the book.
 pub fn place(h: Hit) style.Point {

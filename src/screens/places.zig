@@ -72,6 +72,7 @@ pub const all = places: {
         .{ .name = "define.get_dictionary", .point = definition.place(.get_dictionary) },
         .{ .name = "define.close", .point = definition.place(.close) },
         .{ .name = "aa.running", .point = aa.place(.themes, .running) },
+        .{ .name = "aa.close", .point = toolbar.close_under_sheet() },
         .{ .name = "goto.close", .point = goto.place(.close) },
         .{ .name = "goto.prev", .point = goto.place(.prev) },
         .{ .name = "goto.next", .point = goto.place(.next) },

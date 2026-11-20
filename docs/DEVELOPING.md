@@ -19,6 +19,13 @@ Needs [Zig](https://ziglang.org) 0.17.
   ([TIGER_STYLE.md](TIGER_STYLE.md#how-its-kept)).
 - `zig build scenarios`: scripted runs of the real app (see Tests).
 - `zig build tools`: development tools, also for the Kindle.
+- `zig build layouts`: the whole interface laid out for every other Kindle's screen
+  (`device.Model`: the Basic, the Scribe, a 167 dpi Kindle), built but not run. Every
+  layout checks as it's built that it fits (nothing overlaps or runs off the screen,
+  every control takes a fingertip), so a build that passes fits that Kindle. Sizes are
+  points turned into pixels by the screen's density (`src/ui/style.zig`), never pixels.
+  A build is laid out for one Kindle, `-Dlayout=<model>` (the Paperwhite unless
+  asked), and starts only on that one's screen.
 - `zig build gates`: all of the above at once, as every change passes before it's
   committed. Its exit status is the answer: read that, not what scrolls past.
 - `zig build clean`: empties the build cache (`.zig-cache`). Zig keeps every version

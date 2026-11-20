@@ -19,6 +19,8 @@ Needs [Zig](https://ziglang.org) 0.17.
   ([TIGER_STYLE.md](TIGER_STYLE.md#how-its-kept)).
 - `zig build scenarios`: scripted runs of the real app (see Tests).
 - `zig build tools`: development tools, also for the Kindle.
+- `zig build gates`: all of the above at once, as every change passes before it's
+  committed. Its exit status is the answer: read that, not what scrolls past.
 - `zig build clean`: empties the build cache (`.zig-cache`). Zig keeps every version
   it has built and never removes one, so it grows by gigabytes as the code changes;
   everything is rebuilt as it's next needed.

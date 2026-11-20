@@ -45,13 +45,24 @@ pub fn build(b: *std.Build) void {
     assert(target.result.ptrBitWidth() == 32);
 
     const app = build_app(b, target);
-    build_checks(b);
-    build_tools(b, target);
+    const check = build_checks(b);
+    const tools = build_tools(b, target);
     build_host_tools(b);
     build_package(b, app);
-    build_scenarios(b, target);
-    build_tests(b);
+    const scenarios = build_scenarios(b, target);
+    const tests = build_tests(b);
     build_clean(b);
+    build_gates(b, &.{ b.getInstallStep(), check, tools, scenarios, tests });
+}
+
+/// `zig build gates`: every check a change passes before it's committed, the app and
+/// the tools built, the checks, the unit tests and the scenarios, as one step whose exit
+/// status alone says whether all passed: nothing is read off what they print.
+fn build_gates(b: *std.Build, gates: []const *std.Build.Step) void {
+    assert(gates.len > 0);
+    const gates_step = b.step("gates", "Build everything and run every check and test");
+    for (gates) |gate| gates_step.dependOn(gate);
+    assert(gates_step.dependencies.items.len == gates.len);
 }
 
 /// `zig build clean`: empties the build cache. Zig keeps every version of everything
@@ -208,7 +219,7 @@ fn pack_file(
 }
 
 /// `zig build check`: ownership boundaries, Tiger Style and zig fmt.
-fn build_checks(b: *std.Build) void {
+fn build_checks(b: *std.Build) *std.Build.Step {
     // Ownership boundaries: `zig build check` fails when a file imports across one.
     const host = b.graph.host;
     assert(host.result.ptrBitWidth() >= 32);
@@ -259,10 +270,11 @@ fn build_checks(b: *std.Build) void {
         check_step.dependOn(&unit_tests(b, b.resolveTargetQuery(query)).step);
     }
     assert(run_style.has_side_effects); // Never skipped as cached
+    return check_step;
 }
 
 /// Development tools, kept out of the app. Built with `zig build tools`.
-fn build_tools(b: *std.Build, target: std.Build.ResolvedTarget) void {
+fn build_tools(b: *std.Build, target: std.Build.ResolvedTarget) *std.Build.Step {
     assert(target.result.cpu.arch == .arm); // For the Kindle, like the app
     assert(tool_names.len > 0);
     const core = b.createModule(.{
@@ -287,12 +299,13 @@ fn build_tools(b: *std.Build, target: std.Build.ResolvedTarget) void {
         tool.root_module.addImport("core", core);
         tools_step.dependOn(&b.addInstallArtifact(tool, .{}).step);
     }
+    return tools_step;
 }
 
 /// Scenario tests: the real app played by script on a screen in memory.
 /// `zig build scenarios` builds the Kindle copy (zig-out/bin/noface-scenarios) and,
 /// on a Linux or Mac computer, builds and runs one there too.
-fn build_scenarios(b: *std.Build, target: std.Build.ResolvedTarget) void {
+fn build_scenarios(b: *std.Build, target: std.Build.ResolvedTarget) *std.Build.Step {
     assert(target.result.cpu.arch == .arm); // The Kindle copy
     const scenarios_step = b.step(
         "scenarios",
@@ -316,10 +329,11 @@ fn build_scenarios(b: *std.Build, target: std.Build.ResolvedTarget) void {
         const host_scenarios = scenario_exe(b, b.graph.host, "noface-scenarios-host");
         scenarios_step.dependOn(&b.addRunArtifact(host_scenarios).step);
     }
+    return scenarios_step;
 }
 
 /// `zig build test`: every unit test, listed in src/tests.zig, on this computer.
-fn build_tests(b: *std.Build) void {
+fn build_tests(b: *std.Build) *std.Build.Step {
     const test_step = b.step("test", "Run unit tests on the host");
     const tests = unit_tests(b, b.graph.host);
     test_step.dependOn(&b.addRunArtifact(tests).step);
@@ -347,6 +361,7 @@ fn build_tests(b: *std.Build) void {
     // Tests run on this computer, through its C library
     assert(tests.root_module.link_libc.?); // Asked for, as set above
     assert(tests.root_module.resolved_target != null);
+    return test_step;
 }
 
 /// Every unit test, listed in src/tests.zig, built for `target`.

@@ -378,7 +378,7 @@ fn write_dictionary(alloc: std.mem.Allocator, path: [*:0]const u8) !void {
 fn count_notes(state_path: []const u8, kind: []const u8) u32 {
     assert(kind.len > 0);
     assert(state_path.len > 0);
-    var path_buf: [320]u8 = undefined;
+    var path_buf: [file.own_path_bytes_max]u8 = undefined;
     const path = state.sibling(&path_buf, state_path, "notes") catch return 0;
     var buf: [8192]u8 = undefined;
     var n: u32 = 0;
@@ -723,7 +723,7 @@ fn play_on_start(
     try a.apply_settings();
 
     if (kindle.read_before) |before| {
-        var before_buf: [320]u8 = undefined;
+        var before_buf: [file.own_path_bytes_max]u8 = undefined;
         const before_path = try a.state_path(&before_buf, book_paths[before.book]);
         state.save(before_path, .{
             .para = before.para,
@@ -792,13 +792,13 @@ fn play_on_outcome(
     assert(ran.last_screen.len == width * height);
     // Something was drawn, at least the first screen
     try expect(a.display.screen.updates > 0, "nothing was drawn");
-    var state_buf: [320]u8 = undefined;
+    var state_buf: [file.own_path_bytes_max]u8 = undefined;
     var note_buf: [8]u8 = undefined;
     const state_path = try a.state_path(&state_buf, book_paths[0]);
     var opened: [2]bool = @splat(false);
     var finished: [2]bool = @splat(false);
     for (kindle.books[0..@min(2, kindle.books.len)], 0..) |_, i| {
-        var b: [320]u8 = undefined;
+        var b: [file.own_path_bytes_max]u8 = undefined;
         const s = state.load(try a.state_path(&b, book_paths[i]));
         opened[i] = s.opened > 1_700_000_000;
         finished[i] = s.finished;
@@ -841,7 +841,7 @@ fn play_on_outcome(
 /// a book of any length is digested whole. 0 when none were saved.
 fn breaks_digest(state_path: []const u8) u64 {
     assert(state_path.len > 0);
-    var path_buf: [320]u8 = undefined;
+    var path_buf: [file.own_path_bytes_max]u8 = undefined;
     const path = page_store.path_for(&path_buf, state_path) catch return 0;
     const rc = linux.open(path, .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0);
     if (os.failed(rc)) return 0;
@@ -869,7 +869,7 @@ fn breaks_digest(state_path: []const u8) u64 {
 /// same highlights, bookmarks and notes, in the same places.
 fn notes_digest(state_path: []const u8) u64 {
     assert(state_path.len > 0);
-    var path_buf: [320]u8 = undefined;
+    var path_buf: [file.own_path_bytes_max]u8 = undefined;
     const path = state.sibling(&path_buf, state_path, "notes") catch return 0;
     var buf: [8192]u8 = undefined;
     const content = file.read_small(path, &buf);

@@ -142,7 +142,7 @@ pub const Lock = struct {
 /// the reader's own picture, if they chose it, it's there and it decodes; else the
 /// book's cover.
 fn draw_target(a: *app.App, entry: ?*const catalog.Entry) void {
-    var picture_buffer: [320]u8 = undefined;
+    var picture_buffer: [file.own_path_bytes_max]u8 = undefined;
     const own = if (a.user.settings.lock_picture) picture_path(a, &picture_buffer) else null;
     const own_data: ?[]const u8 = if (own) |p| file.map(p) catch null else null;
     defer if (own_data) |d| file.unmap(d);
@@ -216,7 +216,7 @@ fn picture_path(a: *const app.App, buffer: []u8) ?[:0]const u8 {
 
 /// Whether the reader has put a lock screen picture in the data folder.
 pub fn has_picture(a: *const app.App) bool {
-    var buffer: [320]u8 = undefined;
+    var buffer: [file.own_path_bytes_max]u8 = undefined;
     return picture_path(a, &buffer) != null;
 }
 

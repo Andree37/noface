@@ -41,7 +41,7 @@ pub const kindle_folders: Folders = .{
 
 /// The paths of a run, from its folders, made once as it starts.
 const Paths = struct {
-    buffers: [6][320]u8 = undefined,
+    buffers: [6][file.own_path_bytes_max]u8 = undefined,
     log: [:0]const u8 = "",
     log_old: [:0]const u8 = "",
     attempts: [:0]const u8 = "",

@@ -95,7 +95,9 @@ pub const Search = struct {
             const plural = if (n == 1) "" else "s";
             count = std.fmt.bufPrint(&count_buffer, "{d} result{s}", .{ n, plural }) catch "";
         }
-        try a.ui.caption.draw(page, style.margin, search_sheet.content_top + 56, count);
+        // Centred in its band, over the list
+        const baseline = a.ui.caption.centred_baseline(search_sheet.content_top, count_height);
+        try a.ui.caption.draw(page, style.margin, baseline, count);
         const empty = "No matches in this book.";
         try goto.render_list(a.ui, page, rows, null, pages.page, empty);
     }

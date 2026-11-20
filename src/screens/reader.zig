@@ -191,6 +191,8 @@ fn open_book(r: *Reader) !void {
     r.data = try file.map(entry.path);
     const parsed = try book_open.parse(a, r.alloc, entry, r.data);
     const book = parsed.book;
+    // Laid out from here on with the book's language's hyphenation
+    a.layout.hyphenator = a.languages.hyphenator(a.alloc, parsed.lang);
     const t1 = now_us();
     const state_path = try a.state_path(&r.path_buffer, entry.path);
     r.state_path = state_path;
@@ -244,7 +246,7 @@ pub const Reader = struct {
     alloc: std.mem.Allocator = undefined, // The book's, kept while it's open
     scratch: std.mem.Allocator = undefined, // One action's, emptied after it
     data: []const u8 = &.{}, // The book's file, mapped
-    path_buffer: [320]u8 = undefined,
+    path_buffer: [file.own_path_bytes_max]u8 = undefined,
     state_path: [:0]const u8 = "", // In `path_buffer`
     progress: ?paginate.Progressive = null, // A first open's layout, laid out in idle moments
     session: sess.Session = undefined,

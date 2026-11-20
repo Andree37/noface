@@ -10,9 +10,6 @@ const file = @import("sys/file.zig");
 /// How many languages noface hyphenates and has dictionaries for.
 pub const count = @typeInfo(hyphen.Lang).@"enum".field_names.len;
 
-/// Room for a dictionary's path: the data folder, a slash and its file's name.
-const path_bytes_max = 320;
-
 comptime {
     // Every language has a dictionary file, named in `dictionary_file`
     assert(count == 2);
@@ -70,7 +67,7 @@ pub const Languages = struct {
         const which = lang orelse return null;
         const slot = &l.dictionaries[@backingInt(which)];
         if (slot.* == null) {
-            var buf: [path_bytes_max]u8 = undefined;
+            var buf: [file.own_path_bytes_max]u8 = undefined;
             const name = dictionary_file(which);
             const fields = .{ l.dir, name };
             const path = std.fmt.bufPrintSentinel(&buf, "{s}/{s}", fields, 0) catch return null;

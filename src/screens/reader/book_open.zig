@@ -12,13 +12,14 @@ const epub = @import("../../epub/epub.zig");
 const kfx = @import("../../kindle/kfx.zig");
 const hyphen = @import("../../layout/hyphen.zig");
 const state = @import("../../sys/state.zig");
+const file = @import("../../sys/file.zig");
 const page_store = @import("page_store.zig");
 const paginate = @import("paginate.zig");
 const sess = @import("session.zig");
 const hl = @import("highlight.zig");
 
-/// The book's text and contents, from its file, and its language, whose hyphenation
-/// layout is set to.
+/// The book's text and contents, from its file, and its language, as far as its text
+/// tells.
 pub fn parse(
     a: *app.App,
     alloc: std.mem.Allocator,
@@ -35,7 +36,6 @@ pub fn parse(
     for (book.chapters) |chapter| assert(chapter.para < book.paragraphs.len);
     book_model.plain_body(book.paragraphs);
     const lang = hyphen.detect(book.paragraphs);
-    a.layout.hyphenator = a.languages.hyphenator(a.alloc, lang);
     std.debug.print("language {s}\n", .{if (lang) |l| @tagName(l) else "unknown"});
     return .{ .book = book, .lang = lang };
 }
@@ -69,7 +69,7 @@ pub fn find_pages(
 ) !Opened {
     assert(options.progress.* == null);
     assert(paragraphs.len > 0); // Parsing refuses a book without any
-    var pages_buffer: [320]u8 = undefined;
+    var pages_buffer: [file.own_path_bytes_max]u8 = undefined;
     const pages_name = try page_store.path_for(&pages_buffer, options.state_path);
     const pages_path = try alloc.dupeSentinel(u8, pages_name, 0);
     const pages_key = page_store.key(a, options.book_bytes);

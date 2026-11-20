@@ -26,6 +26,7 @@ const image = @import("gfx/image.zig");
 const decoder_memory = @import("gfx/decoder_memory.zig");
 const device = @import("model/device.zig");
 const style = @import("ui/style.zig");
+const file = @import("sys/file.zig");
 
 /// What each memory region reserves, taken once at startup (`memory.Region`). Pages
 /// come in as they're first touched, so a region costs what's used, not its size.
@@ -247,7 +248,7 @@ pub const Kit = struct {
 
 /// The files an App keeps in its data folder, by full path.
 pub const DataFiles = struct {
-    buffers: [4][320]u8 = undefined,
+    buffers: [4][file.own_path_bytes_max]u8 = undefined,
     settings: [:0]const u8 = "",
     speed: [:0]const u8 = "",
     journal: [:0]const u8 = "",

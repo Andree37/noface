@@ -602,7 +602,7 @@ fn test_folder(buffer: []u8, kindle_rows: u32, epubs: u32, cover_bytes: u32) ![:
     const root = try std.fmt.bufPrintSentinel(buffer, "/tmp/noface-library-test-{d}", .{
         calls.getpid(),
     }, 0);
-    var path: [320]u8 = undefined;
+    var path: [file.own_path_bytes_max]u8 = undefined;
     _ = calls.mkdir(root, 0o755); // Ignored: the writes below say if it's missing
     _ = calls.mkdir(try std.fmt.bufPrintSentinel(&path, "{s}/documents", .{root}, 0), 0o755);
     _ = calls.mkdir(try std.fmt.bufPrintSentinel(&path, "{s}/state", .{root}, 0), 0o755);
@@ -642,7 +642,7 @@ const TestLibrary = struct {
     budget: memory.Budget,
     scratch: memory.Region,
     shared: *view.Shared,
-    paths: [3][320]u8,
+    paths: [3][file.own_path_bytes_max]u8,
     sources: Sources,
 
     fn init(t: *TestLibrary, root: []const u8) !void {
@@ -707,7 +707,7 @@ test "hundreds of EPUBs list in memory that doesn't grow with them, read once" {
     try std.testing.expectEqual(before + library_bytes, t.budget.live);
     // Built again (an EPUB more), with every book read before now unreadable: what the
     // last build read of each is kept, so none is opened again
-    var path_buffer: [320]u8 = undefined;
+    var path_buffer: [file.own_path_bytes_max]u8 = undefined;
     var name_buffer: [32]u8 = undefined;
     for (0..epubs) |i| {
         const name = try std.fmt.bufPrint(&name_buffer, "documents/Book {d}.epub", .{i});
@@ -737,7 +737,7 @@ test "a build beats the watchdog only once a beat's interval has passed since it
     var t: TestLibrary = undefined;
     try t.init(root);
     defer t.deinit();
-    var beat_buffer: [320]u8 = undefined;
+    var beat_buffer: [file.own_path_bytes_max]u8 = undefined;
     const beat_path = try t.data_path(&beat_buffer, "alive");
     t.sources.heartbeat = beat_path;
     // Its clock starts with the build, not at 0: a build quicker than a beat's interval
@@ -757,10 +757,10 @@ test "an EPUB whose cover couldn't be saved is listed without one, not with a mi
     try t.init(root);
     defer t.deinit();
     // A folder where the cover's new file goes: writing it fails, as on a full drive
-    var book_buffer: [320]u8 = undefined;
-    var state_buffer: [320]u8 = undefined;
-    var cover_buffer: [320]u8 = undefined;
-    var tmp_buffer: [320]u8 = undefined;
+    var book_buffer: [file.own_path_bytes_max]u8 = undefined;
+    var state_buffer: [file.own_path_bytes_max]u8 = undefined;
+    var cover_buffer: [file.own_path_bytes_max]u8 = undefined;
+    var tmp_buffer: [file.own_path_bytes_max]u8 = undefined;
     const book = try std.fmt.bufPrint(&book_buffer, "{s}/documents/Book 0.epub", .{root});
     const state_path = try state.path_for(&state_buffer, t.sources.state_dir, book);
     const cover = try state.sibling(&cover_buffer, state_path, "cover");
@@ -782,7 +782,7 @@ test "a book's place is read from its state file, found by one listing of the fo
     var t: TestLibrary = undefined;
     try t.init(root);
     defer t.deinit();
-    var path_buffer: [320]u8 = undefined;
+    var path_buffer: [file.own_path_bytes_max]u8 = undefined;
     const kindle = "/mnt/us/documents/Kindle 1.azw3";
     state.save(try state.path_for(&path_buffer, t.sources.state_dir, kindle), .{
         .para = 3,
@@ -858,7 +858,7 @@ test "an EPUB's own series is listed when its package is stored, not deflated" {
     // Its package read in the book's file itself, which is let go of before it's listed
     const data = try test_epub(std.testing.allocator, "Dune", 1 << 10, "The Dune Saga");
     defer std.testing.allocator.free(data);
-    var path_buffer: [320]u8 = undefined;
+    var path_buffer: [file.own_path_bytes_max]u8 = undefined;
     try test_write(try std.fmt.bufPrintSentinel(&path_buffer, "{s}/documents/Dune.epub", .{
         root,
     }, 0), data);
@@ -878,7 +878,7 @@ test "a download is watched by its own file, not by reading the whole catalog ag
     var t: TestLibrary = undefined;
     try t.init(root);
     defer t.deinit();
-    var book_buffer: [320]u8 = undefined;
+    var book_buffer: [file.own_path_bytes_max]u8 = undefined;
     const book = try std.fmt.bufPrintSentinel(&book_buffer, "{s}/documents/B.kfx", .{root}, 0);
     var row_buffer: [400]u8 = undefined;
     const row = try std.fmt.bufPrint(&row_buffer, "{s}\tB\tx\t0\t0\t0\t\t0\t2\n", .{book});
@@ -904,8 +904,8 @@ test "an index torn, damaged or cut short is built again as it's loaded" {
     const count = good.count();
     const generation = good.shelf().generation;
     good.deinit();
-    var records_buffer: [320]u8 = undefined;
-    var header_buffer: [320]u8 = undefined;
+    var records_buffer: [file.own_path_bytes_max]u8 = undefined;
+    var header_buffer: [file.own_path_bytes_max]u8 = undefined;
     const records_path = try t.data_path(&records_buffer, "library/records");
     const header_path = try t.data_path(&header_buffer, "library/header");
     // Half a record written over, as by power lost in the middle of saving a place; a
@@ -946,8 +946,8 @@ test "a build whose files can't be put in place leaves the library empty, not cr
     defer t.deinit();
     // A folder where the records go: renaming the new ones over it fails, as on a
     // drive that's full, after both new files were written and closed
-    var dir_buffer: [320]u8 = undefined;
-    var records_buffer: [320]u8 = undefined;
+    var dir_buffer: [file.own_path_bytes_max]u8 = undefined;
+    var records_buffer: [file.own_path_bytes_max]u8 = undefined;
     _ = calls.mkdir(try t.data_path(&dir_buffer, "library"), 0o755);
     const records_path = try t.data_path(&records_buffer, "library/records");
     _ = calls.mkdir(records_path, 0o755);

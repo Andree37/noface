@@ -26,6 +26,7 @@ const supervisor = @import("kindle/supervisor.zig");
 const wifi_saver = @import("kindle/wifi_saver.zig");
 const service = @import("sys/service.zig");
 const os = @import("sys/os.zig");
+const file = @import("sys/file.zig");
 
 const launch_log = paths.data_dir ++ "/" ++ paths.data.launch_log;
 
@@ -87,7 +88,7 @@ fn e2e(envp: [*:null]const ?[*:0]const u8, dir: []const u8) void {
         std.debug.print("e2e: give the test folder by its full path\n", .{});
         std.process.exit(2);
     }
-    var buffers: [3][320]u8 = undefined;
+    var buffers: [3][file.own_path_bytes_max]u8 = undefined;
     const folders: supervisor.Folders = .{
         .data = std.fmt.bufPrint(&buffers[0], "{s}/data", .{dir}) catch std.process.exit(2),
         .library = std.fmt.bufPrint(&buffers[1], "{s}/library.tsv", .{dir}) catch

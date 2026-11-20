@@ -7,6 +7,7 @@ const card = @import("../ui/card.zig");
 const catalog = @import("../model/catalog.zig");
 const book_actions = @import("../ui/book_actions.zig");
 const state = @import("../sys/state.zig");
+const file = @import("../sys/file.zig");
 const store = @import("../kindle/store.zig");
 const app = @import("../app.zig");
 const display = @import("../display.zig");
@@ -54,7 +55,7 @@ pub fn mark_read(a: *app.App, e: *catalog.Entry, done: bool) void {
 /// stock's place and percent, so ours win, without moving it up in recent order.
 fn save_marked(a: *app.App, e: *const catalog.Entry) !void {
     assert(e.is_epub() or e.is_local()); // A file of its own to keep its place by
-    var path_buffer: [320]u8 = undefined;
+    var path_buffer: [file.own_path_bytes_max]u8 = undefined;
     const path = try a.state_path(&path_buffer, e.path);
     var saved = state.load(path);
     saved.finished = e.finished;
@@ -107,7 +108,7 @@ pub const Sheet = struct {
     phase: enum { card, series } = .card,
     list_buffer: [4]book_actions.Option = undefined,
     row_buffer: [4]card.Row = undefined,
-    subtitle_buffer: [320]u8 = undefined,
+    subtitle_buffer: [file.own_path_bytes_max]u8 = undefined,
     list: []const book_actions.Option = &.{},
     card: card_screen.Card = undefined,
     card_ending: ?screen.Ending(u32) = null,

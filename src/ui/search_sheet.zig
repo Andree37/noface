@@ -11,6 +11,7 @@ const icons = @import("icons.zig");
 const keyboard = @import("keyboard.zig");
 const catalog = @import("../model/catalog.zig");
 const Fonts = @import("fonts.zig").Fonts;
+const Font = @import("../gfx/font.zig").Font;
 
 /// Where the bar's layout starts: under the library's status strip. A screen may draw
 /// the sheet from higher up (`render_bar`'s `from`); the band down to here is then
@@ -50,11 +51,19 @@ const rows_bottom = keyboard.top; // Down to the keyboard's tray
 /// A row's title's and quiet author's baselines, down from its top.
 const row_title_drop = 50;
 const row_author_drop = 88;
-/// The quiet hint, or "No books match.", on the first row: its baseline, down from the
-/// rows' top.
-const note_drop = 56;
 /// "Press Search to see them all.", quiet, over the rows' foot: its baseline's rise.
 const more_rise = 12;
+
+/// The note line under the bar, the first row's band: a hint, "No books match.", a
+/// search's count, a page that isn't there.
+pub const note_height = row_height;
+
+/// The note line's baseline, its text centred in its band.
+pub fn note_baseline(font: *const Font) i32 {
+    const baseline = font.centred_baseline(rows_top, note_height);
+    assert(baseline < rows_top + note_height);
+    return baseline;
+}
 
 /// How many matching books fit between the bar and the keyboard.
 pub const max_rows = (rows_bottom - rows_top) / row_height;
@@ -170,11 +179,12 @@ pub fn render(
     const width = page.width - 2 * style.margin;
     if (query.len == 0) {
         const hint = "Find a book by its title or its author.";
-        const hint_y = rows_top + note_drop;
+        const hint_y = note_baseline(fonts.small);
         try fonts.small.draw(page, style.margin, hint_y, hint);
         fonts.small.fade(page, style.margin, hint_y, width, style.quiet);
     } else if (matches.len == 0) {
-        try fonts.small.draw(page, style.margin, rows_top + note_drop, "No books match.");
+        const note_y = note_baseline(fonts.small);
+        try fonts.small.draw(page, style.margin, note_y, "No books match.");
     }
     for (matches, 0..) |match, index| {
         assert(match < entries.len); // An index into `entries`

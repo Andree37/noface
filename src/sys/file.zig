@@ -10,6 +10,14 @@ const failed = os.failed;
 /// The longest path noface names, as Linux's PATH_MAX.
 pub const path_bytes_max: u32 = 4096;
 
+/// Room for a path in one of noface's own folders, which are short: the folder, a slash
+/// and a name noface gives the file. A book's own path may be longer (`path_bytes_max`).
+pub const own_path_bytes_max = 320;
+
+comptime {
+    assert(own_path_bytes_max < path_bytes_max);
+}
+
 /// Why a file couldn't be mapped. Only `NotFound` and `EmptyFile` say there's nothing in
 /// it; the others mean it may hold something that couldn't be read this time, which a
 /// caller about to write over it must not take for nothing.

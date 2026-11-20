@@ -120,6 +120,15 @@ const special = 0xc4; // Delete and space: a step darker than letters
 const corner = style.key_corner;
 // Drawn a little inside their tap area, so neighbours have a clear gap
 const inset = 3;
+/// How far a key's shadow shows under its face.
+const shadow_drop = 3;
+
+comptime {
+    // The backspace tag stays inside its key
+    const backspace_cx = backspace_x + backspace_width / 2;
+    assert(backspace_cx - icons.backspace_left >= backspace_x);
+    assert(backspace_cx + icons.backspace_right <= backspace_x + backspace_width);
+}
 
 fn key_face(page: Page, x: i32, y: u32, w: u32, face: u8) void {
     assert(x + inset >= 0);
@@ -127,7 +136,7 @@ fn key_face(page: Page, x: i32, y: u32, w: u32, face: u8) void {
     const left: u32 = @intCast(x + inset);
     const width = w - 2 * inset;
     const height = key_height - 2 * inset;
-    page.round_rect(left, y + inset + 3, width, height, corner, shadow);
+    page.round_rect(left, y + inset + shadow_drop, width, height, corner, shadow);
     page.round_rect(left, y + inset, width, height, corner, face);
 }
 
@@ -138,22 +147,6 @@ fn key(fonts: Fonts, page: Page, x: i32, y: u32, w: u32, label: []const u8, face
     const center_x: f32 = @floatFromInt(x + @as(i32, @intCast(w / 2)));
     const baseline = fonts.small.centred_baseline(@intCast(y), key_height);
     try draw.centered(fonts.small, page, center_x, baseline, label);
-}
-
-/// Backspace: a tag pointing left with a cross in it.
-fn backspace_icon(page: Page, cx: f32, cy: f32) void {
-    // The tag stays inside its key.
-    assert(cx - 30 >= backspace_x);
-    assert(cx + 26 <= backspace_x + backspace_width);
-    const l = cx - 30;
-    const r = cx + 26;
-    page.stroke(l, cy, l + 16, cy - 18, 3);
-    page.stroke(l, cy, l + 16, cy + 18, 3);
-    page.stroke(l + 16, cy - 18, r, cy - 18, 3);
-    page.stroke(l + 16, cy + 18, r, cy + 18, 3);
-    page.stroke(r, cy - 18, r, cy + 18, 3);
-    page.stroke(cx - 4, cy - 8, cx + 12, cy + 8, 3);
-    page.stroke(cx - 4, cy + 8, cx + 12, cy - 8, 3);
 }
 
 pub fn render(fonts: Fonts, page: Page) !void {
@@ -171,7 +164,7 @@ pub fn render(fonts: Fonts, page: Page) !void {
     const last: u32 = keys_top + last_letters * row_step;
     key_face(page, backspace_x, last, backspace_width, special);
     const backspace_cx = backspace_x + backspace_width / 2;
-    backspace_icon(page, backspace_cx, @floatFromInt(last + key_height / 2));
+    icons.backspace(page, backspace_cx, @floatFromInt(last + key_height / 2));
     const bottom: u32 = keys_top + rows.len * row_step;
     try key(fonts, page, space_left, bottom, space_width, "space", style.white);
     // The main key: black like a key that's on, shadow and all, its label in white

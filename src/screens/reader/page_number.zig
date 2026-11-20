@@ -61,7 +61,8 @@ pub const PageEntry = struct {
         const note_height = keyboard.top - search_sheet.content_top;
         page.fill_rect(0, search_sheet.content_top, page.width, note_height, 0xff);
         if (e.note.len > 0) {
-            try a.ui.small.draw(page, style.margin, search_sheet.content_top + 56, e.note);
+            const baseline = search_sheet.note_baseline(a.ui.small);
+            try a.ui.small.draw(page, style.margin, baseline, e.note);
         }
         if (part == .all) try keyboard.render(a.ui, page);
         const bottom: u32 = if (part == .all) a.display.screen.height else keyboard.top;

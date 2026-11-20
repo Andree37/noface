@@ -325,6 +325,36 @@ pub fn dots(page: Page, cx: f32, cy: f32) void {
     page.disc(x, y + 16, 4, 0, 0x00);
 }
 
+/// A pager's arrow: a chevron pointing right when `forward`, its tip at its middle.
+pub fn pager_arrow(page: Page, cx: f32, cy: f32, forward: bool) void {
+    assert(inside(cx, page.width));
+    assert(inside(cy, page.height));
+    const p: Pen = .{ .page = page, .cx = cx, .cy = cy };
+    const direction: f32 = if (forward) 1 else -1;
+    p.line(-9 * direction, -18, 9 * direction, 0, stroke.regular);
+    p.line(9 * direction, 0, -9 * direction, 18, stroke.regular);
+}
+
+/// How far the backspace tag reaches either side of its middle, for its key to hold it.
+pub const backspace_left = 30;
+pub const backspace_right = 26;
+
+/// Backspace: a tag pointing left with a cross in it.
+pub fn backspace(page: Page, cx: f32, cy: f32) void {
+    assert(inside(cx, page.width));
+    assert(inside(cy, page.height));
+    const p: Pen = .{ .page = page, .cx = cx, .cy = cy };
+    const l = -backspace_left;
+    const r = backspace_right;
+    p.line(l, 0, l + 16, -18, stroke.fine);
+    p.line(l, 0, l + 16, 18, stroke.fine);
+    p.line(l + 16, -18, r, -18, stroke.fine);
+    p.line(l + 16, 18, r, 18, stroke.fine);
+    p.line(r, -18, r, 18, stroke.fine);
+    p.line(-4, -8, 12, 8, stroke.fine);
+    p.line(-4, 8, 12, -8, stroke.fine);
+}
+
 /// Chapter skip: a bar and a triangle, pointing right when `forward`.
 pub fn skip(page: Page, cx: f32, cy: f32, forward: bool) void {
     assert(inside(cx, page.width));

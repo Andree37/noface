@@ -250,17 +250,15 @@ pub const Pager = struct {
         assert(p.top < p.bottom);
         assert(pages > 0);
         assert(index < pages);
-        const y: i32 = @intCast((p.top + p.bottom) / 2 + 12);
+        // The count and both arrows centred on the band's middle
+        const middle: i32 = @intCast((p.top + p.bottom) / 2);
         var label: [32]u8 = undefined;
         const count = std.fmt.bufPrint(&label, "{d} of {d}", .{ index + 1, pages }) catch "";
-        try centered(fonts.small, page, @floatFromInt(page.width / 2), y, count);
-        const mid: f32 = @floatFromInt(y - 11);
-        const prev_x: f32 = prev_left + button / 2;
-        const next_x: f32 = next_left + button / 2;
-        page.stroke(prev_x + 9, mid - 18, prev_x - 9, mid, 4);
-        page.stroke(prev_x - 9, mid, prev_x + 9, mid + 18, 4);
-        page.stroke(next_x - 9, mid - 18, next_x + 9, mid, 4);
-        page.stroke(next_x + 9, mid, next_x - 9, mid + 18, 4);
+        const baseline = fonts.small.centred_on(middle);
+        try centered(fonts.small, page, @floatFromInt(page.width / 2), baseline, count);
+        const mid: f32 = @floatFromInt(middle);
+        icons.pager_arrow(page, prev_left + button / 2, mid, false);
+        icons.pager_arrow(page, next_left + button / 2, mid, true);
         // Faded when there's nowhere to go.
         const height = p.bottom - p.top;
         if (index == 0) page.tint(prev_left, p.top, button, height, style.disabled);

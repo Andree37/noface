@@ -43,8 +43,6 @@ comptime {
 /// search, a chapter, the slider, Back), which the button remembers.
 pub const Move = enum { turn, jump };
 
-pub const Rect = struct { x: u32, y: u32, width: u32, height: u32 };
-
 pub const Back = struct {
     /// Where the reader was before the first jump kept; null with no button.
     place: ?book_model.Pos = null,
@@ -105,8 +103,8 @@ pub const Back = struct {
         return .{
             .x = @as(i32, @intCast(r.x)) - reach_px,
             .y = @as(i32, @intCast(r.y)) - reach_px,
-            .w = @intCast(r.width + 2 * reach_px),
-            .h = @intCast(r.height + 2 * reach_px),
+            .w = @intCast(r.w + 2 * reach_px),
+            .h = @intCast(r.h + 2 * reach_px),
         };
     }
 
@@ -133,16 +131,16 @@ pub const Back = struct {
         assert(r.y >= clear_above_px);
         // Over the footer's text there
         const clear_top = r.y - clear_above_px;
-        const clear_width = r.x + r.width + clear_right_px;
+        const clear_width = r.x + r.w + clear_right_px;
         target.fill_rect(0, clear_top, clear_width, target.height - clear_top, style.white);
-        draw.box(target, r.x, r.y, r.width, r.height);
+        draw.box(target, r.x, r.y, r.w, r.h);
         var label_buffer: [32]u8 = undefined;
         var label: []const u8 = "Back";
         if (settled) {
             const number = b.page(pages).? + 1;
             label = std.fmt.bufPrint(&label_buffer, "Back to p. {d}", .{number}) catch "Back";
         }
-        const center_y: f32 = @floatFromInt(r.y + r.height / 2);
+        const center_y: f32 = @floatFromInt(r.y + r.h / 2);
         icons.back(target, @floatFromInt(r.x + arrow_inset_px), center_y);
         const label_x: f32 = @floatFromInt(r.x + label_inset_px);
         const baseline = font.centred_on(@intFromFloat(center_y));
@@ -153,18 +151,18 @@ pub const Back = struct {
 /// The middle of the button, on a screen this tall.
 pub fn place(screen_height: u32) style.Point {
     const r = rect(screen_height);
-    return .{ .x = @intCast(r.x + r.width / 2), .y = @intCast(r.y + r.height / 2) };
+    return .{ .x = @intCast(r.x + r.w / 2), .y = @intCast(r.y + r.h / 2) };
 }
 
 /// The button's place on a screen: the bottom left, over the footer.
-fn rect(screen_height: u32) Rect {
+fn rect(screen_height: u32) style.Rect {
     assert(screen_height > above_bottom_px);
     assert(above_bottom_px >= clear_above_px);
     return .{
         .x = x_px,
         .y = screen_height - above_bottom_px,
-        .width = width_px,
-        .height = height_px,
+        .w = width_px,
+        .h = height_px,
     };
 }
 
@@ -203,8 +201,8 @@ test "the button takes a fingertip's touches around it, and none with no place k
     const height = style.screen.height_px;
     var b: Back = .{};
     const r = rect(height);
-    const middle_x: i32 = @intCast(r.x + r.width / 2);
-    const middle_y: i32 = @intCast(r.y + r.height / 2);
+    const middle_x: i32 = @intCast(r.x + r.w / 2);
+    const middle_y: i32 = @intCast(r.y + r.h / 2);
     try std.testing.expect(!b.hit(height, middle_x, middle_y));
     b.place = .{};
     try std.testing.expect(b.hit(height, middle_x, middle_y));

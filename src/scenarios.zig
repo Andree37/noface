@@ -9,7 +9,6 @@ const std = @import("std");
 const assert = std.debug.assert;
 const folders = @import("sys/dir.zig");
 const hyphen = @import("layout/hyphen.zig");
-const text_layout = @import("layout/text.zig");
 const file = @import("sys/file.zig");
 const fonts_db = @import("kindle/fonts.zig");
 const process = @import("sys/process.zig");
@@ -47,6 +46,7 @@ const selection = @import("ui/selection.zig");
 const run_mode = @import("screens/reader/run.zig");
 const running_model = @import("model/running.zig");
 const places = @import("screens/places.zig");
+const placed = @import("screens/placed.zig");
 const run_view = @import("screens/reader/run_view.zig");
 const back_button_ui = @import("screens/reader/back_button.zig");
 const more = @import("screens/reader/more.zig");
@@ -231,17 +231,19 @@ const Outcome = struct {
     running_pace: ?f64, // Running's pace, once it has one
     awake_at_end: bool, // The Kindle held awake as the steps ran out, before noface stopped
     speed_pages: u32, // Pages the reader's speed in the hand has counted
+    /// Where the app last placed what moves with the page, by `placed.What`: a note's
+    /// mark, a picture, a highlight's Delete bubble.
+    placed: [placed_kinds]?style.Point,
     settings: settings_model.Settings, // In use at the end
     saved_settings: settings_model.Settings, // As the settings file has them
 };
 
-/// A page drawn, and where its words, its notes' marks and its pictures were drawn.
-const Shown = struct {
-    page: u32,
-    words: []const book_model.Word,
-    references: []const text_layout.Hit,
-    pictures: []const text_layout.Hit,
-};
+/// The app's messages in a scenario's folder, as noface's own log on the Kindle.
+const app_log = "noface.log";
+const placed_kinds = std.enums.values(placed.What).len;
+
+/// A page drawn, and its words where they were drawn.
+const Shown = struct { page: u32, words: []const book_model.Word };
 
 /// The most books a scenario puts in the documents folder.
 const books_max = 4;
@@ -323,6 +325,7 @@ const Snapshot = enum {
     series,
     note,
     picture,
+    highlight,
 };
 
 /// Whether `pixels` match the reference image `name`, allowing for anti-aliasing:
@@ -521,7 +524,7 @@ fn play_on_app(kindle: Kindle, steps: []const Step, stage: Stage) !Outcome {
         defer a.release();
         if (kindle.app_bytes_spare) |spare| app_budget.limit = app_budget.live + spare;
         try play_on_start(&a, kindle, stage.dir, stage.book_paths);
-        const ms = try play_on_sealed(&a, kindle, stage.book_paths[0]);
+        const ms = try play_on_sealed(&a, kindle, stage.book_paths[0], stage.dir);
         // Every step was played: the steps ran out and noface was told to stop, or the
         // last one left noface itself
         const played = stage.devices.script.at == steps.len;
@@ -561,13 +564,13 @@ fn app_memory() !*memory.Budget {
 
 /// Plays the script with memory sealed, as the Kindle runs: any memory asked of the
 /// system from here on fails the scenario.
-fn play_on_sealed(a: *app.App, kindle: Kindle, book_path: [:0]const u8) !u64 {
+fn play_on_sealed(a: *app.App, kindle: Kindle, book_path: [:0]const u8, dir: []const u8) !u64 {
     assert(!memory.sealed);
     assert(a.app_budget.region != null); // The app's memory comes from a region
     const late_before = memory.late_requests;
     memory.seal();
     defer memory.sealed = false;
-    const ms = try play_on_run(a, kindle, book_path);
+    const ms = try play_on_run(a, kindle, book_path, dir);
     try expect(memory.late_requests == late_before, "memory was asked of the system after startup");
     return ms;
 }
@@ -775,9 +778,10 @@ fn play_on_start(
     }
 }
 
-/// Plays the script in the library or the first book, with the app's own messages
-/// hidden. How long it took, by the wall clock.
-fn play_on_run(a: *app.App, kindle: Kindle, book_path: [:0]const u8) !u64 {
+/// Plays the script in the library or the first book, the app's own messages kept out
+/// of the run's in the scenario folder's log, which says where it placed what moves
+/// with the page (screens/placed.zig). How long it took, by the wall clock.
+fn play_on_run(a: *app.App, kindle: Kindle, book_path: [:0]const u8, dir: []const u8) !u64 {
     assert(book_path.len > 0);
     assert(hidden_stderr == -1); // One scenario at a time
     const kind = if (std.mem.endsWith(u8, book_path, ".epub")) "EPUB" else "KFX";
@@ -798,7 +802,10 @@ fn play_on_run(a: *app.App, kindle: Kindle, book_path: [:0]const u8) !u64 {
         _ = linux.dup2(saved_stderr, 2);
         _ = linux.close(saved_stderr);
     }
-    const quiet = linux.open("/dev/null", .{ .ACCMODE = .WRONLY }, 0);
+    var log_buffer: [file.own_path_bytes_max]u8 = undefined;
+    const log_path = try std.fmt.bufPrintSentinel(&log_buffer, "{s}/{s}", .{ dir, app_log }, 0);
+    const flags: linux.O = .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true };
+    const quiet = linux.open(log_path, flags, 0o644);
     if (!os.failed(quiet)) {
         _ = linux.dup2(@intCast(quiet), 2);
         _ = linux.close(@intCast(quiet));
@@ -848,7 +855,22 @@ fn play_on_outcome(
         looks_right = try matches_reference(ran.alloc, name, ran.last_screen);
     }
     const wifi_key = "com.lab126.cmd wirelessEnable";
+    var placed_at: [placed_kinds]?style.Point = @splat(null);
+    var log_buffer: [file.own_path_bytes_max]u8 = undefined;
+    const log_path = try std.fmt.bufPrintSentinel(&log_buffer, "{s}/{s}", .{ ran.dir, app_log }, 0);
+    // An empty log placed nothing; one that can't be read fails the scenario
+    const logged: ?[]const u8 = file.map(log_path) catch |err| switch (err) {
+        error.EmptyFile => null,
+        else => return err,
+    };
+    if (logged) |text| {
+        defer file.unmap(text);
+        for (std.enums.values(placed.What), &placed_at) |what, *at| {
+            at.* = placed.find(text, @tagName(what));
+        }
+    }
     return .{
+        .placed = placed_at,
         .ms = ran.ms,
         .looks_right = looks_right,
         .opened = opened,
@@ -926,14 +948,7 @@ fn pages_shown(alloc: std.mem.Allocator, a: *const app.App) ![3]?Shown {
         const page = slot.page orelse continue;
         assert(slot.hits.word_count <= slot.hits.words.len);
         const words = slot.hits.words[0..slot.hits.word_count];
-        const references = slot.hits.items[0..slot.hits.len];
-        const pictures = slot.hits.pictures[0..slot.hits.picture_count];
-        out.* = .{
-            .page = page,
-            .words = try alloc.dupe(book_model.Word, words),
-            .references = try alloc.dupe(text_layout.Hit, references),
-            .pictures = try alloc.dupe(text_layout.Hit, pictures),
-        };
+        out.* = .{ .page = page, .words = try alloc.dupe(book_model.Word, words) };
     }
     return shown;
 }
@@ -1349,15 +1364,13 @@ const scenarios = [_]Scenario{
             "holding a picture shows it whole until its button, the book reading on after both",
         .run = struct {
             fn run() !void {
-                var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-                defer arena.deinit();
-                const book: Kindle = .{ .book = .notes, .pages_into = arena.allocator() };
-                const first = try play_on(book, &.{});
-                const page = first.shown[0] orelse return error.NothingShown;
-                try expect(page.references.len == 1, "the book's one note mark wasn't found");
-                try expect(page.pictures.len == 1, "the book's picture wasn't drawn");
-                const mark = tap_on(middle_of(page.references[0]));
-                const picture = middle_of(page.pictures[0]);
+                // Where the first page put its note's mark and its picture, as its log says
+                const first = try play_on(.{ .book = .notes }, &.{});
+                const mark_at = first.placed[@backingInt(placed.What.note)] orelse
+                    return error.MarkNotPlaced;
+                const picture = first.placed[@backingInt(placed.What.picture)] orelse
+                    return error.PictureNotPlaced;
+                const mark = tap_on(mark_at);
                 // The note's panel open over the page, then closed by a tap above it
                 const noted = try play_on(.{ .book = .notes, .snapshot = .note }, &.{mark});
                 try expect(noted.looks_right, "the note's panel looks different");
@@ -1378,11 +1391,33 @@ const scenarios = [_]Scenario{
                 const put_back = try play_on(.{ .book = .notes }, &closed_then_on);
                 try expect(same_place(put_back.saved, turned.saved), "the picture stayed open");
             }
-
-            fn middle_of(h: text_layout.Hit) style.Point {
-                assert(h.w > 0);
-                assert(h.h > 0);
-                return .{ .x = h.x + @divTrunc(h.w, 2), .y = h.y + @divTrunc(h.h, 2) };
+        }.run,
+    },
+    .{
+        .name = "a highlight chosen from Go To's notes brings its page back, a tap selects " ++
+            "it, and its Delete bubble removes it",
+        .run = struct {
+            fn run() !void {
+                const held_at = a_word.act.hold;
+                const highlight_it = [_]Step{ a_word, lift, highlight_button, away_from_word };
+                const highlighted = [_]Step{forward} ++ highlight_it;
+                const notes_tab = tap_on(goto_ui.place(.{ .tab = .notes }));
+                const first_note = tap_on(goto_ui.place(.{ .row = 0 }));
+                const found = highlighted ++ .{ forward, top, tool(.goto), notes_tab, first_note };
+                const on_its_page = try play_on(.{ .dictionary = true }, &highlighted);
+                const returned = try play_on(.{ .dictionary = true }, &found);
+                const brought_back = same_place(returned.saved, on_its_page.saved);
+                try expect(brought_back, "Go To didn't bring it back");
+                // Tapped, it's selected: its handles and its Delete bubble
+                const selected_steps = found ++ .{tap(held_at.x, held_at.y)};
+                const kindle: Kindle = .{ .dictionary = true, .snapshot = .highlight };
+                const selected = try play_on(kindle, &selected_steps);
+                try expect(selected.looks_right, "the selected highlight looks different");
+                const bubble = selected.placed[@backingInt(placed.What.delete)] orelse
+                    return error.DeleteNotPlaced;
+                const removed = try play_on(.{ .dictionary = true }, &(selected_steps ++
+                    .{tap_on(bubble)}));
+                try expect(removed.highlights == 0, "the Delete bubble left the highlight");
             }
         }.run,
     },

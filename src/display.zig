@@ -205,6 +205,31 @@ pub const Display = struct {
         return null;
     }
 
+    /// The slot to draw page `page_index` into, a page of the window around `center`
+    /// given up for it if none is free (layout/page_cache.zig). It holds no page until
+    /// `end_draw`, and pixels lent from it before now are known stale: a draw that
+    /// fails leaves it empty, never half of another page that still looks cached.
+    pub fn begin_draw(d: *Display, page_index: u32, center: u32) *Slot {
+        assert(d.slot_for(page_index) == null); // Drawn only when not cached already
+        var cached: [slots_count]?u32 = undefined;
+        for (&d.slots, &cached) |*slot, *c| c.* = slot.page;
+        const victim = page_cache.victim(cached, center);
+        assert(victim < d.slots.len);
+        const slot = &d.slots[victim];
+        slot.page = null;
+        slot.drawn +%= 1;
+        slot.hits.clear();
+        return slot;
+    }
+
+    /// The slot `begin_draw` gave, drawn whole: it now holds page `page_index`.
+    pub fn end_draw(d: *Display, slot: *Slot, page_index: u32) void {
+        assert(slot.page == null); // As `begin_draw` left it
+        assert(d.slot_for(page_index) == null);
+        slot.page = page_index;
+        assert(d.slot_for(page_index).? == slot);
+    }
+
     /// Drops every cached page, after anything that changes how pages look.
     pub fn forget_pages(d: *Display) void {
         for (&d.slots) |*slot| {
@@ -213,3 +238,32 @@ pub const Display = struct {
         }
     }
 };
+
+test "a page drawn into the cache is cached once drawn whole; pixels lent before are stale" {
+    const alloc = std.testing.allocator;
+    var screen = try hwtcon.Screen.fake(alloc, style.screen_width, style.screen_height);
+    defer alloc.free(screen.map);
+    var d = try Display.init(alloc, &screen);
+    defer d.release(alloc);
+    // Page 5 drawn whole, and lent to a sheet
+    const five = d.begin_draw(5, 5);
+    d.end_draw(five, 5);
+    const lent: Backdrop = .{
+        .pixels = five.buf,
+        .lent = .{ .slot = @intCast(five - &d.slots[0]), .drawn = five.drawn },
+    };
+    try std.testing.expect(lent.holds(&d));
+    // Pages 4 and 6 fill the other slots; page 9's draw takes 5's slot and fails
+    // before it's done
+    d.end_draw(d.begin_draw(4, 5), 4);
+    d.end_draw(d.begin_draw(6, 5), 6);
+    const nine = d.begin_draw(9, 9);
+    try std.testing.expect(nine == five);
+    try std.testing.expect(d.slot_for(5) == null);
+    try std.testing.expect(d.slot_for(9) == null);
+    try std.testing.expect(!lent.holds(&d));
+    // Drawn again, it's cached
+    const again = d.begin_draw(9, 9);
+    d.end_draw(again, 9);
+    try std.testing.expect(d.slot_for(9).? == again);
+}

@@ -11,7 +11,6 @@ const bookmarks = @import("../../model/bookmarks.zig");
 const icons = @import("../../ui/icons.zig");
 const catalog = @import("../../model/catalog.zig");
 const os = @import("../../sys/os.zig");
-const cache = @import("../../layout/page_cache.zig");
 const state = @import("../../sys/state.zig");
 const text = @import("../../layout/text.zig");
 const now_us = os.now_us;
@@ -386,16 +385,7 @@ pub const Session = struct {
         check.thatf(center < s.pages.len, "page {d} of {d}", .{ center, s.pages.len });
         const a = s.app;
         if (a.display.slot_for(index)) |slot| return slot.buf;
-        var cached: [display.slots_count]?u32 = undefined;
-        for (&a.display.slots, &cached) |*slot, *c| c.* = slot.page;
-        const victim = cache.victim(cached, center);
-        assert(victim < a.display.slots.len);
-        const slot = &a.display.slots[victim];
-        // Holds no page while it's drawn, and pixels lent from it before now are
-        // another page's: a draw that fails leaves it empty, never half another page
-        slot.page = null;
-        slot.drawn +%= 1;
-        slot.hits.clear();
+        const slot = a.display.begin_draw(index, center);
         const buf = slot.buf;
         const page = a.display.page(buf);
         const hits = &slot.hits;
@@ -420,9 +410,7 @@ pub const Session = struct {
             try s.back.draw_on(page, a.ui.small, s.pages, s.progress == null);
         }
 
-        assert(slot.page == null);
-        slot.page = index;
-        assert(a.display.slot_for(index).? == slot);
+        a.display.end_draw(slot, index);
         return buf;
     }
 

@@ -8,9 +8,10 @@ const hwtcon = @import("kindle/hwtcon.zig");
 const text = @import("layout/text.zig");
 const library = @import("ui/library.zig");
 const style = @import("ui/style.zig");
+const page_cache = @import("layout/page_cache.zig");
 
-/// How many pages the cache keeps drawn: the one on screen and one each side.
-pub const slots_count = 3;
+/// How many pages the cache keeps drawn (layout/page_cache.zig picks which).
+pub const slots_count = page_cache.slots;
 
 /// The outline `flash` draws round a book, its bars this thick.
 const flash_bar_px = 6;

@@ -386,14 +386,19 @@ pub const Session = struct {
         check.thatf(center < s.pages.len, "page {d} of {d}", .{ center, s.pages.len });
         const a = s.app;
         if (a.display.slot_for(index)) |slot| return slot.buf;
-        var cached: [3]?u32 = undefined;
+        var cached: [display.slots_count]?u32 = undefined;
         for (&a.display.slots, &cached) |*slot, *c| c.* = slot.page;
         const victim = cache.victim(cached, center);
         assert(victim < a.display.slots.len);
-        const buf = a.display.slots[victim].buf;
+        const slot = &a.display.slots[victim];
+        // Holds no page while it's drawn, and pixels lent from it before now are
+        // another page's: a draw that fails leaves it empty, never half another page
+        slot.page = null;
+        slot.drawn +%= 1;
+        slot.hits.clear();
+        const buf = slot.buf;
         const page = a.display.page(buf);
-        a.display.slots[victim].hits.clear();
-        const hits = &a.display.slots[victim].hits;
+        const hits = &slot.hits;
         // Drawn to end where the next page starts, as it was laid out: the page before
         // the reader's place was cut short there, and would otherwise run on into it
         var layout = a.layout;
@@ -415,10 +420,9 @@ pub const Session = struct {
             try s.back.draw_on(page, a.ui.small, s.pages, s.progress == null);
         }
 
-        a.display.slots[victim].page = index;
-        // Pixels lent from this slot before now are another page's
-        a.display.slots[victim].drawn +%= 1;
-        assert(a.display.slot_for(index).? == &a.display.slots[victim]);
+        assert(slot.page == null);
+        slot.page = index;
+        assert(a.display.slot_for(index).? == slot);
         return buf;
     }
 

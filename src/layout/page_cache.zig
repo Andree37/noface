@@ -2,9 +2,12 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
+/// How many pages are kept drawn: the one on screen and one each side.
+pub const slots = 3;
+
 /// Picks a free slot, else one outside the window around `center`.
 /// Keeps the page on screen and both of its neighbours.
-pub fn victim(pages: [3]?u32, center: u32) u32 {
+pub fn victim(pages: [slots]?u32, center: u32) u32 {
     const free = std.mem.indexOfScalar(?u32, &pages, null);
     const index: u32 = if (free) |i| @intCast(i) else for (pages, 0..) |p, i| {
         // Every slot holds a page: none was free

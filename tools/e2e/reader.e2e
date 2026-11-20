@@ -90,8 +90,8 @@ log words, saved true
 drawn 500
 still
 
-# Its delete bubble removes it
-tap 636 714
+# Its delete bubble removes it, tapped where noface drew it
+tap placed delete
 log highlight removed: true
 drawn 200
 still
@@ -105,6 +105,35 @@ still
 tap page.back
 log turn to 1
 drawn 500
+still
+
+# The highlight left on "reader", chosen from Go To's notes: its page again, after
+# turning away. A tap on it selects it, and its delete bubble removes it
+tap page.forward
+log turn to 2
+drawn 500
+still
+tap page.top
+drawn 200
+still
+tap toolbar.goto
+log screen: GoTo opened
+drawn 300
+still
+tap goto.tab.notes
+drawn 200
+still
+tap goto.row.0
+log screen: GoTo done
+drawn 500
+still
+tap 160 318
+log placed delete
+drawn 300
+shot selected
+tap placed delete
+log highlight removed: true
+drawn 200
 still
 
 # Locking shows the book: the test book has no cover, so its title on white. Unlocking

@@ -1,0 +1,35 @@
+# A footnote and a picture, on the notes test book: src/testdata/notes.epub, alone in
+# its own test folder's documents (tools/e2e.zig plays it). Its mark and its picture are
+# tapped where noface drew them, as its log says (screens/placed.zig).
+
+# Opening the book from the library's hero
+tap library.hero
+log screen: Reader opened
+drawn 600
+still
+
+# The note's mark opens the note in a panel over the page; a tap above it closes it
+tap placed note
+log note parts
+drawn 300
+shot note
+tap page.top
+log note closed
+drawn 300
+still
+
+# Holding the picture shows it whole; its button closes it
+hold placed picture 700
+log screen: Viewer opened
+drawn 600
+shot picture
+tap picture.close
+log screen: Viewer
+drawn 600
+still
+
+# The book reads on after both
+tap page.forward
+log turn to 2
+drawn 500
+still

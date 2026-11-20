@@ -227,7 +227,7 @@ const Run = struct {
 };
 
 /// Why a step failed, to print.
-const Failure = error{ Usage, Timeout, TooSlow, CantSave, NoLog, UnknownPlace };
+const Failure = error{ Usage, Timeout, TooSlow, CantSave, NoLog, UnknownPlace, NotPlaced };
 const Words = std.mem.TokenIterator(u8, .any);
 const Point = core.places.Point;
 
@@ -459,9 +459,30 @@ fn step(run: *Run, line: []const u8) Failure!?u32 {
 /// A touch a script makes, or the power button, read from its line.
 const Touch = union(enum) {
     power,
-    tap: Point,
-    hold: struct { at: Point, ms: u32 },
+    tap: Target,
+    hold: struct { at: Target, ms: u32 },
     drag: struct { from: Point, to: Point, ms: u32, hold_ms: u32 },
+};
+
+/// Where a tap or a hold lands: a point known before the run (a control by name, or
+/// "<x> <y>"), or what noface placed with the page, by "placed <what>", found in its log
+/// as the step is played (screens/placed.zig).
+const Target = union(enum) {
+    at: Point,
+    placed: core.placed.What,
+
+    /// The point, looked up in the log for what noface placed: where it last drew it.
+    fn resolve(t: Target, run: *const Run) Failure!Point {
+        assert(run.log_path[0] != 0);
+        const what = switch (t) {
+            .at => |p| return p,
+            .placed => |w| w,
+        };
+        const text = core.file.map(run.log_path) catch return error.NoLog;
+        defer core.file.unmap(text);
+        assert(text.len > 0); // A mapped file is never empty
+        return core.placed.find(text, @tagName(what)) orelse error.NotPlaced;
+    }
 };
 
 /// The touch a line's words say, its points by name or as "<x> <y>"; null for a line
@@ -470,9 +491,9 @@ const Touch = union(enum) {
 fn parse_touch(verb: []const u8, words: *Words) Failure!?Touch {
     assert(verb.len > 0);
     if (std.mem.eql(u8, verb, "power")) return .power;
-    if (std.mem.eql(u8, verb, "tap")) return .{ .tap = try point(words) };
+    if (std.mem.eql(u8, verb, "tap")) return .{ .tap = try target(words) };
     if (std.mem.eql(u8, verb, "hold")) {
-        const at = try point(words);
+        const at = try target(words);
         return .{ .hold = .{ .at = at, .ms = try number(words) } };
     }
     if (std.mem.eql(u8, verb, "drag")) {
@@ -492,13 +513,15 @@ fn touch(run: *Run, t: Touch) Failure!void {
     run.mark();
     switch (t) {
         .power => try press_power(),
-        .tap => |at| {
+        .tap => |to| {
+            const at = try to.resolve(run);
             run.panel.down(at.x, at.y);
             sleep_ms(touchsim.tap_ms);
             run.panel.up();
         },
         .hold => |h| {
-            run.panel.down(h.at.x, h.at.y);
+            const at = try h.at.resolve(run);
+            run.panel.down(at.x, at.y);
             sleep_ms(h.ms);
             run.panel.up();
         },
@@ -586,6 +609,22 @@ fn log_has(path: [*:0]const u8, from: u64, wanted: []const u8) Failure!bool {
 
 /// The next point: a place by name (screens/places.zig), or "<x> <y>" for what isn't a
 /// control, like a word on the page.
+/// A tap's or a hold's target: "placed <what>", or a point.
+fn target(words: *Words) Failure!Target {
+    if (words.peek()) |word| if (std.mem.eql(u8, word, "placed")) {
+        _ = words.next(); // The word just looked at
+        const name = words.next() orelse return error.Usage;
+        assert(name.len > 0); // A word, from splitting on spaces
+        const what = std.meta.stringToEnum(core.placed.What, name) orelse return error.UnknownPlace;
+        return .{ .placed = what };
+    };
+    const at = try point(words);
+    // On the screen: a control's place is, and a typed point is read as a u16
+    assert(at.x >= 0);
+    assert(at.y >= 0);
+    return .{ .at = at };
+}
+
 fn point(words: *Words) Failure!Point {
     const word = words.next() orelse return error.Usage;
     assert(word.len > 0);
@@ -609,8 +648,11 @@ test "every script reads, each place it names found" {
         @embedFile("e2e/reader.e2e"),
         @embedFile("e2e/running.e2e"),
         @embedFile("e2e/sheets.e2e"),
+        @embedFile("e2e/notes.e2e"),
     };
     for (scripts) |script| try std.testing.expect(script_reads(script));
     try std.testing.expect(!script_reads("tap toolbar.nothing\n"));
     try std.testing.expect(script_reads("tap 10 20 # A word\ntap page.forward\n"));
+    try std.testing.expect(script_reads("tap placed note\nhold placed picture 700\n"));
+    try std.testing.expect(!script_reads("tap placed nothing\n"));
 }

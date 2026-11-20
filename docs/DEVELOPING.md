@@ -65,7 +65,12 @@ from Aa's Themes tab: its phrases, its taps, a drip let go, pausing, the card, a
 stopping from it), and `tools/e2e/sheets.e2e` what opens over a book and the library
 (a book's series list, Go To, the chapter skips, the book's search, the ⋮ menu and its
 Go to page, Aa's tabs, themes and switches). Every control is tapped by its name
-(`screens/places.zig`); only words on a page are tapped where they are. All play on
+(`screens/places.zig`); what moves with the text, a footnote's mark, a picture, a
+highlight's Delete bubble, is tapped where noface's log says it drew it
+(`tap placed note`, `screens/placed.zig`); only words on a page are tapped where they
+are. `tools/e2e/notes.e2e` plays on a folder of its own holding
+`src/testdata/notes.epub` as `Notes and Pictures.epub` (a footnote's panel, a picture
+shown whole and closed). The others play on
 `documents` holding `src/testdata/scenario.epub` as `Scenario Book.epub` and 13 copies
 beside it (`Scenario Book 02.epub` to `14`), so the library has two pages. Copy the
 tool and the scripts into the test folder (on `/mnt/us`: a file made executable in
@@ -240,17 +245,19 @@ illustrations.
 - `zig build test`: unit tests, on this computer (GitHub runs them on Linux).
 - `zig build gates`: everything a change passes before it's committed, as one step.
 - Scripts in `tools/e2e/` play touches on the Kindle itself, against noface's own test
-  books, tapping controls by name (`screens/places.zig`), so they follow layout.
+  books, tapping controls by name (`screens/places.zig`) and what moves with the text
+  where noface logged it (`screens/placed.zig`), so they follow layout.
 - `zig build scenarios`: the scenario tests, which play scripted touches through the
   real app on a screen in memory, a clock it moves itself and a pretend Kindle that
   starts no programs. GitHub runs them on every push; on the Kindle they're part of
   `noface selftest`.
-- The scenarios compare twelve screens with reference images in
+- The scenarios compare thirteen screens with reference images in
   `src/testdata/snapshots`: a page, the toolbar, Aa, a definition, a book's search,
-  the lock screen, running, the library, its search, a series list, a note's panel and
-  a picture shown whole. The last two are of `src/testdata/notes.epub`, a book with a
-  footnote and a picture, which a scenario opens with `.book = .notes`. When a screen changes on
-  purpose, write new ones and convert them:
+  the lock screen, running, the library, its search, a series list, a selected
+  highlight, a note's panel and a picture shown whole. The last two are of
+  `src/testdata/notes.epub`, a book with a footnote and a picture, which a scenario
+  opens with `.book = .notes`. When a screen changes on purpose, write new ones and
+  convert them:
 
 ```sh
 zig build scenarios host-tools                       # builds zig-out/bin/noface-scenarios for the Kindle

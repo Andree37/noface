@@ -443,8 +443,9 @@ const Stack = struct {
             .tap => |t| if (t.us < stack.shown_us) {
                 // The finger touched while another screen was in front: the tap was
                 // meant for that one, which has ended, never for this one
-                log.info("tap {d},{d} dropped: touched before {s} was shown", .{
-                    t.x, t.y, f.kind.name,
+                const early_ms = (stack.shown_us - t.us) / std.time.us_per_ms;
+                log.info("tap {d},{d} dropped: touched {d} ms before {s} was shown", .{
+                    t.x, t.y, early_ms, f.kind.name,
                 });
                 return;
             },

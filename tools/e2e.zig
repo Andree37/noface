@@ -26,6 +26,8 @@
 //! Each step prints a line; the first that fails stops the run, which exits 1.
 const std = @import("std");
 const assert = std.debug.assert;
+/// Lines a check makes before the run, which the tests keep quiet.
+const log = std.log.scoped(.e2e);
 const core = @import("core");
 const touchsim = @import("touchsim.zig");
 const linux = std.os.linux;
@@ -271,7 +273,9 @@ fn script_reads(script: []const u8) bool {
         var words = std.mem.tokenizeAny(u8, code, " \t\r");
         const verb = words.next() orelse continue;
         _ = parse_touch(verb, &words) catch |err| {
-            std.debug.print("FAIL {d}: {s}: {s}, before any touch\n", .{
+            // Logged, so a test of a script that mustn't read stays quiet (std.testing
+            // keeps only warnings), while a run on the Kindle shows which line
+            log.info("FAIL {d}: {s}: {s}, before any touch", .{
                 line_number, std.mem.trim(u8, code, " \t\r"), @errorName(err),
             });
             bad += 1;

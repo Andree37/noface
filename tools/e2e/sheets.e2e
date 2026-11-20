@@ -1,0 +1,175 @@
+# The sheets and lists over a book and the library that the other scripts don't open, on
+# the test books (tools/e2e.zig plays it). Start from a fresh test folder: noface on its
+# library. After each screen opens, `still` waits for it to show: noface drops a touch
+# that lands before.
+
+# A book's series, from holding it in the library: the list of series to put it in
+hold library.hero 700
+log screen: Sheet opened
+drawn 300
+still
+tap card.3.2
+log screen: Choices opened
+drawn 300
+shot series
+
+# Back to the library along its top: the list, the series and the book's actions all
+# done before the library is shown again. It's shown whole, with a refresh the panel
+# takes a while over after the screen's memory is still, and a tap before it's done
+# is dropped as meant for the list
+tap goto.close
+log screen: Sheet done
+drawn 300
+still
+wait 1000
+
+# Opening the book
+tap library.hero
+log screen: Reader opened
+drawn 600
+still
+
+# Go To: its contents, its notes, and a chapter, which jumps there
+tap page.top
+drawn 200
+still
+tap toolbar.goto
+log screen: GoTo opened
+drawn 300
+shot goto
+tap goto.tab.notes
+drawn 200
+still
+tap goto.tab.contents
+drawn 200
+still
+tap goto.row.1
+log screen: GoTo done
+drawn 500
+still
+
+# The chapter skips, on and back
+tap page.top
+drawn 200
+still
+tap toolbar.chapter_next
+drawn 500
+still
+tap toolbar.chapter_prev
+drawn 500
+still
+tap toolbar.close
+drawn 200
+still
+
+# Searching the book: typed, searched, and its first result, which jumps there
+tap page.top
+drawn 200
+still
+tap toolbar.search
+log screen: Search opened
+drawn 300
+still
+tap key.g
+drawn 200
+tap key.a
+drawn 200
+tap key.r
+drawn 200
+tap key.d
+drawn 200
+tap key.e
+drawn 200
+tap key.n
+drawn 200
+tap key.search
+log search:
+drawn 500
+shot search
+tap goto.row.0
+log screen: Search done
+drawn 500
+still
+
+# The ⋮ menu: back to the beginning
+tap page.top
+drawn 200
+still
+tap toolbar.more
+log screen: More opened
+drawn 300
+shot more
+tap more.beginning
+log screen: More done
+drawn 500
+still
+
+# The ⋮ menu's Go to page: a page typed in
+tap page.top
+drawn 200
+still
+tap toolbar.more
+log screen: More opened
+drawn 300
+still
+tap more.go_to_page
+log screen: PageEntry opened
+drawn 300
+still
+tap key.3
+drawn 200
+tap key.search
+log screen: PageEntry done
+drawn 500
+still
+
+# Aa: each tab, Compact and back to Standard, and switches flipped and back
+tap page.top
+drawn 200
+still
+tap toolbar.text
+drawn 300
+still
+# It opens on Font, the tab it keeps
+tap aa.switch.bold
+drawn 600
+still
+tap aa.switch.bold
+drawn 600
+still
+tap aa.tab.layout
+drawn 200
+still
+tap aa.tab.more
+drawn 200
+shot aa-more
+tap aa.switch.time_left
+drawn 300
+still
+tap aa.switch.time_left
+drawn 300
+still
+tap aa.tab.themes
+drawn 200
+still
+# Each lays the book out again and refreshes the whole page, which the panel takes a
+# while over, so these have more time
+tap aa.theme.0
+drawn 1500
+still
+tap aa.theme.1
+drawn 1500
+still
+# Closed by a tap on the page under the sheet
+tap aa.close
+drawn 300
+still
+
+# Home: the library is back
+tap page.top
+drawn 200
+still
+tap toolbar.home
+log screen: Reader done
+drawn 300
+shot library

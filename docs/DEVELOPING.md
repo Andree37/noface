@@ -60,21 +60,28 @@ soon it draws: `tools/e2e/reader.e2e` takes every gesture the reader has (turnin
 tap and swipe, the toolbar, a bookmark, the quick panel, looking up and highlighting,
 locking, Home) with time budgets for each, and `tools/e2e/library.e2e` every control
 the library has (paging, the filter, each sort, stats, search typed on its keyboard, a
-book's actions, the quick panel), and `tools/e2e/running.e2e` running mode (turned on
+book's actions, the quick panel), `tools/e2e/running.e2e` running mode (turned on
 from Aa's Themes tab: its phrases, its taps, a drip let go, pausing, the card, and
-stopping from it). All play on `documents` holding
-`src/testdata/scenario.epub` as `Scenario Book.epub` and 13 copies beside it
-(`Scenario Book 02.epub` to `14`), so the library has two pages. Copy the tool and the
-scripts into the test folder (on `/mnt/us`: a file made executable in `/tmp` can't be
-run), start from a fresh `data` each time, and play one:
+stopping from it), and `tools/e2e/sheets.e2e` what opens over a book and the library
+(a book's series list, Go To, the chapter skips, the book's search, the ⋮ menu and its
+Go to page, Aa's tabs, themes and switches). Every control is tapped by its name
+(`screens/places.zig`); only words on a page are tapped where they are. All play on
+`documents` holding `src/testdata/scenario.epub` as `Scenario Book.epub` and 13 copies
+beside it (`Scenario Book 02.epub` to `14`), so the library has two pages. Copy the
+tool and the scripts into the test folder (on `/mnt/us`: a file made executable in
+`/tmp` can't be run) and play one, with the reader's own noface stopped first and
+started again after:
 
 ```sh
-noface-launch e2e /mnt/us/noface-e2e   # its data folder removed first
-cd /mnt/us/noface-e2e && ./e2e reader.e2e data/noface.log out
+kill -TERM $(pidof noface)                       # the reader's noface, stopped
+/mnt/us/noface-e2e/e2e /mnt/us/noface-e2e/reader.e2e /mnt/us/noface-e2e
+/mnt/us/noface/noface-launch now &              # and started again
 ```
 
-Each step prints `ok` or `FAIL`; `drawn` steps print what they measured, and `shot`
-steps leave PGM screenshots in `out`.
+The tool wakes the Kindle and holds it awake, makes the folder's `data` fresh, starts
+noface on its books, waits for the library, plays the script, and stops noface, also
+when a step fails. Each step prints `ok` or `FAIL`; `drawn` steps print what they
+measured, and `shot` steps leave PGM screenshots in `out`.
 
 ## Packaging and releases
 
@@ -238,9 +245,11 @@ illustrations.
   real app on a screen in memory, a clock it moves itself and a pretend Kindle that
   starts no programs. GitHub runs them on every push; on the Kindle they're part of
   `noface selftest`.
-- One scenario compares nine screens (a page, the toolbar, Aa, a definition, a
-  book's search, the lock screen, running, the library and its search) with reference
-  images in `src/testdata/snapshots`. When a screen changes on
+- The scenarios compare twelve screens with reference images in
+  `src/testdata/snapshots`: a page, the toolbar, Aa, a definition, a book's search,
+  the lock screen, running, the library, its search, a series list, a note's panel and
+  a picture shown whole. The last two are of `src/testdata/notes.epub`, a book with a
+  footnote and a picture, which a scenario opens with `.book = .notes`. When a screen changes on
   purpose, write new ones and convert them:
 
 ```sh

@@ -6,8 +6,10 @@ pub const hwtcon = @import("kindle/hwtcon.zig");
 pub const ion = @import("kindle/ion.zig");
 pub const kfx = @import("kindle/kfx.zig");
 pub const lipc = @import("kindle/lipc.zig");
+pub const paths = @import("kindle/paths.zig");
 
 // Linux.
+pub const calls = @import("sys/calls.zig");
 pub const clock = @import("sys/clock.zig");
 pub const file = @import("sys/file.zig");
 pub const os = @import("sys/os.zig");

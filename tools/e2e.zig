@@ -1,7 +1,12 @@
 //! Plays a script of touches on the Kindle and checks what noface does with them: what it
-//! logs, and how soon it draws. Run against noface's own test books
-//! (`noface-launch e2e <dir>`), so the reader's books, places and settings stay as they are.
-//! Usage: e2e <script> <log> <out dir>
+//! logs, and how soon it draws. It starts noface itself, fresh, on a test folder of its
+//! own books (`noface-launch e2e <folder>`), and stops it after, so the reader's books,
+//! places and settings stay as they are; the reader's noface is started again by
+//! whoever stopped it.
+//! Usage: e2e <script> <test folder>
+//! The test folder holds documents/, the test books: "Scenario Book.epub" and "Scenario
+//! Book 02.epub" to "14", copies of src/testdata/scenario.epub. Each run makes data/
+//! (noface's) and out/ (the shots) in it anew.
 //!
 //! Each line of the script is a step; `#` starts a comment.
 //!   tap <point>                     A finger down and up.
@@ -228,16 +233,32 @@ const Point = core.places.Point;
 
 pub fn main(init: std.process.Init.Minimal) !void {
     const argv = init.args.vector;
-    if (argv.len != 4) return error.Usage;
+    if (argv.len != 3) return error.Usage;
     const script = try core.file.map(argv[1]);
     defer core.file.unmap(script);
-    var run = Run{
-        .panel = try touchsim.Panel.open(),
-        .screen = try Screen.open(),
-        .log_path = argv[2],
-        .out_dir = std.mem.sliceTo(argv[3], 0),
-    };
     if (!script_reads(script)) std.process.exit(1);
+    var buffers: Folder.Buffers = undefined;
+    const folder = try Folder.in(&buffers, std.mem.sliceTo(argv[2], 0));
+    try start_noface(folder);
+    // Stopped whatever the script does, so a failed step leaves no noface on the test
+    // folder for the reader's own to start beside
+    assert(script.len > 0); // A mapped file is never empty
+    const passed = play(script, folder);
+    stop_noface();
+    if (!passed) std.process.exit(1);
+}
+
+/// Plays every step of `script` against noface on `folder`, saying how each went:
+/// false at the first that fails.
+fn play(script: []const u8, folder: Folder) bool {
+    assert(script.len > 0);
+    assert(folder.out.len > 0);
+    var run = Run{
+        .panel = touchsim.Panel.open() catch return false,
+        .screen = Screen.open() catch return false,
+        .log_path = folder.log,
+        .out_dir = folder.out,
+    };
     var lines = std.mem.splitScalar(u8, script, '\n');
     var line_number: u32 = 0;
     var passed: u32 = 0;
@@ -248,7 +269,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         if (line.len == 0) continue;
         const took_ms = step(&run, line) catch |err| {
             std.debug.print("FAIL {d}: {s}: {s}\n", .{ line_number, line, @errorName(err) });
-            std.process.exit(1);
+            return false;
         };
         passed += 1;
         if (took_ms) |ms| {
@@ -259,7 +280,134 @@ pub fn main(init: std.process.Init.Minimal) !void {
     }
     assert(passed <= line_number);
     std.debug.print("e2e: {d} steps passed\n", .{passed});
+    return true;
 }
+
+/// The test folder (`noface-launch e2e <folder>`): its books in documents/, and what a
+/// run makes in it, noface's data, made fresh for each run so noface starts on its
+/// library with nothing read, and the shots. The reader's own books, places and
+/// settings are elsewhere, never touched.
+const Folder = struct {
+    root: [:0]const u8,
+    data: [:0]const u8,
+    log: [:0]const u8,
+    out: [:0]const u8,
+
+    const Buffers = [4][core.file.own_path_bytes_max]u8;
+
+    fn in(buffers: *Buffers, root: []const u8) !Folder {
+        assert(root.len > 0);
+        const f: Folder = .{
+            .root = try std.fmt.bufPrintSentinel(&buffers[0], "{s}", .{root}, 0),
+            .data = try std.fmt.bufPrintSentinel(&buffers[1], "{s}/data", .{root}, 0),
+            .log = try std.fmt.bufPrintSentinel(
+                &buffers[2],
+                "{s}/data/{s}",
+                .{ root, core.paths.data.log },
+                0,
+            ),
+            .out = try std.fmt.bufPrintSentinel(&buffers[3], "{s}/out", .{root}, 0),
+        };
+        // What's removed for a fresh run is inside the test folder, never above it
+        assert(std.mem.startsWith(u8, f.data, root));
+        assert(std.mem.startsWith(u8, f.out, root));
+        return f;
+    }
+};
+
+/// Longest wait for noface to start on the test folder and log its library.
+const start_ms_max = 40_000;
+/// Then this long more, for the library's first refreshes to finish before a touch.
+const settle_after_start_ms = 3_000;
+/// Longest wait for noface and its launcher to stop.
+const stop_ms_max = 20_000;
+/// A Kindle woken from its screensaver takes this long to show what's under it.
+const wake_ms = 3_000;
+/// How often a start or a stop is checked on.
+const check_ms = 250;
+
+/// Starts noface fresh on `folder`: the Kindle awake and held so for the run, the
+/// folder's data and shots made anew, and noface on its library.
+fn start_noface(folder: Folder) !void {
+    // Its log in its data, which is made anew below
+    assert(std.mem.startsWith(u8, folder.log, folder.data));
+    assert(folder.out.len > folder.root.len);
+    // A Kindle in its screensaver shows noface's lock, which would take the touches
+    if (core.lipc.power_state() == .asleep) {
+        press_power() catch return error.CantWake;
+        sleep_ms(wake_ms);
+    }
+    core.lipc.hold_awake(true);
+    var out: [64]u8 = undefined;
+    const remove = [_:null]?[*:0]const u8{ "/bin/rm", "-rf", folder.data, folder.out };
+    _ = core.process.run(&remove, &out) orelse return error.CantClear;
+    if (core.os.failed(core.calls.mkdir(folder.out, 0o755))) return error.CantClear;
+    const launch = [_:null]?[*:0]const u8{ core.paths.launcher, "e2e", folder.root };
+    _ = core.process.run(&launch, &out) orelse return error.CantStart;
+    const deadline = now_us() + start_ms_max * 1000;
+    // Bounded by the deadline
+    while (!(log_has(folder.log, 0, "library") catch false)) {
+        if (now_us() >= deadline) return error.CantStart;
+        sleep_ms(check_ms);
+    }
+    sleep_ms(settle_after_start_ms);
+}
+
+/// Stops noface, its launcher with it, and lets the Kindle sleep again.
+fn stop_noface() void {
+    defer core.lipc.hold_awake(false);
+    const pid = pid_of("noface") orelse return;
+    assert(pid > 0); // A process's, never 0 or -1, which would signal many
+    _ = linux.kill(pid, linux.SIG.TERM); // Already gone: nothing to stop
+    const deadline = now_us() + stop_ms_max * 1000;
+    // Bounded by the deadline
+    while (pid_of("noface") != null or pid_of("noface-launch") != null) {
+        if (now_us() >= deadline) {
+            std.debug.print("noface didn't stop\n", .{});
+            return;
+        }
+        sleep_ms(check_ms);
+    }
+    assert(pid_of("noface") == null);
+}
+
+/// The power button, pressed once.
+fn press_power() Failure!void {
+    comptime assert(std.mem.startsWith(u8, std.mem.span(lipc_set), "/usr/bin/"));
+    const argv = [_:null]?[*:0]const u8{ lipc_set, "com.lab126.powerd", "powerButton", "1" };
+    var out: [64]u8 = undefined;
+    _ = core.process.run(&argv, &out) orelse return error.Timeout;
+}
+
+/// The longest name Linux keeps for a process (its comm, less the closing zero).
+const comm_bytes_max = 15;
+
+/// The process named `name`, found by its name in /proc, or null with none.
+fn pid_of(name: []const u8) ?i32 {
+    assert(name.len > 0);
+    assert(name.len <= comm_bytes_max); // Linux keeps no more of a name in comm
+    var found: Found = .{ .name = name };
+    core.calls.each_entry("/proc", &found, Found.each);
+    return found.pid;
+}
+
+/// What `pid_of` looks for as /proc is listed, and what it found.
+const Found = struct {
+    name: []const u8,
+    pid: ?i32 = null,
+
+    fn each(f: *Found, entry: []const u8, is_folder: bool) void {
+        assert(entry.len > 0);
+        assert(f.name.len <= comm_bytes_max);
+        if (f.pid != null or !is_folder) return;
+        const pid = std.fmt.parseInt(i32, entry, 10) catch return; // Not a process
+        var path: [32]u8 = undefined;
+        const comm = std.fmt.bufPrintSentinel(&path, "/proc/{d}/comm", .{pid}, 0) catch return;
+        var buffer: [32]u8 = undefined;
+        const named = std.mem.trimEnd(u8, core.file.read_small(comm, &buffer), "\n");
+        if (std.mem.eql(u8, named, f.name)) f.pid = pid;
+    }
+};
 
 /// Whether every touch in `script` reads, its places found, before any is made: a
 /// mistake in a later line would otherwise show only after the touches before it.
@@ -343,13 +491,7 @@ fn touch(run: *Run, t: Touch) Failure!void {
     assert(!run.panel.finger_down);
     run.mark();
     switch (t) {
-        .power => {
-            const argv = [_:null]?[*:0]const u8{
-                lipc_set, "com.lab126.powerd", "powerButton", "1",
-            };
-            var out: [64]u8 = undefined;
-            _ = core.process.run(&argv, &out) orelse return error.Timeout;
-        },
+        .power => try press_power(),
         .tap => |at| {
             run.panel.down(at.x, at.y);
             sleep_ms(touchsim.tap_ms);
@@ -466,6 +608,7 @@ test "every script reads, each place it names found" {
         @embedFile("e2e/library.e2e"),
         @embedFile("e2e/reader.e2e"),
         @embedFile("e2e/running.e2e"),
+        @embedFile("e2e/sheets.e2e"),
     };
     for (scripts) |script| try std.testing.expect(script_reads(script));
     try std.testing.expect(!script_reads("tap toolbar.nothing\n"));

@@ -92,6 +92,42 @@ log library tap clear_search at
 drawn 150
 still
 
+# Searching again, with a slip taken back and a space: "ox", backspace, a space, "b",
+# typed as "o b", which is in "Scenario Book" (a search matches what's typed whole);
+# a key that failed leaves nothing listed. Its row opens it, and Home brings the
+# library back, with a refresh a tap waits out
+tap library.search
+log screen: LibrarySearch opened
+drawn 150
+still
+tap key.o
+drawn 150
+still
+tap key.x
+drawn 150
+still
+tap key.backspace
+drawn 150
+still
+tap key.space
+drawn 150
+still
+tap key.b
+drawn 150
+still
+tap library.found.0
+log screen: Reader opened
+drawn 600
+still
+tap page.top
+drawn 200
+still
+tap toolbar.home
+log screen: Reader done
+drawn 300
+still
+wait 1000
+
 # A book's actions, from holding it; a tap above the sheet closes it
 hold library.book.first 700
 log screen: Sheet opened

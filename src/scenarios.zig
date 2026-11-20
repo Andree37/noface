@@ -130,12 +130,16 @@ fn wait(ms: u64) Step {
 }
 const lock_it: Step = .{ .act = .lock };
 
-/// Taps on the keyboard typing `word`, its letters' keys.
+/// Taps on the keyboard typing `word`: its letters' keys, and the space bar for a space.
 fn typed(comptime word: []const u8) [word.len]Step {
     var steps: [word.len]Step = undefined;
-    for (word, &steps) |char, *step| step.* = tap_on(keyboard.place(.{ .char = char }));
+    for (word, &steps) |char, *step| {
+        const key: keyboard.Key = if (char == ' ') .space else .{ .char = char };
+        step.* = tap_on(keyboard.place(key));
+    }
     return steps;
 }
+const backspace = tap_on(keyboard.place(.backspace));
 const wake: Step = .{ .act = .unlock };
 /// The quick panel pulled down from the top, and its Kindle button, which leaves noface.
 const pull_down: Step = .{ .act = .pull };
@@ -1339,6 +1343,9 @@ const scenarios = [_]Scenario{
                 const third = try play(&.{ forward, forward });
                 const typed_third = try play(&(go_to_page ++ typed("3") ++ .{search_key}));
                 try expect(same_place(typed_third.saved, third.saved), "page 3 wasn't reached");
+                // A digit typed too many, taken back
+                const fixed = try play(&(go_to_page ++ typed("39") ++ .{ backspace, search_key }));
+                try expect(same_place(fixed.saved, third.saved), "backspace didn't take back 9");
                 const second = try play(&.{forward});
                 const past = try play(&(.{forward} ++ go_to_page ++ typed("999") ++ .{search_key}));
                 try expect(same_place(past.saved, second.saved), "a page past the end moved");
@@ -1411,6 +1418,12 @@ const scenarios = [_]Scenario{
                 const r = try play_on(.{ .library = true }, &(.{search_books} ++
                     typed("scenario") ++ .{ first_found, wait(2_000) }));
                 try expect(r.opened[0], "the book found wasn't opened");
+                // Two words, the space bar between, and a slip taken back with backspace:
+                // a key that failed leaves words no title has, and nothing to open
+                const slipped = typed("scenarix") ++ .{backspace} ++ typed("o book");
+                const fixed = try play_on(.{ .library = true }, &(.{search_books} ++
+                    slipped ++ .{ first_found, wait(2_000) }));
+                try expect(fixed.opened[0], "the book typed with a slip wasn't opened");
             }
         }.run,
     },

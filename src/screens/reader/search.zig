@@ -53,6 +53,9 @@ pub const Search = struct {
     typed: search.Query,
     alloc: std.mem.Allocator,
     shown: Shown = .keyboard,
+    /// The last search's results, in `alloc`, let go of when another search replaces
+    /// them: kept here, as the keyboard over them leaves `shown` without them.
+    found: []const goto.Row = &.{},
 
     /// Under the bar: the keyboard, or a search's results, a page of them at a time.
     const Shown = union(enum) {
@@ -121,7 +124,10 @@ pub const Search = struct {
                 const words = se.typed.words();
                 if (words.len == 0) return .stay;
                 se.last.* = se.typed;
+                se.alloc.free(se.found);
+                se.found = &.{};
                 const rows = try find(se.alloc, se.s, words);
+                se.found = rows;
                 assert(rows.len <= results_max);
                 std.debug.print("search: {d} results\n", .{rows.len});
                 se.shown = .{ .results = .{ .rows = rows } };
@@ -153,6 +159,7 @@ pub const Search = struct {
 fn find(alloc: std.mem.Allocator, s: *const sess.Session, query: []const u8) ![]const goto.Row {
     assert(query.len > 0);
     const matches = try search.find(alloc, s.paragraphs, query, results_max);
+    defer alloc.free(matches); // Only where they are is kept, in the rows
     assert(matches.len <= results_max);
     const rows = try alloc.alloc(goto.Row, matches.len);
     for (matches, rows) |m, *r| r.* = .{

@@ -1361,7 +1361,8 @@ const scenarios = [_]Scenario{
                 const on = try play(&(marking ++ notes ++ .{ next_page, first_row }));
                 try expect(same_place(on.saved, last_page.saved), "next didn't list the rest");
                 const start = try play(&.{});
-                const returned = try play(&(marking ++ notes ++ .{ next_page, prev_page, first_row }));
+                const there_and_back = [_]Step{ next_page, prev_page, first_row };
+                const returned = try play(&(marking ++ notes ++ there_and_back));
                 try expect(same_place(returned.saved, start.saved), "prev didn't list the first");
             }
         }.run,

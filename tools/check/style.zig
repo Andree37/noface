@@ -13,7 +13,8 @@
 //!                       the kernel's ABI needs;
 //!   `// Assertions: …`  just above a function that can't honestly make two assertions;
 //!   `// Not a size: …`  on a line of the screens' code (or just above it) whose number
-//!                       isn't a length: a step of a setting, a row's place in a list.
+//!                       isn't a length on the screen: a step of a setting, a row's
+//!                       place in a list, a test page's own size.
 //!
 //! A marker with nothing to excuse is a break too, so none outlives its reason.
 const std = @import("std");
@@ -72,12 +73,13 @@ pub const Rule = enum {
     import_inline,
     /// A file's import that nothing in it uses.
     import_unused,
-    /// A bare number of 3 or more for a size in the screens' code (src/ui/, src/screens/):
+    /// A bare number of 3 or more for a size in the screens' code (see `is_layout`):
     /// in a declaration named like one (a width, a gap, an inset…), or given to a drawing
     /// call. Sizes come from style.zig's scale, in points, so they're the same on every
     /// Kindle; there, and in the icons' own grid, numbers are the point. A divisor
-    /// (sharing room), a number in an assertion, and one marked `// Not a size: …` are
-    /// left alone.
+    /// (sharing room), an array's length, a number in an assertion, a number times a
+    /// dotted name (a count of a size named elsewhere), and one marked `// Not a size:
+    /// …` are left alone.
     layout_number,
 };
 
@@ -1121,7 +1123,7 @@ fn find_breaks(io: std.Io, root: std.Io.Dir, gpa: std.mem.Allocator) ![]const Fo
 
 /// How many times `source` breaks `rule`.
 fn count_in(source: []const u8, rule: Rule) !u32 {
-    const breaks = try check_zig("src/a.zig", source, std.testing.allocator);
+    const breaks = try check_zig("src/sys/a.zig", source, std.testing.allocator);
     defer std.testing.allocator.free(breaks);
     var count: u32 = 0;
     for (breaks) |b| {
@@ -1215,7 +1217,7 @@ test "assertions average per file; a signature may run over lines; nesting" {
     // Short once one goes: the function below two is listed, at the line it starts
     const short = comptime even[0..std.mem.indexOf(u8, even, "    assert(a != 4);").?] ++
         even[std.mem.indexOf(u8, even, "    assert(a != 4);").? + "    assert(a != 4);\n".len ..];
-    const breaks = try check_zig("src/a.zig", short, std.testing.allocator);
+    const breaks = try check_zig("src/sys/a.zig", short, std.testing.allocator);
     defer std.testing.allocator.free(breaks);
     try std.testing.expect(breaks.len == 1);
     try std.testing.expectEqual(Break{ .rule = .assertion_density, .line = 12 }, breaks[0]);
@@ -1608,4 +1610,16 @@ test "a size in the screens' code comes from the scale, and a marked number may 
     const in_style = try check_zig("src/ui/style.zig", source, std.testing.allocator);
     defer std.testing.allocator.free(in_style);
     for (in_style) |b| try std.testing.expect(b.rule != .layout_number);
+}
+
+test "the size rule covers the code that lays out the screen, and only that" {
+    for ([_][]const u8{
+        "src/ui/menu.zig",   "src/screens/reader.zig", "src/layout/text.zig",
+        "src/gfx/image.zig", "src/app.zig",            "src/display.zig",
+    }) |path| try std.testing.expect(is_layout(path));
+    for ([_][]const u8{
+        "src/ui/style.zig",     "src/ui/icons.zig", "src/gfx/jpeg.zig",
+        "src/gfx/truetype.zig", "src/sys/os.zig",   "src/kindle/touch.zig",
+        "src/model/book.zig",   "tools/e2e.zig",    "build.zig",
+    }) |path| try std.testing.expect(!is_layout(path));
 }

@@ -214,6 +214,7 @@ fn main_reader_configure(
     const documents = init.environ.getPosix(paths.test_documents_env);
     shared.documents = documents orelse paths.documents;
     shared.logs_placed = test_run(init);
+    shared.input.says_idle = test_run(init);
     shared.dictionary_base = init.environ.getPosix("NOFACE_DICT_URL") orelse
         dict_download.default_base;
     shared.utc_offset = clock.utc_offset();

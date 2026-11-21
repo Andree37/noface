@@ -101,9 +101,12 @@ folder whose `documents/` already hold its books, such as one `all` made
 (`/mnt/us/noface-e2e/books`).
 
 For each script the tool wakes the Kindle and holds it awake, makes the folder's
-`data` fresh, starts noface on its books, waits for the library to be shown, plays the
-script, and stops noface, also when a step fails; one script failing doesn't stop the
-rest. Each step prints `ok` or `FAIL`; `drawn` steps print what they
+`data` fresh, starts noface on its books, waits for it to say it's idle on its
+library, plays the script, and stops noface, also when a step fails; one script
+failing doesn't stop the rest. In a test run noface logs `idle: lifted at <time>` each
+time it goes back to waiting with everything it read handled
+(`src/kindle/input/idle.zig`); `still` and `shot` wait for that line, from after the
+last touch's lift, so the next touch is never made before its screen is shown. Each step prints `ok` or `FAIL`; `drawn` steps print what they
 measured, and `shot` steps leave PGM screenshots in `out`.
 
 ## Which Kindles

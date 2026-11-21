@@ -108,6 +108,9 @@ fn event_us(event: InputEvent) u64 {
 /// A finger lifting, at `up_us` by the panel's clock.
 pub fn finger_up(in: *Input, up_us: u64) ?Action {
     assert(in.slot < slots_count);
+    // Any finger's, followed or not, taken or ignored: a test waits on its lift
+    in.lifted_us = up_us;
+    in.busy = true;
     if (in.drag_slot == in.slot) {
         in.drag_slot = null;
         return .drag_end;

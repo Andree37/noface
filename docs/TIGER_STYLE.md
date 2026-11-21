@@ -30,7 +30,7 @@ excuse is itself a break, so none outlives its reason. A reviewer finds them all
 | `// Ignored: <why>` | on the line | an error whose only effect is something missing, nothing worse |
 | `// usize: <why>` | on the line, or just above it | a `usize` the language, C or the kernel's ABI requires: a syscall's signature, C's `size_t`, the panic handler's or `std.mem.Allocator`'s interface |
 | `// Assertions: <why>` | just above the function (with its doc comment) | a function that can't honestly make two assertions, when its file's average needs it: it only reads outside data, or is a one-line call to C or lipc, or reads or sets fields every value of which is valid |
-| `// Not a size: <why>` | on the line, or just above it | a number in the screens' code that the size check takes for a length but isn't one |
+| `// Not a size: <why>` | on the line, or just above it | a number in the screens' code that the size check takes for a length on the screen but isn't one: a step of a setting, a row's place, a test page's own size |
 
 An `// Assertions:` function is left out of its file's average, its assertions with
 it. Never pad a function with assertions that check nothing to avoid one; never assert
@@ -216,11 +216,13 @@ doesn't look at, so the rules for the code it tests (assertions, ignored errors,
   height). So a layout is the same physical size on any Kindle and fills a bigger
   screen with more, not with bigger gaps. The check flags a number of 3 or more in a
   declaration named like a size or given to a drawing call; a divisor, an array's
-  length, a number in an assertion and a count of a named size from another file
-  (`3 * style.fingertip`) are left alone. The icons draw in their own grid, and the
-  file formats' decoders (JPEG, PNG, TrueType, CFF) keep the formats' own numbers.
-  `src/layout/` may not import the scale, so the page's sizes reach it in its
-  `Layout`, set from the scale by whoever lays out.
+  length, a number in an assertion and a number times a dotted name, taken for a
+  count of a size named elsewhere (`3 * style.fingertip`, `2 * line.height`), are left
+  alone. The icons draw in their own grid, and the file formats' decoders (JPEG, PNG,
+  TrueType, CFF) keep the formats' own numbers. `src/layout/` may not import the
+  scale, so the page's sizes reach it in its `Layout`, set from the scale by whoever
+  lays out. The touch zones (`src/kindle/touch.zig`), below the interface, are written
+  in points too, turned into pixels by the same density (`model/device.zig`).
 
 ## Dependencies and tooling
 

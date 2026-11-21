@@ -15,6 +15,7 @@ const now_us = os.now_us;
 const evdev = @import("input/evdev.zig");
 const gestures = @import("input/gestures.zig");
 const watchers = @import("input/watchers.zig");
+const idle = @import("input/idle.zig");
 const process = @import("../sys/process.zig");
 pub const eviocgrab = evdev.eviocgrab;
 pub const should_tell_powerd = watchers.should_tell_powerd;
@@ -228,6 +229,14 @@ pub const Input = struct {
     watcher_retry_us: u64 = 0, // When to restart a power-event watcher that died
     told_powerd_us: u64 = 0, // When powerd last heard the reader is active
     script: ?*Script = null, // Set in scenario tests: actions to play instead of the panel
+    /// Set in a test run on the Kindle: noface says in its log each time it goes back
+    /// to waiting with all it read handled (input/idle.zig), for the device tests.
+    says_idle: bool = false,
+    /// An action was handed out, or a finger lifted, since noface last said it was
+    /// idle: at first, the screen noface starts on, drawn before the first wait.
+    busy: bool = true,
+    /// When the last finger read lifted, by the panel's clock: 0 before any has.
+    lifted_us: u64 = 0,
     /// Set when powerd said a charger came or went: whoever shows the status bar reads it
     /// again and clears this.
     /// A control inside the grip zones (the reader's Back button): touches there count.
@@ -412,14 +421,36 @@ pub const Input = struct {
     /// until something happens or the next tick is due, and returns null when that was
     /// nothing to act on: one turn of noface's event loop (screens/screen.zig).
     pub fn poll(in: *Input) ?Action {
+        const action = in.next_action() orelse return null;
+        switch (action) {
+            // Asked for by noface, or the status bar's: not what a test waits on
+            .tick, .charger => {},
+            .tap, .hold, .pull, .drag, .swipe, .drag_end => in.busy = true,
+            .lock, .unlock, .power, .computer, .stop => in.busy = true,
+        }
+        return action;
+    }
+
+    /// The next action, as `poll` says. Before it waits, every action handed out
+    /// before has been handled: the event loop asks for the next only then.
+    fn next_action(in: *Input) ?Action {
         in.invariants();
         if (in.ready()) |action| return action;
+        in.say_idle();
         in.keep_alive();
         in.wait_for_events();
         if (in.from_power_key()) |action| return action;
         if (in.restart_watcher_if_dead()) |action| return action;
         if (in.from_usb_watcher()) |action| return action;
         return in.from_power_watcher();
+    }
+
+    /// In a test run, says once noface is waiting with everything it read handled.
+    fn say_idle(in: *Input) void {
+        if (!in.says_idle) return;
+        if (!in.busy) return; // Said already, and nothing read or handed out since
+        in.busy = false;
+        idle.say(in.lifted_us);
     }
 
     /// An action already known, without waiting: a request to stop, one kept back for

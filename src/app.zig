@@ -211,7 +211,7 @@ pub const App = struct {
             const pixels = made orelse {
                 // Not kept, so a picture that fails for want of memory is tried again
                 std.debug.print("picture not drawn: {d}x{d}\n", .{ image.width, image.height });
-                cover.placeholder(page_buf, x, y, w, h);
+                cover.placeholder(page_buf, x, y, w, h, style.button_corner);
                 return;
             };
             assert(pixels.len == @as(u64, w) * h); // Prepared at the size asked for

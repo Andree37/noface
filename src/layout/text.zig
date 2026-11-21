@@ -8,7 +8,30 @@ const Paragraph = @import("../model/book.zig").Paragraph;
 const hyphen = @import("hyphen.zig");
 
 /// Where a note reference landed on a page.
-pub const Hit = struct { x: i32, y: i32, w: i32, h: i32, target: u32 };
+pub const Hit = struct {
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    target: u32,
+
+    /// How far a point is from the hit, in pixels, across or up and down, whichever is
+    /// farther: 0 on it.
+    fn away(hit: Hit, x: i32, y: i32) i32 {
+        assert(hit.w > 0);
+        assert(hit.h > 0);
+        return @max(outside(x, hit.x, hit.w), outside(y, hit.y, hit.h));
+    }
+
+    /// How far `at` is outside the `length` pixels from `start`: 0 inside them.
+    fn outside(at: i32, start: i32, length: i32) i32 {
+        assert(length > 0);
+        const last = start + length - 1;
+        if (at < start) return start - at;
+        if (at > last) return at - last;
+        return 0;
+    }
+};
 
 /// A highlight is a black line under its words, not a gray band: on this panel every
 /// refresh that turns grays blinks a gray black as it comes or goes, where black and
@@ -82,18 +105,38 @@ pub const Hits = struct {
         h.len += 1;
     }
 
-    /// Finds the reference at a tap within `reach` pixels round it, with room for how
-    /// small they are.
+    /// Finds the reference at a tap, or the nearest within `reach` pixels round it,
+    /// with room for how small they are: two marks close together, on one line or one
+    /// above the other, each opens its own.
     pub fn find(h: *const Hits, x: i32, y: i32, reach: i32) ?u32 {
         assert(h.len <= h.items.len);
         assert(reach >= 0);
+        var nearest: ?u32 = null;
+        var nearest_away: i32 = reach;
         for (h.items[0..h.len]) |r| {
-            const across = x >= r.x - reach and x < r.x + r.w + reach;
-            if (across and y >= r.y - reach and y < r.y + r.h + reach) return r.target;
+            const away = r.away(x, y);
+            if (away <= nearest_away) {
+                // The first of two as near wins: no later one replaces it
+                if (nearest == null or away < nearest_away) nearest = r.target;
+                nearest_away = away;
+            }
         }
-        return null;
+        return nearest;
     }
 };
+
+test "a tap between two references opens the one it's nearer, or the one it's on" {
+    var hits = Hits{};
+    const reach = 10;
+    // One line's mark, and the next line's just below it
+    hits.add(.{ .x = 100, .y = 200, .w = 20, .h = 40, .target = 1 });
+    hits.add(.{ .x = 100, .y = 245, .w = 20, .h = 40, .target = 2 });
+    try std.testing.expectEqual(@as(u32, 1), hits.find(110, 239, reach).?); // On the first
+    try std.testing.expectEqual(@as(u32, 2), hits.find(110, 245, reach).?); // On the second
+    try std.testing.expectEqual(@as(u32, 1), hits.find(110, 241, reach).?); // Nearer it
+    try std.testing.expectEqual(@as(u32, 2), hits.find(110, 244, reach).?);
+    try std.testing.expectEqual(@as(u32, 2), hits.find(110, 240 + 4 + reach, reach).?);
+}
 
 test "tap near a reference finds it" {
     var hits = Hits{};
@@ -153,13 +196,19 @@ fn at_stop(l: *const Layout, para: u32, byte: u32) bool {
 
 const Link = book_model.Link;
 
-/// The link in `links` that refers to a note and overlaps `len` bytes from `start`.
-fn find_reference(links: []const Link, paras: []const Paragraph, start: u32, len: u32) ?Link {
+/// Whether `link` refers to a note and overlaps `len` bytes from `start`.
+fn is_reference(link: Link, paras: []const Paragraph, start: u32, len: u32) bool {
+    if (link.start >= link.end) return false; // A book's empty link: nothing to tap
+    if (link.end <= start or link.start >= start + len) return false;
+    return link.target < paras.len and paras[link.target].note_start;
+}
+
+/// Whether any link in `links` refers to a note and overlaps `len` bytes from `start`.
+fn has_reference(links: []const Link, paras: []const Paragraph, start: u32, len: u32) bool {
     for (links) |link| {
-        if (link.end <= start or link.start >= start + len) continue;
-        if (link.target < paras.len and paras[link.target].note_start) return link;
+        if (is_reference(link, paras, start, len)) return true;
     }
-    return null;
+    return false;
 }
 
 fn face(l: *const Layout, base: *Font, bold: bool, italic: bool, size: u8) !*Font {
@@ -684,7 +733,6 @@ fn draw_line(
             const joined = k + 1 < line.n and
                 word_marked(l.marks, para.text, para_index, line.words[k + 1]);
             const mark_width: u32 = @intFromFloat(if (joined) w + place.gap else w);
-            // Fonts are set at 26 px and up, lines taller than the mark's place
             // The line sits within its line's height, above the next line's words
             const u = l.underline;
             assert(u.above_foot_px > u.thick_px);
@@ -703,8 +751,9 @@ fn draw_line(
             .end = word_end,
         });
         var shrink: f32 = 0; // A small mark takes less room than was measured
-        if (find_reference(para.links, paras, word_start, @intCast(word.len))) |r| {
-            shrink = try draw_with_mark(p, l, wf, word, word_start, r, x, place);
+        if (has_reference(para.links, paras, word_start, @intCast(word.len))) {
+            const in_word: InWord = .{ .text = word, .start = word_start };
+            shrink = try draw_with_marks(p, l, wf, in_word, para.links, paras, x, place);
         } else {
             try draw_word(p, wf, line.starts[k], x, place.baseline, word);
         }
@@ -735,39 +784,57 @@ fn word_marked(
     return is_marked(marks, para_index, start, start + @as(u32, @intCast(word.len)));
 }
 
-/// A word holding a note's reference: the mark raised and small, like a printed one,
-/// and tappable. Returns how much narrower the mark is than measured.
-fn draw_with_mark(
+/// A word, and where it starts in its paragraph's text.
+const InWord = struct { text: []const u8, start: u32 };
+
+/// A word holding notes' references: each mark raised and small, like a printed one,
+/// and tappable, the word's other bytes drawn as body text round them. Returns how
+/// much narrower the marks are than measured.
+fn draw_with_marks(
     p: Page,
     l: *const Layout,
     wf: *Font,
-    word: []const u8,
-    word_start: u32,
-    r: Link,
+    word: InWord,
+    links: []const Link,
+    paras: []const Paragraph,
     x: f32,
     place: *const LinePlace,
 ) !f32 {
+    assert(word.text.len > 0);
     const small = l.reference orelse wf;
     const pf = place.pf;
     const baseline = place.baseline;
-    // The mark's bytes in the word: `find_reference` found it overlapping
-    const a = @max(r.start, word_start) - word_start;
-    const b = @min(r.end, word_start + word.len) - word_start;
-    assert(a <= word.len);
-    assert(b <= word.len);
-    try wf.draw(p, x, baseline, word[0..a]);
-    const mark_x = x + try wf.measure(word[0..a]);
-    try small.draw(p, mark_x, baseline - @divTrunc(pf.line_height, 3), word[a..b]);
-    const mark_w = try small.measure(word[a..b]);
-    try wf.draw(p, mark_x + mark_w, baseline, word[b..]);
-    if (place.hits) |h| h.add(.{
-        .x = @intFromFloat(mark_x),
-        .y = baseline - pf.ascent,
-        .w = @intFromFloat(@max(mark_w, 1)),
-        .h = pf.line_height,
-        .target = r.target,
-    });
-    return try wf.measure(word[a..b]) - mark_w;
+    const len: u32 = @intCast(word.text.len);
+    var drawn: u32 = 0; // The word's bytes drawn so far
+    var pen = x;
+    var shrink: f32 = 0;
+    for (links) |r| {
+        if (!is_reference(r, paras, word.start, len)) continue;
+        // The mark's bytes in the word: it overlaps it
+        const a = @max(r.start, word.start) - word.start;
+        const b = @min(r.end, word.start + len) - word.start;
+        assert(a < b);
+        assert(b <= len);
+        // A book's links out of order, or overlapping: what's drawn already stays
+        if (a < drawn) continue;
+        try wf.draw(p, pen, baseline, word.text[drawn..a]);
+        const mark_x = pen + try wf.measure(word.text[drawn..a]);
+        try small.draw(p, mark_x, baseline - @divTrunc(pf.line_height, 3), word.text[a..b]);
+        const mark_w = try small.measure(word.text[a..b]);
+        if (place.hits) |h| h.add(.{
+            .x = @intFromFloat(mark_x),
+            .y = baseline - pf.ascent,
+            .w = @intFromFloat(@max(mark_w, 1)),
+            .h = pf.line_height,
+            .target = r.target,
+        });
+        shrink += try wf.measure(word.text[a..b]) - mark_w;
+        pen = mark_x + mark_w;
+        drawn = b;
+    }
+    assert(drawn > 0); // A word holding a reference drew its mark
+    try wf.draw(p, pen, baseline, word.text[drawn..]);
+    return shrink;
 }
 
 fn draw_picture(
@@ -995,6 +1062,44 @@ test "a highlight's line spans the gap between its words, and none after its las
         const x: u32 = @intCast(first.x + first.w + 2);
         try std.testing.expectEqual(in_gap, out.pixels[y * TestPage.test_width + x]);
     }
+}
+
+test "every note's mark in a word is drawn small and opens its own note" {
+    var font = try Font.init(@embedFile("../testdata/fonts/Go-Regular.ttf"), 30, 1.2);
+    // "word12": two references in one word, as a book may run them together
+    const links = [_]Link{
+        .{ .start = 12, .end = 13, .target = 1 },
+        .{ .start = 13, .end = 14, .target = 2 },
+    };
+    const paras = [_]Paragraph{
+        .{ .text = "A noted word12 here.", .links = &links },
+        .{ .text = "The first note.", .note_start = true },
+        .{ .text = "The second note.", .note_start = true },
+    };
+    const out = try std.testing.allocator.create(TestPage);
+    defer std.testing.allocator.destroy(out);
+    out.* = .{};
+    const l = Layout{
+        .margin_x = 40,
+        .margin_top = 30,
+        .margin_bottom = 30,
+        .indent = 0,
+        .underline = test_underline,
+    };
+    try out.draw(&font, &paras, .{}, l);
+    try std.testing.expectEqual(@as(u32, 2), out.hits.len);
+    const first = out.hits.items[0];
+    const second = out.hits.items[1];
+    try std.testing.expectEqual(@as(u32, 1), first.target);
+    try std.testing.expectEqual(@as(u32, 2), second.target);
+    try std.testing.expect(second.x >= first.x + first.w); // Side by side, in order
+    // Each opens its own note, tapped on its middle
+    const y = first.y + @divTrunc(first.h, 2);
+    const no_reach = 0;
+    const first_x = first.x + @divTrunc(first.w, 2);
+    const second_x = second.x + @divTrunc(second.w, 2);
+    try std.testing.expectEqual(@as(u32, 1), out.hits.find(first_x, y, no_reach).?);
+    try std.testing.expectEqual(@as(u32, 2), out.hits.find(second_x, y, no_reach).?);
 }
 
 test "a word broken across lines is as bold as it is whole" {

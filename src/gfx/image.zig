@@ -249,21 +249,19 @@ fn inflated(alloc: std.mem.Allocator, bytes: []const u8, size: u32) ?[]u8 {
 
 /// The gray of a picture's place when it can't be drawn: one of the panel's own, light.
 const placeholder_gray = 14 * panel_gray_step;
-/// Its corners' radius, at most: the interface's rounded shapes.
-const placeholder_corner_max = 24;
-
 comptime {
     assert(placeholder_gray < 255);
     assert(placeholder_gray % panel_gray_step == 0);
 }
 
 /// What stands where a picture can't be drawn: a light rounded box filling the
-/// picture's own box, so the page around it is laid out as with the picture.
-pub fn placeholder(page: Page, x: u32, y: u32, w: u32, h: u32) void {
+/// picture's own box, so the page around it is laid out as with the picture, its
+/// corners rounded as the interface's shapes are, by up to `corner_max` pixels.
+pub fn placeholder(page: Page, x: u32, y: u32, w: u32, h: u32, corner_max: u32) void {
     assert(page.holds_rows());
     assert(w > 0);
     if (h == 0 or x + w > page.width or y + h > page.height) return;
-    const corner: f32 = @floatFromInt(@min(placeholder_corner_max, @min(w, h) / 2));
+    const corner: f32 = @floatFromInt(@min(corner_max, @min(w, h) / 2));
     page.round_rect(x, y, w, h, corner, placeholder_gray);
 }
 

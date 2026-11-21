@@ -63,6 +63,7 @@ test {
     _ = @import("kindle/paths.zig");
     _ = @import("setup.zig");
     _ = @import("kindle/input/gestures.zig");
+    _ = @import("kindle/input/idle.zig");
     _ = @import("kindle/input/watchers.zig");
     _ = @import("screens/books.zig");
     _ = @import("screens/book_actions.zig");

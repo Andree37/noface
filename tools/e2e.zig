@@ -34,8 +34,10 @@
 //!   drawn <ms>                      The screen changed within <ms> of the last touch's lift:
 //!                                   a speed check. Times the framebuffer, not the panel's
 //!                                   own refresh after it.
-//!   still                           Waits for the screen to settle: noface drops a touch
-//!                                   that lands before its screen is shown.
+//!   still                           Waits for noface to have done all the last touch
+//!                                   asked, as its log says (kindle/input/idle.zig), and
+//!                                   the screen to settle: noface drops a touch that lands
+//!                                   before its screen is shown.
 //!   shot <name>                     The screen once still, saved as <out dir>/<name>.pgm.
 //!   wait <ms>                       A pause.
 //! Each step prints a line; the first that fails stops the run, which exits 1.
@@ -226,13 +228,24 @@ const Run = struct {
     /// The screen just before the last touch, and when that touch lifted.
     before: u64 = 0,
     lifted_us: u64 = 0,
+    /// Just before the last touch's finger was lifted, by the clock the panel stamps
+    /// its events with: null for the power button, which lifts none.
+    lifting_us: ?u64 = null,
 
     /// Notes the log's length and the screen, just before a touch.
     fn mark(run: *Run) void {
         assert(run.screen.fd >= 0);
         run.log_mark = core.file.size_of(run.log_path);
         run.before = run.screen.sample();
+        run.lifting_us = null;
         assert(run.lifted_us <= now_us());
+    }
+
+    /// Lifts the finger, noting when first: the panel stamps the lift no earlier.
+    fn lift(run: *Run) void {
+        assert(run.panel.finger_down);
+        run.lifting_us = now_us();
+        run.panel.up();
     }
 
     fn lifted(run: *Run) void {
@@ -456,26 +469,12 @@ fn play(script: []const u8, folder: Folder) bool {
     var lines = std.mem.splitScalar(u8, script, '\n');
     var line_number: u32 = 0;
     var passed: u32 = 0;
-    // The last touch, and the steps since it, played again once if noface dropped the
-    // touch as made too early
-    var replay: Replay = .{};
     while (lines.next()) |line_raw| {
         line_number += 1;
         const code = line_raw[0 .. std.mem.indexOfScalar(u8, line_raw, '#') orelse line_raw.len];
         const line = std.mem.trim(u8, code, " \t\r");
         if (line.len == 0) continue;
-        if (is_touch(line)) replay = .{ .touch = line };
-        // A tap touched before the screen in front was shown, its panel refresh done, is
-        // dropped, which a script can't see: noface says so, and the touch and the steps
-        // since are played again, once, whether or not this step passed without it (a
-        // refresh still going on can pass for a change). Any other failure fails
-        const result = step(&run, line);
-        const took_ms = if (replay.due(&run)) replayed: {
-            break :replayed replay.play(&run, line) catch |err| {
-                return step_failed(line_number, line, err);
-            };
-        } else result catch |err| return step_failed(line_number, line, err);
-        if (!is_touch(line)) replay.add(line);
+        const took_ms = step(&run, line) catch |err| return step_failed(line_number, line, err);
         passed += 1;
         if (took_ms) |ms| {
             std.debug.print("ok   {d}: {s} ({d} ms)\n", .{ line_number, line, ms });
@@ -493,68 +492,6 @@ fn step_failed(line_number: u32, line: []const u8, err: Failure) bool {
     assert(line_number > 0);
     assert(line.len > 0);
     std.debug.print("FAIL {d}: {s}: {s}\n", .{ line_number, line, @errorName(err) });
-    return false;
-}
-
-/// The last touch and the steps since it, to play again once if noface dropped the
-/// touch as made before its screen was shown.
-const Replay = struct {
-    touch: ?[]const u8 = null,
-    since: [since_max][]const u8 = undefined,
-    since_count: u32 = 0,
-    played: bool = false,
-
-    /// The most steps between two touches that a replay plays again.
-    const since_max = 16;
-
-    fn add(r: *Replay, line: []const u8) void {
-        assert(!is_touch(line));
-        if (r.touch == null) return; // Before any touch: nothing to play again
-        assert(r.since_count < since_max); // A script waits a few steps between touches
-        r.since[r.since_count] = line;
-        r.since_count += 1;
-    }
-
-    /// Whether the touch was dropped as made too early, and not yet played again.
-    fn due(r: *const Replay, run: *const Run) bool {
-        if (r.touch == null or r.played) return false;
-        return try_log_has(run, dropped_early);
-    }
-
-    /// Makes the touch again, then the steps since it, then `line`, the one that found
-    /// it dropped.
-    fn play(r: *Replay, run: *Run, line: []const u8) Failure!?u32 {
-        const touch_line = r.touch.?;
-        assert(is_touch(touch_line));
-        assert(!r.played);
-        r.played = true;
-        std.debug.print("     {s}: dropped as made before its screen was shown, made again\n", .{
-            touch_line,
-        });
-        _ = try step(run, touch_line);
-        for (r.since[0..r.since_count]) |since| _ = try step(run, since);
-        return step(run, line);
-    }
-};
-
-/// What noface logs as it drops a tap made before the screen in front was shown
-/// (screens/screen.zig `route`).
-const dropped_early = "dropped: touched";
-
-/// Whether the log since the last touch says `wanted`, a log that can't be read
-/// counting as not.
-fn try_log_has(run: *const Run, wanted: []const u8) bool {
-    assert(wanted.len > 0);
-    return log_has(run.log_path, run.log_mark, wanted) catch false;
-}
-
-/// Whether a script's line is a touch, which a later step's failure may make again.
-fn is_touch(line: []const u8) bool {
-    assert(line.len > 0);
-    const verbs = [_][]const u8{ "tap ", "hold ", "drag " };
-    for (verbs) |verb| {
-        if (std.mem.startsWith(u8, line, verb)) return true;
-    }
     return false;
 }
 
@@ -590,10 +527,9 @@ const Folder = struct {
     }
 };
 
-/// Longest wait for noface to start on the test folder and show its library: logged
-/// once the panel's refresh of it is done, as noface takes touches only from then.
+/// Longest wait for noface to start on the test folder and show its library: it says
+/// it's idle once the panel's refresh of it is done, as it takes touches only from then.
 const start_ms_max = 40_000;
-const library_shown = "shown: Browser";
 /// Longest wait for noface and its launcher to stop.
 const stop_ms_max = 20_000;
 /// A Kindle woken from its screensaver takes this long to show what's under it.
@@ -625,7 +561,7 @@ fn start_noface(folder: Folder) !void {
     errdefer stop_noface();
     const deadline = now_us() + start_ms_max * 1000;
     // Bounded by the deadline
-    while (!(log_has(folder.log, 0, library_shown) catch false)) {
+    while (!(idle_since(folder.log, 0, 0) catch false)) {
         if (now_us() >= deadline) return error.CantStart;
         sleep_ms(check_ms);
     }
@@ -726,7 +662,7 @@ fn step(run: *Run, line: []const u8) Failure!?u32 {
         if (wanted.len == 0) return error.Usage;
         try wait_for_log(run, wanted);
     } else if (std.mem.eql(u8, verb, "still")) {
-        if (!run.screen.settle()) return error.Timeout;
+        try settled(run);
     } else if (std.mem.eql(u8, verb, "shot")) {
         try shot(run, words.next() orelse return error.Usage);
     } else if (std.mem.eql(u8, verb, "wait")) {
@@ -801,13 +737,13 @@ fn touch(run: *Run, t: Touch) Failure!void {
             const at = try to.resolve(run);
             run.panel.down(at.x, at.y);
             sleep_ms(touchsim.tap_ms);
-            run.panel.up();
+            run.lift();
         },
         .hold => |h| {
             const at = try h.at.resolve(run);
             run.panel.down(at.x, at.y);
             sleep_ms(h.ms);
-            run.panel.up();
+            run.lift();
         },
         .drag => |d| drag(run, try d.from.resolve(run), try d.to.resolve(run), d.ms, d.hold_ms),
     }
@@ -832,7 +768,7 @@ fn drag(run: *Run, from: Point, to: Point, total_ms: u32, hold_ms: u32) void {
     // The last step lands where the drag ends
     assert(x == to.x);
     assert(y == to.y);
-    run.panel.up();
+    run.lift();
 }
 
 /// Waits for the screen to change from how it was before the last touch, and returns
@@ -851,11 +787,25 @@ fn drawn(run: *const Run, budget_ms: u32) Failure!u32 {
     return @intCast(took_us / 1000);
 }
 
+/// Waits for noface to have done all the last touch asked, and for the screen to settle
+/// then: a touch made only once both have is never dropped as made too early.
+fn settled(run: *const Run) Failure!void {
+    const deadline = now_us() + wait_ms_max * 1000;
+    // Its lift read, or for the power button anything since it was pressed
+    const lifted_us_min = run.lifting_us orelse 0;
+    // Bounded by the deadline
+    while (!try idle_since(run.log_path, run.log_mark, lifted_us_min)) {
+        if (now_us() >= deadline) return error.Timeout;
+        sleep_ms(poll_ms * 10);
+    }
+    if (!run.screen.settle()) return error.Timeout;
+}
+
 /// Waits for the screen to settle and saves it as `<out dir>/<name>.pgm`.
 fn shot(run: *const Run, name: []const u8) Failure!void {
     assert(name.len > 0);
     assert(run.out_dir.len > 0);
-    if (!run.screen.settle()) return error.Timeout;
+    try settled(run);
     var path: [512]u8 = undefined;
     const full = std.fmt.bufPrintSentinel(&path, "{s}/{s}.pgm", .{ run.out_dir, name }, 0) catch
         return error.Usage;
@@ -879,9 +829,20 @@ var log_buffer: [log_read_max]u8 = undefined;
 /// Whether the log, from byte `from` on, has `wanted` in it.
 fn log_has(path: [*:0]const u8, from: u64, wanted: []const u8) Failure!bool {
     assert(wanted.len > 0);
-    // A log started again since (shorter than the mark) is read from its start
+    return std.mem.indexOf(u8, try log_since(path, from), wanted) != null;
+}
+
+/// Whether the log, from byte `from` on, says noface went idle having read a lift at
+/// `lifted_us_min` or later.
+fn idle_since(path: [*:0]const u8, from: u64, lifted_us_min: u64) Failure!bool {
+    return core.idle.since(try log_since(path, from), lifted_us_min);
+}
+
+/// The log from byte `from` on; one started again since (shorter than `from`) from its
+/// start.
+fn log_since(path: [*:0]const u8, from: u64) Failure![]const u8 {
     const start = if (core.file.size_of(path) < from) 0 else from;
-    return std.mem.indexOf(u8, try read_log(path, start), wanted) != null;
+    return read_log(path, start);
 }
 
 /// The last `log_read_max` bytes of the log, or all of it when shorter: what was placed

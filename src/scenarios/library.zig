@@ -25,6 +25,17 @@ const width = taps.width;
 
 pub const all = [_]Scenario{
     .{
+        .name = "every key typed in the library's search shows, a space at the end too",
+        .run = struct {
+            fn run() !void {
+                const search_books = tap_on(library_ui.place(.search));
+                const word = try play_on(.{ .library = true }, &(.{search_books} ++ typed("o")));
+                const spaced = try play_on(.{ .library = true }, &(.{search_books} ++ typed("o ")));
+                try expect(word.screen_hash != spaced.screen_hash, "the space didn't show");
+            }
+        }.run,
+    },
+    .{
         .name = "the library's search finds a book by its title as it's typed, and opens it",
         .run = struct {
             fn run() !void {

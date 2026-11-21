@@ -31,13 +31,20 @@ pub const Query = struct {
         assert(q.len < q.buf.len);
     }
 
-    /// What's typed, without spaces at either end.
+    /// What's typed, without spaces at either end: what's searched for.
     pub fn words(q: *const Query) []const u8 {
-        const typed = std.mem.trim(u8, q.slice(), " ");
-        assert(typed.len <= q.len);
-        return typed;
+        const result = words_of(q.slice());
+        assert(result.len <= q.len);
+        return result;
     }
 };
+
+/// `typed` without spaces at either end: what's searched for when that's typed.
+pub fn words_of(typed: []const u8) []const u8 {
+    const result = std.mem.trim(u8, typed, " ");
+    assert(result.len <= typed.len);
+    return result;
+}
 
 const Folded = struct { cp: u32, len: u32 };
 

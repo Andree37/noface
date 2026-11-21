@@ -10,6 +10,7 @@ const style = @import("style.zig");
 const icons = @import("icons.zig");
 const keyboard = @import("keyboard.zig");
 const catalog = @import("../model/catalog.zig");
+const search = @import("../model/search.zig");
 const Fonts = @import("fonts.zig").Fonts;
 const Font = @import("../gfx/font.zig").Font;
 
@@ -176,12 +177,13 @@ fn draw_row(fonts: Fonts, page: Page, y: u32, e: *const catalog.Entry) !void {
     page.fill_rect(style.margin, y + row_height - 1, page.width - 2 * style.margin, 1, style.rule);
 }
 
-/// The sheet over the status strip's screen. `matches` are indexes into `entries`,
-/// at most `max_rows` of them; `more` says whether others matched too.
+/// The sheet over the status strip's screen, with `typed` in its field as typed, spaces
+/// and all, so every key shows. `matches` are indexes into `entries`, at most
+/// `max_rows` of them; `more` says whether others matched too.
 pub fn render(
     fonts: Fonts,
     page: Page,
-    query: []const u8,
+    typed: []const u8,
     entries: []const catalog.Entry,
     matches: []const u32,
     more: bool,
@@ -189,9 +191,9 @@ pub fn render(
     assert(matches.len <= max_rows);
     assert(page.height > rows_bottom);
     page.fill_rect(0, top, page.width, page.height - top, style.white);
-    try render_bar(fonts, page, top, query, "Title or author", .search);
+    try render_bar(fonts, page, top, typed, "Title or author", .search);
     const width = page.width - 2 * style.margin;
-    if (query.len == 0) {
+    if (search.words_of(typed).len == 0) {
         const hint = "Find a book by its title or its author.";
         const hint_y = note_baseline(fonts.small);
         try fonts.small.draw(page, style.margin, hint_y, hint);

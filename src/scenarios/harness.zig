@@ -67,6 +67,8 @@ pub const Outcome = struct {
     ms: u64, // How long the run took, by the wall clock
     // The screen at the end matched its reference image, if one was asked for
     looks_right: bool,
+    // The screen at the end, hashed: two runs that end on different screens differ here
+    screen_hash: u64,
     opened: [2]bool, // Whether the first two books were opened
     finished: [2]bool, // Whether they were marked finished
     highlights: u32, // Highlights and bookmarks saved for the book
@@ -776,6 +778,7 @@ pub fn play_on_outcome(
         .placed = try placed_logged(ran.dir),
         .ms = ran.ms,
         .looks_right = looks_right,
+        .screen_hash = std.hash.Wyhash.hash(0, ran.last_screen),
         .opened = opened,
         .finished = finished,
         .saved = state.load(state_path),

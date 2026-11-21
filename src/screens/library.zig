@@ -101,7 +101,8 @@ const LibrarySearch = struct {
         assert(ls.matches.len <= search_sheet.max_rows);
         const page = a.display.on_screen();
         const listed = rows[0..ls.matches.len];
-        try search_sheet.render(a.ui, page, words, ls.matches, listed, more);
+        // What's typed in the field, a space at its end too, so the key shows
+        try search_sheet.render(a.ui, page, ls.q.slice(), ls.matches, listed, more);
         // The keyboard never changes, so after the first time only the part above it does
         const bottom: u32 = if (part == .all) a.display.screen.height else keyboard.top;
         try a.display.show_band(search_sheet.top, bottom - search_sheet.top);

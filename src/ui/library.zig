@@ -141,10 +141,6 @@ const icon_inset = style.space.wide; // From a button's rounded end to its icon'
 /// The tabs row's labels, centred in its buttons: the line under the chosen one, down
 /// from the row's top; the others faded.
 const tab_underline = style.space.wider;
-/// The sort button's room: right of its label, its arrows' width and their gaps.
-const sort_label_pad = style.space.roomy;
-const sort_arrows_width = style.space.snug;
-const sort_arrows_gap = style.space.small;
 /// While searching, in the hero's place, down from its top: the query, the count, and
 /// the button that clears it, its label's room either side.
 const search_head = struct {
@@ -197,9 +193,9 @@ const search_cx = tabs[tabs.len - 1].right + search_gap + button_height / 2;
 const search_reach = style.space.wide;
 // The round stats button, beside search, their taps just short of meeting
 const stats_cx = search_cx + 2 * search_reach + style.space.hair;
-/// The sort button takes taps from a gap right of the stats button's.
-const sort_gap = style.space.wide;
-const sort_left = stats_cx + search_reach + sort_gap;
+/// The round sort button, at the right margin: its arrows alone, the order it gives
+/// named as it changes (screens/library.zig), so the row fits the narrowest Kindle.
+const sort_cx = screen_width - margin - button_height / 2;
 
 comptime {
     // The grid's columns between the margins, reaching both: no more than a pixel a gap
@@ -228,7 +224,9 @@ comptime {
     assert(2 * search_reach >= style.fingertip);
     assert(tabs[tabs.len - 1].right < search_cx - search_reach);
     assert(search_cx + search_reach < stats_cx - search_reach);
-    assert(stats_cx + search_reach < sort_left);
+    // The sort button's taps and circle clear the stats button's, on every screen
+    assert(stats_cx + search_reach < sort_cx - search_reach);
+    assert(sort_cx + button_height / 2 <= screen_width - margin);
     // The hero's dots are drawn where they take taps, a fingertip tall
     assert(style.screen_width - margin - hero_text.dots_inset >= hero_dots_left);
     assert(hero_top + hero_text.dots_drop < hero_dots_bottom);
@@ -361,7 +359,7 @@ pub fn hit(x: i32, y: i32, page: u32, books: u32, searching: bool) Hit {
 
 /// Which button in the tabs row a tap at `x` lands on.
 fn hit_tabs(x: i32) Hit {
-    if (x >= sort_left) return .sort;
+    if (@abs(x - sort_cx) <= search_reach) return .sort;
     if (@abs(x - search_cx) <= search_reach) return .search;
     if (@abs(x - stats_cx) <= search_reach) return .stats;
     for (tabs) |t| {
@@ -393,7 +391,7 @@ pub fn place(h: Hit) style.Point {
         } else unreachable, // Every filter has its tab
         .search => .{ .x = search_cx, .y = tabs_middle },
         .stats => .{ .x = stats_cx, .y = tabs_middle },
-        .sort => .{ .x = @divTrunc(sort_left + screen_width, 2), .y = tabs_middle },
+        .sort => .{ .x = sort_cx, .y = tabs_middle },
         .prev => footer.place(.prev),
         .next => footer.place(.next),
         .book => |index| book: {
@@ -748,7 +746,6 @@ fn draw_tabs(
     page: Page,
     top: i32,
     filter: catalog.Filter,
-    order: catalog.Order,
     searching: bool,
 ) !void {
     assert(top == hero_tabs_top or top == plain_tabs_top);
@@ -779,30 +776,8 @@ fn draw_tabs(
         assert(t.label_left + @as(i32, @intCast(width)) + tab_label_pad <= t.right);
         if (!active) fonts.small.fade(page, left, y, width, style.faded);
     }
-    try draw_tabs_sort(fonts, page, top, order);
-}
-
-/// The sort button at the right of the tabs row, saying the order in use.
-fn draw_tabs_sort(fonts: Fonts, page: Page, top: i32, order: catalog.Order) !void {
-    assert(top == hero_tabs_top or top == plain_tabs_top);
-    assert(order.label().len > 0);
-    const y = fonts.small.centred_baseline(top + button_top, button_height);
-    const cy: f32 = @floatFromInt(top + button_top + button_height / 2);
-    const right: f32 = @floatFromInt(page.width - margin);
-    // One width for every order, sized to the longest label, so the button stays put
-    // as it cycles; the label sits centred in the room right of the arrows.
-    var widest: f32 = 0;
-    for (std.enums.values(catalog.Order)) |o| {
-        widest = @max(widest, try fonts.small.measure(o.label()));
-    }
-    const arrows = sort_arrows_width + sort_arrows_gap;
-    const button_left = right - sort_label_pad - widest - arrows - icon_inset;
-    button_outline(page, button_left, right, top);
-    icons.sort_arrows(page, button_left + icon_inset, cy);
-    const label_left = button_left + icon_inset + arrows;
-    const label_w = try fonts.small.measure(order.label());
-    const label_x = label_left + (right - sort_label_pad - label_left - label_w) / 2;
-    try fonts.small.draw(page, label_x, y, order.label());
+    button_outline(page, sort_cx - r, sort_cx + r, top);
+    icons.sort_arrows(page, sort_cx, cy);
 }
 
 /// The books to draw: those on page `index` (`shown`) of the `count` let through, and
@@ -820,7 +795,6 @@ pub fn render(
     books: Books,
     index: u32,
     filter: catalog.Filter,
-    order: catalog.Order,
     query: []const u8,
     message: []const u8,
     quick: *const quick_model.Quick,
@@ -841,7 +815,7 @@ pub fn render(
             hero_drawn = true;
         }
     }
-    try draw_tabs(fonts, page, tabs_top(with_hero), filter, order, query.len > 0);
+    try draw_tabs(fonts, page, tabs_top(with_hero), filter, query.len > 0);
 
     const top: u32 = @intCast(grid_top(with_hero));
     for (books.shown, 0..) |*e, i| {
@@ -925,7 +899,7 @@ test "header and footer controls" {
     // Between stats and sort
     const gap_x = stats_cx + search_reach + 1;
     try std.testing.expectEqual(Hit.none, hit(gap_x, y, 0, test_books, false));
-    try std.testing.expectEqual(Hit.sort, hit(sort_left, y, 0, test_books, false));
+    try std.testing.expectEqual(Hit.sort, hit(sort_cx, y, 0, test_books, false));
     try std.testing.expectEqual(Hit.prev, hit(test_prev_x, test_pager_y, 0, test_books, false));
     try std.testing.expectEqual(Hit.next, hit(test_next_x, test_pager_y, 0, test_books, false));
 }
@@ -986,7 +960,7 @@ test "the tabs row takes taps just off its pills, and the filter's from its funn
     const x = test_tab_x(tabs[0]);
     try std.testing.expectEqual(all, hit(x, hero_bottom, 0, test_books, false));
     try std.testing.expectEqual(all, hit(x, hero_grid_top - 1, 0, test_books, false));
-    try std.testing.expectEqual(Hit.sort, hit(sort_left, hero_grid_top - 1, 0, test_books, false));
+    try std.testing.expectEqual(Hit.sort, hit(sort_cx, hero_grid_top - 1, 0, test_books, false));
     const first = cell_origin(0, true);
     const first_x: i32 = @intCast(first.x);
     const grid_hit = hit(first_x, hero_grid_top, 0, test_books, false);

@@ -398,7 +398,6 @@ const Browser = struct {
             books_shown,
             b.index,
             b.filter,
-            b.order,
             b.query.words(),
             b.notice,
             &a.quick,
@@ -504,6 +503,8 @@ const Browser = struct {
             .sort => {
                 b.order = b.order.next();
                 b.index = 0;
+                // The button shows arrows alone: the order is named as it changes
+                b.notice = sorted_notice(b.order);
                 return .page;
             },
             .stats => {
@@ -743,3 +744,12 @@ const Browser = struct {
         return .everything;
     }
 };
+
+/// What the library says, once, as the books are put in `order`.
+fn sorted_notice(order: catalog.Order) []const u8 {
+    const result = switch (order) {
+        inline else => |o| "Sorted: " ++ comptime o.label(),
+    };
+    assert(result.len > 0);
+    return result;
+}

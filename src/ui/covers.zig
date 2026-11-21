@@ -5,12 +5,15 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const style = @import("style.zig");
+const library = @import("library.zig");
 const image = @import("../gfx/image.zig");
 const memory = @import("../base/memory.zig");
 
-/// Covers of the grid kept at once: the page shown and those either side (twelve each
-/// at most) are ready together, and as many again stay for paging back and forth.
-pub const grid_slots: u32 = 64;
+/// Covers of the grid kept at once: the page shown and those either side are ready
+/// together, and a page's more stay for paging back and forth.
+pub const grid_slots: u32 = (pages_ready + 1) * library.page_books_max;
+/// The page shown and the one either side.
+const pages_ready = 3;
 /// Covers of the hero's size: the book to continue, and the few it was before.
 pub const hero_slots: u32 = 4;
 
@@ -20,10 +23,10 @@ const grid_cover_bytes: u32 = style.cover.width * style.cover.height;
 const hero_cover_bytes: u32 = style.cover.hero_width * style.cover.hero_height;
 
 comptime {
-    // The page shown and both sides fit, with room to spare
-    assert(grid_slots >= 3 * 12 + 12);
+    // The page shown and both sides fit, with room to spare; what the pool takes is
+    // counted in the library's region (setup.zig), which checks it all fits
+    assert(grid_slots > pages_ready * library.page_books_max);
     assert(hero_slots >= 1);
-    assert(bytes <= 8 << 20);
 }
 
 pub const Pool = struct {

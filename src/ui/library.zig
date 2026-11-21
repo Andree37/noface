@@ -343,8 +343,12 @@ pub fn hit(x: i32, y: i32, page: u32, books: u32, searching: bool) Hit {
     };
     if (y >= footer.top and y < footer.bottom) return .none;
     const top = grid_top(hero);
-    if (y < top or x < margin) return .none;
-    const column: u32 = @intCast(@divTrunc(x - margin, cell_step));
+    // Each cover takes taps to the middle of the gap either side of it, and no further
+    // than that past the first's left and the last's right
+    const half_gap = gutter / 2;
+    if (y < top or x < margin - half_gap) return .none;
+    if (x >= margin + columns * cell_step - half_gap) return .none;
+    const column: u32 = @intCast(@divTrunc(x - margin + half_gap, cell_step));
     const row: u32 = @intCast(@divTrunc(y - top, row_height));
     if (column >= columns or row >= grid_size(hero) / columns) return .none;
     const first = first_book(page);
@@ -1002,4 +1006,20 @@ test "a cover set in type has room for its title's lines above the author" {
     // A long title's four lines at least, on a grid cover and the hero's
     try std.testing.expect(type_title_lines(style.cover.height) >= 4);
     try std.testing.expect(type_title_lines(style.cover.hero_height) >= 4);
+}
+
+test "a tap between two covers goes to the nearer, and past the grid's sides to none" {
+    const first = cell_origin(0, true);
+    const left: i32 = @intCast(first.x);
+    const y: i32 = @intCast(first.y + style.cover.height / 2);
+    const right_edge = left + style.cover.width; // Just past the first cover
+    const half_gap = gutter / 2;
+    try std.testing.expectEqual(Hit{ .book = 0 }, hit(right_edge + half_gap - 1, y, 0, 9, false));
+    try std.testing.expectEqual(Hit{ .book = 1 }, hit(right_edge + half_gap, y, 0, 9, false));
+    try std.testing.expectEqual(Hit{ .book = 0 }, hit(left - half_gap, y, 0, 9, false));
+    try std.testing.expectEqual(Hit.none, hit(left - half_gap - 1, y, 0, 9, false));
+    const last_right = left + columns * cell_step - gutter; // The last column's right edge
+    const last: Hit = .{ .book = columns - 1 };
+    try std.testing.expectEqual(last, hit(last_right + half_gap - 1, y, 0, 9, false));
+    try std.testing.expectEqual(Hit.none, hit(last_right + half_gap, y, 0, 9, false));
 }

@@ -44,11 +44,13 @@ pub fn build(b: *std.Build) void {
     assert(target.result.cpu.arch == .arm);
     assert(target.result.ptrBitWidth() == 32);
 
-    layout_model = b.option(
-        []const u8,
+    // A name of no Kindle is refused here, the names it could be listed
+    const chosen = b.option(
+        Layout,
         "layout",
-        "The Kindle to lay the interface out for, and run on (device.Model): paperwhite_12",
+        "The Kindle to lay the interface out for, and run on (device.Model)",
     ) orelse default_layout;
+    layout_model = @tagName(chosen);
     const app = build_app(b, target);
     const check = build_checks(b);
     const tools = build_tools(b, target);
@@ -63,12 +65,14 @@ pub fn build(b: *std.Build) void {
 
 /// The Kindle the interface is laid out for (src/model/device.zig `target`), set once
 /// from `-Dlayout` as the build starts: the Paperwhite noface runs on, unless asked.
-const default_layout = "paperwhite_12";
-var layout_model: []const u8 = default_layout;
+const default_layout: Layout = .paperwhite_12;
+var layout_model: []const u8 = @tagName(default_layout);
 
-/// Every Kindle noface knows (src/model/device.zig `Model`, which refuses a name it
-/// hasn't got): `zig build layouts` lays the interface out for each but the one built.
-const all_layouts = [_][]const u8{ "paperwhite_12", "basic_11", "scribe", "basic_10" };
+/// Every Kindle noface knows, as src/model/device.zig `Model` names them (which refuses
+/// a name it hasn't got): `zig build layouts` lays the interface out for each but the
+/// one built.
+const Layout = enum { paperwhite_12, basic_11, scribe, basic_10 };
+const all_layouts = std.meta.fieldNames(Layout);
 
 /// Gives `module` the layout option src/model/device.zig reads: which Kindle's screen
 /// the interface is laid out for.
@@ -432,6 +436,8 @@ fn unit_tests(
     model: []const u8,
 ) *std.Build.Step.Compile {
     const tests = b.addTest(.{
+        // Named for the Kindle it's laid out for, so a failure says which
+        .name = b.fmt("test-{s}", .{model}),
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/tests.zig"),
             .target = target,

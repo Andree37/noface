@@ -31,8 +31,8 @@ const tool_reach = style.space.wide; // Taps this far either side of a tool's ce
 /// The tools take taps this far into the title's band under them.
 const tool_taps_below = style.space.small;
 /// The status line's middle, down from the screen's top: the icons' middle, and the
-/// clock's and percentage's capitals centred on it, as in the library.
-const status_centre = style.space.wide;
+/// clock's and percentage's capitals centred on it, where the page's clock is.
+const status_centre = style.page_clock.middle;
 /// The book's title, faded: its baseline, down from the title band's top.
 const title_baseline_drop = style.space.wide;
 const tool_spacing = style.space.tall; // From one tool's centre to the next

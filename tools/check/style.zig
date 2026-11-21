@@ -320,9 +320,10 @@ fn is_size_word(word: []const u8) bool {
     return false;
 }
 
-/// The decimal numbers of 3 or more on a line that aren't a divisor, a multiplier or an
-/// array's length: `[16]u8`, `/ 4` and `3 * style.fingertip` share out or count, they
-/// don't size.
+/// The decimal numbers of 3 or more on a line that aren't a divisor, a count of a named
+/// size from another file or an array's length: `[16]u8`, `/ 4` and
+/// `3 * style.fingertip` share out or count, they don't size. `2 * 150` and `100 * n`
+/// size, and count.
 fn big_numbers(code: []const u8) u32 {
     var count: u32 = 0;
     var i: u32 = 0;
@@ -346,15 +347,26 @@ fn big_numbers(code: []const u8) u32 {
         // `@divTrunc(x, 3)` and its kind divide too
         const divisor = divided or divides_in_call(before);
         const after = std.mem.trimStart(u8, code[end..], " ");
-        const multiplied = (before.len > 0 and before[before.len - 1] == '*') or
-            (after.len > 0 and after[0] == '*');
         assert(after.len <= code.len - end);
+        const counts_size = after.len > 0 and after[0] == '*' and
+            names_size_elsewhere(std.mem.trimStart(u8, after[1..], " "));
         const length = before.len > 0 and before[before.len - 1] == '[' and
             end < code.len and code[end] == ']';
-        if (value >= 3 and !divisor and !multiplied and !length) count += 1;
+        if (value >= 3 and !divisor and !counts_size and !length) count += 1;
         i = end;
     }
     return count;
+}
+
+/// Whether `code` starts with a size named in another file, `style.fingertip` say: a
+/// name with a dot in it, which a number times it counts out.
+fn names_size_elsewhere(code: []const u8) bool {
+    var end: u32 = 0;
+    while (end < code.len and (is_word(code[end]) or code[end] == '.')) end += 1;
+    assert(end <= code.len);
+    const name = code[0..end];
+    if (name.len == 0 or !std.ascii.isAlphabetic(name[0])) return false;
+    return std.mem.indexOfScalar(u8, name, '.') != null;
 }
 
 /// Whether the code `before` a number leaves it the second argument of the innermost
@@ -1562,6 +1574,7 @@ test "a size in the screens' code comes from the scale, and a marked number may 
         \\    page.fill_rect(0, 0, @divTrunc(page.width, 3), 3 * style.fingertip, style.black);
         \\    page.fill_rect(@divTrunc(page.width, 2), 0, 12, 1, style.black);
         \\    page.fill_rect(0, 0, @divTrunc(f(page.width, 5), 2), 1, style.black);
+        \\    page.fill_rect(0, 0, 2 * 150, 100 * n, style.black);
         \\}
     ;
     const in_ui = try check_zig("src/ui/menu.zig", source, std.testing.allocator);
@@ -1572,8 +1585,8 @@ test "a size in the screens' code comes from the scale, and a marked number may 
         if (b.rule == .layout_number) bare += 1;
         if (b.rule == .marker_unused) unused += 1;
     }
-    // 24, the two 4s, the 12 after a `@div` call, and the 5 inside one
-    try std.testing.expectEqual(@as(u32, 5), bare);
+    // 24, the two 4s, the 12 after a `@div` call, the 5 inside one, 150 and 100
+    try std.testing.expectEqual(@as(u32, 7), bare);
     try std.testing.expectEqual(@as(u32, 1), unused); // `row(page, 3)` writes no size
     const in_style = try check_zig("src/ui/style.zig", source, std.testing.allocator);
     defer std.testing.allocator.free(in_style);

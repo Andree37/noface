@@ -38,8 +38,8 @@ const unix_time = os.unix_time;
 const log = std.log.scoped(.app);
 
 /// The clock over the page: its band's top, height and width, its text inside.
-pub const clock_top_px = style.space.snug;
-pub const clock_height_px = style.space.wide;
+pub const clock_top_px = style.page_clock.top;
+pub const clock_height_px = style.page_clock.height;
 pub const clock_width_px = style.button_width / 2;
 
 pub const notice_ms = 1800;

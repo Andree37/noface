@@ -21,9 +21,9 @@ const lipc = core.lipc;
 const text = core.text;
 const toolbar = core.toolbar;
 
-/// The panel noface is drawn for.
-const screen_width = 1272;
-const screen_height = 1696;
+/// The panel noface is laid out for (`-Dlayout`), which the pictures are drawn on.
+const screen_width = core.style.screen.width_px;
+const screen_height = core.style.screen.height_px;
 const font_folder = "/usr/java/lib/fonts/";
 const library_path = "/mnt/us/noface-data/library.tsv";
 const stdout_fd = 1;

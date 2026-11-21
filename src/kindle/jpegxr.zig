@@ -39,14 +39,25 @@ pub fn decode_jpeg_xr(
     width: u32,
     height: u32,
 ) ?Gray {
+    return decode_through(alloc, data, .{ .width = width, .height = height, .input = jxr_input });
+}
+
+/// What `decode_through` decodes to, and the file the picture is handed over in: the
+/// one noface's own, a test's its own so tests running side by side don't share it.
+const Through = struct { width: u32, height: u32, input: [:0]const u8 };
+
+fn decode_through(alloc: std.mem.Allocator, data: []const u8, through: Through) ?Gray {
+    assert(through.input.len > 0);
+    const width = through.width;
+    const height = through.height;
     const result = linux.open(
-        jxr_input,
+        through.input,
         .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true, .CLOEXEC = true },
         0o600,
     );
     if (failed(result)) return null;
     // /tmp is RAM, shared with Amazon's services: a page-sized picture isn't left there
-    defer _ = linux.unlink(jxr_input); // Gone already: nothing is left to free
+    defer _ = linux.unlink(through.input); // Gone already: nothing is left to free
     const written = linux.write(@intCast(result), data.ptr, data.len);
     // Ignored: the bytes are written; a close that fails loses nothing of them.
     _ = linux.close(@intCast(result));
@@ -55,11 +66,11 @@ pub fn decode_jpeg_xr(
     const out_size = std.math.add(u32, pixel_count, pgm_header_size_max) catch return null;
     const out = alloc.alloc(u8, out_size) catch return null;
     var command_buffer: [160]u8 = undefined;
-    const command_format = jxr_helper ++ " {d} {d} < " ++ jxr_input;
+    const command_format = jxr_helper ++ " {d} {d} < {s}";
     const command = std.fmt.bufPrintSentinel(
         &command_buffer,
         command_format,
-        .{ width, height },
+        .{ width, height, through.input },
         0,
     ) catch return null;
     assert(command.len < command_buffer.len); // Room for the sentinel
@@ -101,8 +112,13 @@ test "the picture handed to the helper isn't left in /tmp, decoded or not" {
     var fixed = std.heap.FixedBufferAllocator.init(&memory);
     // A size past any picture: given up on after the picture was written for the helper
     const side = std.math.maxInt(u32);
-    try std.testing.expect(decode_jpeg_xr(fixed.allocator(), "II\xbc\x01 a", side, side) == null);
-    const opened = linux.open(jxr_input, .{ .ACCMODE = .RDONLY }, 0);
+    var input_buffer: [64]u8 = undefined;
+    const input = try std.fmt.bufPrintSentinel(&input_buffer, "/tmp/noface-picture-{d}.jxr", .{
+        linux.getpid(),
+    }, 0);
+    const through: Through = .{ .width = side, .height = side, .input = input };
+    try std.testing.expect(decode_through(fixed.allocator(), "II\xbc\x01 a", through) == null);
+    const opened = linux.open(input, .{ .ACCMODE = .RDONLY }, 0);
     if (!failed(opened)) _ = linux.close(@intCast(opened)); // Only looked for
     try std.testing.expect(failed(opened));
 }

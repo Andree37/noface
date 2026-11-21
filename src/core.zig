@@ -27,6 +27,7 @@ pub const page = @import("gfx/page.zig");
 pub const decoder_memory = @import("gfx/decoder_memory.zig");
 pub const memory = @import("base/memory.zig");
 pub const card = @import("ui/card.zig");
+pub const style = @import("ui/style.zig");
 pub const covers = @import("ui/covers.zig");
 pub const aa = @import("ui/aa.zig");
 pub const fonts = @import("ui/fonts.zig");

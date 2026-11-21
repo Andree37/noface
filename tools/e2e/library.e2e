@@ -1,6 +1,7 @@
 # Every control the library has, on the test books (tools/e2e.zig plays it). Start from
-# a fresh test folder whose documents hold the test book and 13 copies of it, so the
-# library has two pages: noface on its library, nothing read yet. After each screen
+# a fresh test folder whose documents hold the test book and its copies, one more book
+# than a later library page holds, so the library has two pages: noface on its
+# library, nothing read yet. After each screen
 # opens, `still` waits for it to show: noface drops a touch that lands before.
 # `drawn` budgets are a few times what a Paperwhite 12th gen takes (60 ms at most).
 

@@ -7,8 +7,9 @@
 //!        e2e <script> <test folder>
 //! `all` plays every script in tools/e2e/, built in, each on the test folder it needs,
 //! which it makes in <folder> with the test books built in too (src/testdata/books.zig):
-//! books/, whose documents/ hold "Scenario Book.epub" and "Scenario Book 02.epub" to
-//! "14", so the library has two pages, and notes/, whose documents/ hold "Notes and
+//! books/, whose documents/ hold "Scenario Book.epub" and numbered copies from
+//! "Scenario Book 02.epub", one more book than a later library page holds, so the
+//! library has two pages, and notes/, whose documents/ hold "Notes and
 //! Pictures.epub". It plays them all, says how each went, and exits 1 if any failed.
 //! Given a script instead, it plays that one on a test folder whose documents/ already
 //! hold its books, such as one `all` made. Each run makes data/ (noface's) and out/
@@ -79,8 +80,8 @@ comptime {
     assert(xres_offset + 4 <= yres_offset);
     assert(yoffset_offset + 4 <= screen_info_size);
     assert(line_length_offset + 4 <= fixed_info_size);
-    // A row of the panel noface is drawn for, 1272 pixels across, fits.
-    assert(row_size_max >= 1272);
+    // A row of the panel noface is laid out for fits
+    assert(row_size_max >= core.style.screen.width_px);
     assert(still_ms > poll_ms);
 }
 
@@ -275,7 +276,7 @@ const Script = struct { name: []const u8, text: []const u8, shelf: Shelf };
 
 /// The test folders `all` makes, by their folder's name, each with the books it holds.
 const Shelf = enum {
-    books, // The scenario book and 13 copies: a library of two pages
+    books, // The scenario book and its copies: a library of two pages
     notes, // The book with a footnote and a picture
 
     /// How many copies of its book it holds: one, or enough to fill two library pages.
@@ -306,8 +307,9 @@ const Shelf = enum {
 const scenario_copies = core.library.page_books_max + 1;
 
 comptime {
-    // Two pages of the library, so its scripts can turn on and back
-    assert(core.library.page_count(scenario_copies) == 2);
+    // Two pages of the library, so its scripts can turn on and back: the books bar the
+    // hero, which the library's pages leave out
+    assert(core.library.page_count(scenario_copies - 1) == 2);
 }
 
 /// Plays every script in `suite` on its shelf in `root`, made first, and says whether
@@ -369,6 +371,14 @@ fn shelve(shelf_root: []const u8, shelf: Shelf) !void {
         core.file.write_small(book, shelf.book());
         if (core.file.size_of(book) != shelf.book().len) return error.CantShelve;
     }
+    // Copies past those, from a build whose layout held more books a page, go: the
+    // library is to hold exactly the books counted on
+    const past_last = shelf.copies() + 1; // The number the next copy would have
+    assert(past_last <= copy_number_max);
+    for (past_last..copy_number_max + 1) |stale_number| {
+        const stale = try copy_path(&path_buffer, shelf_root, shelf, @intCast(stale_number));
+        if (core.os.failed(core.calls.unlink(stale))) break; // None left past this one
+    }
 }
 
 /// Whether the file at `path` holds exactly `bytes`.
@@ -394,10 +404,25 @@ fn book_path(
     const documents = .{ shelf_root, shelf.title() };
     if (i == 0) return std.fmt.bufPrintSentinel(buffer, "{s}/documents/{s}.epub", documents, 0);
     const copy_number = i + 1; // The first copy is the book's second
+    return copy_path(buffer, shelf_root, shelf, copy_number);
+}
+
+/// The copy numbered `number` of `shelf`'s book, as a reader's would be named.
+fn copy_path(
+    buffer: *[core.file.own_path_bytes_max]u8,
+    shelf_root: []const u8,
+    shelf: Shelf,
+    copy_number: u32,
+) ![:0]const u8 {
+    assert(copy_number >= 2); // The first is named by its title alone
+    assert(copy_number <= copy_number_max);
     return std.fmt.bufPrintSentinel(buffer, "{s}/documents/{s} {d:0>2}.epub", .{
         shelf_root, shelf.title(), copy_number,
     }, 0);
 }
+
+/// The highest a copy's number goes: two digits in its name.
+const copy_number_max = 99;
 
 /// Starts noface on `folder`, plays `script` against it, and stops it again, whatever
 /// the script did: a failed step leaves no noface on the test folder for the reader's

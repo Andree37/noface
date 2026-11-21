@@ -82,9 +82,10 @@ picture whole.
 
 `e2e all <folder>` plays every script, built into the tool, each on the test folder it
 needs, which it makes in `<folder>` with the test books built in too
-(`src/testdata/books.zig`): `books/`, holding `Scenario Book.epub` and 13 copies
-(`Scenario Book 02.epub` to `14`), so the library has two pages, and `notes/`,
-holding `Notes and Pictures.epub`. Copy the tool to `/mnt/us` (a file made executable
+(`src/testdata/books.zig`): `books/`, holding `Scenario Book.epub` and numbered
+copies from `Scenario Book 02.epub`, one more book than a later library page holds, so
+the library has two pages (copies past those, left by an older build, are removed),
+and `notes/`, holding `Notes and Pictures.epub`. Copy the tool to `/mnt/us` (a file made executable
 in `/tmp` can't be run) and play them all, with the reader's own noface stopped first
 and started again after:
 

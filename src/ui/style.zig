@@ -92,6 +92,15 @@ pub const slider_inset = pt(26.5);
 /// screens opened over it, which stay under it.
 pub const status_height = pt(23);
 
+/// The clock over a page, in a band from the screen's top, and the line through its
+/// middle that the toolbar's clock and status icons sit on too, so the time stays put
+/// as the toolbar opens and closes over the page.
+pub const page_clock = struct {
+    pub const top = space.snug;
+    pub const height = space.wide;
+    pub const middle = top + height / 2;
+};
+
 // Tones. A tint lightens what's already drawn toward white by this much.
 pub const black = 0x00;
 pub const white = 0xff;

@@ -3,6 +3,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const book_model = @import("book.zig");
+const unicode = @import("../text/unicode.zig");
 
 pub const Match = struct { para: u32, byte: u32 };
 
@@ -46,42 +47,22 @@ pub fn words_of(typed: []const u8) []const u8 {
     return result;
 }
 
-const Folded = struct { cp: u32, len: u32 };
+const Folded = unicode.Character;
 
-/// The character at `i`, lowercased and without its accent where that's simple.
+/// The character at `i`, as words are matched (`unicode.fold`): a byte that starts no
+/// character stands for itself.
 fn fold_at(s: []const u8, i: u32) Folded {
     assert(i < s.len);
-    const len = std.unicode.utf8ByteSequenceLength(s[i]) catch return .{ .cp = s[i], .len = 1 };
-    if (i + len > s.len) return .{ .cp = s[i], .len = 1 };
-    const cp = std.unicode.utf8Decode(s[i..][0..len]) catch return .{ .cp = s[i], .len = 1 };
-    const folded: Folded = .{ .cp = fold(cp), .len = len };
+    const c = unicode.character_at(s, i) orelse return .{ .cp = s[i], .len = 1 };
+    const folded: Folded = .{ .cp = unicode.fold(c.cp), .len = c.len };
     assert(folded.len >= 1);
     assert(i + folded.len <= s.len);
     return folded;
 }
 
-/// Latin-1 and Latin Extended-A letters, U+00C0 to U+017F, mapped to their plain letter
-/// (from Unicode's decompositions). '*' marks the ones without one, like æ and ß.
-const fold_first = 0xc0;
-const fold_last = 0x17f;
-const fold_plain = "aaaaaa*ceeeeiiii*nooooo**uuuuy**aaaaaa*ceeeeiiii*nooooo**uuuuy*y" ++
-    "aaaaaaccccccccdd**eeeeeeeeeegggggggghh**iiiiiiiii***jjkk*llllll*" ++
-    "***nnnnnn***oooooo**rrrrrrsssssssstttt**uuuuuuuuuuuuwwyyyzzzzzz*";
-
-comptime {
-    assert(fold_plain.len == fold_last - fold_first + 1);
-    for (fold_plain) |c| assert(c == '*' or std.ascii.isLower(c));
-}
-
-pub fn fold(cp: u32) u32 {
-    if (cp >= 'A' and cp <= 'Z') return cp + 32;
-    if (cp < fold_first or cp > fold_last) return cp;
-    const c = fold_plain[cp - fold_first];
-    const folded: u32 = if (c == '*') cp else c;
-    // Folding never leaves a capital behind.
-    assert(folded < 'A' or folded > 'Z');
-    return folded;
-}
+/// A character as words are matched, ignoring case and accents (`unicode.fold`): the
+/// search's, and a dictionary's keys'.
+pub const fold = unicode.fold;
 
 /// Every place `query` appears, in reading order, up to `limit`. Notes are skipped,
 /// as they aren't part of the flow.
@@ -92,7 +73,7 @@ pub fn find(
     limit: u32,
 ) ![]Match {
     assert(limit > 0);
-    var wanted: std.ArrayList(u32) = .empty;
+    var wanted: std.ArrayList(u21) = .empty;
     defer wanted.deinit(alloc);
     var q: u32 = 0;
     while (q < query.len) {
@@ -123,7 +104,7 @@ pub fn find(
 /// Whether `query` appears anywhere in `s`, ignoring case and accents. For short
 /// texts like titles; queries past 64 characters never match.
 pub fn contains(s: []const u8, query: []const u8) bool {
-    var wanted: [64]u32 = undefined;
+    var wanted: [64]u21 = undefined;
     var n: u32 = 0;
     var q: u32 = 0;
     while (q < query.len) {
@@ -152,7 +133,7 @@ test "contains ignores case and accents" {
     try std.testing.expect(!contains("ab", "abc"));
 }
 
-fn matches_at(s: []const u8, start: u32, wanted: []const u32) bool {
+fn matches_at(s: []const u8, start: u32, wanted: []const u21) bool {
     assert(start < s.len);
     assert(wanted.len > 0);
     var i = start;

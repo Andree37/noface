@@ -3,6 +3,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const search = @import("search.zig");
+const unicode = @import("../text/unicode.zig");
 
 pub const Availability = enum { local, cloud, downloading };
 
@@ -335,9 +336,7 @@ fn named(name_part: []const u8, number_part: []const u8, sureness: Sureness) ?Se
     if (sureness == .guessed) {
         // A name has letters, in any script (not a year), and a place in a series is
         // a small number
-        var letters = false;
-        for (name) |c| letters = letters or std.ascii.isAlphabetic(c) or c >= 0x80;
-        if (!letters or index > guessed_index_max) return null;
+        if (!unicode.has_letter(name) or index > guessed_index_max) return null;
         var words = std.mem.tokenizeScalar(u8, name, ' ');
         while (words.next()) |w| {
             const bare = std.mem.trimEnd(u8, w, ".,");

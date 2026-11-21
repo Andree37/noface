@@ -6,6 +6,7 @@ const Page = @import("../gfx/page.zig").Page;
 const book_model = @import("../model/book.zig");
 const Paragraph = @import("../model/book.zig").Paragraph;
 const hyphen = @import("hyphen.zig");
+const unicode = @import("../text/unicode.zig");
 
 /// Where a note reference landed on a page.
 pub const Hit = struct {
@@ -218,34 +219,36 @@ fn face(l: *const Layout, base: *Font, bold: bool, italic: bool, size: u8) !*Fon
 }
 
 /// How many bytes of `word` are set bold with bold word starts: anything before its
-/// first letter, then half its letters (one for words of up to three), rounded up.
+/// first letter, then half its letters and digits (one for words of up to three),
+/// rounded up, each with the accents written after it.
 pub fn bold_start(word: []const u8) u32 {
     var letters: u32 = 0;
-    var it = (std.unicode.Utf8View.init(word) catch return 0).iterator();
-    while (it.nextCodepoint()) |cp| {
-        if (is_letter(cp)) letters += 1;
+    var i: u32 = 0;
+    while (i < word.len) {
+        const c = unicode.character_at(word, i) orelse return 0; // Not text: none bold
+        if (unicode.is_letter_or_number(c.cp)) letters += 1;
+        i += c.len;
     }
     if (letters == 0) return 0;
     const want = if (letters <= 3) 1 else (letters + 1) / 2;
     assert(want > 0);
     assert(want <= letters);
     var seen: u32 = 0;
-    it = (std.unicode.Utf8View.init(word) catch return 0).iterator();
-    while (it.nextCodepoint()) |cp| {
-        if (is_letter(cp)) seen += 1;
-        if (seen == want) break;
+    var end: u32 = 0;
+    while (seen < want) {
+        const c = unicode.character_at(word, end).?; // Read whole above
+        if (unicode.is_letter_or_number(c.cp)) seen += 1;
+        end += c.len;
     }
-    // Just past the last letter set bold: as many as wanted were seen before the end
+    // With the accents on its last letter, written apart (e and a combining acute for é)
+    while (end < word.len) {
+        const c = unicode.character_at(word, end).?;
+        if (!unicode.is_combining(c.cp)) break;
+        end += c.len;
+    }
     assert(seen == want);
-    return @intCast(it.i);
-}
-
-/// Letters and digits; beyond ASCII, anything but Latin-1's symbols and the general
-/// punctuation block (curly quotes, dashes, ellipses).
-fn is_letter(cp: u21) bool {
-    assert(cp <= 0x10ffff); // Decoded from UTF-8, so a code point Unicode has room for
-    if (cp < 128) return std.ascii.isAlphanumeric(@intCast(cp));
-    return cp > 0xbf and !(cp >= 0x2000 and cp <= 0x206f);
+    assert(end <= word.len);
+    return end;
 }
 
 /// A word's bold start: the face, and how many of the word's bytes it sets.
@@ -898,6 +901,11 @@ test "bold word starts cover half of each word's letters" {
     try std.testing.expectEqualStrings("\u{201c}Bing", quoted[0..bold_start(quoted)]);
     try std.testing.expectEqualStrings("caf", "caf\u{e9}s"[0..bold_start("caf\u{e9}s")]);
     try std.testing.expectEqual(@as(u32, 0), bold_start("\u{2014}"));
+    // An accent written apart from its letter stays with it
+    const apart = "ope\u{301}ra";
+    try std.testing.expectEqualStrings("ope\u{301}", apart[0..bold_start(apart)]);
+    const greek = "\u{3b1}\u{3bb}\u{3c6}\u{3b1}"; // Letters in any script
+    try std.testing.expectEqualStrings("\u{3b1}\u{3bb}", greek[0..bold_start(greek)]);
 }
 
 /// The highlight line the tests' pages draw.

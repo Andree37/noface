@@ -12,6 +12,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const search = @import("search.zig");
+const unicode = @import("../text/unicode.zig");
 
 pub const magic = "NFDICT1\n";
 
@@ -162,12 +163,11 @@ fn last_start(word: []const u8, end: u32) u32 {
     return i;
 }
 
+/// Whether a letter or a digit, in any script, starts at byte `i` of `word`.
 fn is_word_byte(word: []const u8, i: u32) bool {
     assert(i < word.len);
-    const c = word[i];
-    if (std.ascii.isAlphanumeric(c)) return true;
-    // Letters beyond ASCII start with C3..C5 (Latin-1 and Extended-A)
-    return c >= 0xc3 and c <= 0xc5;
+    const c = unicode.character_at(word, i) orelse return false;
+    return unicode.is_letter_or_number(c.cp);
 }
 
 /// A dictionary key: lowercase, accents off, curly apostrophes made straight. Null
@@ -178,12 +178,12 @@ pub fn fold(buf: []u8, word: []const u8) ?[]const u8 {
     while (i < word.len) {
         const len = std.unicode.utf8ByteSequenceLength(word[i]) catch return null;
         if (i + len > word.len) return null;
-        var cp: u32 = std.unicode.utf8Decode(word[i..][0..len]) catch return null;
+        var cp: u21 = std.unicode.utf8Decode(word[i..][0..len]) catch return null;
         i += len;
         if (cp == 0x2019) cp = '\'';
         cp = search.fold(cp);
         var out: [4]u8 = undefined;
-        const m = std.unicode.utf8Encode(@intCast(cp), &out) catch return null;
+        const m = std.unicode.utf8Encode(cp, &out) catch return null;
         if (n + m > buf.len) return null;
         @memcpy(buf[n..][0..m], out[0..m]);
         n += m;

@@ -226,9 +226,16 @@ doesn't look at, so the rules for the code it tests (assertions, ignored errors,
 
 ## Dependencies and tooling
 
-- **Zero dependencies but the Zig toolchain**, as Tiger Style asks. Fonts and pictures
-  are read by noface's own Zig in `src/gfx/`, ports of stb_truetype and stb_image
-  (see `THIRD_PARTY_NOTICES.md`), with no outside code built in.
+- **One dependency besides the Zig toolchain**, where Tiger Style asks for none:
+  uucode (<https://github.com/jacobsandlund/uucode>, MIT, pure Zig, used by Ghostty),
+  for Unicode's tables. What a character is (a letter, a mark, a space) and its plain
+  form are Unicode's to say, and its tables change with each Unicode version; copied
+  by hand they were partial (Latin only) and went stale. It is pinned by commit and
+  hash in `build.zig.zon`, only the fields noface reads are built in (build.zig
+  `unicode_fields`), and only `src/text/unicode.zig` imports it **[checked]**, so it
+  is one file to read when it's bumped. Nothing else comes from outside: fonts and
+  pictures are read by noface's own Zig in `src/gfx/`, ports of stb_truetype and
+  stb_image (see `THIRD_PARTY_NOTICES.md`).
 - **Tooling is Zig.** Scripts that aren't Zig are counted **[checked]**, and there are
   none: the tools that run on a computer (`tools/build_dictionary.zig`,
   `tools/pgm2png.zig`, `tools/package.zig`) and everything that runs on the Kindle

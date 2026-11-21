@@ -14,12 +14,15 @@
 //! base word's entry (most Portuguese plurals and verb forms) are added the same way,
 //! when they have no entry of their own.
 //!
-//! It replaced a Python script, and writes the same file byte for byte: lengths are
-//! counted in characters (code points), and spaces and letters are Python's.
+//! It replaced a Python script, and writes the file as it did: lengths are counted in
+//! characters (code points), and spaces and letters are Python's, read from Unicode's
+//! tables as noface reads them (src/text/unicode.zig). Words are folded into keys as
+//! noface's search folds them, so a word looked up finds its key.
 const std = @import("std");
 const assert = std.debug.assert;
-const search = @import("search");
-const letters = @import("unicode_letters.zig");
+const core = @import("core");
+const search = core.search;
+const unicode = core.unicode;
 const Value = std.json.Value;
 
 const magic = "NFDICT1\n";
@@ -73,13 +76,6 @@ const skip_form_tags = [_][]const u8{
     "inflection-template",
     "class",
     "romanization",
-};
-
-/// The code points Python's `str.split()` splits on.
-const python_spaces = [_]u21{
-    0x09,   0x0A,   0x0B,   0x0C,   0x0D,   0x1C,   0x1D,   0x1E,   0x1F,   0x20,
-    0x85,   0xA0,   0x1680, 0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006,
-    0x2007, 0x2008, 0x2009, 0x200A, 0x2028, 0x2029, 0x202F, 0x205F, 0x3000,
 };
 
 /// A part of speech of a word, and its senses so far.
@@ -305,14 +301,10 @@ fn usable_word(word: []const u8) bool {
     const view = std.unicode.Utf8View.init(word) catch return false;
     var characters = view.iterator();
     var count: u32 = 0;
-    var has_letter = false;
-    while (characters.nextCodepoint()) |code_point| {
-        count += 1;
-        if (letters.is_letter(code_point)) has_letter = true;
-    }
+    while (characters.nextCodepoint()) |_| count += 1;
     assert(count > 0);
     assert(count <= word.len);
-    return count <= word_characters_max and has_letter;
+    return count <= word_characters_max and unicode.has_letter(word);
 }
 
 /// The senses of `w` under part of speech `pos`, as many as fit.
@@ -534,24 +526,15 @@ fn fold(scratch: std.mem.Allocator, word: []const u8) ![]const u8 {
     var out: std.ArrayList(u8) = .empty;
     try out.ensureTotalCapacity(scratch, word.len);
     while (characters.nextCodepoint()) |code_point| {
-        const plain: u21 = if (code_point == 0x2019) '\'' else @intCast(search.fold(code_point));
+        const plain: u21 = if (code_point == 0x2019) '\'' else search.fold(code_point);
         var bytes: [4]u8 = undefined;
         const length = try std.unicode.utf8Encode(plain, &bytes);
         try out.appendSlice(scratch, bytes[0..length]);
     }
-    // Folding keeps letters in their range, so never lengthens a word
-    assert(out.items.len <= word.len);
+    // A character folds to one character, of up to as many bytes again
+    assert(out.items.len <= word.len * 2);
     assert(word.len == 0 or out.items.len > 0);
     return out.items;
-}
-
-fn is_python_space(code_point: u21) bool {
-    for (python_spaces) |space| {
-        assert(space < 0x3001);
-        if (space == code_point) return true;
-    }
-    assert(code_point != ' ');
-    return false;
 }
 
 /// A gloss on one line, its spaces single, cut at a space near 200 characters with
@@ -564,7 +547,7 @@ fn clip(scratch: std.mem.Allocator, text: []const u8) ![]const u8 {
     var count: u32 = 0;
     var cut_end: u32 = 0; // Where the 200th character ends
     while (characters.nextCodepoint()) |code_point| {
-        if (is_python_space(code_point)) {
+        if (unicode.is_space(code_point)) {
             space_pending = out.items.len > 0;
             continue;
         }

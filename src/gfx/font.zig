@@ -5,6 +5,7 @@ const assert = std.debug.assert;
 const Page = @import("page.zig").Page;
 const truetype = @import("truetype.zig");
 const glyph_cache = @import("glyph_cache.zig");
+const unicode = @import("../text/unicode.zig");
 
 /// The font file's first bytes: its version, which says what kind of font it is.
 const sfnt_version_truetype = 0x00010000;
@@ -15,10 +16,6 @@ const table_directory_size = 12;
 const table_record_size = 16;
 /// A collection's header: "ttcf", version, font count, then the first font's offset.
 const collection_header_size = 16;
-/// Combining diacritics, which sit over the letter before and take no room of their own.
-const combining_first = 0x300;
-const combining_last = 0x36f;
-const code_point_max = 0x10ffff;
 
 comptime {
     assert(sfnt_version_apple == std.mem.readInt(u32, "true", .big));
@@ -28,12 +25,11 @@ comptime {
     // A record holds its tag, checksum, offset and length
     assert(table_record_size == 4 * 4);
     assert(collection_header_size == 12 + 4);
-    assert(combining_first < combining_last);
 }
 
-fn is_combining(code_point: u32) bool {
-    return code_point >= combining_first and code_point <= combining_last;
-}
+/// Marks that sit over the letter before and take no room of their own.
+const is_combining = unicode.is_combining;
+const code_point_max = unicode.code_point_max;
 
 const Glyph = glyph_cache.Drawn;
 const Metrics = glyph_cache.Metrics;

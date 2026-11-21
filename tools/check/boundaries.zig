@@ -24,7 +24,11 @@
 //!           import anything but screens and testing, as screens build on them; the
 //!           roots (`roots`), which put screens and the App together, or give the tools
 //!           what they use, import anything.
-//! Every folder may import base.
+//!   text    What a character is (a letter, a mark, a space) and its plain form, by
+//!           Unicode's tables. Imports only text; text/unicode.zig alone imports
+//!           uucode, noface's one dependency, so the whole of Unicode is reached
+//!           through it.
+//! Every folder may import base and text.
 const std = @import("std");
 const assert = std.debug.assert;
 
@@ -32,6 +36,7 @@ const Rule = struct { folder: []const u8, allowed: []const []const u8 };
 
 const rules = [_]Rule{
     .{ .folder = "base", .allowed = &.{"base"} },
+    .{ .folder = "text", .allowed = &.{"text"} },
     .{ .folder = "sys", .allowed = &.{"sys"} },
     .{ .folder = "model", .allowed = &.{"model"} },
     .{ .folder = "gfx", .allowed = &.{ "gfx", "sys" } },
@@ -56,6 +61,11 @@ const roots = [_][]const u8{
 };
 
 const import_prefix = "@import(\"";
+/// The one file that may import uucode, Unicode's tables.
+const unicode_file = "text/unicode.zig";
+const uucode_import = "@import(\"uucode\")";
+/// What every folder may import: building blocks with no folder's knowledge in them.
+const shared = [_][]const u8{ "base", "text" };
 /// The longest path inside src/ an import may resolve to.
 const resolved_size_max = 256;
 
@@ -102,15 +112,21 @@ pub fn check(
     allocator: std.mem.Allocator,
 ) !u32 {
     assert(std.mem.endsWith(u8, file, ".zig"));
+    const out_size_before = out.items.len;
+    var found: u32 = 0;
+    // Unicode is reached through one file, whatever the folder: roots too
+    const imports_uucode = std.mem.indexOf(u8, source, uucode_import) != null;
+    if (imports_uucode and !std.mem.eql(u8, file, unicode_file)) {
+        found += 1;
+        try out.print(allocator, "{s}: imports uucode (only {s} may)\n", .{ file, unicode_file });
+    }
     const from = folder_of(file);
     for (roots) |root| {
-        if (std.mem.eql(u8, file, root)) return 0;
+        if (std.mem.eql(u8, file, root)) return found;
     }
     const rule = for (rules) |r| {
         if (std.mem.eql(u8, r.folder, from)) break r;
-    } else return 0;
-    const out_size_before = out.items.len;
-    var found: u32 = 0;
+    } else return found;
     var at: u32 = 0;
     while (std.mem.indexOfPos(u8, source, at, import_prefix)) |start| {
         const name_start = start + import_prefix.len;
@@ -121,7 +137,10 @@ pub fn check(
         var buffer: [resolved_size_max]u8 = undefined;
         const resolved = resolve(&buffer, file, target) orelse continue;
         const to = folder_of(resolved);
-        const ok = std.mem.eql(u8, to, "base") or for (rule.allowed) |allowed| {
+        const everyones = for (shared) |folder| {
+            if (std.mem.eql(u8, folder, to)) break true;
+        } else false;
+        const ok = everyones or for (rule.allowed) |allowed| {
             if (std.mem.eql(u8, allowed, to)) break true;
         } else false;
         if (!ok) {
@@ -215,6 +234,12 @@ test "imports are judged by folder" {
     try expect_problems(1, "display.zig", "const f = @import(\"testing/fake_kindle.zig\");");
     try expect_problems(0, "setup.zig", "const b = @import(\"screens/books.zig\");");
     try expect_problems(0, "tests.zig", "const f = @import(\"testing/fake_kindle.zig\");");
+    // Every folder reaches Unicode through text/, and only text/unicode.zig reaches uucode
+    try expect_problems(0, "gfx/a.zig", "const u = @import(\"../text/unicode.zig\");");
+    try expect_problems(1, "text/a.zig", "const m = @import(\"../model/book.zig\");");
+    try expect_problems(0, "text/unicode.zig", "const u = @import(\"uucode\");");
+    try expect_problems(1, "model/a.zig", "const u = @import(\"uucode\");");
+    try expect_problems(1, "core.zig", "const u = @import(\"uucode\");");
 }
 
 test "a file with tests must be listed" {

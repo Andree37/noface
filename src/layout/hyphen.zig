@@ -7,6 +7,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const book_model = @import("../model/book.zig");
+const unicode = @import("../text/unicode.zig");
 
 pub const Lang = enum { english, portuguese };
 
@@ -187,12 +188,11 @@ pub const Hyphenator = struct {
 /// A place a word may break: before byte `at`, adding a hyphen or not.
 pub const Break = struct { at: u32, hyphen: bool };
 
+/// Whether a letter, in any script, starts at byte `i` of `word`.
 fn is_letter_start(word: []const u8, i: u32) bool {
     assert(i < word.len);
-    const c = word[i];
-    if (std.ascii.isAlphabetic(c)) return true;
-    // Latin-1 letters are C3 followed by 80..BF, except × and ÷
-    return c == 0xc3 and i + 1 < word.len and word[i + 1] != 0x97 and word[i + 1] != 0xb7;
+    const c = unicode.character_at(word, i) orelse return false;
+    return unicode.is_letter(c.cp);
 }
 
 /// How many bytes the dash at `word[i]` takes, or 0 when there's none there.
@@ -234,8 +234,10 @@ pub fn breaks(h: ?*const Hyphenator, word: []const u8, out: []Break) []Break {
     while (start < word.len and !is_letter_start(word, start)) start += 1;
     var end: u32 = @intCast(word.len);
     while (end > start) {
-        const last = end - 1;
-        const lead = if (last > start and word[last] & 0xc0 == 0x80) last - 1 else last;
+        // Back to where the last character starts, over its continuation bytes
+        var lead = end - 1;
+        while (lead > start and word[lead] & 0xc0 == 0x80) lead -= 1;
+        assert(end - lead <= 4); // A character takes four bytes at most
         if (is_letter_start(word, lead)) break;
         end = lead;
     }
@@ -255,25 +257,23 @@ pub fn breaks(h: ?*const Hyphenator, word: []const u8, out: []Break) []Break {
     return out[0..count];
 }
 
-/// `core` in lowercase, into `lower`. False for a word with digits, apostrophes and
-/// the like, which is left whole.
+/// `core` in lowercase, into `lower`, byte for byte where `core` has it, so a break
+/// found in `lower` is one in `core`. False for a word with digits, apostrophes and the
+/// like, or a letter whose lowercase takes another number of bytes: left whole.
 fn breaks_lowered(core: []const u8, lower: *[word_length_max]u8) bool {
     assert(core.len > 0);
     assert(core.len <= lower.len);
     var k: u32 = 0;
-    while (k < core.len) : (k += 1) {
-        const c = core[k];
-        if (std.ascii.isAlphabetic(c)) {
-            lower[k] = std.ascii.toLower(c);
-        } else if (c == 0xc3 and k + 1 < core.len) {
-            lower[k] = c;
-            const next = core[k + 1];
-            // Uppercase Latin-1 letters sit 0x20 below their lowercase ones
-            const upper = next >= 0x80 and next <= 0x9e and next != 0x97;
-            lower[k + 1] = if (upper) next + 0x20 else next;
-            k += 1;
-        } else return false;
+    while (k < core.len) {
+        const c = unicode.character_at(core, k) orelse return false;
+        if (!unicode.is_letter(c.cp)) return false;
+        const lowered = unicode.lowercase(c.cp);
+        const len = std.unicode.utf8CodepointSequenceLength(lowered) catch return false;
+        if (len != c.len) return false;
+        _ = std.unicode.utf8Encode(lowered, lower[k..][0..len]) catch return false;
+        k += c.len;
     }
+    assert(k == core.len);
     return true;
 }
 

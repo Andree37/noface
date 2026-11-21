@@ -20,6 +20,10 @@ pub const book = @import("model/book.zig");
 pub const note_rules = @import("model/notes.zig");
 pub const catalog = @import("model/catalog.zig");
 pub const quick = @import("model/quick.zig");
+pub const search = @import("model/search.zig");
+pub const device = @import("model/device.zig");
+/// What a character is, by Unicode's tables: the only way to uucode.
+pub const unicode = @import("text/unicode.zig");
 pub const settings = @import("model/settings.zig");
 pub const text = @import("layout/text.zig");
 pub const cover = @import("gfx/image.zig");

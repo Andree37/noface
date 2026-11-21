@@ -93,10 +93,28 @@ comptime {
     }
 }
 
-/// Gives `module` the layout option src/model/device.zig reads: which Kindle's screen
-/// the interface is laid out for.
-fn lay_out_for(b: *std.Build, module: *std.Build.Module, model: []const u8) void {
+/// The fields of Unicode's tables noface asks of uucode, its one dependency (pinned in
+/// build.zig.zon), which src/text/unicode.zig alone imports: only these are built in.
+const unicode_fields = [_][]const u8{
+    "general_category",
+    "bidi_class",
+    "case_folding_simple",
+    "simple_lowercase_mapping",
+    "decomposition_type",
+    "decomposition_mapping",
+};
+
+/// Gives `module`, rooted in src/, what src/ imports by name: the layout option
+/// src/model/device.zig reads (which Kindle's screen the interface is laid out for),
+/// and uucode, Unicode's tables, built for the module's target.
+fn src_imports(b: *std.Build, module: *std.Build.Module, model: []const u8) void {
     assert(model.len > 0);
+    const uucode = b.dependency("uucode", .{
+        .target = module.resolved_target.?,
+        .optimize = module.optimize orelse .debug,
+        .fields = @as([]const []const u8, &unicode_fields),
+    });
+    module.addImport("uucode", uucode.module("uucode"));
     const options = b.addOptions();
     options.addOption([]const u8, "model", model);
     // Whether this Kindle's screens and page breaks are recorded to compare with
@@ -107,6 +125,7 @@ fn lay_out_for(b: *std.Build, module: *std.Build.Module, model: []const u8) void
     options.addOption(bool, "recorded", recorded);
     module.addOptions("layout", options);
     assert(module.import_table.get("layout") != null);
+    assert(module.import_table.get("uucode") != null);
 }
 
 /// `zig build layouts`: the whole interface laid out for every other Kindle's screen,
@@ -129,7 +148,7 @@ fn build_layouts(b: *std.Build, target: std.Build.ResolvedTarget) *std.Build.Ste
             .strip = true,
             .link_libc = true,
         });
-        lay_out_for(b, module, model);
+        src_imports(b, module, model);
         const laid_out = b.addExecutable(.{
             .name = b.fmt("noface-{s}", .{model}),
             .root_module = module,
@@ -203,7 +222,7 @@ fn noface_for(
             .link_libc = true,
         }),
     });
-    lay_out_for(b, noface.root_module, model);
+    src_imports(b, noface.root_module, model);
     assert(noface.root_module.link_libc.?); // Asked for, as set above
     return noface;
 }
@@ -225,7 +244,7 @@ fn launcher_for(
             .strip = true,
         }),
     });
-    lay_out_for(b, launcher.root_module, model);
+    src_imports(b, launcher.root_module, model);
     // Static, and needing nothing but Linux: libc not asked for (unset is not linked)
     assert(!(launcher.root_module.link_libc orelse false));
     return launcher;
@@ -281,7 +300,9 @@ fn host_tool(b: *std.Build, name: []const u8) *std.Build.Step.Compile {
     return tool;
 }
 
-/// A host tool's code: the dictionary builder folds words as the app's search does.
+/// A host tool's code, with src/ to hand as `core`: the dictionary builder folds words
+/// as the app's search does, and the release's table names the Kindles (the same on
+/// any layout, so the one built).
 fn host_tool_module(b: *std.Build, name: []const u8) *std.Build.Module {
     assert(name.len > 0);
     const module = b.createModule(.{
@@ -289,18 +310,14 @@ fn host_tool_module(b: *std.Build, name: []const u8) *std.Build.Module {
         .target = b.graph.host,
         .optimize = .ReleaseSafe,
     });
-    module.addImport("search", b.createModule(.{
-        .root_source_file = b.path("src/model/search.zig"),
+    const core = b.createModule(.{
+        .root_source_file = b.path("src/core.zig"),
         .target = b.graph.host,
-    }));
-    // The Kindles' names, for the release's table (the layout is any: names are the
-    // same for each)
-    const device = b.createModule(.{
-        .root_source_file = b.path("src/model/device.zig"),
-        .target = b.graph.host,
+        .optimize = .ReleaseSafe,
+        .link_libc = true,
     });
-    lay_out_for(b, device, @tagName(default_layout));
-    module.addImport("device", device);
+    src_imports(b, core, layout_model);
+    module.addImport("core", core);
     assert(module.import_table.count() > 0);
     return module;
 }
@@ -444,7 +461,7 @@ fn build_tools(b: *std.Build, target: std.Build.ResolvedTarget) *std.Build.Step 
         .optimize = .ReleaseFast,
         .link_libc = true,
     });
-    lay_out_for(b, core, layout_model);
+    src_imports(b, core, layout_model);
 
     const tools_step = b.step("tools", "Build the development tools in tools/");
     for (tool_names) |name| {
@@ -509,7 +526,7 @@ fn build_tests(b: *std.Build) *std.Build.Step {
         .target = b.graph.host,
         .link_libc = true,
     });
-    lay_out_for(b, core, layout_model);
+    src_imports(b, core, layout_model);
     for (tool_names) |name| {
         const tool_tests = b.addTest(.{ .root_module = b.createModule(.{
             .root_source_file = b.path(b.fmt("tools/{s}.zig", .{name})),
@@ -541,7 +558,7 @@ fn unit_tests(
             .link_libc = true,
         }),
     });
-    lay_out_for(b, tests.root_module, model);
+    src_imports(b, tests.root_module, model);
     // So src/kindle/paths.zig can check that what starts the launcher names it
     tests.root_module.addAnonymousImport("launch_sh", .{
         .root_source_file = b.path("device/kpm/launch.sh"),
@@ -571,7 +588,7 @@ fn scenario_exe(
             .link_libc = true,
         }),
     });
-    lay_out_for(b, exe.root_module, model);
+    src_imports(b, exe.root_module, model);
     return exe;
 }
 

@@ -126,6 +126,18 @@ second display backend. A release carries one zip per Kindle that's been run thr
 | Scribe | Unknown: its display driver is to check first |
 | Paperwhite 4, Oasis 2 and 3, Kindle (10th generation) and older | Not planned: `mxcfb` |
 
+## The one dependency
+
+uucode, Unicode's tables in Zig, is pinned in `build.zig.zon` by commit and hash, and
+fetched by `zig build` into Zig's cache the first time (its tables are generated
+then, in a few seconds, and cached). Only `src/text/unicode.zig` imports it, and only
+the fields in build.zig `unicode_fields` are built in; a field used without being
+listed is a compile error naming it. To move to a newer uucode, read what changed
+upstream since the pinned commit, then
+`zig fetch --save=uucode git+https://github.com/jacobsandlund/uucode#<commit>`, and
+run the gates and `e2e all` on a Kindle: a new Unicode version can fold a few more
+letters, so a dictionary built before it is rebuilt with `build_dictionary` to match.
+
 ## Packaging and releases
 
 `zig build package -Dversion=1.2.3` builds everything and packs one zip per shipped

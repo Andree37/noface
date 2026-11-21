@@ -7,7 +7,7 @@
 //! Each model is a src/model/device.zig `Model` name, as the zip is named by.
 const std = @import("std");
 const assert = std.debug.assert;
-const device = @import("device");
+const device = @import("core").device;
 
 /// The most Kindles one release carries: every one noface knows.
 const models_max = std.meta.fieldNames(device.Model).len;

@@ -1,0 +1,21 @@
+.{
+    .name = .noface,
+    .version = "0.1.2",
+    .fingerprint = 0xbc0e8b6edfa9bc24,
+    .minimum_zig_version = "0.17.1",
+    .dependencies = .{
+        .uucode = .{
+            .url = "git+https://github.com/jacobsandlund/uucode#1fb73433bba5d93366c57f23ff2e9d7939746500",
+            .hash = "uucode-0.2.0-ZZjBPm6FVgBcY-79AHV8ckQj86z0JwOyVyj89VeZrEiv",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "tools",
+        "device",
+        "LICENSE.md",
+        "THIRD_PARTY_NOTICES.md",
+    },
+}

@@ -2,6 +2,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const book = @import("book.zig");
+const unicode = @import("../text/unicode.zig");
 
 const max_reference_bytes = 12;
 
@@ -43,8 +44,7 @@ pub fn is_mark(s: []const u8) bool {
     var letters: u32 = 0;
     var it = (std.unicode.Utf8View.init(s) catch return false).iterator();
     while (it.nextCodepoint()) |cp| {
-        const latin = cp >= 0xc0 and cp <= 0x24f;
-        if (latin or (cp < 0x80 and std.ascii.isAlphabetic(@intCast(cp)))) letters += 1;
+        if (unicode.is_letter(cp)) letters += 1;
     }
     assert(letters <= s.len); // A letter takes a byte at least
     return letters <= 1;

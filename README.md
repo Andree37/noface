@@ -49,8 +49,8 @@ KPM. **It runs on that Kindle only:** noface drives its display directly, so on 
 other model it checks the screen, says it can't run, and goes back to the Kindle's own
 home screen.
 
-1. Download the latest **noface-*.zip** from [Releases](../../releases/latest) and
-   unzip it.
+1. Download the latest **noface-&lt;version&gt;-paperwhite_12.zip** from
+   [Releases](../../releases/latest) and unzip it.
 2. Plug in the Kindle. Copy the **noface** folder to its drive, and the folder
    **noface/kpm/noface** into **kmc/kpm/packages**.
 3. Eject, and type `;kpm launch noface` in the Kindle's search bar.

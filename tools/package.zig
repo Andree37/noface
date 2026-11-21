@@ -8,7 +8,8 @@
 //! never asks to replace one (Finder replacing "kmc" would remove KMC).
 //!
 //! Run by `zig build package -Dversion=1.2.3`, which builds everything first and
-//! writes zig-out/noface-1.2.3.zip. build.zig names the files:
+//! writes zig-out/noface-1.2.3-<model>.zip for each Kindle it ships. build.zig names
+//! the files:
 //!
 //!   package <out.zip> <version> [<mode> <path in the zip> <file>]...
 //!

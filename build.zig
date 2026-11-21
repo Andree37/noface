@@ -16,6 +16,7 @@ const host_tool_names = [_][]const u8{
     "build_dictionary",
     "pgm2png",
     "package",
+    "kindles",
 };
 
 comptime {
@@ -51,11 +52,18 @@ pub fn build(b: *std.Build) void {
         "The Kindle to lay the interface out for, and run on (device.Model)",
     ) orelse default_layout;
     layout_model = @tagName(chosen);
-    const app = build_app(b, target);
+    // The app, with Zig's own bounds and overflow checks on: they cost page turns
+    // nothing measurable. `-Dfast=true` builds without them.
+    const fast = b.option(
+        bool,
+        "fast",
+        "Build the app without Zig's runtime safety checks",
+    ) orelse false;
+    const app = build_app(b, target, fast);
     const check = build_checks(b);
     const tools = build_tools(b, target);
     build_host_tools(b);
-    build_package(b, app);
+    build_package(b, target, app.jxr);
     const scenarios = build_scenarios(b, target);
     const tests = build_tests(b);
     build_clean(b);
@@ -73,6 +81,17 @@ var layout_model: []const u8 = @tagName(default_layout);
 /// one built.
 const Layout = enum { paperwhite_12, basic_11, scribe, basic_10 };
 const all_layouts = std.meta.fieldNames(Layout);
+
+/// The Kindles a release carries a zip for: each only once `e2e all` has passed on a
+/// real one (docs/DEVELOPING.md, "Which Kindles"). A layout that merely builds
+/// (`zig build layouts`) isn't shipped.
+const shipped = [_]Layout{.paperwhite_12};
+
+comptime {
+    for (shipped, 0..) |model, index| {
+        for (shipped[index + 1 ..]) |other| assert(model != other); // One zip each
+    }
+}
 
 /// Gives `module` the layout option src/model/device.zig reads: which Kindle's screen
 /// the interface is laid out for.
@@ -146,19 +165,34 @@ fn build_clean(b: *std.Build) void {
     remove.has_side_effects = true; // Runs every time it's asked for
     const clean_step = b.step("clean", "Empty the build cache, which grows with every change");
     clean_step.dependOn(&remove.step);
+    assert(clean_step.dependencies.items.len == 1);
+    assert(remove.argv.items.len == 3); // rm, its flags and the cache
 }
 
 /// The app, its launcher, and the picture helper it runs.
-fn build_app(b: *std.Build, target: std.Build.ResolvedTarget) App {
+fn build_app(b: *std.Build, target: std.Build.ResolvedTarget, fast: bool) App {
     assert(target.result.os.tag == .linux);
     assert(target.result.abi == .musleabihf); // Static: it runs on any Kindle
-    // The app, with Zig's own bounds and overflow checks on: they cost page turns
-    // nothing measurable. `-Dfast=true` builds without them.
-    const fast = b.option(
-        bool,
-        "fast",
-        "Build the app without Zig's runtime safety checks",
-    ) orelse false;
+    const app = App{
+        .noface = noface_for(b, target, layout_model, fast),
+        .launcher = launcher_for(b, target, layout_model),
+        .jxr = jxr_helper(b),
+    };
+    b.installArtifact(app.noface);
+    b.installArtifact(app.launcher);
+    b.installArtifact(app.jxr);
+    return app;
+}
+
+/// The app laid out for `model`'s screen, with Zig's runtime safety checks unless
+/// asked to be `fast`.
+fn noface_for(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    model: []const u8,
+    fast: bool,
+) *std.Build.Step.Compile {
+    assert(model.len > 0);
     const noface = b.addExecutable(.{
         .name = "noface",
         .root_module = b.createModule(.{
@@ -169,11 +203,19 @@ fn build_app(b: *std.Build, target: std.Build.ResolvedTarget) App {
             .link_libc = true,
         }),
     });
-    lay_out_for(b, noface.root_module, layout_model);
-    b.installArtifact(noface);
+    lay_out_for(b, noface.root_module, model);
+    assert(noface.root_module.link_libc.?); // Asked for, as set above
+    return noface;
+}
 
-    // The launcher: starts the app and always puts the Kindle's own screens back.
-    // Small, and apart from the app, so nothing the app does can take it down.
+/// The launcher, for `model`: starts the app and always puts the Kindle's own screens
+/// back. Small, and apart from the app, so nothing the app does can take it down.
+fn launcher_for(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    model: []const u8,
+) *std.Build.Step.Compile {
+    assert(model.len > 0);
     const launcher = b.addExecutable(.{
         .name = "noface-launch",
         .root_module = b.createModule(.{
@@ -183,9 +225,14 @@ fn build_app(b: *std.Build, target: std.Build.ResolvedTarget) App {
             .strip = true,
         }),
     });
-    lay_out_for(b, launcher.root_module, layout_model);
-    b.installArtifact(launcher);
+    lay_out_for(b, launcher.root_module, model);
+    // Static, and needing nothing but Linux: libc not asked for (unset is not linked)
+    assert(!(launcher.root_module.link_libc orelse false));
+    return launcher;
+}
 
+/// The picture helper, the same for every Kindle.
+fn jxr_helper(b: *std.Build) *std.Build.Step.Compile {
     // The picture helper. Built against the Kindle's own glibc, because it loads the
     // Kindle's JPEG XR decoder at run time, which a static musl program can't.
     const jxr = b.addExecutable(.{
@@ -207,11 +254,9 @@ fn build_app(b: *std.Build, target: std.Build.ResolvedTarget) App {
         .file = b.path("device/jxr/jxr2pgm.c"),
         .flags = &.{"-O2"},
     });
-    b.installArtifact(jxr);
-    // Static, and needing nothing but Linux: libc not asked for (unset is not linked)
-    assert(!(launcher.root_module.link_libc orelse false));
-    assert(noface.root_module.link_libc.?); // Asked for, as set above
-    return .{ .noface = noface, .launcher = launcher, .jxr = jxr };
+    assert(jxr.root_module.link_libc.?); // The Kindle's glibc, as set above
+    assert(jxr.root_module.resolved_target.?.result.abi == .gnueabihf);
+    return jxr;
 }
 
 /// Tools that run on this computer: the dictionary builder, the snapshot converter and
@@ -248,18 +293,63 @@ fn host_tool_module(b: *std.Build, name: []const u8) *std.Build.Module {
         .root_source_file = b.path("src/model/search.zig"),
         .target = b.graph.host,
     }));
+    // The Kindles' names, for the release's table (the layout is any: names are the
+    // same for each)
+    const device = b.createModule(.{
+        .root_source_file = b.path("src/model/device.zig"),
+        .target = b.graph.host,
+    });
+    lay_out_for(b, device, @tagName(default_layout));
+    module.addImport("device", device);
     assert(module.import_table.count() > 0);
     return module;
 }
 
-/// `zig build package -Dversion=1.2.3`: everything built, then packed as
-/// zig-out/noface-1.2.3.zip, the zip a release carries (see tools/package.zig).
-fn build_package(b: *std.Build, app: App) void {
+/// `zig build package -Dversion=1.2.3`: everything built, then packed for each shipped
+/// Kindle as zig-out/noface-1.2.3-<model>.zip (see tools/package.zig), the zips a
+/// release carries, with zig-out/KINDLES.md, the table of them its notes open with
+/// (tools/kindles.zig). The app and launcher are laid out for each Kindle, always
+/// with runtime safety checks (Zig's cache reuses what `zig build` made alike).
+fn build_package(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    jxr: *std.Build.Step.Compile,
+) void {
     const version_help = "The version a package is for, like 1.2.3";
     const version = b.option([]const u8, "version", version_help) orelse "dev";
     assert(version.len > 0);
+    const package_step = b.step(
+        "package",
+        "Pack the app as zig-out/noface-<version>-<model>.zip for each shipped Kindle",
+    );
+    const table = b.addRunArtifact(host_tool(b, "kindles"));
+    const table_file = table.addOutputFileArg("KINDLES.md");
+    table.addArg(version);
+    for (shipped) |layout| {
+        const model = @tagName(layout);
+        const laid_out: App = .{
+            .noface = noface_for(b, target, model, false),
+            .launcher = launcher_for(b, target, model),
+            .jxr = jxr,
+        };
+        const zip_name = b.fmt("noface-{s}-{s}.zip", .{ version, model });
+        const zip = pack_for(b, laid_out, zip_name, b.fmt("{s} for {s}", .{ version, model }));
+        package_step.dependOn(&b.addInstallFile(zip, zip_name).step);
+        table.addArg(model);
+    }
+    package_step.dependOn(&b.addInstallFile(table_file, "KINDLES.md").step);
+    assert(package_step.dependencies.items.len == shipped.len + 1);
+}
+
+/// `app` packed as `zip_name`, its VERSION file saying `version`.
+fn pack_for(
+    b: *std.Build,
+    app: App,
+    zip_name: []const u8,
+    version: []const u8,
+) std.Build.LazyPath {
+    assert(std.mem.endsWith(u8, zip_name, ".zip"));
     const pack = b.addRunArtifact(host_tool(b, "package"));
-    const zip_name = b.fmt("noface-{s}.zip", .{version});
     const zip = pack.addOutputFileArg(zip_name);
     pack.addArg(version);
     const executable = "755";
@@ -271,10 +361,8 @@ fn build_package(b: *std.Build, app: App) void {
     pack_file(pack, executable, "noface/kpm/noface/launch.sh", b.path("device/kpm/launch.sh"));
     pack_file(pack, plain, "noface/LICENSE.md", b.path("LICENSE.md"));
     pack_file(pack, plain, "noface/THIRD_PARTY_NOTICES.md", b.path("THIRD_PARTY_NOTICES.md"));
-    const install_zip = b.addInstallFile(zip, zip_name);
-    b.step("package", "Pack the app as zig-out/noface-<version>.zip (-Dversion=1.2.3)")
-        .dependOn(&install_zip.step);
     assert(pack.argv.items.len > 2);
+    return zip;
 }
 
 /// One file for the package: its mode, its path in the zip, and where it comes from.
@@ -443,6 +531,7 @@ fn unit_tests(
     target: std.Build.ResolvedTarget,
     model: []const u8,
 ) *std.Build.Step.Compile {
+    assert(model.len > 0);
     const tests = b.addTest(.{
         // Named for the Kindle it's laid out for, so a failure says which
         .name = b.fmt("test-{s}", .{model}),
@@ -490,6 +579,8 @@ fn scenario_exe(
 /// natively on a Mac, as 32-bit x86 on a 64-bit Linux, as a Kindle's system calls
 /// need. Null on any other computer.
 fn host_scenarios(b: *std.Build, name: []const u8, model: []const u8) ?*std.Build.Step.Run {
+    assert(name.len > 0);
+    assert(model.len > 0);
     const host_os = b.graph.host.result;
     if (host_os.os.tag == .linux and host_os.cpu.arch == .x86_64) {
         const x86 = b.resolveTargetQuery(.{ .cpu_arch = .x86, .os_tag = .linux, .abi = .musl });

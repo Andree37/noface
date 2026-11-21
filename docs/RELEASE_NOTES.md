@@ -1,11 +1,11 @@
 ## Install
 
-You need a jailbroken Kindle Paperwhite, 12th generation (2024), with KMC and KPM.
-**It runs on that Kindle only:** noface drives its display directly, so on any other
-model it checks the screen, says it can't run, and goes back to the Kindle's own home
-screen.
+You need a jailbroken Kindle from the table above, with KMC and KPM. **Each zip runs
+on its own Kindle only:** noface drives the display directly and is laid out for one
+screen, so on any other model it checks the screen, says it can't run, and goes back
+to the Kindle's own home screen.
 
-1. Download **noface-*.zip** below and unzip it.
+1. Download the zip for your Kindle below and unzip it.
 2. Plug in the Kindle. Copy the **noface** folder to the Kindle's drive, then copy the
    folder **noface/kpm/noface** into **kmc/kpm/packages** on the Kindle.
 3. Eject the Kindle and type `;kpm launch noface` in its search bar.
@@ -20,7 +20,7 @@ button for later. Without Wi‑Fi, download `dict-en.zip` or `dict-pt.zip` from 
 [Dictionaries release](../../releases/tag/dictionaries), unzip, and copy the `dict-en`
 or `dict-pt` file into the **noface-data** folder on the Kindle.
 
-**Checking the download:** `SHA256SUMS` beside it holds its checksum, and GitHub
+**Checking the download:** `SHA256SUMS` beside it holds every zip's checksum, and GitHub
 signed where it was built: `gh attestation verify noface-*.zip -R Andree37/noface`
 says whether it came from this repository's release workflow, unchanged.
 

@@ -35,7 +35,8 @@ Needs [Zig](https://ziglang.org) 0.17.
   everything is rebuilt as it's next needed.
 - `zig build host-tools`: the tools that run on this computer, in `zig-out/bin`: the
   dictionary builder, the snapshot converter and the packer.
-- `zig build package -Dversion=1.2.3`: the release zip (see Packaging).
+- `zig build package -Dversion=1.2.3`: the release zips, one per shipped Kindle (see
+  Packaging).
 
 Before pushing, run them all; CI does the same (`.github/workflows/ci.yml`).
 
@@ -127,9 +128,13 @@ second display backend. A release carries one zip per Kindle that's been run thr
 
 ## Packaging and releases
 
-`zig build package -Dversion=1.2.3` builds everything and packs
-`zig-out/noface-1.2.3.zip` (`tools/package.zig`), the same zip a release carries. Pushing a tag like `v1.2.3` has GitHub build and publish it
-(`.github/workflows/release.yml`), with `docs/RELEASE_NOTES.md` as its install steps.
+`zig build package -Dversion=1.2.3` builds everything and packs one zip per shipped
+Kindle, `zig-out/noface-1.2.3-<model>.zip` (`tools/package.zig`), laid out for that
+Kindle's screen, and `zig-out/KINDLES.md`, the table of them (`tools/kindles.zig`).
+build.zig's `shipped` lists the Kindles: one joins only after `e2e all` passed on a
+real one. Pushing a tag like `v1.2.3` has GitHub build and publish them
+(`.github/workflows/release.yml`), with one `SHA256SUMS` for all, and notes made of
+`docs/releases/1.2.3.md`, the table, and `docs/RELEASE_NOTES.md`'s install steps.
 The dictionaries are built and published by hand from the Actions tab
 (`dictionaries.yml`).
 

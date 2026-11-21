@@ -23,12 +23,14 @@ jobs:
       - run: zig build check
       - run: zig build test
       - run: zig build scenarios
+      - run: zig build layouts
       - name: Package
+        # One zip per Kindle build.zig ships, and the table of them (KINDLES.md)
         run: zig build package -Dversion="${GITHUB_REF_NAME#v}"
       - name: Checksum
         run: |
           cd zig-out
-          sha256sum "noface-${GITHUB_REF_NAME#v}.zip" > SHA256SUMS
+          sha256sum noface-"${GITHUB_REF_NAME#v}"-*.zip > SHA256SUMS
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: zig-out/noface-*.zip
@@ -37,8 +39,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           # What this release is, written for it (docs/releases/<version>.md: a release
-          # without one isn't published), then how to install it, the same each time
-          cat "docs/releases/${GITHUB_REF_NAME#v}.md" docs/RELEASE_NOTES.md > notes.md
-          gh release create "$GITHUB_REF_NAME" "zig-out/noface-${GITHUB_REF_NAME#v}.zip" \
+          # without one isn't published), which zip is for which Kindle, then how to
+          # install it, the same each time
+          cat "docs/releases/${GITHUB_REF_NAME#v}.md" zig-out/KINDLES.md \
+            docs/RELEASE_NOTES.md > notes.md
+          gh release create "$GITHUB_REF_NAME" zig-out/noface-"${GITHUB_REF_NAME#v}"-*.zip \
             zig-out/SHA256SUMS \
             --title "noface ${GITHUB_REF_NAME#v}" --notes-file notes.md

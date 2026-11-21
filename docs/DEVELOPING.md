@@ -20,8 +20,9 @@ Needs [Zig](https://ziglang.org) 0.17.
 - `zig build scenarios`: scripted runs of the real app (see Tests).
 - `zig build tools`: development tools, also for the Kindle.
 - `zig build layouts`: the whole interface laid out for every other Kindle's screen
-  (`device.Model`: the Basic, the Scribe, a 167 dpi Kindle), built but not run. Every
-  layout checks as it's built that it fits (nothing overlaps or runs off the screen,
+  (`device.Model`: the Basic, the Scribe, a 167 dpi Kindle), built, with the unit
+  tests run on each: a test takes its numbers from the layout, never one Kindle's
+  pixels. Every layout checks as it's built that it fits (nothing overlaps or runs off the screen,
   every control takes a fingertip), so a build that passes fits that Kindle. Sizes are
   points turned into pixels by the screen's density (`src/ui/style.zig`), never pixels.
   A build is laid out for one Kindle, `-Dlayout=<model>` (the Paperwhite unless

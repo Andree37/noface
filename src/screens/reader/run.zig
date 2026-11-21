@@ -36,7 +36,7 @@ const history_max = 32;
 pub const tick_us = 100 * std.time.us_per_ms;
 /// The band at the top of the screen whose taps pause: bigger than the toolbar's, as a
 /// hand mid-stride lands less precisely.
-pub const pause_band_px = 2 * style.fingertip + style.fingertip; // Three fingertips
+pub const pause_band_px = 3 * style.fingertip;
 
 comptime {
     assert(tick_us < phrases.phrase_us_min);

@@ -99,7 +99,7 @@ pub const placed_kinds = std.enums.values(placed.What).len;
 pub const Shown = struct { page: u32, words: []const book_model.Word };
 
 /// The most books a scenario puts in the documents folder.
-pub const books_max = 4;
+pub const books_max = 6;
 
 /// How the pretend Kindle starts, and where a scenario begins.
 pub const Kindle = struct {

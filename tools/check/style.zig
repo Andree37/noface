@@ -320,8 +320,9 @@ fn is_size_word(word: []const u8) bool {
     return false;
 }
 
-/// The decimal numbers of 3 or more on a line that aren't a divisor or an array's
-/// length: `[16]u8` and `/ 4` share out or count, they don't size.
+/// The decimal numbers of 3 or more on a line that aren't a divisor, a multiplier or an
+/// array's length: `[16]u8`, `/ 4` and `3 * style.fingertip` share out or count, they
+/// don't size.
 fn big_numbers(code: []const u8) u32 {
     var count: u32 = 0;
     var i: u32 = 0;
@@ -343,15 +344,53 @@ fn big_numbers(code: []const u8) u32 {
         const before = std.mem.trimEnd(u8, code[0..i], " ");
         const divided = before.len > 0 and before[before.len - 1] == '/';
         // `@divTrunc(x, 3)` and its kind divide too
-        const div_call = before.len > 0 and before[before.len - 1] == ',' and
-            std.mem.lastIndexOf(u8, before, "@div") != null;
-        const divisor = divided or div_call;
+        const divisor = divided or divides_in_call(before);
+        const after = std.mem.trimStart(u8, code[end..], " ");
+        const multiplied = (before.len > 0 and before[before.len - 1] == '*') or
+            (after.len > 0 and after[0] == '*');
+        assert(after.len <= code.len - end);
         const length = before.len > 0 and before[before.len - 1] == '[' and
             end < code.len and code[end] == ']';
-        if (value >= 3 and !divisor and !length) count += 1;
+        if (value >= 3 and !divisor and !multiplied and !length) count += 1;
         i = end;
     }
     return count;
+}
+
+/// Whether the code `before` a number leaves it the second argument of the innermost
+/// call still open, and that call is a `@div…`: `@divTrunc(x, 3)`, not `f(@divTrunc(a,
+/// b), 3)` nor `@divTrunc(f(a, 3), b)`.
+fn divides_in_call(before: []const u8) bool {
+    if (before.len == 0 or before[before.len - 1] != ',') return false;
+    var depth: u32 = 0;
+    var commas: u32 = 0;
+    assert(before.len <= std.math.maxInt(u32)); // One line of a file
+    var at: u32 = @intCast(before.len);
+    // Back to the innermost open bracket, a character a pass
+    while (at > 0) {
+        at -= 1;
+        assert(at < before.len);
+        switch (before[at]) {
+            ')', ']', '}' => depth += 1,
+            '(', '[', '{' => {
+                if (depth == 0) {
+                    if (before[at] != '(' or commas != 1) return false;
+                    const name_end = at;
+                    var name_start = name_end;
+                    while (name_start > 0 and is_word(before[name_start - 1])) name_start -= 1;
+                    assert(name_start <= name_end);
+                    if (name_start == 0 or before[name_start - 1] != '@') return false;
+                    return std.mem.startsWith(u8, before[name_start..name_end], "div");
+                }
+                depth -= 1;
+            },
+            ',' => {
+                if (depth == 0) commas += 1;
+            },
+            else => {},
+        }
+    }
+    return false;
 }
 
 /// Whether a line imports somewhere other than at the file's top: an `@import` in
@@ -1520,6 +1559,9 @@ test "a size in the screens' code comes from the scale, and a marked number may 
         \\    // Not a size: the fourth row
         \\    row(page, 3);
         \\    assert(row_gap >= 3);
+        \\    page.fill_rect(0, 0, @divTrunc(page.width, 3), 3 * style.fingertip, style.black);
+        \\    page.fill_rect(@divTrunc(page.width, 2), 0, 12, 1, style.black);
+        \\    page.fill_rect(0, 0, @divTrunc(f(page.width, 5), 2), 1, style.black);
         \\}
     ;
     const in_ui = try check_zig("src/ui/menu.zig", source, std.testing.allocator);
@@ -1530,7 +1572,8 @@ test "a size in the screens' code comes from the scale, and a marked number may 
         if (b.rule == .layout_number) bare += 1;
         if (b.rule == .marker_unused) unused += 1;
     }
-    try std.testing.expectEqual(@as(u32, 3), bare); // 24, and the two 4s
+    // 24, the two 4s, the 12 after a `@div` call, and the 5 inside one
+    try std.testing.expectEqual(@as(u32, 5), bare);
     try std.testing.expectEqual(@as(u32, 1), unused); // `row(page, 3)` writes no size
     const in_style = try check_zig("src/ui/style.zig", source, std.testing.allocator);
     defer std.testing.allocator.free(in_style);

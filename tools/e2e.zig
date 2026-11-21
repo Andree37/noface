@@ -301,8 +301,9 @@ const Shelf = enum {
     }
 };
 
-/// Copies of the scenario book on the books shelf: more than a library page holds.
-const scenario_copies = 14;
+/// Copies of the scenario book on the books shelf: one more than a later library page
+/// holds, so they need two pages and no more, on any Kindle's layout.
+const scenario_copies = core.library.page_books_max + 1;
 
 comptime {
     // Two pages of the library, so its scripts can turn on and back
@@ -853,7 +854,10 @@ test "a shelf's books are named as a reader's copies would be, the first by its 
     const second = try book_path(&buffer, "t/books", .books, 1);
     try std.testing.expectEqualStrings("t/books/documents/Scenario Book 02.epub", second);
     const last = try book_path(&buffer, "t/books", .books, scenario_copies - 1);
-    try std.testing.expectEqualStrings("t/books/documents/Scenario Book 14.epub", last);
+    var expected: [64]u8 = undefined;
+    const fmt = "t/books/documents/Scenario Book {d:0>2}.epub";
+    const named = try std.fmt.bufPrint(&expected, fmt, .{scenario_copies});
+    try std.testing.expectEqualStrings(named, last);
     const notes = try book_path(&buffer, "t/notes", .notes, 0);
     try std.testing.expectEqualStrings("t/notes/documents/Notes and Pictures.epub", notes);
 }

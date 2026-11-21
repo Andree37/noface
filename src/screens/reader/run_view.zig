@@ -30,10 +30,12 @@ const phrase_line_spacing = 1.35;
 const phrase_lines_max = @min(phrase_lines_most, phrase_lines_fit);
 const phrase_lines_most = 6;
 const phrase_line_px: comptime_float = phrase_px * phrase_line_spacing;
-const phrase_lines_fit: comptime_int = @intFromFloat(@floor(
+/// The most whole lines strictly shorter than the room between the lines before and
+/// after the phrase, so the phrase never touches them.
+const phrase_lines_fit: comptime_int = @as(comptime_int, @intFromFloat(@ceil(
     @as(comptime_float, 2 * (phrase_middle_y - (text_top + before_below_top_px + context_px))) /
         phrase_line_px,
-));
+))) - 1;
 /// Where the phrase sits: its middle at the screen's, between the line before it under
 /// the map and the line after it over the footer.
 pub const phrase_middle_y = style.screen_height / 2;

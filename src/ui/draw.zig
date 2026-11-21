@@ -288,16 +288,21 @@ comptime {
 }
 
 test "the shared pager takes taps to the bottom edge" {
-    try std.testing.expectEqual(Pager.Hit.next, bottom_pager.hit(800, 1690).?);
-    try std.testing.expect(bottom_pager.hit(800, 1500) == null);
+    // On the next arrow, at the screen's last row of pixels and just over the pager
+    const x = Pager.next_left + 1;
+    try std.testing.expectEqual(Pager.Hit.next, bottom_pager.hit(x, style.screen_height - 1).?);
+    try std.testing.expect(bottom_pager.hit(x, bottom_pager.top - 1) == null);
 }
 
 test "pager arrows sit either side of the count" {
     const p = Pager{ .top = 100, .bottom = 200 };
-    try std.testing.expectEqual(Pager.Hit.prev, p.hit(400, 150).?);
-    try std.testing.expectEqual(Pager.Hit.next, p.hit(800, 150).?);
-    try std.testing.expect(p.hit(600, 150) == null);
-    try std.testing.expect(p.hit(400, 250) == null);
+    const prev_x = Pager.prev_left + 1;
+    const next_x = Pager.next_left + 1;
+    const count_x = style.screen_width / 2; // Between the arrows
+    try std.testing.expectEqual(Pager.Hit.prev, p.hit(prev_x, 150).?);
+    try std.testing.expectEqual(Pager.Hit.next, p.hit(next_x, 150).?);
+    try std.testing.expect(p.hit(count_x, 150) == null);
+    try std.testing.expect(p.hit(prev_x, 250) == null);
 }
 
 test "a line keeps a word that fits just before the space that overflows" {

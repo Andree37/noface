@@ -267,7 +267,8 @@ fn tile_center(i: u32) struct { x: i32, y: i32 } {
     assert(col < in_row);
     // Doubled to keep the half-step of an even row whole, halved last
     const offset2: i32 = 2 * @as(i32, @intCast(col)) - @as(i32, @intCast(in_row - 1));
-    const x = @divTrunc(style.screen_width + offset2 * tile_step_x, 2);
+    // Each half rounded towards the middle, so a row is mirrored about it exactly
+    const x = @divTrunc(style.screen_width, 2) + @divTrunc(offset2 * tile_step_x, 2);
     const y = first_row_y + @as(i32, @intCast(row)) * row_step_y;
     assert(x - tile_reach_x >= 0);
     assert(x + tile_reach_x <= style.screen_width);

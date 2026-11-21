@@ -328,7 +328,7 @@ const toggle_height = style.fingertip - 2 * toggle_reach; // Its taps a fingerti
 /// A switch's parts: its pill's middle, down from its top, which its label is centred
 /// on; and the pill's size.
 const toggle = struct {
-    const middle_drop = style.space.small + style.space.medium;
+    const middle_drop = toggle_height / 2;
     const width = style.space.band;
     const radius = style.space.medium;
 };
@@ -393,6 +393,7 @@ comptime {
     assert(row_bar < row_height);
     // A switch takes a fingertip, and the next one starts where its taps end
     assert(toggle_height + 2 * toggle_reach >= style.fingertip);
+    assert(2 * toggle.radius <= toggle_height); // The pill inside its taps' middle
     assert(toggle_height + 2 * toggle_reach <= switch_step);
     // Every row of controls takes a fingertip's taps
     assert(tabs_height >= style.fingertip);

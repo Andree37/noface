@@ -17,10 +17,15 @@ const covers = @import("covers.zig");
 const margin = style.margin;
 const whole_percent = 100; // A book read through
 const screen_width = style.screen_width;
-const gutter = style.space.tiny + style.space.roomy;
+/// The grid: as many covers as fit across between the margins with a gap of at least
+/// `gutter_least` between each two, and what's left over shared out between the gaps,
+/// so the grid always reaches from margin to margin, without room for one more cover
+/// left over at its side.
+const grid_width = screen_width - 2 * margin;
+const gutter_least = style.space.roomy;
+const columns = (grid_width + gutter_least) / (style.cover.width + gutter_least);
+const gutter = (grid_width - columns * style.cover.width) / (columns - 1);
 const cell_step = style.cover.width + gutter;
-/// As many covers as fit across between the margins.
-const columns = (screen_width - 2 * margin + gutter) / cell_step;
 /// A cover, its bar and its title under it, and a gap before the next row.
 const row_height = style.cover.height + style.space.wide + cell_title_below;
 const cell_title_below = style.space.roomy; // From the bar under a cover to its title's baseline
@@ -101,17 +106,17 @@ const Tab = struct {
 /// tab's left otherwise.
 const funnel_width = style.space.band;
 const tab_label_pad = style.space.snug;
-/// Each tab's own room past the funnel: its label's, and a fingertip's at least.
-const tab_width = style.space.band + style.space.wide;
 // Inside one rounded button that starts with a funnel, side by side from the margin,
-// each at least a fingertip wide, as wide as its label needs. The first takes the
-// funnel's taps too, as it's drawn as part of it.
+// each at least a fingertip wide and as wide as its label needs: its room past the
+// funnel is a step of the scale that its label in the small font fits, with a pad
+// either side (drawing checks it, measured). The first takes the funnel's taps too,
+// as it's drawn as part of it.
 const tabs = tabs: {
     const Each = struct { filter: catalog.Filter, label: []const u8, width: i32 };
     const each = [_]Each{
-        .{ .filter = .all, .label = "All", .width = funnel_width + tab_width },
-        .{ .filter = .unread, .label = "Unread", .width = tab_width },
-        .{ .filter = .read, .label = "Read", .width = tab_width },
+        .{ .filter = .all, .label = "All", .width = funnel_width + style.space.band },
+        .{ .filter = .unread, .label = "Unread", .width = style.space.band + style.space.wider },
+        .{ .filter = .read, .label = "Read", .width = style.space.tall },
     };
     var placed: [each.len]Tab = undefined;
     var left: i32 = margin;
@@ -162,8 +167,8 @@ const type_edge = 2; // Its outline
 const type_paper = 0xf0; // A shade off white, so the cover reads as one
 const type_author_above = style.space.roomy; // From the cover's bottom up to the author's baseline
 /// How high the author's letters reach above their baseline, at most: the size of the
-/// caption font it's set in (26 px, setup.zig), which none of its letters outgrows.
-const type_author_reach = style.space.medium;
+/// caption font it's set in (setup.zig), which none of its letters outgrows.
+const type_author_reach = style.text.caption;
 const type_rule_gap = style.space.tiny; // At least this between the rule and the author's letters
 
 /// The moment a frame is drawn for, read once so every part of it agrees.
@@ -197,8 +202,12 @@ const sort_gap = style.space.wide;
 const sort_left = stats_cx + search_reach + sort_gap;
 
 comptime {
-    // The grid's four columns between the margins
+    // The grid's columns between the margins, reaching both: no more than a pixel a gap
+    // left over at its side, not a cover's width, nor a gap's
+    assert(columns > 1);
+    assert(gutter >= gutter_least);
     assert(margin + columns * cell_step - gutter <= style.screen_width - margin);
+    assert(grid_width - (columns * cell_step - gutter) < columns);
     // A cover, its progress bar and its title fit in a row
     assert(style.cover.height + cell.bar_gap + cell_title_below < row_height);
     // The strips, top to bottom, with page one's hero above its tabs
@@ -763,6 +772,7 @@ fn draw_tabs(
         try draw.choice(fonts, page, x, .left, y, t.label, active, @intCast(top + tab_underline));
         // Over its label alone, clear of the pill's outline round the tabs
         const width: u32 = @intFromFloat(@ceil(try fonts.small.measure(t.label)));
+        assert(t.label_left + @as(i32, @intCast(width)) + tab_label_pad <= t.right);
         if (!active) fonts.small.fade(page, left, y, width, style.faded);
     }
     try draw_tabs_sort(fonts, page, top, order);
@@ -865,7 +875,8 @@ const test_books = 79; // More than fill page one
 
 test "the current book stays on page one of every view" {
     try std.testing.expectEqual(Hit.hero, hit(test_hero_x, test_hero_y, 0, test_books, false));
-    for ([_]u32{ 0, columns - 1, columns }) |slot| {
+    // The first cover, the first row's last, and page one's last
+    for ([_]u32{ 0, columns - 1, grid_size(true) - 1 }) |slot| {
         const at = test_book(slot, true);
         try std.testing.expectEqual(Hit{ .book = slot }, hit(at[0], at[1], 0, test_books, false));
     }
@@ -916,8 +927,9 @@ test "header and footer controls" {
 }
 
 test "tapping past the last book does nothing" {
-    const fourth = test_book(3, true);
-    try std.testing.expectEqual(Hit.none, hit(fourth[0], fourth[1], 0, 3, false));
+    // One book: the cover beside its is empty
+    const second = test_book(1, true);
+    try std.testing.expectEqual(Hit.none, hit(second[0], second[1], 0, 1, false));
 }
 
 test "page count follows the layout" {

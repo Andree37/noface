@@ -310,9 +310,10 @@ test "bad or unknown lines change nothing; a typeface not on offer is kept by na
 }
 
 test "defaults match the original reader" {
+    // 11 point text, lines 1.35 times its size apart, on whichever screen
     const s = Settings{};
-    try std.testing.expectEqual(@as(f32, 46), s.px());
-    try std.testing.expectEqual(@as(i32, 62), s.line_height());
+    try std.testing.expectEqual(in_pixels(f32, .{11})[0], s.px());
+    try std.testing.expectEqual(@as(i32, @intFromFloat(s.px() * 1.35)), s.line_height());
 }
 
 test "the reader's own typefaces are offered after the Kindle's, by name" {

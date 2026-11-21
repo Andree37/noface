@@ -809,7 +809,7 @@ test "a book read and saved moves up, and keeps its place through a reload" {
     var library = try load(t.sources);
     library.arrange(.recent, .all, "");
     _ = library.page(0);
-    const e = library.book(5);
+    const e = library.book(library.state.page_filled - 1); // Not the hero: page one's last
     const title = try std.testing.allocator.dupe(u8, e.title);
     defer std.testing.allocator.free(title);
     e.percent = 50;

@@ -30,9 +30,9 @@ const tool_icon_y = status_row + draw.back_link.drop;
 const tool_reach = style.space.wide; // Taps this far either side of a tool's centre
 /// The tools take taps this far into the title's band under them.
 const tool_taps_below = style.space.small;
-/// The clock's baseline and the status icons' middle, down from the screen's top.
-const status_text_y = style.space.wide;
-const status_icons_y = style.space.wide;
+/// The status line's middle, down from the screen's top: the icons' middle, and the
+/// clock's and percentage's capitals centred on it, as in the library.
+const status_centre = style.space.wide;
 /// The book's title, faded: its baseline, down from the title band's top.
 const title_baseline_drop = style.space.wide;
 const tool_spacing = style.space.tall; // From one tool's centre to the next
@@ -289,10 +289,11 @@ pub fn render(
     const clock = quick.clock_text();
     const time = clock[0 .. std.mem.indexOfScalar(u8, clock, ' ') orelse clock.len];
     // Centred, as on the page and in the library
-    try draw.centered(fonts.caption, page, w / 2, status_text_y, time);
+    const baseline = fonts.caption.centred_on(status_centre);
+    assert(baseline < status_band);
+    try draw.centered(fonts.caption, page, w / 2, baseline, time);
     const right = w - margin;
-    const status_y = status_icons_y;
-    try icons.status_cluster(page, fonts.caption, right, status_y, status_text_y, quick, false);
+    try icons.status_cluster(page, fonts.caption, right, status_centre, baseline, quick, false);
 
     try draw.draw_back_link(fonts.small, page, tool_icon_y, "Home");
     // Each tool drawn where its entry says it takes taps

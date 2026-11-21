@@ -162,16 +162,22 @@ test "only MediaTek's display driver is supported" {
 }
 
 test "only the screen size the interface is laid out for is supported" {
-    try std.testing.expect(hwtcon.supported_size(1272, 1696));
-    // A Paperwhite 11th gen's panel, an older Kindle's, and the right one on its side
-    try std.testing.expect(!hwtcon.supported_size(1236, 1648));
-    try std.testing.expect(!hwtcon.supported_size(1072, 1448));
-    try std.testing.expect(!hwtcon.supported_size(1696, 1272));
+    // This build's Kindle's screen, upright; every other Kindle's, and its own on its side
+    const own = device.screen(device.target);
+    try std.testing.expect(hwtcon.supported_size(own.width_px, own.height_px));
+    try std.testing.expect(!hwtcon.supported_size(own.height_px, own.width_px));
+    var other: ?device.Screen = null;
+    for (std.enums.values(device.Model)) |model| {
+        if (model == device.target) continue;
+        const s = device.screen(model);
+        try std.testing.expect(!hwtcon.supported_size(s.width_px, s.height_px));
+        other = s;
+    }
     // A pretend screen of another size is refused as a real one would be, not drawn on
     const allocator = std.testing.allocator;
-    const refused = hwtcon.Screen.fake(allocator, 1072, 1448);
+    const refused = hwtcon.Screen.fake(allocator, other.?.width_px, other.?.height_px);
     try std.testing.expectError(error.UnsupportedScreenSize, refused);
-    const screen = try hwtcon.Screen.fake(allocator, 1272, 1696);
+    const screen = try hwtcon.Screen.fake(allocator, own.width_px, own.height_px);
     defer allocator.free(screen.map);
-    try std.testing.expectEqual(@as(u32, 1272), screen.width);
+    try std.testing.expectEqual(own.width_px, screen.width);
 }

@@ -466,8 +466,9 @@ pub const Viewer = struct {
 
 test "taps on and near the close button close" {
     try std.testing.expect(on_close(close_center_x, close_center_y));
-    try std.testing.expect(on_close(close_center_x - close_radius - 20, close_center_y));
-    try std.testing.expect(!on_close(600, 800));
+    try std.testing.expect(on_close(close_center_x - close_reach, close_center_y));
+    try std.testing.expect(!on_close(close_center_x - close_reach - 1, close_center_y));
+    try std.testing.expect(!on_close(style.screen_width / 2, style.screen_height / 2));
 }
 
 test "sizes too big to decode are refused without overflowing" {

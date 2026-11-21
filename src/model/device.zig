@@ -10,7 +10,7 @@ const assert = std.debug.assert;
 /// Which Kindle this build is laid out for (`zig build -Dlayout=<model>`).
 const layout = @import("layout");
 
-/// The Kindles noface knows the screens of.
+/// The Kindles noface knows the screens of; build.zig `all_layouts` names each too.
 pub const Model = enum { paperwhite_12, basic_11, scribe, basic_10 };
 
 /// The Kindle this build is laid out for, and so the one it runs on: the Paperwhite,

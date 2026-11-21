@@ -66,8 +66,9 @@ pub fn build(b: *std.Build) void {
 const default_layout = "paperwhite_12";
 var layout_model: []const u8 = default_layout;
 
-/// The other Kindles' screens every layout is checked against by `zig build layouts`.
-const other_layouts = [_][]const u8{ "basic_11", "scribe", "basic_10" };
+/// Every Kindle noface knows (src/model/device.zig `Model`, which refuses a name it
+/// hasn't got): `zig build layouts` lays the interface out for each but the one built.
+const all_layouts = [_][]const u8{ "paperwhite_12", "basic_11", "scribe", "basic_10" };
 
 /// Gives `module` the layout option src/model/device.zig reads: which Kindle's screen
 /// the interface is laid out for.
@@ -80,15 +81,17 @@ fn lay_out_for(b: *std.Build, module: *std.Build.Module, model: []const u8) void
 }
 
 /// `zig build layouts`: the whole interface laid out for every other Kindle's screen,
-/// built but not run. Every layout checks itself as it's built (nothing overlaps,
+/// built, and the unit tests run on each, so none holds only on the Kindle built for.
+/// Every layout checks itself as it's built (nothing overlaps,
 /// nothing runs off the screen, every control takes a fingertip, every named place is
 /// a tap on its control: screens/places.zig), so a build that passes is a layout
 /// that fits that Kindle.
 fn build_layouts(b: *std.Build, target: std.Build.ResolvedTarget) *std.Build.Step {
     assert(target.result.cpu.arch == .arm); // For a Kindle, like the app
-    assert(other_layouts.len > 0);
-    const layouts_step = b.step("layouts", "Lay the interface out for every other Kindle's screen");
-    for (other_layouts) |model| {
+    assert(all_layouts.len > 1);
+    const layouts_step = b.step("layouts", "Lay out and test for every other Kindle's screen");
+    for (all_layouts) |model| {
+        if (std.mem.eql(u8, model, layout_model)) continue; // Built and tested already
         const module = b.createModule(.{
             .root_source_file = b.path("src/layouts.zig"),
             .target = target,
@@ -102,8 +105,10 @@ fn build_layouts(b: *std.Build, target: std.Build.ResolvedTarget) *std.Build.Ste
             .root_module = module,
         });
         layouts_step.dependOn(&laid_out.step);
+        layouts_step.dependOn(&b.addRunArtifact(unit_tests(b, b.graph.host, model)).step);
     }
-    assert(layouts_step.dependencies.items.len == other_layouts.len);
+    // Built and tested for every Kindle but the one built, which must be one of them
+    assert(layouts_step.dependencies.items.len == 2 * (all_layouts.len - 1));
     return layouts_step;
 }
 
@@ -321,7 +326,7 @@ fn build_checks(b: *std.Build) *std.Build.Step {
         .{ .cpu_arch = .arm, .os_tag = .linux, .abi = .musleabihf },
     };
     for (linux_targets) |query| {
-        check_step.dependOn(&unit_tests(b, b.resolveTargetQuery(query)).step);
+        check_step.dependOn(&unit_tests(b, b.resolveTargetQuery(query), layout_model).step);
     }
     assert(run_style.has_side_effects); // Never skipped as cached
     return check_step;
@@ -390,7 +395,7 @@ fn build_scenarios(b: *std.Build, target: std.Build.ResolvedTarget) *std.Build.S
 /// `zig build test`: every unit test, listed in src/tests.zig, on this computer.
 fn build_tests(b: *std.Build) *std.Build.Step {
     const test_step = b.step("test", "Run unit tests on the host");
-    const tests = unit_tests(b, b.graph.host);
+    const tests = unit_tests(b, b.graph.host, layout_model);
     test_step.dependOn(&b.addRunArtifact(tests).step);
     // The tools that run on this computer, each with its own tests
     for (host_tool_names) |name| {
@@ -420,8 +425,12 @@ fn build_tests(b: *std.Build) *std.Build.Step {
     return test_step;
 }
 
-/// Every unit test, listed in src/tests.zig, built for `target`.
-fn unit_tests(b: *std.Build, target: std.Build.ResolvedTarget) *std.Build.Step.Compile {
+/// Every unit test, listed in src/tests.zig, built for `target` and laid out for `model`.
+fn unit_tests(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    model: []const u8,
+) *std.Build.Step.Compile {
     const tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/tests.zig"),
@@ -429,7 +438,7 @@ fn unit_tests(b: *std.Build, target: std.Build.ResolvedTarget) *std.Build.Step.C
             .link_libc = true,
         }),
     });
-    lay_out_for(b, tests.root_module, layout_model);
+    lay_out_for(b, tests.root_module, model);
     // So src/kindle/paths.zig can check that what starts the launcher names it
     tests.root_module.addAnonymousImport("launch_sh", .{
         .root_source_file = b.path("device/kpm/launch.sh"),

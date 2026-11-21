@@ -656,7 +656,7 @@ const ExampleRoot = struct {
 };
 
 /// The screen the tests' fake input reports, and a tap in its middle.
-const test_screen = device.screen(.paperwhite_12);
+const test_screen = device.screen(device.target);
 const test_middle: input_mod.Tap = .{
     .x = @intCast(test_screen.width_px / 2),
     .y = @intCast(test_screen.height_px / 2),

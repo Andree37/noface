@@ -56,7 +56,14 @@ pub const all = [_]Scenario{
                     const r = try play_on(.{ .dictionary = true, .snapshot = shot[0] }, shot[1]);
                     try expect(r.looks_right, @tagName(shot[0]) ++ " looks different");
                 }
-                const lib = try play_on(.{ .library = true, .snapshot = .library }, &.{});
+                // Shelf enough for the grid's whole first row and part of its second, so
+                // its columns are seen as well as the hero
+                const shelf: Kindle = .{
+                    .library = true,
+                    .books = &shelf_books,
+                    .snapshot = .library,
+                };
+                const lib = try play_on(shelf, &.{});
                 try expect(lib.looks_right, "library looks different");
                 const search_books = tap_on(library_ui.place(.search));
                 const found: Kindle = .{ .library = true, .snapshot = .@"library-search" };
@@ -71,3 +78,6 @@ pub const all = [_]Scenario{
         }.run,
     },
 };
+
+/// A shelf for the library's look: more books than one row of its grid takes.
+const shelf_books = [_][]const u8{ "a.epub", "b.epub", "c.epub", "d.epub", "e.epub", "f.epub" };

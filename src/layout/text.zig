@@ -12,17 +12,14 @@ pub const Hit = struct { x: i32, y: i32, w: i32, h: i32, target: u32 };
 
 /// A highlight is a black line under its words, not a gray band: on this panel every
 /// refresh that turns grays blinks a gray black as it comes or goes, where black and
-/// white change cleanly with the page.
-const mark_line_px = 5;
-/// From the foot of the line's height to the mark's line: under the descenders.
-const mark_line_above_foot_px = 10;
+/// white change cleanly with the page. Its thickness, and how far up from the foot of
+/// its line's height it sits, under the descenders: the screen's to say, in pixels.
+pub const Underline = struct { thick_px: u32, above_foot_px: u32 };
 
 /// The most words on one line.
 const max_words = 96;
 
 comptime {
-    // The line sits within its line's height, above the next line's words
-    assert(mark_line_above_foot_px > mark_line_px);
     assert(max_words > 1);
 }
 
@@ -85,13 +82,14 @@ pub const Hits = struct {
         h.len += 1;
     }
 
-    /// Finds the reference at a tap, with room for how small they are.
-    pub fn find(h: *const Hits, x: i32, y: i32) ?u32 {
+    /// Finds the reference at a tap within `reach` pixels round it, with room for how
+    /// small they are.
+    pub fn find(h: *const Hits, x: i32, y: i32, reach: i32) ?u32 {
         assert(h.len <= h.items.len);
-        const pad = 30;
+        assert(reach >= 0);
         for (h.items[0..h.len]) |r| {
-            const across = x >= r.x - pad and x < r.x + r.w + pad;
-            if (across and y >= r.y - pad and y < r.y + r.h + pad) return r.target;
+            const across = x >= r.x - reach and x < r.x + r.w + reach;
+            if (across and y >= r.y - reach and y < r.y + r.h + reach) return r.target;
         }
         return null;
     }
@@ -100,8 +98,11 @@ pub const Hits = struct {
 test "tap near a reference finds it" {
     var hits = Hits{};
     hits.add(.{ .x = 100, .y = 200, .w = 20, .h = 40, .target = 7 });
-    try std.testing.expectEqual(@as(u32, 7), hits.find(90, 190).?);
-    try std.testing.expect(hits.find(300, 200) == null);
+    // Within the reach round it, and just past it
+    const reach = 10;
+    try std.testing.expectEqual(@as(u32, 7), hits.find(100 - reach, 200 - reach, reach).?);
+    try std.testing.expect(hits.find(100 - reach - 1, 200, reach) == null);
+    try std.testing.expect(hits.find(300, 200, reach) == null);
 }
 
 /// Where layout gets the font for a weight, slant and size. Without one, every
@@ -132,6 +133,7 @@ pub const Layout = struct {
     margin_top: i32,
     margin_bottom: i32,
     indent: f32,
+    underline: Underline,
     reference: ?*Font = null, // Smaller font for note references
     marks: []const book_model.Mark = &.{},
     justify: bool = true,
@@ -683,9 +685,13 @@ fn draw_line(
                 word_marked(l.marks, para.text, para_index, line.words[k + 1]);
             const mark_width: u32 = @intFromFloat(if (joined) w + place.gap else w);
             // Fonts are set at 26 px and up, lines taller than the mark's place
-            assert(pf.line_height > mark_line_above_foot_px);
-            const mark_top: u32 = @intCast(line_top + pf.line_height - mark_line_above_foot_px);
-            p.fill_rect(@intFromFloat(x), mark_top, mark_width, mark_line_px, 0x00);
+            // The line sits within its line's height, above the next line's words
+            const u = l.underline;
+            assert(u.above_foot_px > u.thick_px);
+            assert(pf.line_height > u.above_foot_px);
+            const above_foot: i32 = @intCast(u.above_foot_px);
+            const mark_top: u32 = @intCast(line_top + pf.line_height - above_foot);
+            p.fill_rect(@intFromFloat(x), mark_top, mark_width, u.thick_px, 0x00);
         }
         if (place.hits) |h| h.add_word(.{
             .x = @intFromFloat(x),
@@ -827,13 +833,18 @@ test "bold word starts cover half of each word's letters" {
     try std.testing.expectEqual(@as(u32, 0), bold_start("\u{2014}"));
 }
 
+/// The highlight line the tests' pages draw.
+const test_underline: Underline = .{ .thick_px = 5, .above_foot_px = 10 };
+
 /// One page drawn from `start` on a fresh page, its words' places and where it ends.
 const TestPage = struct {
     pixels: [test_width * test_height]u8 = undefined,
     hits: Hits = .{},
     next: book_model.Pos = .{},
 
+    // Not a size: a test page's, any size holding the few lines set in it will do
     const test_width = 600;
+    // Not a size: as wide
     const test_height = 420;
 
     fn draw(
@@ -887,6 +898,7 @@ test "a stop at a page's own end draws that page exactly as it falls without one
         .margin_top = 30,
         .margin_bottom = 30,
         .indent = 40,
+        .underline = test_underline,
         .hyphenator = &english,
     };
     const free = try std.testing.allocator.create(TestPage);
@@ -928,6 +940,7 @@ test "a stop inside a page ends it exactly there, the lines above as they were" 
         .margin_top = 30,
         .margin_bottom = 30,
         .indent = 40,
+        .underline = test_underline,
         .hyphenator = &english,
     };
     const free = try std.testing.allocator.create(TestPage);
@@ -970,6 +983,7 @@ test "a highlight's line spans the gap between its words, and none after its las
             .margin_top = 30,
             .margin_bottom = 30,
             .indent = 0,
+            .underline = test_underline,
             .marks = &marks,
         };
         try out.draw(&font, &paras, .{}, l);
@@ -977,7 +991,7 @@ test "a highlight's line spans the gap between its words, and none after its las
         const second = out.hits.words[1];
         try std.testing.expectEqual(@as(u32, 15), first.end);
         try std.testing.expect(second.x > first.x + first.w + 4); // A gap to look into
-        const y: u32 = @intCast(first.y + first.h - mark_line_above_foot_px + 2);
+        const y: u32 = @intCast(first.y + first.h - test_underline.above_foot_px + 2);
         const x: u32 = @intCast(first.x + first.w + 2);
         try std.testing.expectEqual(in_gap, out.pixels[y * TestPage.test_width + x]);
     }
@@ -1004,6 +1018,7 @@ test "a word broken across lines is as bold as it is whole" {
         .margin_top = 30,
         .margin_bottom = 30,
         .indent = 0,
+        .underline = test_underline,
         .bold_starts = true,
     };
     const p = Paragraph{ .text = "we acknowledged it" };

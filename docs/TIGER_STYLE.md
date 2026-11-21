@@ -207,7 +207,8 @@ doesn't look at, so the rules for the code it tests (assertions, ignored errors,
 - **At most 100 columns per line [checked]**, no exceptions. Add a trailing comma and
   let `zig fmt` wrap.
 - Braces on an `if` unless it fits on one line **[checked]**.
-- **No bare sizes in the screens' code [checked]** (`src/ui/`, `src/screens/`): every
+- **No bare sizes in the screens' code [checked]** (`src/ui/`, `src/screens/`,
+  `src/layout/`, `src/gfx/` and the files of `src/` itself): every
   width, gap, inset and band comes from `src/ui/style.zig`, where sizes are written in
   points and turned into the screen's pixels by its density (`style.space`,
   `style.text`, `style.fingertip`, `style.button_width`), or is worked out from the
@@ -215,7 +216,11 @@ doesn't look at, so the rules for the code it tests (assertions, ignored errors,
   height). So a layout is the same physical size on any Kindle and fills a bigger
   screen with more, not with bigger gaps. The check flags a number of 3 or more in a
   declaration named like a size or given to a drawing call; a divisor, an array's
-  length and a number in an assertion are left alone. The icons draw in their own grid.
+  length, a number in an assertion and a count of a named size from another file
+  (`3 * style.fingertip`) are left alone. The icons draw in their own grid, and the
+  file formats' decoders (JPEG, PNG, TrueType, CFF) keep the formats' own numbers.
+  `src/layout/` may not import the scale, so the page's sizes reach it in its
+  `Layout`, set from the scale by whoever lays out.
 
 ## Dependencies and tooling
 

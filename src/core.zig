@@ -20,6 +20,7 @@ pub const book = @import("model/book.zig");
 pub const note_rules = @import("model/notes.zig");
 pub const catalog = @import("model/catalog.zig");
 pub const quick = @import("model/quick.zig");
+pub const settings = @import("model/settings.zig");
 pub const text = @import("layout/text.zig");
 pub const cover = @import("gfx/image.zig");
 pub const font = @import("gfx/font.zig");

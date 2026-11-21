@@ -69,6 +69,24 @@ pub fn line_step(comptime size: comptime_int) comptime_int {
 pub const margin = pt(17.25); // Left and right edge of interface text
 /// The least a control takes taps across: about 8.5 mm, a fingertip.
 pub const fingertip = space.band;
+/// The reading page: its text's room under the clock and over the footer, a
+/// paragraph's first-line indent, the line under a highlight (its thickness, and how
+/// far up from the foot of its line's height it sits, under the descenders), and how
+/// far round a note's mark a tap still opens it, the mark being small.
+pub const reading = struct {
+    pub const top = pt(21.5);
+    pub const bottom = pt(36);
+    pub const indent = pt(14.5);
+    pub const underline_thick = underline;
+    pub const underline_above_foot = pt(2.5);
+    pub const mark_reach = pt(7.25);
+
+    comptime {
+        assert(underline_above_foot > underline_thick); // Within its line's height
+        assert(top < bottom); // The footer takes more than the clock
+    }
+};
+
 /// A book's cover as the library shows it, in the grid and as the book to continue,
 /// which is the larger: covers are decoded at these sizes (ui/covers.zig).
 pub const cover = struct {
@@ -115,7 +133,8 @@ pub const panel_rule = 0x80; // The line across the quick panel
 // Shapes
 pub const stroke = pt(0.5); // A thin line: a rule, an icon's stroke
 pub const border = pt(0.75); // Outline of boxes and cards
-pub const underline = pt(1.25); // Under the selected choice
+pub const underline = pt(1.25); // Under the selected choice, and a highlight's words
+pub const flash_bar = pt(1.5); // The outline round a book as it's tapped, at once
 pub const sheet_corner = pt(8.75); // A sheet rising from the bottom
 pub const button_corner = pt(5.75); // Buttons, bubbles and tiles
 pub const key_corner = pt(3.25); // Keyboard keys

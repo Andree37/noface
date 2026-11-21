@@ -14,13 +14,18 @@ const png_decoder = @import("png.zig");
 const scaler = @import("rows.zig");
 const workspace = @import("workspace.zig");
 
-/// The panel's grays are 16 steps of this, from black to white.
-const panel_gray_step = 17;
+/// The panel shows this many grays, black to white, evenly apart: steps of this.
+const panel_grays = 16;
+const panel_gray_step = std.math.maxInt(u8) / (panel_grays - 1);
+/// The scaler's blending weights, whole numbers out of this, and two multiplied.
+const weight_bits = 8;
+const weight_whole: u32 = 1 << weight_bits;
+const weight_squared: u32 = weight_whole * weight_whole;
 /// The widest view `zoomed` draws: its column tables are this long.
 const view_width_max = 2048;
 
 comptime {
-    assert(panel_gray_step * 15 == 255);
+    assert(panel_gray_step * (panel_grays - 1) == std.math.maxInt(u8)); // White a step
 }
 
 /// A size in pixels.
@@ -397,7 +402,7 @@ fn averaged(src: Gray, cx: f32, cy: f32, zoom: f32, page: Page, dw: u32, dh: u32
 }
 
 /// The smooth view: each screen pixel mixes the four picture pixels around it, in
-/// whole numbers (weights out of 256), with each column's sums worked out once.
+/// whole numbers (weights out of `weight_whole`), with each column's sums worked out once.
 fn blended(src: Gray, cx: f32, cy: f32, zoom: f32, page: Page, dw: u32, dh: u32) void {
     assert(zoom > 1);
     // The last row and column are the edge every mix is clamped to
@@ -417,7 +422,7 @@ fn blended(src: Gray, cx: f32, cy: f32, zoom: f32, page: Page, dw: u32, dh: u32)
         c.* = .{
             .x0 = x0,
             .x1 = @min(x0 + 1, src.width - 1),
-            .fx = @intFromFloat((xc - @floor(xc)) * 256),
+            .fx = @intFromFloat((xc - @floor(xc)) * weight_whole),
             .inside = sx >= -0.5 and sx <= max_x + 0.5,
         };
     }
@@ -431,7 +436,7 @@ fn blended(src: Gray, cx: f32, cy: f32, zoom: f32, page: Page, dw: u32, dh: u32)
         const yc = std.math.clamp(sy, 0, max_y);
         const y0: u32 = @intFromFloat(@floor(yc));
         const y1 = @min(y0 + 1, src.height - 1);
-        const fy: u32 = @intFromFloat((yc - @floor(yc)) * 256);
+        const fy: u32 = @intFromFloat((yc - @floor(yc)) * weight_whole);
         const r0 = src.pixels[y0 * src.width ..][0..src.width];
         const r1 = src.pixels[y1 * src.width ..][0..src.width];
         for (row, cols[0..n]) |*d, c| {
@@ -439,9 +444,11 @@ fn blended(src: Gray, cx: f32, cy: f32, zoom: f32, page: Page, dw: u32, dh: u32)
                 d.* = 0xff;
                 continue;
             }
-            const top = @as(u32, r0[c.x0]) * (256 - c.fx) + @as(u32, r0[c.x1]) * c.fx;
-            const bottom = @as(u32, r1[c.x0]) * (256 - c.fx) + @as(u32, r1[c.x1]) * c.fx;
-            d.* = @intCast((top * (256 - fy) + bottom * fy + 32768) >> 16);
+            const top = @as(u32, r0[c.x0]) * (weight_whole - c.fx) + @as(u32, r0[c.x1]) * c.fx;
+            const bottom = @as(u32, r1[c.x0]) * (weight_whole - c.fx) + @as(u32, r1[c.x1]) * c.fx;
+            // Two weights multiplied: rounded to the nearest, then back to a gray
+            const mixed = top * (weight_whole - fy) + bottom * fy + weight_squared / 2;
+            d.* = @intCast(mixed >> 2 * weight_bits);
         }
     }
 }

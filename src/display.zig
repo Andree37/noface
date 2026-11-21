@@ -14,7 +14,7 @@ const page_cache = @import("layout/page_cache.zig");
 pub const slots_count = page_cache.slots;
 
 /// The outline `flash` draws round a book, its bars this thick.
-const flash_bar_px = 6;
+const flash_bar_px = style.flash_bar;
 
 /// A cached page: which it is (null: none), its pixels and where its words are, and how
 /// many times a page has been drawn into it, so pixels lent from it are known stale

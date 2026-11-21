@@ -456,15 +456,26 @@ fn play(script: []const u8, folder: Folder) bool {
     var lines = std.mem.splitScalar(u8, script, '\n');
     var line_number: u32 = 0;
     var passed: u32 = 0;
+    // The last touch, and the steps since it, played again once if noface dropped the
+    // touch as made too early
+    var replay: Replay = .{};
     while (lines.next()) |line_raw| {
         line_number += 1;
         const code = line_raw[0 .. std.mem.indexOfScalar(u8, line_raw, '#') orelse line_raw.len];
         const line = std.mem.trim(u8, code, " \t\r");
         if (line.len == 0) continue;
-        const took_ms = step(&run, line) catch |err| {
-            std.debug.print("FAIL {d}: {s}: {s}\n", .{ line_number, line, @errorName(err) });
-            return false;
-        };
+        if (is_touch(line)) replay = .{ .touch = line };
+        // A tap touched before the screen in front was shown, its panel refresh done, is
+        // dropped, which a script can't see: noface says so, and the touch and the steps
+        // since are played again, once, whether or not this step passed without it (a
+        // refresh still going on can pass for a change). Any other failure fails
+        const result = step(&run, line);
+        const took_ms = if (replay.due(&run)) replayed: {
+            break :replayed replay.play(&run, line) catch |err| {
+                return step_failed(line_number, line, err);
+            };
+        } else result catch |err| return step_failed(line_number, line, err);
+        if (!is_touch(line)) replay.add(line);
         passed += 1;
         if (took_ms) |ms| {
             std.debug.print("ok   {d}: {s} ({d} ms)\n", .{ line_number, line, ms });
@@ -475,6 +486,76 @@ fn play(script: []const u8, folder: Folder) bool {
     assert(passed <= line_number);
     std.debug.print("e2e: {d} steps passed\n", .{passed});
     return true;
+}
+
+/// Says a step failed, and that the script did: false.
+fn step_failed(line_number: u32, line: []const u8, err: Failure) bool {
+    assert(line_number > 0);
+    assert(line.len > 0);
+    std.debug.print("FAIL {d}: {s}: {s}\n", .{ line_number, line, @errorName(err) });
+    return false;
+}
+
+/// The last touch and the steps since it, to play again once if noface dropped the
+/// touch as made before its screen was shown.
+const Replay = struct {
+    touch: ?[]const u8 = null,
+    since: [since_max][]const u8 = undefined,
+    since_count: u32 = 0,
+    played: bool = false,
+
+    /// The most steps between two touches that a replay plays again.
+    const since_max = 16;
+
+    fn add(r: *Replay, line: []const u8) void {
+        assert(!is_touch(line));
+        if (r.touch == null) return; // Before any touch: nothing to play again
+        assert(r.since_count < since_max); // A script waits a few steps between touches
+        r.since[r.since_count] = line;
+        r.since_count += 1;
+    }
+
+    /// Whether the touch was dropped as made too early, and not yet played again.
+    fn due(r: *const Replay, run: *const Run) bool {
+        if (r.touch == null or r.played) return false;
+        return try_log_has(run, dropped_early);
+    }
+
+    /// Makes the touch again, then the steps since it, then `line`, the one that found
+    /// it dropped.
+    fn play(r: *Replay, run: *Run, line: []const u8) Failure!?u32 {
+        const touch_line = r.touch.?;
+        assert(is_touch(touch_line));
+        assert(!r.played);
+        r.played = true;
+        std.debug.print("     {s}: dropped as made before its screen was shown, made again\n", .{
+            touch_line,
+        });
+        _ = try step(run, touch_line);
+        for (r.since[0..r.since_count]) |since| _ = try step(run, since);
+        return step(run, line);
+    }
+};
+
+/// What noface logs as it drops a tap made before the screen in front was shown
+/// (screens/screen.zig `route`).
+const dropped_early = "dropped: touched";
+
+/// Whether the log since the last touch says `wanted`, a log that can't be read
+/// counting as not.
+fn try_log_has(run: *const Run, wanted: []const u8) bool {
+    assert(wanted.len > 0);
+    return log_has(run.log_path, run.log_mark, wanted) catch false;
+}
+
+/// Whether a script's line is a touch, which a later step's failure may make again.
+fn is_touch(line: []const u8) bool {
+    assert(line.len > 0);
+    const verbs = [_][]const u8{ "tap ", "hold ", "drag " };
+    for (verbs) |verb| {
+        if (std.mem.startsWith(u8, line, verb)) return true;
+    }
+    return false;
 }
 
 /// The test folder (`noface-launch e2e <folder>`): its books in documents/, and what a
@@ -509,12 +590,10 @@ const Folder = struct {
     }
 };
 
-/// Longest wait for noface to start on the test folder and log its library.
+/// Longest wait for noface to start on the test folder and show its library: logged
+/// once the panel's refresh of it is done, as noface takes touches only from then.
 const start_ms_max = 40_000;
-/// Then, once the library's screen is still, this long more for the panel's own
-/// refresh of it to finish: `still` sees the framebuffer, and noface drops a touch
-/// that lands before the panel's done.
-const panel_refresh_ms = 1_000;
+const library_shown = "shown: Browser";
 /// Longest wait for noface and its launcher to stop.
 const stop_ms_max = 20_000;
 /// A Kindle woken from its screensaver takes this long to show what's under it.
@@ -546,14 +625,13 @@ fn start_noface(folder: Folder) !void {
     errdefer stop_noface();
     const deadline = now_us() + start_ms_max * 1000;
     // Bounded by the deadline
-    while (!(log_has(folder.log, 0, "library") catch false)) {
+    while (!(log_has(folder.log, 0, library_shown) catch false)) {
         if (now_us() >= deadline) return error.CantStart;
         sleep_ms(check_ms);
     }
     var screen = Screen.open() catch return error.CantStart;
     defer screen.close();
     if (!screen.settle()) return error.CantStart;
-    sleep_ms(panel_refresh_ms);
 }
 
 /// Stops noface, its launcher with it, and lets the Kindle sleep again.

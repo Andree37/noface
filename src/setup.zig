@@ -26,6 +26,7 @@ const image = @import("gfx/image.zig");
 const decoder_memory = @import("gfx/decoder_memory.zig");
 const device = @import("model/device.zig");
 const style = @import("ui/style.zig");
+const settings_model = @import("model/settings.zig");
 const file = @import("sys/file.zig");
 
 /// What each memory region reserves, taken once at startup (`memory.Region`). Pages
@@ -306,11 +307,17 @@ pub fn assemble(p: Parts) !app.App {
         .hero = &k.hero,
         .cover = &k.cover_type,
     };
+    // The reading page's, on the scale; its side margins come from the reader's
+    // settings (app.zig `apply_settings`), the default ones until then
     const layout: text.Layout = .{
-        .margin_x = 100,
-        .margin_top = 90,
-        .margin_bottom = 150,
-        .indent = 60,
+        .margin_x = settings_model.margins[(settings_model.Settings{}).margin],
+        .margin_top = style.reading.top,
+        .margin_bottom = style.reading.bottom,
+        .indent = style.reading.indent,
+        .underline = .{
+            .thick_px = style.reading.underline_thick,
+            .above_foot_px = style.reading.underline_above_foot,
+        },
         .reference = &k.reference,
     };
     const user: user_data.UserData = .load(.{

@@ -35,10 +35,14 @@ const sample_page_index = 36;
 const sample_page_count = 280;
 /// A body page's layout, as the reader sets one.
 const body_layout = text.Layout{
-    .margin_x = 100,
-    .margin_top = 90,
-    .margin_bottom = 150,
-    .indent = 60,
+    .margin_x = core.settings.margins[(core.settings.Settings{}).margin],
+    .margin_top = core.style.reading.top,
+    .margin_bottom = core.style.reading.bottom,
+    .indent = core.style.reading.indent,
+    .underline = .{
+        .thick_px = core.style.reading.underline_thick,
+        .above_foot_px = core.style.reading.underline_above_foot,
+    },
 };
 
 const filler = "Sample body words stand in for a real page and fill the lines around the marks. ";

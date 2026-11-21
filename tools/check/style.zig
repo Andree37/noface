@@ -246,12 +246,17 @@ fn count_assertions(code: []const u8, expects_assert: bool) u32 {
         count_token(code, "invariants()") + expects;
 }
 
-/// Whether `path` lays out the screen: the code in src/ui/ and src/screens/, but for
-/// the scale itself and the icons, whose shapes are drawn in a grid of their own.
+/// Whether `path` lays out the screen: the code in src/ui/, src/screens/, src/layout/,
+/// src/gfx/ and src/ itself (the app, its display, its setup), but for the scale
+/// itself, the icons, whose shapes are drawn in a grid of their own, and the file
+/// formats' decoders, whose numbers are the formats' (JPEG's 8 by 8 blocks, a font's
+/// table offsets), not sizes on the screen.
 fn is_layout(path: []const u8) bool {
     assert(path.len > 0);
     const screens = std.mem.startsWith(u8, path, "src/ui/") or
-        std.mem.startsWith(u8, path, "src/screens/");
+        std.mem.startsWith(u8, path, "src/screens/") or
+        std.mem.startsWith(u8, path, "src/layout/") or
+        std.mem.startsWith(u8, path, "src/gfx/") or is_src_root(path);
     if (!screens) return false;
     for (layout_exempt) |exempt| {
         if (std.mem.eql(u8, path, exempt)) return false;
@@ -259,10 +264,22 @@ fn is_layout(path: []const u8) bool {
     return true;
 }
 
+/// Whether `path` is a file of src/ itself, in no folder under it.
+fn is_src_root(path: []const u8) bool {
+    if (!std.mem.startsWith(u8, path, "src/")) return false;
+    const rest = path["src/".len..];
+    assert(rest.len > 0);
+    return std.mem.indexOfScalar(u8, rest, '/') == null;
+}
+
 const layout_exempt = [_][]const u8{
     "src/ui/style.zig",
     "src/ui/icons.zig",
     "src/ui/run_icons.zig",
+    "src/gfx/jpeg.zig",
+    "src/gfx/png.zig",
+    "src/gfx/truetype.zig",
+    "src/gfx/cff.zig",
 };
 
 /// The words that name a size, as the last part of a declaration's name: `row_gap`,

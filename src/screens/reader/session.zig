@@ -318,7 +318,7 @@ pub const Session = struct {
         assert(s.current < s.pages.len);
         const slot = s.app.display.slot_for(s.current) orelse return null;
         assert(slot.page.? == s.current); // Found by its page
-        return slot.hits.find(x, y);
+        return slot.hits.find(x, y, style.reading.mark_reach);
     }
 
     /// Where touches count as the Back button although the thumb filter is on there.

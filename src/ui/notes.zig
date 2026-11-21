@@ -37,6 +37,10 @@ const layout = text.Layout{
     .margin_top = header + text_gap,
     .margin_bottom = text_room_below,
     .indent = 0,
+    .underline = .{
+        .thick_px = style.reading.underline_thick,
+        .above_foot_px = style.reading.underline_above_foot,
+    },
 };
 
 comptime {

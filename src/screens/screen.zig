@@ -426,15 +426,22 @@ const Stack = struct {
         return f;
     }
 
+    /// The screen in front is drawn, its panel refresh done: taps touched from now on
+    /// are meant for it, and earlier ones are dropped. Logged, so a script driving the
+    /// Kindle (tools/e2e.zig) knows when its next touch counts.
+    fn mark_shown(stack: *Stack) void {
+        stack.shown_us = os.now_us();
+        if (stack.depth == 0) return; // The root ended: nothing is in front
+        log.info("shown: {s}", .{stack.top().kind.name});
+    }
+
     /// Hands `action` to the screen that takes it: the one in front, or for a lock or a
     /// stop the first under it that takes those, the ones in front of it ended first.
     fn route(stack: *Stack, a: *app.App, action: Action) !void {
         assert(stack.depth > 0);
         const changes_before = stack.changes;
-        defer if (stack.changes != changes_before) {
-            // Another screen is in front, drawn: from now on taps are meant for it
-            stack.shown_us = os.now_us();
-        };
+        // Another screen is in front, drawn: from now on taps are meant for it
+        defer if (stack.changes != changes_before) stack.mark_shown();
         if (interrupts(action)) try stack.unwind(action);
         if (stack.depth == 0) return; // The root ended as the screens over it did
         const f = stack.top().*;
@@ -574,7 +581,7 @@ pub fn run_root(a: *app.App, root: anytype) !Ending(@TypeOf(root.*).Result) {
     var stack = Stack{ .input = a.input };
     errdefer stack.end_all(a);
     try stack.settle(a, .{ .push = open(root, &ending) });
-    stack.shown_us = os.now_us();
+    stack.mark_shown();
     // Unbounded: noface's event loop, the only one, which runs for as long as the
     // reader reads: each turn waits once for something to happen, and hands what
     // happened, if anything, to the screen that takes it

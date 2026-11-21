@@ -95,8 +95,13 @@ pub const all = [_]Scenario{
                 const first = try play_on(.{ .book = .notes }, &.{});
                 const mark_at = first.placed[@backingInt(placed.What.note)] orelse
                     return error.MarkNotPlaced;
-                const picture = first.placed[@backingInt(placed.What.picture)] orelse
-                    return error.PictureNotPlaced;
+                // The picture follows the mark on the first page, or on the next where a
+                // small screen has no room left for it there
+                const picture_kind = @backingInt(placed.What.picture);
+                const on_first = first.placed[picture_kind] != null;
+                const next = if (on_first) first else try play_on(.{ .book = .notes }, &.{forward});
+                const picture = next.placed[picture_kind] orelse return error.PictureNotPlaced;
+                const turns_to_picture: u32 = if (on_first) 0 else 1;
                 const mark = tap_on(mark_at);
                 // The note's panel open over the page, then closed by a tap above it
                 const noted = try play_on(.{ .book = .notes, .snapshot = .note }, &.{mark});
@@ -108,15 +113,23 @@ pub const all = [_]Scenario{
                 const above = tap_on(places.page.top);
                 const closed = try play_on(.{ .book = .notes }, &.{ mark, above, forward });
                 try expect(same_place(closed.saved, turned.saved), "the note stayed open");
-                // The picture, whole, then closed by its button
-                const held = [_]Step{ hold(picture.x, picture.y), lift };
-                // The viewer follows a finger from its touch, and acts on its lift
+                // On the picture's page, the picture whole, then closed by its button; the
+                // viewer follows a finger from its touch, and acts on its lift. Each list
+                // starts with the turn to the picture's page, skipped when it's the first
                 const close = tap_on(places.find("picture.close").?);
-                const shown = try play_on(.{ .book = .notes, .snapshot = .picture }, &held);
+                const at = hold(picture.x, picture.y);
+                const held_from_start = [_]Step{ forward, at, lift };
+                const held = held_from_start[1 - turns_to_picture ..];
+                const shown = try play_on(.{ .book = .notes, .snapshot = .picture }, held);
                 try expect(shown.looks_right, "the picture shown whole looks different");
-                const closed_then_on = held ++ .{ close, lift, forward };
-                const put_back = try play_on(.{ .book = .notes }, &closed_then_on);
-                try expect(same_place(put_back.saved, turned.saved), "the picture stayed open");
+                const closed_from_start = held_from_start ++ .{ close, lift, forward };
+                const closed_then_on = closed_from_start[1 - turns_to_picture ..];
+                const put_back = try play_on(.{ .book = .notes }, closed_then_on);
+                // A page on from the picture's
+                const page_after: [2]Step = @splat(forward);
+                const to_after = page_after[0 .. turns_to_picture + 1];
+                const after = try play_on(.{ .book = .notes }, to_after);
+                try expect(same_place(put_back.saved, after.saved), "the picture stayed open");
             }
         }.run,
     },

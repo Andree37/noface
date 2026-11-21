@@ -2,7 +2,6 @@
 //! locking, and a book marked read.
 const std = @import("std");
 const assert = std.debug.assert;
-const page_store = @import("../screens/reader/page_store.zig");
 const library_ui = @import("../ui/library.zig");
 const card = @import("../ui/card.zig");
 const toolbar = @import("../ui/toolbar.zig");
@@ -54,22 +53,23 @@ pub const all = [_]Scenario{
             fn run() !void {
                 // Long enough for the whole book to be laid out in idle moments, and saved
                 const laid_out = try play(&.{wait(3000)});
-                if (laid_out.breaks != page_store.breaks_digest) {
-                    std.debug.print(
-                        "page breaks moved: digest {x}. If the layout changed on purpose, " ++
-                            "raise layout_version in page_store.zig and set its " ++
-                            "breaks_digest to this, so saved breaks are laid out again.\n",
-                        .{laid_out.breaks},
-                    );
-                }
                 try expect(laid_out.breaks != 0, "no page breaks were saved");
-                try expect(laid_out.breaks == page_store.breaks_digest, "page breaks moved");
                 // Bold word starts lay words out at their own widths, and break there
                 const bold = try play_on(.{ .bold_starts = true }, &.{wait(3000)});
-                if (bold.breaks != page_store.breaks_digest_bold_starts) {
-                    std.debug.print("bold-starts page breaks moved: digest {x}\n", .{bold.breaks});
+                try expect(bold.breaks != 0, "no page breaks were saved with bold word starts");
+                // Compared where they're recorded, for this Kindle's screen
+                const want = harness.recorded_breaks orelse return;
+                if (laid_out.breaks != want.plain or bold.breaks != want.bold_starts) {
+                    std.debug.print(
+                        "page breaks moved: {x}, with bold word starts {x}. If the layout " ++
+                            "changed on purpose, raise layout_version in page_store.zig " ++
+                            "and write these to src/testdata/recorded/{s}/breaks.txt, so " ++
+                            "saved breaks are laid out again.\n",
+                        .{ laid_out.breaks, bold.breaks, harness.layout_model },
+                    );
                 }
-                const bold_same = bold.breaks == page_store.breaks_digest_bold_starts;
+                try expect(laid_out.breaks == want.plain, "page breaks moved");
+                const bold_same = bold.breaks == want.bold_starts;
                 try expect(bold_same, "page breaks with bold word starts moved");
             }
         }.run,
@@ -231,10 +231,11 @@ pub const all = [_]Scenario{
         .run = struct {
             fn run() !void {
                 const read_row = tap_on(more.place(.finished)); // Finished, or unread once it is
+                // Marking it finished leaves the toolbar open: its ⋮ is tapped again
                 const r = try play(&.{
-                    forward, forward,     forward,
-                    top,     tool(.more), read_row,
-                    top,     tool(.more), read_row,
+                    forward,     forward,     forward,
+                    top,         tool(.more), read_row,
+                    tool(.more), read_row,
                 });
                 try expect(!r.finished[0], "it's still marked finished");
                 try expect(r.saved.para == 0, "it didn't start again");

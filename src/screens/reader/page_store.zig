@@ -4,7 +4,7 @@
 //! sets text. All of that goes into a key; a saved file with another key is ignored
 //! and replaced. The code's part is `layout_version`, raised by hand when the layout
 //! breaks pages differently. A scenario ("the layout breaks pages where …") lays out
-//! the test book and compares where its pages break with `breaks_digest`, so a change
+//! the test book and compares where its pages break with those recorded, so a change
 //! that moves breaks fails until the version is raised, and one that doesn't (a
 //! comment, a test, drawing alone) leaves every reader's saved breaks in place.
 const std = @import("std");
@@ -18,13 +18,9 @@ const app = @import("../../app.zig");
 const magic = "NFPG";
 
 /// Raised by hand when the layout breaks pages differently, so saved breaks are laid
-/// out again; the scenario that checks `breaks_digest` says when.
+/// out again; the scenario that checks the recorded page breaks says when
+/// (src/testdata/recorded/<model>/breaks.txt).
 const layout_version: u64 = 3;
-
-/// Where the test book's pages break today (scenarios/harness.zig's `breaks_digest`), as
-/// shipped and with bold word starts on, which set words in other widths.
-pub const breaks_digest: u64 = 0xd0b0973931a2e843;
-pub const breaks_digest_bold_starts: u64 = 0x589ad40798b38fc5;
 
 /// Everything the breaks depend on.
 pub fn key(a: *const app.App, book_bytes: u64) u64 {

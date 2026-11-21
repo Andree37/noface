@@ -2,6 +2,7 @@
 //! screen in memory, the steps played on a clock it moves itself, and what came of
 //! them, read back for the checks.
 const std = @import("std");
+const layout = @import("layout");
 const assert = std.debug.assert;
 const file = @import("../sys/file.zig");
 const fonts_db = @import("../kindle/fonts.zig");
@@ -143,6 +144,9 @@ pub const Kindle = struct {
     radio_slow: bool = false,
     /// The reader has bold word starts on, which lay words out at other widths.
     bold_starts: bool = false,
+    /// The reader's text size (settings.zig `sizes`): the largest makes the most pages
+    /// of the test book, on a screen of any size.
+    text_size: u32 = (settings_model.Settings{}).size,
     /// Compares the screen at the end with the reference image of this name.
     snapshot: ?Snapshot = null,
 };
@@ -164,15 +168,37 @@ pub const RealBook = struct {
 /// the reference images carried, so they don't weigh on the app.
 const with_snapshots = @import("root") == @import("../scenarios.zig");
 
+/// The Kindle this build is laid out for (`layout`), and whether its screens and page
+/// breaks are recorded to compare with (src/testdata/recorded/<model>/). One without
+/// them runs every scenario but those comparisons, pictures and digests of its screen.
+pub const recorded = layout.recorded;
+pub const layout_model = layout.model;
+const recorded_dir = "../testdata/recorded/" ++ layout.model ++ "/";
+
+/// Where the test book's pages break, as recorded for this Kindle: as shipped, and with
+/// bold word starts on, which set words in other widths. Null with nothing recorded.
+pub const Breaks = struct { plain: u64, bold_starts: u64 };
+pub const recorded_breaks: ?Breaks = if (recorded) breaks: {
+    @setEvalBranchQuota(10_000);
+    var lines = std.mem.tokenizeScalar(u8, @embedFile(recorded_dir ++ "breaks.txt"), '\n');
+    const plain = std.fmt.parseInt(u64, lines.next().?, 16) catch
+        @compileError(recorded_dir ++ "breaks.txt: its first line isn't a hex digest");
+    const bold_starts = std.fmt.parseInt(u64, lines.next().?, 16) catch
+        @compileError(recorded_dir ++ "breaks.txt: its second line isn't a hex digest");
+    break :breaks .{ .plain = plain, .bold_starts = bold_starts };
+} else null;
+
 /// Set (from NOFACE_WRITE_SNAPSHOTS) to write each snapshot's screen to this folder as
 /// <name>.pgm, to make new reference images, instead of comparing.
 pub var write_snapshots: ?[]const u8 = null;
 
 pub fn reference_image(comptime name: []const u8) []const u8 {
-    return if (with_snapshots) @embedFile("../testdata/snapshots/" ++ name ++ ".png") else "";
+    if (!with_snapshots or !recorded) return "";
+    return @embedFile(recorded_dir ++ name ++ ".png");
 }
 
-/// The screens compared with a reference image, each src/testdata/snapshots/<name>.png.
+/// The screens compared with a reference image, each
+/// src/testdata/recorded/<model>/<name>.png.
 pub const Snapshot = enum {
     page,
     toolbar,
@@ -200,6 +226,7 @@ pub fn matches_reference(alloc: std.mem.Allocator, which: Snapshot, pixels: []co
         return true;
     }
     if (!with_snapshots) return true; // The self-test doesn't carry them
+    if (!recorded) return true; // None recorded for this Kindle's screen
     const encoded = switch (which) {
         inline else => |w| reference_image(@tagName(w)),
     };
@@ -643,7 +670,8 @@ pub fn play_on_start(
     a.regions.book.end_peak = 0;
     a.regions.pages_budget.peak = 0;
     a.regions.pages_budget.limit = kindle.pages_bytes;
-    a.user.settings = .{ .bold_starts = kindle.bold_starts };
+    assert(kindle.text_size < settings_model.sizes.len);
+    a.user.settings = .{ .bold_starts = kindle.bold_starts, .size = kindle.text_size };
     a.user.running_pace = null;
     a.user.speed = .{};
     a.user.journal = .{};

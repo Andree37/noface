@@ -94,8 +94,6 @@ pub const all = [_]Scenario{
             fn run() !void {
                 const stats_button = tap_on(library_ui.place(.stats));
                 const hero = tap_in(library_ui.hero_rect(width));
-                const hit = library_ui.hit(758, 558, 0, 1, false);
-                try expect(hit == .stats, "the stats button isn't where it was");
                 const kindle: Kindle = .{ .library = true, .read_before = .{} };
                 // The second tap touched as the first closed them, before the library
                 // was back: meant for the stats, it opens nothing
@@ -125,7 +123,7 @@ pub const all = [_]Scenario{
                 }, &.{
                     tap_in(library_ui.hero_rect(width)), wait(2_000), // Continue the first
                     top, tool(.more), tap_on(more.place(.finished)), // ⋮, Mark as finished
-                    top, tool(.home), // Home, where the next one is offered
+                    tool(.home), // Home, on the toolbar left open, where the next one is offered
                     card_row(1, 0), // Up next: Read it now
                     wait(2_000), top, tool(.home), // Home
                 });

@@ -80,12 +80,19 @@ fn lay_out_for(b: *std.Build, module: *std.Build.Module, model: []const u8) void
     assert(model.len > 0);
     const options = b.addOptions();
     options.addOption([]const u8, "model", model);
+    // Whether this Kindle's screens and page breaks are recorded to compare with
+    // (src/testdata/recorded/<model>/): a layout without them skips those comparisons
+    const recorded_path = b.pathJoin(&.{ b.root.sub_path, "src/testdata/recorded", model });
+    const root_dir = b.root.root_dir.handle;
+    const recorded = if (root_dir.access(b.graph.io, recorded_path, .{})) true else |_| false;
+    options.addOption(bool, "recorded", recorded);
     module.addOptions("layout", options);
     assert(module.import_table.get("layout") != null);
 }
 
 /// `zig build layouts`: the whole interface laid out for every other Kindle's screen,
-/// built, and the unit tests run on each, so none holds only on the Kindle built for.
+/// built, with the unit tests and the scenarios run on each (where this computer runs
+/// scenarios), so none holds only on the Kindle built for.
 /// Every layout checks itself as it's built (nothing overlaps,
 /// nothing runs off the screen, every control takes a fingertip, every named place is
 /// a tap on its control: screens/places.zig), so a build that passes is a layout
@@ -110,9 +117,12 @@ fn build_layouts(b: *std.Build, target: std.Build.ResolvedTarget) *std.Build.Ste
         });
         layouts_step.dependOn(&laid_out.step);
         layouts_step.dependOn(&b.addRunArtifact(unit_tests(b, b.graph.host, model)).step);
+        const name = b.fmt("noface-scenarios-{s}", .{model});
+        if (host_scenarios(b, name, model)) |run| layouts_step.dependOn(&run.step);
     }
     // Built and tested for every Kindle but the one built, which must be one of them
-    assert(layouts_step.dependencies.items.len == 2 * (all_layouts.len - 1));
+    assert(layouts_step.dependencies.items.len >= 2 * (all_layouts.len - 1));
+    assert(layouts_step.dependencies.items.len <= 3 * (all_layouts.len - 1));
     return layouts_step;
 }
 
@@ -375,23 +385,21 @@ fn build_scenarios(b: *std.Build, target: std.Build.ResolvedTarget) *std.Build.S
         "scenarios",
         "Build the scenario tests, and run them on a Linux host",
     );
-    const kindle_scenarios = scenario_exe(b, target, "noface-scenarios");
+    const kindle_scenarios = scenario_exe(b, target, "noface-scenarios", layout_model);
     scenarios_step.dependOn(&b.addInstallArtifact(kindle_scenarios, .{}).step);
+    // On Linux as 32-bit x86, which a 64-bit Linux runs as is: noface makes Linux's own
+    // system calls there, written for the Kindle's 32-bit ARM, and this matches it. On a
+    // Mac natively: its system calls go through the C library
+    assert(target.result.ptrBitWidth() == 32);
+    if (host_scenarios(b, "noface-scenarios-host", layout_model)) |run| {
+        scenarios_step.dependOn(&run.step);
+    }
     const host_os = b.graph.host.result;
     if (host_os.os.tag == .linux and host_os.cpu.arch == .x86_64) {
-        // As 32-bit x86, which a 64-bit Linux runs as is: on Linux noface makes Linux's
-        // own system calls, written for the Kindle's 32-bit ARM, and this matches it
-        const x86 = b.resolveTargetQuery(.{ .cpu_arch = .x86, .os_tag = .linux, .abi = .musl });
-        assert(x86.result.ptrBitWidth() == target.result.ptrBitWidth());
-        const host_scenarios = scenario_exe(b, x86, "noface-scenarios-host");
-        scenarios_step.dependOn(&b.addRunArtifact(host_scenarios).step);
         // Built too, not run, for this computer's own 64 bits, as a Mac builds it: code
         // that compiles only where a usize is 32 bits fails here as well
-        scenarios_step.dependOn(&scenario_exe(b, b.graph.host, "noface-scenarios-64").step);
-    } else if (host_os.os.tag == .macos) {
-        // On a Mac, natively: noface's system calls go through the C library there
-        const host_scenarios = scenario_exe(b, b.graph.host, "noface-scenarios-host");
-        scenarios_step.dependOn(&b.addRunArtifact(host_scenarios).step);
+        const wide = scenario_exe(b, b.graph.host, "noface-scenarios-64", layout_model);
+        scenarios_step.dependOn(&wide.step);
     }
     return scenarios_step;
 }
@@ -460,6 +468,7 @@ fn scenario_exe(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     name: []const u8,
+    model: []const u8,
 ) *std.Build.Step.Compile {
     assert(std.mem.startsWith(u8, name, "noface-scenarios"));
     assert(target.result.os.tag == .linux or target.result.os.tag == .macos);
@@ -473,6 +482,22 @@ fn scenario_exe(
             .link_libc = true,
         }),
     });
-    lay_out_for(b, exe.root_module, layout_model);
+    lay_out_for(b, exe.root_module, model);
     return exe;
+}
+
+/// The scenarios laid out for `model`, run on this computer, where it can run them:
+/// natively on a Mac, as 32-bit x86 on a 64-bit Linux, as a Kindle's system calls
+/// need. Null on any other computer.
+fn host_scenarios(b: *std.Build, name: []const u8, model: []const u8) ?*std.Build.Step.Run {
+    const host_os = b.graph.host.result;
+    if (host_os.os.tag == .linux and host_os.cpu.arch == .x86_64) {
+        const x86 = b.resolveTargetQuery(.{ .cpu_arch = .x86, .os_tag = .linux, .abi = .musl });
+        assert(x86.result.ptrBitWidth() == 32);
+        return b.addRunArtifact(scenario_exe(b, x86, name, model));
+    }
+    if (host_os.os.tag == .macos) {
+        return b.addRunArtifact(scenario_exe(b, b.graph.host, name, model));
+    }
+    return null;
 }

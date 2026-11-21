@@ -82,8 +82,10 @@ pub const all = [_]Scenario{
                 }
                 break :steps steps;
             };
+            /// The largest text, so the book has a page to mark for each, on any screen
+            const largest: Kindle = .{ .text_size = settings_model.sizes.len - 1 };
             fn run() !void {
-                const all_marked = try play(&marking);
+                const all_marked = try play_on(largest, &marking);
                 try expect(all_marked.bookmarks == marked, "not every page was bookmarked");
                 const notes = [_]Step{
                     top, tool(.goto), tap_on(goto_ui.place(.{ .tab = .notes })),
@@ -93,12 +95,12 @@ pub const all = [_]Scenario{
                 const prev_page = tap_on(goto_ui.place(.prev));
                 // The last bookmark is on the page `marked - 1` turns on
                 const turns: [marked - 1]Step = @splat(forward);
-                const last_page = try play(&turns);
-                const on = try play(&(marking ++ notes ++ .{ next_page, first_row }));
+                const last_page = try play_on(largest, &turns);
+                const on = try play_on(largest, &(marking ++ notes ++ .{ next_page, first_row }));
                 try expect(same_place(on.saved, last_page.saved), "next didn't list the rest");
-                const start = try play(&.{});
+                const start = try play_on(largest, &.{});
                 const there_and_back = [_]Step{ next_page, prev_page, first_row };
-                const returned = try play(&(marking ++ notes ++ there_and_back));
+                const returned = try play_on(largest, &(marking ++ notes ++ there_and_back));
                 try expect(same_place(returned.saved, start.saved), "prev didn't list the first");
             }
         }.run,

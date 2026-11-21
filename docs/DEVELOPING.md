@@ -21,9 +21,10 @@ Needs [Zig](https://ziglang.org) 0.17.
 - `zig build tools`: development tools, also for the Kindle.
 - `zig build layouts`: the whole interface laid out for every other Kindle's screen
   (`device.Model`: the Basic, the Scribe, a 167 dpi Kindle), built, with the unit
-  tests run on each: a test takes its numbers from the layout, never one Kindle's
-  pixels. Every layout checks as it's built that it fits (nothing overlaps or runs off the screen,
-  every control takes a fingertip), so a build that passes fits that Kindle. Sizes are
+  tests and the scenarios run on each: a test takes its numbers from the layout,
+  never one Kindle's pixels. Every layout checks as it's built that it fits (nothing
+  overlaps or runs off the screen, every control takes a fingertip), so a build that
+  passes fits that Kindle. Sizes are
   points turned into pixels by the screen's density (`src/ui/style.zig`), never pixels.
   A build is laid out for one Kindle, `-Dlayout=<model>` (the Paperwhite unless
   asked), and starts only on that one's screen.
@@ -286,8 +287,11 @@ illustrations.
   real app on a screen in memory, a clock it moves itself and a pretend Kindle that
   starts no programs. GitHub runs them on every push; on the Kindle they're part of
   `noface selftest`.
-- The scenarios compare thirteen screens with reference images in
-  `src/testdata/snapshots`: a page, the toolbar, Aa, a definition, a book's search,
+- The scenarios compare thirteen screens with reference images, and where the test
+  book's pages break with recorded digests (`breaks.txt`), in
+  `src/testdata/recorded/<model>/`, for each Kindle that has that folder: today the
+  Paperwhite. A Kindle without one runs every scenario but those comparisons, and the
+  run says so. The screens: a page, the toolbar, Aa, a definition, a book's search,
   the lock screen, running, the library, its search, a series list, a selected
   highlight, a note's panel and a picture shown whole. The last two are of
   `src/testdata/notes.epub`, a book with a footnote and a picture, which a scenario
@@ -298,7 +302,7 @@ illustrations.
 zig build scenarios host-tools                       # builds zig-out/bin/noface-scenarios for the Kindle
 NOFACE_WRITE_SNAPSHOTS=/tmp/snaps <noface-scenarios> # on the Kindle or a computer: writes <name>.pgm
 for f in /tmp/snaps/*.pgm; do
-  zig-out/bin/pgm2png "$f" src/testdata/snapshots/$(basename "$f" .pgm).png
+  zig-out/bin/pgm2png "$f" src/testdata/recorded/paperwhite_12/$(basename "$f" .pgm).png
 done
 ```
 

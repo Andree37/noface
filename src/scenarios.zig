@@ -77,6 +77,10 @@ fn run_scenarios() u32 {
     assert(failed <= scenarios.len);
     const passed = scenarios.len - failed;
     std.debug.print("{d} of {d} scenarios passed\n", .{ passed, scenarios.len });
+    if (!harness.recorded) {
+        const model = harness.layout_model;
+        std.debug.print("{s}: no screens or page breaks recorded, so none compared\n", .{model});
+    }
     return failed;
 }
 

@@ -449,8 +449,8 @@ pub const Reader = struct {
             const percent: ?u32 = switch (outcome) {
                 .library, .quit => r.s.percent(),
                 // Its pages may be gone (a layout after a settings change failed partway),
-                // so how far in it is stays as last saved
-                .failed => null,
+                // so how far in it is stays as the pages last said, or as last saved
+                .failed => r.s.percent_before_relayout,
             };
             sess.save_progress(r.entry, r.state_path, r.s, percent);
             wifi_saver.restore(); // Leaving the book, Wi-Fi comes back

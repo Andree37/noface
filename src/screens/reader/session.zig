@@ -60,6 +60,9 @@ pub const Session = struct {
     book_bytes: u64 = 0, // The book file's size, part of the saved breaks' key
     // A first open still being laid out: pages count from the reader's place until done
     progress: ?*paginate.Progressive = null,
+    /// How far in the reader was, by the pages, as they were let go of to be laid out
+    /// again after a settings change: what's kept if that layout fails. Null before any.
+    percent_before_relayout: ?u32 = null,
     chapters: []const book_model.Chapter = &.{},
     words: Words = .{}, // Counted as the book opens, for time left and the speed
     clock: reading_clock.Clock = .{},
@@ -605,6 +608,9 @@ pub fn relayout(a: *app.App, s: *Session) !void {
     };
     a.user.save_settings();
     a.display.forget_pages();
+    // Known now, from the pages about to go; a change made while the last one was still
+    // laid out keeps what was known before it
+    s.percent_before_relayout = s.percent() orelse s.percent_before_relayout;
     const t0 = now_us();
     const pages_key = page_store.key(a, s.book_bytes);
     s.progress = null; // A layout still running was for the old settings

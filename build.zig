@@ -68,13 +68,16 @@ pub fn build(b: *std.Build) void {
     const app = build_app(b, target, fast);
     const check = build_checks(b);
     const tools = build_tools(b, target);
-    build_host_tools(b);
+    const host_tools = build_host_tools(b);
     build_package(b, target, app.jxr);
     const scenarios = build_scenarios(b, target);
     const tests = build_tests(b);
     build_clean(b);
     const layouts = build_layouts(b, target);
-    build_gates(b, &.{ b.getInstallStep(), check, tools, scenarios, tests, layouts });
+    // The computer's tools built whole too: their tests alone compile only what they reach,
+    // so a broken `main` would first show at a release's `zig build package`
+    const gates = .{ b.getInstallStep(), check, tools, host_tools, scenarios, tests, layouts };
+    build_gates(b, &gates);
 }
 
 /// The Kindle the interface is laid out for (src/model/device.zig `target`), set once
@@ -295,7 +298,7 @@ fn jxr_helper(b: *std.Build) *std.Build.Step.Compile {
 
 /// Tools that run on this computer: the dictionary builder, the snapshot converter and
 /// the packer. Built into zig-out/bin with `zig build host-tools`.
-fn build_host_tools(b: *std.Build) void {
+fn build_host_tools(b: *std.Build) *std.Build.Step {
     assert(host_tool_names.len > 0);
     const host_tools_step = b.step("host-tools", "Build the tools that run on this computer");
     for (host_tool_names) |name| {
@@ -303,6 +306,7 @@ fn build_host_tools(b: *std.Build) void {
         host_tools_step.dependOn(&b.addInstallArtifact(tool, .{}).step);
     }
     assert(host_tools_step.dependencies.items.len == host_tool_names.len);
+    return host_tools_step;
 }
 
 fn host_tool(b: *std.Build, name: []const u8) *std.Build.Step.Compile {

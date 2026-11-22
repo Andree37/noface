@@ -17,6 +17,9 @@
 //!           and kindle.
 //!   testing What only the tests use: the pretend Kindle. Imports
 //!           testing, kindle, sys and model. No folder above may import it.
+//!   scenarios The scenario tests: the app driven by scripted touches on the pretend
+//!           Kindle. Imports anything, the pretend Kindle too.
+//!   testdata The books and fonts the tests read. Imports only testdata.
 //!   screens The screens on the stack: what's shown and what taps do. Imports anything
 //!           but testing.
 //!   (top)   Files at the top of src/: the App and what it's made of (display, regions,
@@ -28,7 +31,8 @@
 //!           Unicode's tables. Imports only text; text/unicode.zig alone imports
 //!           uucode, noface's one dependency, so the whole of Unicode is reached
 //!           through it.
-//! Every folder may import base and text.
+//! Every folder may import base and text. A folder with no rule here fails the check,
+//! so a new one is given its place before anything in it is let through.
 const std = @import("std");
 const assert = std.debug.assert;
 
@@ -47,8 +51,13 @@ const rules = [_]Rule{
     .{ .folder = "library", .allowed = &.{ "library", "sys", "model", "epub", "kindle" } },
     .{ .folder = "testing", .allowed = &.{ "testing", "kindle", "sys", "model" } },
     .{ .folder = "screens", .allowed = &(.{"screens"} ++ app_parts) },
+    .{ .folder = "scenarios", .allowed = &(scenario_parts ++ app_parts) },
+    .{ .folder = "testdata", .allowed = &.{"testdata"} },
     .{ .folder = "", .allowed = &app_parts },
 };
+
+/// What the scenarios use besides the App's parts: the screens, and what's only for tests.
+const scenario_parts = .{ "scenarios", "screens", "testing", "testdata" };
 
 /// What the App's parts at the top of src/, and the screens on them, may use.
 const app_parts = .{ "", "sys", "model", "gfx", "layout", "ui", "kindle", "epub", "library" };
@@ -74,7 +83,9 @@ comptime {
         // A folder may always use its own files, and lists itself first.
         assert(std.mem.eql(u8, rule.allowed[0], rule.folder));
         // Only the tests may use the pretend Kindle.
-        if (!std.mem.eql(u8, rule.folder, "testing")) {
+        const tests = std.mem.eql(u8, rule.folder, "testing") or
+            std.mem.eql(u8, rule.folder, "scenarios");
+        if (!tests) {
             for (rule.allowed) |allowed| assert(!std.mem.eql(u8, allowed, "testing"));
         }
     }
@@ -126,7 +137,11 @@ pub fn check(
     }
     const rule = for (rules) |r| {
         if (std.mem.eql(u8, r.folder, from)) break r;
-    } else return found;
+    } else {
+        // A folder nobody has said the place of: nothing in it passes until one does
+        try out.print(allocator, "{s}: src/{s}/ has no boundary rule\n", .{ file, from });
+        return found + 1;
+    };
     var at: u32 = 0;
     while (std.mem.indexOfPos(u8, source, at, import_prefix)) |start| {
         const name_start = start + import_prefix.len;
@@ -223,6 +238,9 @@ test "imports are judged by folder" {
     }.expect_problems;
     try expect_problems(0, "model/a.zig", "const b = @import(\"b.zig\");");
     try expect_problems(1, "model/a.zig", "const k = @import(\"../kindle/kfx.zig\");");
+    // A folder with no rule: nothing in it passes, whatever it imports
+    try expect_problems(1, "net/a.zig", "const b = @import(\"b.zig\");");
+    try expect_problems(0, "scenarios/a.zig", "const t = @import(\"../testing/fake.zig\");");
     try expect_problems(0, "screens/a.zig", "const k = @import(\"../kindle/kfx.zig\");");
     try expect_problems(1, "ui/a.zig", "const p = @import(\"../sys/os.zig\");");
     try expect_problems(0, "ui/a.zig", "const std = @import(\"std\");");

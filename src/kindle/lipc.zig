@@ -393,8 +393,9 @@ pub fn sync_now() void {
     comptime assert(std.mem.startsWith(u8, service, service_prefix));
     const argv = [_:null]?[*:0]const u8{ lipc_set, "-s", service, "syncAndCheck", "1" };
     var out: [32]u8 = undefined;
-    // The sync runs on its own; what the command prints says nothing about how it went
-    _ = process.run(&argv, &out);
+    // The sync runs on its own; what the command prints says nothing about how it went.
+    // Given up on as fast as every other setting, so a hung lipc can't hold the panel
+    _ = process.run_until(&argv, &out, lipc_deadline());
 }
 
 pub fn set_brightness(level: u32) void {

@@ -43,6 +43,19 @@ pub const Screen = struct {
 const mm_per_inch = 25.4;
 const points_per_inch = 72;
 
+/// What the Kindle is called where room is short (the quick panel's header).
+pub fn short_name(model: Model) []const u8 {
+    const result = switch (model) {
+        .paperwhite_12 => "Kindle Paperwhite",
+        .basic_11, .basic_10 => "Kindle",
+        .scribe => "Kindle Scribe",
+    };
+    assert(result.len > 0);
+    // The start of its whole name
+    assert(std.mem.startsWith(u8, name(model), result));
+    return result;
+}
+
 /// A model's name, as a person would say it.
 pub fn name(model: Model) []const u8 {
     const result = switch (model) {

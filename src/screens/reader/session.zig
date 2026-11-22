@@ -646,7 +646,10 @@ pub fn relayout(a: *app.App, s: *Session) !void {
     a.apply_settings() catch |err| {
         std.debug.print("settings failed: {s}\n", .{@errorName(err)});
         a.user.settings = a.user.saved_settings();
-        return a.apply_settings();
+        try a.apply_settings();
+        // Said, so the tap isn't taken for one that did nothing; the page is as it was
+        try app.show_notice(a, "That setting couldn't be used here.");
+        return;
     };
     a.user.save_settings();
     a.display.forget_pages();

@@ -590,14 +590,14 @@ pub fn run_root(a: *app.App, root: anytype) !Ending(@TypeOf(root.*).Result) {
     errdefer stack.end_all(a);
     try stack.settle(a, .{ .push = open(root, &ending) });
     stack.mark_shown();
-    // Unbounded: noface's event loop, the only one, which runs for as long as the
-    // reader reads: each turn waits once for something to happen, and hands what
-    // happened, if anything, to the screen that takes it
-    while (true) {
+    // The event loop, noface's only one, which runs for as long as the reader reads:
+    // each turn waits once for something to happen, and hands what happened, if
+    // anything, to the screen that takes it. The root can end as it opens (a book
+    // whose first page fails), leaving nothing to wait for
+    while (stack.depth > 0) {
         a.input.apply(stack.scope(), false);
         const action = a.input.poll() orelse continue;
         try stack.route(a, action);
-        if (stack.depth == 0) break;
     }
     assert(stack.depth == 0);
     return ending.?;
@@ -764,6 +764,45 @@ const FailingRoot = struct {
         return .{ .done = {} };
     }
 };
+
+/// A root that ends as it opens, as a book whose first page fails does.
+const EndsAtOnce = struct {
+    pub const Result = u32;
+    pub const takes = Takes{ .lock = true, .leave = true };
+    drawn: bool = false,
+
+    pub fn draw(r: *EndsAtOnce, part: Part) !void {
+        assert(part == .all);
+        r.drawn = true;
+    }
+
+    pub fn on_open(r: *EndsAtOnce) !Step(u32) {
+        assert(r.drawn);
+        return .{ .done = 7 };
+    }
+
+    pub fn on_tap(_: *EndsAtOnce, _: Tap) !Step(u32) {
+        unreachable; // Ended before any tap could come
+    }
+};
+
+test "a root that ends as it opens ends the loop, with no touch waited for" {
+    var none = [_]input_mod.Step{};
+    var script = input_mod.Script{ .steps = &none };
+    var input = input_mod.Input{
+        .touch = -1,
+        .power = -1,
+        .width = test_screen.width_px,
+        .height = test_screen.height_px,
+        .x_max = test_screen.width_px,
+        .y_max = test_screen.height_px,
+        .script = &script,
+    };
+    var a: app.App = undefined;
+    a.input = &input;
+    var root = EndsAtOnce{};
+    try std.testing.expectEqual(@as(u32, 7), (try run_root(&a, &root)).done);
+}
 
 test "an error out of the loop still ends every screen, as leaving does" {
     var none = [_]input_mod.Step{};

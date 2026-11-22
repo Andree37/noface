@@ -159,7 +159,9 @@ pub fn bluetooth(page: Page, cx: f32, cy: f32) void {
     p.line(17, 16, 0, 32, stroke.regular);
 }
 
-pub fn wifi(page: Page, cx: f32, cy: f32, scale: f32, bars: u32) void {
+/// The Wi-Fi fan: `bars` of its three arcs, none for no signal, or all three for an
+/// icon that shows no signal (null: the panel's tile).
+pub fn wifi(page: Page, cx: f32, cy: f32, scale: f32, bars: ?u32) void {
     assert(inside(cx, page.width));
     assert(inside(cy, page.height));
     assert(scale > 0);
@@ -167,8 +169,9 @@ pub fn wifi(page: Page, cx: f32, cy: f32, scale: f32, bars: u32) void {
     const p = Pen{ .page = page, .cx = cx, .cy = cy + 2 * scale * unit, .scale = scale * unit };
     p.disc(0, 24, 6, 0x00);
     const radii = [_]f32{ 19, 34, 49 };
+    if (bars) |b| assert(b <= radii.len);
     for (radii, 0..) |r, i| {
-        if (bars > 0 and i >= bars) continue;
+        if (bars) |b| if (i >= b) continue;
         p.arc(0, 24, r, -135, -45, stroke.bold);
     }
 }

@@ -1,6 +1,7 @@
 //! Quick panel: drag down from the top of any screen to open it.
 const std = @import("std");
 const assert = std.debug.assert;
+const device = @import("../model/device.zig");
 const style = @import("style.zig");
 const Page = @import("../gfx/page.zig").Page;
 const Fonts = @import("fonts.zig").Fonts;
@@ -286,7 +287,8 @@ fn draw_glyph(page: Page, quick: *const Quick, glyph: Glyph, x: f32, y: f32) voi
     assert(y > 0);
     switch (glyph) {
         .airplane => icons.airplane(page, x, y),
-        .wifi => icons.wifi(page, x, y - wifi_rise, wifi_scale, quick.wifi_shown() orelse 0),
+        // Its arcs the signal while on; off, the fan whole, as the switch it is
+        .wifi => icons.wifi(page, x, y - wifi_rise, wifi_scale, quick.wifi_shown()),
         .bluetooth => icons.bluetooth(page, x, y),
         .sync => icons.sync(page, x, y),
         .smile => icons.smile(page, x, y),
@@ -523,7 +525,7 @@ pub fn draw_header(
 ) !void {
     const box = header_box(fonts);
     page.fill_rect(box.x, box.y, box.w, box.h, 0xff);
-    try fonts.title.draw(page, header_inset, header_baseline, "Kindle Paperwhite");
+    try fonts.title.draw(page, header_inset, header_baseline, device.short_name(device.target));
     const header_width: f32 = @floatFromInt(page.width - 2 * header_inset);
     const line = notice orelse quick.clock_text();
     try draw.clipped(fonts.small, page, header_inset, clock_baseline, line, header_width);

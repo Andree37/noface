@@ -59,7 +59,9 @@ comptime {
 
 /// How reading a book ended: back to the library, leaving noface, or the book
 /// couldn't be read (the library says so).
-pub const Outcome = enum { library, quit, failed };
+/// How a book closed: back to the library, leaving noface, or on an error, either
+/// before its first page was read (`failed`, it can't be opened) or after (`stopped`).
+pub const Outcome = enum { library, quit, failed, stopped };
 
 /// Reads `entry` on its own, as the root of the stack of screens: for the scenario
 /// tests, which start in a book. noface opens books from the library (`open`).
@@ -70,7 +72,7 @@ pub fn read_book(a: *app.App, entry: *catalog.Entry) !Outcome {
     // A book takes the lock and leaving, so it only ever ends itself
     assert(ending == .done);
     assert(a.regions.book.empty()); // Closing, it let go of its memory
-    if (ending.done == .failed) return error.BookFailed;
+    if (ending.done == .failed or ending.done == .stopped) return error.BookFailed;
     return ending.done;
 }
 
@@ -429,7 +431,10 @@ pub const Reader = struct {
 
     /// Something went wrong reading the book: it closes, and the library says so.
     fn fail(r: *Reader, err: anyerror) screen.Step(Outcome) {
-        std.debug.print("could not open book: {s}\n", .{@errorName(err)});
+        // Opened and read a while, or never shown: told apart in the log and the notice
+        const outcome: Outcome = if (r.reading_started) .stopped else .failed;
+        const what = if (outcome == .stopped) "book stopped" else "could not open book";
+        std.debug.print("{s}: {s}\n", .{ what, @errorName(err) });
         // Still open: its file mapped and pages found, until `finish` lets go of them
         assert(r.data.len > 0);
         assert(r.s.pages.len > 0);
@@ -437,7 +442,7 @@ pub const Reader = struct {
         // Whatever a handler meant to open, it won't now
         r.opening = null;
         r.over = .none;
-        return r.finish(.failed);
+        return r.finish(outcome);
     }
 
     /// The book closes: its place saved, Wi-Fi back, and its memory let go of.
@@ -450,7 +455,7 @@ pub const Reader = struct {
                 .library, .quit => r.s.percent(),
                 // Its pages may be gone (a layout after a settings change failed partway),
                 // so how far in it is goes by the words before its place
-                .failed => null,
+                .failed, .stopped => null,
             };
             sess.save_progress(r.entry, r.state_path, r.s, percent);
             wifi_saver.restore(); // Leaving the book, Wi-Fi comes back

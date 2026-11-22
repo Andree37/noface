@@ -754,15 +754,18 @@ fn draw_line(
             .end = word_end,
         });
         var shrink: f32 = 0; // A small mark takes less room than was measured
+        var word_end_x = x; // Where the word's last letter ends, for a hyphen after it
         if (has_reference(para.links, paras, word_start, @intCast(word.len))) {
-            const in_word: InWord = .{ .text = word, .start = word_start };
-            shrink = try draw_with_marks(p, l, wf, in_word, para.links, paras, x, place);
+            const in_word: InWord = .{ .text = word, .start = word_start, .bold = line.starts[k] };
+            const marked = try draw_with_marks(p, l, wf, in_word, para.links, paras, x, place);
+            shrink = marked.shrink;
+            word_end_x = marked.end_x;
         } else {
             try draw_word(p, wf, line.starts[k], x, place.baseline, word);
+            word_end_x = x + try word_width(wf, line.starts[k], word);
         }
         if (line.hyphen_end and k + 1 == line.n) {
-            const hyphen_x = x + try word_width(wf, line.starts[k], word);
-            try wf.draw(p, hyphen_x, place.baseline, "-");
+            try wf.draw(p, word_end_x, place.baseline, "-");
         }
         x += w + place.gap - shrink;
     }
@@ -787,12 +790,52 @@ fn word_marked(
     return is_marked(marks, para_index, start, start + @as(u32, @intCast(word.len)));
 }
 
-/// A word, and where it starts in its paragraph's text.
-const InWord = struct { text: []const u8, start: u32 };
+/// A word, where it starts in its paragraph's text, and its bold start, if any.
+const InWord = struct { text: []const u8, start: u32, bold: ?BoldStart };
+
+/// The width of `piece`, the word's bytes from `offset` on, with what of it is in the
+/// word's bold start measured in bold, as `draw_piece` draws it.
+fn piece_width(wf: *Font, start: ?BoldStart, offset: u32, piece: []const u8) !f32 {
+    const bold = bold_in_piece(start, offset, piece);
+    const b = start orelse return wf.measure(piece);
+    return try b.face.measure(piece[0..bold]) + try wf.measure(piece[bold..]);
+}
+
+/// Draws `piece`, the word's bytes from `offset` on, at `x`: what of it is in the
+/// word's bold start in bold, as `draw_word` draws a whole word. Returns its width.
+fn draw_piece(
+    p: Page,
+    wf: *Font,
+    start: ?BoldStart,
+    offset: u32,
+    piece: []const u8,
+    x: f32,
+    y: i32,
+) !f32 {
+    const bold = bold_in_piece(start, offset, piece);
+    var pen = x;
+    if (start) |b| {
+        try b.face.draw(p, pen, y, piece[0..bold]);
+        pen += try b.face.measure(piece[0..bold]);
+    }
+    try wf.draw(p, pen, y, piece[bold..]);
+    pen += try wf.measure(piece[bold..]);
+    assert(pen >= x);
+    return pen - x;
+}
+
+/// How many of `piece`'s first bytes, the word's from `offset` on, are in its bold start.
+fn bold_in_piece(start: ?BoldStart, offset: u32, piece: []const u8) u32 {
+    const b = start orelse return 0;
+    if (b.bytes <= offset) return 0;
+    const bold: u32 = @intCast(@min(b.bytes - offset, piece.len));
+    assert(bold <= piece.len);
+    return bold;
+}
 
 /// A word holding notes' references: each mark raised and small, like a printed one,
-/// and tappable, the word's other bytes drawn as body text round them. Returns how
-/// much narrower the marks are than measured.
+/// and tappable, the word's other bytes drawn as body text round them, its bold start
+/// in bold. Returns how much narrower the marks are than measured, and where it ends.
 fn draw_with_marks(
     p: Page,
     l: *const Layout,
@@ -802,7 +845,7 @@ fn draw_with_marks(
     paras: []const Paragraph,
     x: f32,
     place: *const LinePlace,
-) !f32 {
+) !struct { shrink: f32, end_x: f32 } {
     assert(word.text.len > 0);
     const small = l.reference orelse wf;
     const pf = place.pf;
@@ -820,8 +863,8 @@ fn draw_with_marks(
         assert(b <= len);
         // A book's links out of order, or overlapping: what's drawn already stays
         if (a < drawn) continue;
-        try wf.draw(p, pen, baseline, word.text[drawn..a]);
-        const mark_x = pen + try wf.measure(word.text[drawn..a]);
+        const before_mark = word.text[drawn..a];
+        const mark_x = pen + try draw_piece(p, wf, word.bold, drawn, before_mark, pen, baseline);
         try small.draw(p, mark_x, baseline - @divTrunc(pf.line_height, 3), word.text[a..b]);
         const mark_w = try small.measure(word.text[a..b]);
         if (place.hits) |h| h.add(.{
@@ -831,13 +874,13 @@ fn draw_with_marks(
             .h = pf.line_height,
             .target = r.target,
         });
-        shrink += try wf.measure(word.text[a..b]) - mark_w;
+        shrink += try piece_width(wf, word.bold, a, word.text[a..b]) - mark_w;
         pen = mark_x + mark_w;
         drawn = b;
     }
     assert(drawn > 0); // A word holding a reference drew its mark
-    try wf.draw(p, pen, baseline, word.text[drawn..]);
-    return shrink;
+    pen += try draw_piece(p, wf, word.bold, drawn, word.text[drawn..], pen, baseline);
+    return .{ .shrink = shrink, .end_x = pen };
 }
 
 fn draw_picture(
@@ -1147,4 +1190,20 @@ test "a word broken across lines is as bold as it is whole" {
         const rest = try start_face(&l, &regular, &p, &regular, @intCast(begin + at));
         try std.testing.expectEqual(whole, first + if (rest) |r| r.bytes else 0);
     }
+}
+
+test "a word cut into pieces round a note's mark keeps its bold start across the cuts" {
+    var regular = try Font.init(@embedFile("../testdata/fonts/Go-Regular.ttf"), 30, 1.2);
+    var bold = try Font.init(@embedFile("../testdata/fonts/Go-Bold.ttf"), 30, 1.2);
+    const word = "abcdef";
+    const start: BoldStart = .{ .face = &bold, .bytes = 3 }; // "abc" in bold
+    const whole = try word_width(&regular, start, word);
+    // Cut at 2 and 4: the bold start runs into the second piece, and stops there
+    const pieces = try piece_width(&regular, start, 0, word[0..2]) +
+        try piece_width(&regular, start, 2, word[2..4]) +
+        try piece_width(&regular, start, 4, word[4..]);
+    try std.testing.expectApproxEqAbs(whole, pieces, 0.01);
+    try std.testing.expectEqual(@as(u32, 1), bold_in_piece(start, 2, word[2..4]));
+    try std.testing.expectEqual(@as(u32, 0), bold_in_piece(start, 4, word[4..]));
+    try std.testing.expectEqual(@as(u32, 0), bold_in_piece(null, 0, word));
 }

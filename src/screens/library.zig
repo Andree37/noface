@@ -657,7 +657,11 @@ const Browser = struct {
         const a = b.a;
         assert(entry.is_local());
         assert(b.over == .none);
-        if (outcome == .failed) b.notice = "This book can't be opened here.";
+        switch (outcome) {
+            .failed => b.notice = "This book can't be opened here.",
+            .stopped => b.notice = "This book stopped. Your place is saved.",
+            .library, .quit => {},
+        }
         b.lib.save(entry); // Its place and time read, in the library's index
         if (outcome == .quit) return .leave;
         b.status_until = now_us() + status_watch_us; // Wi-Fi coming back, and the like

@@ -175,6 +175,10 @@ fn overlaps(m: book_model.Mark, w: book_model.Word) bool {
 /// highlight's start keeps its ID, so that spot can already be taken by a highlight
 /// elsewhere. A damaged book's positions can reach the largest number, past which
 /// there's no ID to give: `error.PositionTooLarge`, and the highlight can't be saved.
+const id_format = "kindle.highlight-{d}";
+/// The longest highlight id: its prefix and the largest u32.
+const id_bytes_max = std.fmt.count(id_format, .{std.math.maxInt(u32)});
+
 pub fn free_id(
     alloc: std.mem.Allocator,
     list: []const Highlight,
@@ -187,14 +191,17 @@ pub fn free_id(
     next: for (0..list.len + stored.len + 1) |offset| {
         const candidate = std.math.add(u32, short, @intCast(offset)) catch
             return error.PositionTooLarge;
-        const id = try std.fmt.allocPrint(alloc, "kindle.highlight-{d}", .{candidate});
+        // Each candidate written on the stack: only the free one is kept, in `alloc`
+        var id_buffer: [id_bytes_max]u8 = undefined;
+        const written = std.fmt.bufPrint(&id_buffer, id_format, .{candidate});
+        const id = written catch unreachable; // Ignored: sized for the largest (id_bytes_max)
         for (list) |h| {
             if (std.mem.eql(u8, h.id, id)) continue :next;
         }
         for (stored) |taken| {
             if (std.mem.eql(u8, taken, id)) continue :next;
         }
-        return id;
+        return alloc.dupe(u8, id);
     }
     unreachable;
 }
@@ -537,4 +544,16 @@ test "a highlight's pieces that cover no letter are no marks" {
     try std.testing.expectEqual(@as(usize, 1), list.items.len);
     try std.testing.expectEqual(@as(u32, 0), list.items[0].mark.para);
     for (list.items) |h| try std.testing.expect(h.mark.start < h.mark.end);
+}
+
+test "finding a free id keeps only the one it gives" {
+    // Ids 12 to 14 taken: 15 is given, and nothing else is left allocated
+    const stored = [_][]const u8{
+        "kindle.highlight-12",
+        "kindle.highlight-13",
+        "kindle.highlight-14",
+    };
+    const id = try free_id(std.testing.allocator, &.{}, &stored, 12);
+    defer std.testing.allocator.free(id);
+    try std.testing.expectEqualStrings("kindle.highlight-15", id);
 }

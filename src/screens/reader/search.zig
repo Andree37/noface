@@ -14,6 +14,7 @@ const app = @import("../../app.zig");
 const sess = @import("session.zig");
 const screen = @import("../screen.zig");
 const typing = @import("../typing.zig");
+const input_mod = @import("../../kindle/input.zig");
 
 const results_max = 500;
 const snippet_bytes = 160;
@@ -44,6 +45,7 @@ pub fn make(
 
 pub const Search = struct {
     pub const Result = u32;
+    pub const touches = typing.touches;
     a: *app.App,
     s: *sess.Session,
     /// The reader's last search, written only when Enter searches, so a search left
@@ -52,6 +54,7 @@ pub const Search = struct {
     /// What's typed in the bar, from the last search on.
     typed: search.Query,
     alloc: std.mem.Allocator,
+    typist: typing.Typist = .{},
     shown: Shown = .keyboard,
     /// The last search's results, in `alloc`, let go of when another search replaces
     /// them: kept here, as the keyboard over them leaves `shown` without them.
@@ -71,15 +74,18 @@ pub const Search = struct {
         const top = sheet_top;
         const query = se.typed.slice();
         try search_sheet.render_bar(a.ui, page, top, query, "Search this book", .search);
+        // The keys too when they changed: a layer, shift, a letter's accents
+        const keys_due = se.shown == .keyboard and se.typist.redraw_keys(part == .all);
         if (part == .all) switch (se.shown) {
             .keyboard => {
                 const keyboard_gap = keyboard.top - search_sheet.content_top;
                 page.fill_rect(0, search_sheet.content_top, page.width, keyboard_gap, 0xff);
-                try keyboard.render(a.ui, page);
             },
             .results => |r| try se.draw_results(page, r.rows, r.pages),
         };
-        const bottom: u32 = if (part == .all) a.display.screen.height else search_sheet.content_top;
+        if (keys_due) try keyboard.render(a.ui, page, se.typist.keys);
+        const all = part == .all or keys_due;
+        const bottom: u32 = if (all) a.display.screen.height else search_sheet.content_top;
         try a.display.show_band(top, bottom - top);
     }
 
@@ -117,25 +123,37 @@ pub const Search = struct {
         };
     }
 
+    /// A key held shows its letter's accents; held anywhere else, it's a tap there.
+    pub fn on_action(se: *Search, action: input_mod.Action) !screen.Step(u32) {
+        // A finger followed after a hold, and the like, does nothing here
+        if (action != .hold) return .stay;
+        const h = action.hold;
+        if (se.shown == .keyboard and h.y >= keyboard.top) {
+            return se.keyboard_edit(se.typist.hold(&se.typed, h.x, h.y, typing.anything));
+        }
+        return se.on_tap(.{ .x = h.x, .y = h.y, .us = 0 });
+    }
+
     fn on_keyboard(se: *Search, t: screen.Tap) !screen.Step(u32) {
         assert(se.shown == .keyboard);
-        switch (typing.key(&se.typed, t, typing.anything)) {
-            .none => return .stay,
-            .changed => return .{ .redraw = .changing },
-            .enter => {
-                const words = se.typed.words();
-                if (words.len == 0) return .stay;
-                se.last.* = se.typed;
-                se.alloc.free(se.found);
-                se.found = &.{};
-                const rows = try find(se.alloc, se.s, words);
-                se.found = rows;
-                assert(rows.len <= results_max);
-                std.debug.print("search: {d} results\n", .{rows.len});
-                se.shown = .{ .results = .{ .rows = rows } };
-                return .{ .redraw = .all };
-            },
-        }
+        return se.keyboard_edit(se.typist.tap(&se.typed, t.x, t.y, typing.anything));
+    }
+
+    /// What a key did, as the screen goes on: a search for Enter, else redrawn.
+    fn keyboard_edit(se: *Search, edit: typing.Edit) !screen.Step(u32) {
+        assert(se.shown == .keyboard);
+        if (!edit.enter) return if (edit.any()) .{ .redraw = .changing } else .stay;
+        const words = se.typed.words();
+        if (words.len == 0) return .stay;
+        se.last.* = se.typed;
+        se.alloc.free(se.found);
+        se.found = &.{};
+        const rows = try find(se.alloc, se.s, words);
+        se.found = rows;
+        assert(rows.len <= results_max);
+        std.debug.print("search: {d} results\n", .{rows.len});
+        se.shown = .{ .results = .{ .rows = rows } };
+        return .{ .redraw = .all };
     }
 
     fn on_results(

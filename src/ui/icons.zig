@@ -386,6 +386,27 @@ pub fn pager_arrow(page: Page, cx: f32, cy: f32, forward: bool) void {
 pub const backspace_left = px(30);
 pub const backspace_right = px(26);
 
+/// Shift: an arrow pointing up, outlined, with a bar under it while capitals are locked.
+pub fn shift(page: Page, cx: f32, cy: f32, locked: bool) void {
+    assert(inside(cx, page.width));
+    assert(inside(cy, page.height));
+    const p: Pen = .{ .page = page, .cx = cx, .cy = cy };
+    const tip = -20;
+    const wing = 18;
+    const stem = 8;
+    const shoulder = 0;
+    const foot = 14;
+    p.line(0, tip, -wing, shoulder, stroke.fine);
+    p.line(0, tip, wing, shoulder, stroke.fine);
+    p.line(-wing, shoulder, -stem, shoulder, stroke.fine);
+    p.line(wing, shoulder, stem, shoulder, stroke.fine);
+    p.line(-stem, shoulder, -stem, foot, stroke.fine);
+    p.line(stem, shoulder, stem, foot, stroke.fine);
+    p.line(-stem, foot, stem, foot, stroke.fine);
+    const bar = 22;
+    if (locked) p.line(-stem, bar, stem, bar, stroke.fine);
+}
+
 /// Backspace: a tag pointing left with a cross in it.
 pub fn backspace(page: Page, cx: f32, cy: f32) void {
     assert(inside(cx, page.width));

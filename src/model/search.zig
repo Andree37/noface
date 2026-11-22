@@ -17,19 +17,28 @@ pub const Query = struct {
         return q.buf[0..q.len];
     }
 
-    pub fn push(q: *Query, c: u8) void {
+    /// Adds `cp` at the end, in UTF-8, when all of it fits: never half a character.
+    /// Says whether it did.
+    pub fn push(q: *Query, cp: u21) bool {
         assert(q.len <= q.buf.len);
-        if (q.len < q.buf.len) {
-            q.buf[q.len] = c;
-            q.len += 1;
-        }
-        assert(q.len > 0);
+        var bytes: [4]u8 = undefined;
+        const length = std.unicode.utf8Encode(cp, &bytes) catch return false;
+        if (q.len + length > q.buf.len) return false;
+        @memcpy(q.buf[q.len..][0..length], bytes[0..length]);
+        q.len += length;
+        assert(q.len <= q.buf.len);
+        return true;
     }
 
-    pub fn pop(q: *Query) void {
+    /// Takes the last character off, all of its bytes. Says whether there was one.
+    pub fn pop(q: *Query) bool {
         assert(q.len <= q.buf.len);
-        q.len -|= 1;
+        if (q.len == 0) return false;
+        q.len -= 1;
+        // Back over the rest of a character written in more than a byte
+        while (q.len > 0 and q.buf[q.len] & 0xc0 == 0x80) q.len -= 1;
         assert(q.len < q.buf.len);
+        return true;
     }
 
     /// What's typed, without spaces at either end: what's searched for.
@@ -39,6 +48,23 @@ pub const Query = struct {
         return result;
     }
 };
+
+test "what's typed is added and taken back a whole character at a time" {
+    var q: Query = .{};
+    try std.testing.expect(q.push('A'));
+    try std.testing.expect(q.push(0xe7)); // ç, two bytes
+    try std.testing.expect(q.push(0x20ac)); // €, three
+    try std.testing.expectEqualStrings("A\u{e7}\u{20ac}", q.slice());
+    try std.testing.expect(q.pop());
+    try std.testing.expectEqualStrings("A\u{e7}", q.slice());
+    try std.testing.expect(q.pop());
+    try std.testing.expect(q.pop());
+    try std.testing.expect(!q.pop()); // Nothing left
+    // Full: a character that doesn't fit whole isn't added in part
+    while (q.len < q.buf.len - 1) try std.testing.expect(q.push('x'));
+    try std.testing.expect(!q.push(0xe7));
+    try std.testing.expectEqual(@as(u32, q.buf.len - 1), q.len);
+}
 
 /// `typed` without spaces at either end: what's searched for when that's typed.
 pub fn words_of(typed: []const u8) []const u8 {

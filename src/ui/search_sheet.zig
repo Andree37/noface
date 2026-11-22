@@ -187,10 +187,13 @@ pub fn render(
     entries: []const catalog.Entry,
     matches: []const u32,
     more: bool,
+    keys: ?keyboard.State,
 ) !void {
     assert(matches.len <= max_rows);
     assert(page.height > rows_bottom);
-    page.fill_rect(0, top, page.width, page.height - top, style.white);
+    // Down to the keyboard, or past it when its keys are drawn again too
+    const cleared_bottom: u32 = if (keys == null) keyboard.top else page.height;
+    page.fill_rect(0, top, page.width, cleared_bottom - top, style.white);
     try render_bar(fonts, page, top, typed, "Title or author", .search);
     const width = page.width - 2 * style.margin;
     if (search.words_of(typed).len == 0) {
@@ -213,7 +216,8 @@ pub fn render(
         try fonts.caption.draw(page, style.margin, see_all_y, see_all);
         fonts.caption.fade(page, style.margin, see_all_y, width, style.quiet);
     }
-    try keyboard.render(fonts, page);
+    // The keys only when they're to be drawn: they change apart from the rest
+    if (keys) |state| try keyboard.render(fonts, page, state);
 }
 
 test "bar, rows and keyboard each get their own taps" {

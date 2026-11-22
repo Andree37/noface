@@ -1,5 +1,6 @@
 //! Renders the quick panel to a PGM image on stdout, so it can be checked by eye.
-//! Usage: panelshot [panel | notes | toolbar [sheet] | library [page [read]]]
+//! Usage: panelshot [panel | notes | toolbar [sheet] | library [page [read]] |
+//!                   search [symbols | more | shift | locked | accents]]
 const std = @import("std");
 const assert = std.debug.assert;
 const catalog_db = core.catalog_db;
@@ -404,7 +405,23 @@ fn render_format(shot: *const Shot) !void {
     write_image(shot.page.buf, screen_width, screen_height);
 }
 
+/// The keyboard as `name` says: "symbols", "more", "shift", "locked", "accents" (e
+/// held), or the letters.
+fn keys_named(name: []const u8) core.keyboard.State {
+    const keyboard = core.keyboard;
+    if (std.mem.eql(u8, name, "symbols")) return .{ .layer = .symbols };
+    if (std.mem.eql(u8, name, "more")) return .{ .layer = .more };
+    if (std.mem.eql(u8, name, "shift")) return .{ .shift = .once };
+    if (std.mem.eql(u8, name, "locked")) return .{ .shift = .locked };
+    if (std.mem.eql(u8, name, "accents")) {
+        const e = keyboard.place(.{ .char = 'e' });
+        return .{ .accents = keyboard.held_letter(.{}, e.x, e.y) };
+    }
+    return .{};
+}
+
 /// The toolbar with the search bar and keyboard over the dimmed page.
+/// `panelshot search [symbols | more | shift | locked | accents]`.
 fn render_search(shot: *const Shot) !void {
     @memset(shot.page.buf, dimmed_gray);
     try render_sample_toolbar(shot, null);
@@ -416,7 +433,9 @@ fn render_search(shot: *const Shot) !void {
         "Search this book",
         .search,
     );
-    try core.keyboard.render(shot.fonts, shot.page);
+    const name = if (shot.argv.len > 2) std.mem.sliceTo(shot.argv[2], 0) else "letters";
+    const keys = keys_named(name);
+    try core.keyboard.render(shot.fonts, shot.page, keys);
     write_image(shot.page.buf, screen_width, screen_height);
 }
 

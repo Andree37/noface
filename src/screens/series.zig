@@ -107,10 +107,10 @@ const Choices = struct {
 
 const NameEntry = struct {
     pub const Result = []const u8; // As typed, kept in `name`
-    /// A key takes its tap as it lands, however long it's held (see `Choices`).
-    pub const touches = input_mod.Input.Modes.sheet;
+    pub const touches = typing.touches;
     a: *app.App,
     name: search.Query = .{},
+    typist: typing.Typist = .{},
 
     pub fn draw(e: *NameEntry, part: screen.Part) !void {
         assert(e.name.len <= e.name.buf.len);
@@ -121,18 +121,33 @@ const NameEntry = struct {
             page.fill_rect(0, 0, page.width, page.height, style.white);
         }
         try search_sheet.render_bar(a.ui, page, sheet_top, e.name.slice(), "Series name", .none);
-        if (part == .all) try keyboard.render(a.ui, page);
-        const bottom: u32 = if (part == .all) a.display.screen.height else keyboard.top;
+        const keys_due = e.typist.redraw_keys(part == .all);
+        if (keys_due) try keyboard.render(a.ui, page, e.typist.keys);
+        const bottom: u32 = if (keys_due) a.display.screen.height else keyboard.top;
         try a.display.show_band(sheet_top, bottom - sheet_top);
     }
 
     pub fn on_tap(e: *NameEntry, t: screen.Tap) !screen.Step([]const u8) {
         assert(e.name.len <= e.name.buf.len);
-        return switch (typing.key(&e.name, t, typing.anything)) {
-            .changed => .{ .redraw = .changing },
-            .enter => if (e.name.words().len > 0) .{ .done = e.name.slice() } else .stay,
-            .none => if (search_sheet.hit(sheet_top, t.x, t.y, 0) == .cancel) .close else .stay,
-        };
+        const edit = e.typist.tap(&e.name, t.x, t.y, typing.anything);
+        if (edit.any()) return e.edited(edit);
+        return if (search_sheet.hit(sheet_top, t.x, t.y, 0) == .cancel) .close else .stay;
+    }
+
+    /// A key held shows its letter's accents; held anywhere else, it's a tap there.
+    pub fn on_action(e: *NameEntry, action: input_mod.Action) !screen.Step([]const u8) {
+        // A finger followed after a hold, and the like, does nothing here
+        if (action != .hold) return .stay;
+        const h = action.hold;
+        if (h.y < keyboard.top) return e.on_tap(.{ .x = h.x, .y = h.y, .us = 0 });
+        return e.edited(e.typist.hold(&e.name, h.x, h.y, typing.anything));
+    }
+
+    /// What a key did: the name for Enter, once something is typed; else redrawn.
+    fn edited(e: *NameEntry, edit: typing.Edit) screen.Step([]const u8) {
+        assert(e.name.len <= e.name.buf.len);
+        if (edit.enter) return if (e.name.words().len > 0) .{ .done = e.name.slice() } else .stay;
+        return if (edit.any()) .{ .redraw = .changing } else .stay;
     }
 };
 

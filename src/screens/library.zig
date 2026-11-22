@@ -76,12 +76,11 @@ const SearchEnd = union(enum) { cancel, search, open: *catalog.Entry };
 /// opening a book from the list.
 const LibrarySearch = struct {
     pub const Result = SearchEnd;
-    /// Keys and rows act as they land: in the library's own touches, a key pressed a
-    /// little long would become a hold, and be dropped.
-    pub const touches = input_mod.Input.Modes.sheet;
+    pub const touches = typing.touches;
     a: *app.App,
     lib: *Library,
     q: *search.Query,
+    typist: typing.Typist = .{},
     matches: []catalog.Entry = &.{}, // Those listed, read back by the library
 
     /// The rows listed, each the match of its place.
@@ -102,19 +101,19 @@ const LibrarySearch = struct {
         const page = a.display.on_screen();
         const listed = rows[0..ls.matches.len];
         // What's typed in the field, a space at its end too, so the key shows
-        try search_sheet.render(a.ui, page, ls.q.slice(), ls.matches, listed, more);
-        // The keyboard never changes, so after the first time only the part above it does
-        const bottom: u32 = if (part == .all) a.display.screen.height else keyboard.top;
+        const keys_due = ls.typist.redraw_keys(part == .all);
+        const keys: ?keyboard.State = if (keys_due) ls.typist.keys else null;
+        try search_sheet.render(a.ui, page, ls.q.slice(), ls.matches, listed, more, keys);
+        // The keyboard only when its keys changed: otherwise the part above it
+        const bottom: u32 = if (keys_due) a.display.screen.height else keyboard.top;
         try a.display.show_band(search_sheet.top, bottom - search_sheet.top);
     }
 
     pub fn on_tap(ls: *LibrarySearch, t: screen.Tap) !screen.Step(SearchEnd) {
         assert(ls.matches.len <= search_sheet.max_rows);
-        switch (typing.key(ls.q, t, typing.anything)) {
-            .changed => return .{ .redraw = .changing },
-            .enter => return .{ .done = .search },
-            .none => {},
-        }
+        const edit = ls.typist.tap(ls.q, t.x, t.y, typing.anything);
+        if (edit.enter) return .{ .done = .search };
+        if (edit.any()) return .{ .redraw = .changing };
         return switch (search_sheet.hit(search_sheet.top, t.x, t.y, @intCast(ls.matches.len))) {
             .cancel => .close,
             .row => |i| {
@@ -126,6 +125,21 @@ const LibrarySearch = struct {
             },
             .field, .none => .stay,
         };
+    }
+
+    /// A key held shows its letter's accents; held anywhere else, it's a tap there.
+    pub fn on_action(ls: *LibrarySearch, action: input_mod.Action) !screen.Step(SearchEnd) {
+        assert(ls.matches.len <= search_sheet.max_rows);
+        assert(ls.q.len <= ls.q.buf.len);
+        // A finger followed after a hold, and the like, does nothing here
+        if (action != .hold) return .stay;
+        const h = action.hold;
+        if (h.y >= keyboard.top) {
+            const edit = ls.typist.hold(ls.q, h.x, h.y, typing.anything);
+            if (edit.enter) return .{ .done = .search };
+            return if (edit.any()) .{ .redraw = .changing } else .stay;
+        }
+        return ls.on_tap(.{ .x = h.x, .y = h.y, .us = 0 });
     }
 };
 

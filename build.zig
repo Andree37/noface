@@ -106,6 +106,7 @@ const unicode_fields = [_][]const u8{
     "bidi_class",
     "case_folding_simple",
     "simple_lowercase_mapping",
+    "simple_uppercase_mapping",
     "decomposition_type",
     "decomposition_mapping",
 };

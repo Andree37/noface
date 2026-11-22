@@ -9,6 +9,7 @@ const app = @import("../../app.zig");
 const sess = @import("session.zig");
 const screen = @import("../screen.zig");
 const typing = @import("../typing.zig");
+const input_mod = @import("../../kindle/input.zig");
 const Query = @import("../../model/search.zig").Query;
 
 /// The sheet starts under the reader's status row, so is drawn and hit-tested from there.
@@ -41,9 +42,11 @@ pub fn make(a: *app.App, s: *const sess.Session) PageEntry {
 /// A page number typed on the keyboard, under the toolbar.
 pub const PageEntry = struct {
     pub const Result = u32;
+    pub const touches = typing.touches;
     a: *app.App,
     page_count: u32,
     typed: Query = .{},
+    typist: typing.Typist = .digits_first, // A page is a number
     note: []const u8 = "", // Why Enter did nothing, until the next tap
 
     pub fn draw(e: *PageEntry, part: screen.Part) !void {
@@ -64,8 +67,9 @@ pub const PageEntry = struct {
             const baseline = search_sheet.note_baseline(a.ui.small);
             try a.ui.small.draw(page, style.margin, baseline, e.note);
         }
-        if (part == .all) try keyboard.render(a.ui, page);
-        const bottom: u32 = if (part == .all) a.display.screen.height else keyboard.top;
+        const keys_due = e.typist.redraw_keys(part == .all);
+        if (keys_due) try keyboard.render(a.ui, page, e.typist.keys);
+        const bottom: u32 = if (keys_due) a.display.screen.height else keyboard.top;
         assert(bottom > top);
         try a.display.show_band(top, bottom - top);
     }
@@ -76,8 +80,23 @@ pub const PageEntry = struct {
         if (search_sheet.bar_hit(sheet_top, t.x, t.y)) |h| {
             return if (h == .cancel) .close else .stay;
         }
+        return e.edited(e.typist.tap(&e.typed, t.x, t.y, typing.digits));
+    }
+
+    /// A key held: as if tapped, but for a letter's accents, which a number has none of.
+    pub fn on_action(e: *PageEntry, action: input_mod.Action) !screen.Step(u32) {
+        // A finger followed after a hold, and the like, does nothing here
+        if (action != .hold) return .stay;
+        const h = action.hold;
+        if (h.y < keyboard.top) return e.on_tap(.{ .x = h.x, .y = h.y, .us = 0 });
+        return e.edited(e.typist.hold(&e.typed, h.x, h.y, typing.digits));
+    }
+
+    /// What a key did: the page for Enter, if it's one of the book's; else redrawn.
+    fn edited(e: *PageEntry, edit: typing.Edit) screen.Step(u32) {
+        assert(e.page_count > 0);
         e.note = "";
-        if (typing.key(&e.typed, t, typing.digits) == .enter) {
+        if (edit.enter) {
             if (page_index(e.typed.slice(), e.page_count)) |index| {
                 assert(index < e.page_count);
                 return .{ .done = index };

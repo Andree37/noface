@@ -294,7 +294,10 @@ as it opens and again as each step asks. A screen that changes on its own adds
 tick change as it's used says so in `setting` (the library, a book). A screen that only
 leads to others (a book's actions, setting a series, getting a dictionary) draws
 nothing itself and opens its first in `on_open`. Typing on the keyboard is
-`screens/typing.zig`, shared by every screen with a field; a list shown a page at a
+`screens/typing.zig`, shared by every screen with a field: each keeps a `Typist` (the
+keyboard's layer, shift, and a held letter's accents), takes touches as `typing.touches`
+says, and hands it taps and holds; the keys and layers are `ui/keyboard.zig`'s. A list
+shown a page at a
 time is `goto.Pages` (`ui/goto.zig`); a card of rows is `card.over`
 (`screens/card.zig`); following a finger is `Drag` (`screens/drag.zig`).
 

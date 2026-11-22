@@ -2,6 +2,7 @@
 //! per book, "<path>\t<series>\t<number>", with an empty series for "not in one".
 //! They win over what's read from file names and EPUB metadata.
 const std = @import("std");
+const unicode = @import("../text/unicode.zig");
 const assert = std.debug.assert;
 const catalog = @import("catalog.zig");
 
@@ -62,18 +63,54 @@ pub fn format_line(buffer: []u8, path: []const u8, series: ?catalog.Series) ![]c
     return text;
 }
 
-/// "three body problem" typed on a lowercase keyboard, as a name: "Three Body Problem".
+/// A typed name as a series' name: "three body problem" typed all in small letters is
+/// "Three Body Problem", each word's first letter a capital, accented or not; a name
+/// with a capital in it is as the reader typed it ("iZombie").
 pub fn title_case(alloc: std.mem.Allocator, typed: []const u8) ![]const u8 {
-    assert(std.mem.trim(u8, typed, " ").len > 0); // A name was typed, not only spaces
-    const out = try alloc.dupe(u8, std.mem.trim(u8, typed, " "));
+    const name = std.mem.trim(u8, typed, " ");
+    assert(name.len > 0); // A name was typed, not only spaces
+    const out = try alloc.dupe(u8, name);
+    if (has_capital(name)) return out;
     var start = true;
-    for (out) |*c| {
-        if (start) c.* = std.ascii.toUpper(c.*);
-        start = c.* == ' ';
+    var i: u32 = 0;
+    while (i < out.len) {
+        const c = unicode.character_at(out, i) orelse {
+            i += 1; // Not UTF-8 here: left as it is
+            start = false;
+            continue;
+        };
+        if (start) capitalise_at(out, i, c);
+        start = c.cp == ' ';
+        i += c.len;
     }
-    assert(out.len <= typed.len);
-    assert(!std.ascii.isLower(out[0])); // A name starts with a capital
+    assert(out.len == name.len); // Each letter's capital is as long as it is
     return out;
+}
+
+/// Whether `text` has a capital letter in it.
+fn has_capital(text: []const u8) bool {
+    assert(text.len > 0);
+    var i: u32 = 0;
+    while (i < text.len) {
+        const c = unicode.character_at(text, i) orelse {
+            i += 1;
+            continue;
+        };
+        if (unicode.lowercase(c.cp) != c.cp) return true;
+        i += c.len;
+    }
+    assert(i >= text.len);
+    return false;
+}
+
+/// Writes the capital of `c`, at `at` in `text`, where its capital takes as many bytes.
+fn capitalise_at(text: []u8, at: u32, c: unicode.Character) void {
+    assert(at + c.len <= text.len);
+    assert(c.len >= 1);
+    var bytes: [4]u8 = undefined;
+    const length = std.unicode.utf8Encode(unicode.uppercase(c.cp), &bytes) catch return;
+    if (length != c.len) return; // A capital of another length: left as typed
+    @memcpy(text[at..][0..length], bytes[0..length]);
 }
 
 test "a line reads back as written, and is known by its book's path" {
@@ -96,4 +133,8 @@ test "typed names are capitalised" {
     defer arena.deinit();
     const typed = try title_case(arena.allocator(), " three body problem ");
     try std.testing.expectEqualStrings("Three Body Problem", typed);
+    const accented = try title_case(arena.allocator(), "\u{e9}cole des \u{e2}mes");
+    try std.testing.expectEqualStrings("\u{c9}cole Des \u{c2}mes", accented);
+    // Capitals typed are the reader's: kept as they are
+    try std.testing.expectEqualStrings("iZombie", try title_case(arena.allocator(), "iZombie"));
 }

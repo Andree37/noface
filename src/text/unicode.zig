@@ -91,6 +91,13 @@ fn one_of(comptime T: type, value: T, comptime set: []const T) bool {
     return false;
 }
 
+/// `cp` in uppercase, by Unicode's simple mapping: one code point for one.
+pub fn uppercase(cp: u21) u21 {
+    assert(cp <= code_point_max);
+    if (cp < ascii_end) return std.ascii.toUpper(@intCast(cp));
+    return uucode.get(.simple_uppercase_mapping, cp);
+}
+
 /// Whether `cp` is a letter, in any script.
 pub fn is_letter(cp: u21) bool {
     assert(cp <= code_point_max);
@@ -180,6 +187,8 @@ test "letters are told from digits, marks, spaces and punctuation in any script"
     for ([_]u21{ ' ', '\t', '\n', 0xa0, 0x3000, 0x2029 }) |cp| try std.testing.expect(is_space(cp));
     for ([_]u21{ 'a', 0x200b, '-' }) |cp| try std.testing.expect(!is_space(cp));
     try std.testing.expectEqual(@as(u21, 0xe9), lowercase(0xc9)); // É
+    try std.testing.expectEqual(@as(u21, 0xc7), uppercase(0xe7)); // ç to Ç
+    try std.testing.expectEqual(@as(u21, 0xdf), uppercase(0xdf)); // ß: no one letter for it
 }
 
 test "a word folded once folds to itself again, in every script" {
@@ -221,6 +230,7 @@ test "ASCII is answered as Unicode's tables answer it" {
         try std.testing.expectEqual(letter or number, is_letter_or_number(cp));
         try std.testing.expectEqual(one_of(Category, category, &combining), is_combining(cp));
         try std.testing.expectEqual(uucode.get(.simple_lowercase_mapping, cp), lowercase(cp));
+        try std.testing.expectEqual(uucode.get(.simple_uppercase_mapping, cp), uppercase(cp));
         const folded = uucode.get(.case_folding_simple, base(uucode.get(.case_folding_simple, cp)));
         try std.testing.expectEqual(folded, fold(cp));
     }

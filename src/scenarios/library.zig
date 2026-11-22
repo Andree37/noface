@@ -20,6 +20,8 @@ const tap_on = taps.tap_on;
 const tool = taps.tool;
 const top = taps.top;
 const typed = taps.typed;
+const hold = taps.hold;
+const keyboard = @import("../ui/keyboard.zig");
 const wait = taps.wait;
 const width = taps.width;
 
@@ -50,6 +52,26 @@ pub const all = [_]Scenario{
                 const fixed = try play_on(.{ .library = true }, &(.{search_books} ++
                     slipped ++ .{ first_found, wait(2_000) }));
                 try expect(fixed.opened[0], "the book typed with a slip wasn't opened");
+            }
+        }.run,
+    },
+    .{
+        .name = "the library's search takes a capital with shift and an accent held on its " ++
+            "letter, and finds the book written without them",
+        .run = struct {
+            // Assertions: one thing to know, whether the book typed this way opened
+            fn run() !void {
+                const search_books = tap_on(library_ui.place(.search));
+                const first_found = tap_on(search_sheet.place_row(0));
+                const a = keyboard.place(.{ .char = 'a' });
+                const held_a = keyboard.held_letter(.{}, a.x, a.y).?;
+                const acute = tap_on(keyboard.accent_place(held_a, 1));
+                // "Scenário": S with shift, á held on a
+                const steps = .{ search_books, tap_on(keyboard.place(.shift)) } ++
+                    typed("scen") ++ .{ hold(a.x, a.y), acute } ++
+                    typed("rio") ++ .{ first_found, wait(2_000) };
+                const r = try play_on(.{ .library = true }, &steps);
+                try expect(r.opened[0], "the book typed with a capital and an accent wasn't found");
             }
         }.run,
     },

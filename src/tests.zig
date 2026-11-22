@@ -67,6 +67,7 @@ test {
     _ = @import("text/unicode.zig");
     _ = @import("sys/crash.zig");
     _ = @import("screens/panel.zig");
+    _ = @import("screens/typing.zig");
     _ = @import("kindle/input/watchers.zig");
     _ = @import("screens/books.zig");
     _ = @import("screens/book_actions.zig");

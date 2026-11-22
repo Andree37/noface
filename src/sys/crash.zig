@@ -61,7 +61,7 @@ pub fn on_signal(addr: ?usize, name: []const u8, registers: anytype) noreturn { 
     if (again()) std.process.abort();
     say(name);
     if (addr) |a| {
-        say(" at address ");
+        say(" at address"); // The address comes with its own space
         hex(a);
     }
     say("\n");

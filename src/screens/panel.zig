@@ -25,7 +25,9 @@ comptime {
 /// Reads the status again (about a quarter second of lipc calls), and redraws the
 /// panel only if something changed.
 fn refresh_status(a: *app.App, background: display.Backdrop) !void {
-    const fresh = lipc.read(a.quick);
+    var fresh = lipc.read(a.quick);
+    fresh.wifi_paused = paused_by_noface(fresh.airplane);
+    if (fresh.wifi_paused) assert(fresh.airplane); // A pause is airplane mode, noface's
     if (fresh.same(&a.quick)) return;
     a.quick = fresh;
     try draw_menu(a, background);
@@ -189,32 +191,11 @@ fn panel_control(
 /// while the screen shows it.
 fn panel_control_shortcut(a: *app.App, choice: menu.Hit) !void {
     assert(choice == .airplane or choice == .wifi or choice == .bluetooth or choice == .sync);
-    switch (choice) {
-        .airplane, .wifi => a.quick.airplane = !a.quick.airplane,
-        .bluetooth => a.quick.bluetooth = !a.quick.bluetooth,
-        .sync => a.quick.syncing = true,
-        .none,
-        .close,
-        .dimmer,
-        .brighter,
-        .slider,
-        .cooler,
-        .warmer,
-        .warmth,
-        .schedule,
-        .kindle,
-        => unreachable, // Not a shortcut: `panel_control` runs those
-    }
+    a.quick = tapped(a.quick, choice);
     const box = menu.shortcut_box(choice).?;
     assert(box.y + box.h <= menu.height);
     try menu.draw_shortcut(a.ui, a.display.on_screen(), choice, &a.quick);
-    const marker = try a.display.screen.show_region(
-        box.x,
-        box.y,
-        box.w,
-        box.h,
-        .page,
-    );
+    const marker = try a.display.screen.show_region(box.x, box.y, box.w, box.h, .page);
     switch (choice) {
         .airplane, .wifi => {
             // The reader's choice now: noface neither undoes nor redoes it
@@ -239,22 +220,58 @@ fn panel_control_shortcut(a: *app.App, choice: menu.Hit) !void {
         .warmth,
         .schedule,
         .kindle,
-        => unreachable, // Not a shortcut, as above
+        => unreachable, // Not a shortcut: `panel_control` runs those
     }
     try a.display.screen.wait_complete(marker);
     // Airplane mode and Wi-Fi are one switch shown on two tiles: the other follows
     if (choice == .airplane) try redraw_tile(a, .wifi);
     if (choice == .wifi) try redraw_tile(a, .airplane);
     if (choice == .sync and a.quick.airplane and wifi_saver.airplane() == .off) {
-        // The tiles said airplane mode on: show it off now
+        // The tiles said airplane mode on, or Wi-Fi paused: show it on now
         a.quick.airplane = false;
+        a.quick.wifi_paused = false;
         try redraw_tile(a, .airplane);
         try redraw_tile(a, .wifi);
     }
 }
 
+/// What the panel shows once shortcut `choice` is tapped, from `quick` before it.
+fn tapped(quick: quick_model.Quick, choice: menu.Hit) quick_model.Quick {
+    var next = quick;
+    switch (choice) {
+        // Paused by noface, airplane mode showed off: on now, as the reader's own
+        .airplane => if (quick.wifi_paused) {
+            next.wifi_paused = false;
+        } else {
+            next.airplane = !quick.airplane;
+        },
+        .wifi => {
+            next.wifi_paused = false; // Paused or not, the reader's choice from now
+            next.airplane = !quick.airplane;
+        },
+        .bluetooth => next.bluetooth = !quick.bluetooth,
+        .sync => next.syncing = true,
+        .none,
+        .close,
+        .dimmer,
+        .brighter,
+        .slider,
+        .cooler,
+        .warmer,
+        .warmth,
+        .schedule,
+        .kindle,
+        => unreachable, // Not a shortcut: `panel_control` runs those
+    }
+    // Airplane mode is noface's pause only until the reader touches either tile
+    if (choice == .airplane or choice == .wifi) assert(!next.wifi_paused);
+    if (next.wifi_paused) assert(quick.wifi_paused); // A tap never starts a pause
+    return next;
+}
+
 /// Draws a shortcut's tile again as `a.quick` has it now, and shows it.
 fn redraw_tile(a: *app.App, tile: menu.Hit) !void {
+    assert(tile != .none);
     const box = menu.shortcut_box(tile).?; // A shortcut, which has a tile
     assert(box.y + box.h <= menu.height);
     try menu.draw_shortcut(a.ui, a.display.on_screen(), tile, &a.quick);
@@ -264,7 +281,16 @@ fn redraw_tile(a: *app.App, tile: menu.Hit) !void {
 /// The quick panel, to open over the library or a book drawn in `background`.
 pub fn open(a: *app.App, background: display.Backdrop) Panel {
     assert(background.holds(&a.display));
+    a.quick.wifi_paused = paused_by_noface(a.quick.airplane);
     return .{ .a = a, .background = background };
+}
+
+/// Whether airplane mode, `on` as last read, is noface's own pause while reading: its
+/// note says so (kindle/wifi_saver.zig).
+fn paused_by_noface(on: bool) bool {
+    const paused = on and wifi_saver.marked();
+    if (paused) assert(on);
+    return paused;
 }
 
 /// Once the panel has ended: true to go to the Kindle's own screens.
@@ -354,3 +380,18 @@ pub const Panel = struct {
         return .stay;
     }
 };
+
+test "a tap on either radio tile ends noface's pause, and only Wi-Fi's turns the radio on" {
+    const paused = quick_model.Quick{ .airplane = true, .wifi_paused = true };
+    const wifi = tapped(paused, .wifi);
+    try std.testing.expect(!wifi.airplane);
+    try std.testing.expect(!wifi.wifi_paused);
+    const plane = tapped(paused, .airplane);
+    try std.testing.expect(plane.airplane); // Kept off, now the reader's airplane mode
+    try std.testing.expect(!plane.wifi_paused);
+    // Not paused: each is the switch it shows
+    const on = quick_model.Quick{};
+    try std.testing.expect(tapped(on, .airplane).airplane);
+    try std.testing.expect(tapped(on, .wifi).airplane);
+    try std.testing.expect(!tapped(tapped(on, .wifi), .wifi).airplane);
+}

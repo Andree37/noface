@@ -129,6 +129,27 @@ pub const all = [_]Scenario{
         }.run,
     },
     .{
+        .name = "Wi-Fi noface paused while reading comes back with one tap on its tile, and " ++
+            "stays on; airplane mode tapped then is the reader's own",
+        .run = struct {
+            fn run() !void {
+                // A couple of minutes into the book: noface has paused Wi-Fi
+                const paused = [_]Step{ wait(150_000), forward, pull_down, wait(100) };
+                const later = [_]Step{ tap_on(menu_ui.place(.close)), wait(150_000), forward };
+                const back_on = try play(&(paused ++ .{tap_on(menu_ui.place(.wifi))} ++ later));
+                try expect(back_on.airplane_asked_on, "noface didn't pause Wi-Fi to begin with");
+                try expect(!back_on.airplane_at_end, "Wi-Fi didn't come back on, or didn't stay");
+                try expect(!back_on.wifi_note_left, "noface still counts it as its own pause");
+                // Airplane mode, shown off while paused: tapped, it's on, and the reader's
+                const plane_tapped = paused ++ .{tap_on(menu_ui.place(.airplane))} ++ later;
+                const kept_off = try play(&plane_tapped);
+                try expect(kept_off.airplane_at_end, "the airplane tile turned the radio on");
+                try expect(!kept_off.wifi_note_left, "noface would turn the reader's airplane " ++
+                    "mode off on leaving the book");
+            }
+        }.run,
+    },
+    .{
         .name = "the quick panel's controls each ask the Kindle for what they show: a " ++
             "step of brightness and of warmth, the warmth's schedule, airplane mode, " ++
             "Bluetooth and a sync",

@@ -116,6 +116,9 @@ const Tile = struct {
     fills: bool = true,
     /// On while its state is off: the other side of the same switch.
     inverse: bool = false,
+    /// A bool of Quick while which the tile shows off, with `label_quiet` under it.
+    quiet_while: ?[]const u8 = null,
+    label_quiet: []const u8 = "",
     label_on: []const u8,
     label_off: []const u8,
 };
@@ -129,6 +132,9 @@ const tiles = [_]Tile{
         .state = "airplane",
         .label_on = "On",
         .label_off = "Off",
+        // A pause of noface's own while reading isn't the reader's airplane mode
+        .quiet_while = "wifi_paused",
+        .label_quiet = "Off",
     },
     // Wi-Fi is the Kindle's one wireless switch, airplane mode's other side: on here is
     // airplane mode off. Its icon's arcs say how good the connection is
@@ -139,6 +145,9 @@ const tiles = [_]Tile{
         .inverse = true,
         .label_on = "On",
         .label_off = "Off",
+        // Off while reading by noface, to save the battery: a tap turns it back on
+        .quiet_while = "wifi_paused",
+        .label_quiet = "Paused",
     },
     .{
         .hit = .bluetooth,
@@ -229,6 +238,7 @@ fn tile_on(i: u32, quick: *const Quick) bool {
     assert(i < tiles.len);
     inline for (tiles, 0..) |t, j| {
         if (i == j) {
+            if (t.quiet_while) |quiet| if (@field(quick, quiet)) return false;
             const field = t.state orelse return false;
             return t.fills and @field(quick, field) != t.inverse;
         }
@@ -241,6 +251,7 @@ fn tile_label(i: u32, quick: *const Quick) []const u8 {
     assert(i < tiles.len);
     inline for (tiles, 0..) |t, j| {
         if (i == j) {
+            if (t.quiet_while) |quiet| if (@field(quick, quiet)) return t.label_quiet;
             const field = t.state orelse return t.label_on;
             const label = if (@field(quick, field) != t.inverse) t.label_on else t.label_off;
             assert(label.len > 0);
@@ -621,6 +632,14 @@ test "the Wi-Fi tile is airplane mode's other side, one switch shown twice" {
     for ([_]quick_model.Quick{ flying, radio_on }) |q| {
         try std.testing.expect(tile_on(0, &q) != tile_on(1, &q));
     }
+}
+
+test "Wi-Fi noface paused while reading shows as paused, not as the reader's airplane mode" {
+    const paused = quick_model.Quick{ .airplane = true, .wifi_paused = true };
+    try std.testing.expect(!tile_on(0, &paused)); // Airplane mode: not the reader's
+    try std.testing.expectEqualStrings("Off", tile_label(0, &paused));
+    try std.testing.expect(!tile_on(1, &paused));
+    try std.testing.expectEqualStrings("Paused", tile_label(1, &paused));
 }
 
 test "bluetooth toggle shows its state" {

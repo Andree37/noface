@@ -23,6 +23,9 @@ pub const Quick = struct {
     warmth: u32 = 0,
     schedule: bool = false,
     airplane: bool = false,
+    /// Airplane mode is noface's own, turned on a while into a book to save the battery
+    /// (kindle/wifi_saver.zig): Wi-Fi paused, not the reader's airplane mode.
+    wifi_paused: bool = false,
     bluetooth: bool = false,
     syncing: bool = false,
     battery: u32 = 0,

@@ -9,6 +9,8 @@ const quick_model = @import("../model/quick.zig");
 const devices = @import("devices.zig");
 
 const lipc_get: [*:0]const u8 = "/usr/bin/lipc-get-prop";
+/// Reads a property that's a table of fields, given a table (an empty one) on its input.
+const lipc_hash = "/usr/bin/lipc-hash-prop";
 
 const lipc_set: [*:0]const u8 = "/usr/bin/lipc-set-prop";
 
@@ -69,6 +71,68 @@ fn get_text(
     const length = process.run_until(&argv, buffer, deadline) orelse return "";
     assert(length <= buffer.len);
     return std.mem.trim(u8, buffer[0..length], " \n");
+}
+
+/// The name of the Wi-Fi network the Kindle is connected to, into `out`: empty when it
+/// isn't connected or wifid doesn't say. Never logged: it's the reader's own.
+pub fn network_name(out: []u8) []const u8 {
+    assert(out.len > 0);
+    // The table is answered only when asked with one: an empty table, on the input
+    const command = "echo '{}' | " ++ lipc_hash ++ " com.lab126.wifid currentEssid";
+    const argv = [_:null]?[*:0]const u8{ "/bin/sh", "-c", command };
+    var answer: [network_answer_bytes_max]u8 = undefined;
+    const length = process.run_until(&argv, &answer, lipc_deadline()) orelse return out[0..0];
+    assert(length <= answer.len);
+    return essid_of(answer[0..length], out);
+}
+
+/// The most of wifid's table read: a network's fields, each a short line.
+const network_answer_bytes_max = 512;
+
+/// The network's name in wifid's table (`\tessid = "Home"`, with `\tconnected =
+/// "yes"`), into `out`, cut at a character's end where it doesn't fit; empty when it
+/// isn't connected.
+pub fn essid_of(answer: []const u8, out: []u8) []const u8 {
+    assert(out.len > 0);
+    var name: []const u8 = "";
+    var connected = false;
+    var lines = std.mem.splitScalar(u8, answer, '\n');
+    while (lines.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, " \t\r");
+        if (std.mem.startsWith(u8, trimmed, "connected = ")) {
+            connected = std.mem.eql(u8, trimmed["connected = ".len..], "\"yes\"");
+        }
+        if (!std.mem.startsWith(u8, trimmed, "essid = \"")) continue;
+        const quoted = trimmed["essid = ".len..];
+        // Between its quotes: the last one on the line ends it
+        const end = std.mem.lastIndexOfScalar(u8, quoted, '"') orelse continue;
+        if (end > 0) name = quoted[1..end];
+    }
+    if (!connected) return out[0..0];
+    var length: u32 = @intCast(@min(name.len, out.len));
+    // Never inside a character
+    while (length > 0 and length < name.len and name[length] & 0xc0 == 0x80) length -= 1;
+    @memcpy(out[0..length], name[0..length]);
+    assert(length <= out.len);
+    return out[0..length];
+}
+
+test "the network's name is read from wifid's table while it's connected" {
+    const answer = "Hash Index: 0\n\tnetid = 0\n\tessid = \"Casa Nova\"\n" ++
+        "\tbssid = \"aa:bb:cc:dd:ee:ff\"\n\tconnected = \"yes\"\n";
+    var out: [32]u8 = undefined;
+    try std.testing.expectEqualStrings("Casa Nova", essid_of(answer, &out));
+    // Not connected, or no name: none
+    const off = "\tessid = \"Casa\"\n\tconnected = \"no\"\n";
+    try std.testing.expectEqualStrings("", essid_of(off, &out));
+    try std.testing.expectEqualStrings("", essid_of("\tconnected = \"yes\"\n", &out));
+    try std.testing.expectEqualStrings("", essid_of("", &out));
+    // Cut to fit, never inside a character
+    var short: [5]u8 = undefined;
+    const accented = "\tessid = \"Caf\u{e9}s\"\n\tconnected = \"yes\"\n";
+    try std.testing.expectEqualStrings("Caf\u{e9}", essid_of(accented, &short));
+    var shorter: [4]u8 = undefined;
+    try std.testing.expectEqualStrings("Caf", essid_of(accented, &shorter));
 }
 
 /// Maps wifid's "5/5" to the three arcs of the icon.

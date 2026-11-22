@@ -27,6 +27,7 @@ comptime {
 fn refresh_status(a: *app.App, background: display.Backdrop) !void {
     var fresh = lipc.read(a.quick);
     fresh.wifi_paused = paused_by_noface(fresh.airplane);
+    fresh.network_len = @intCast(lipc.network_name(&fresh.network).len);
     if (fresh.wifi_paused) assert(fresh.airplane); // A pause is airplane mode, noface's
     if (fresh.same(&a.quick)) return;
     a.quick = fresh;

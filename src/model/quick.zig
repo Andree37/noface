@@ -32,8 +32,19 @@ pub const Quick = struct {
     plugged: bool = false, // On a charger or a computer: the status bar shows a bolt
     wifi_on: bool = false, // Connected
     wifi_bars: u32 = 0, // The signal, 0 to 3: shown only while connected
+    /// The name of the network connected to, as long as a Wi-Fi name can be: read
+    /// when the panel opens, empty when not connected.
+    network: [network_bytes_max]u8 = undefined,
+    network_len: u32 = 0,
     clock: [40]u8 = undefined,
     clock_len: u32 = 0,
+
+    pub const network_bytes_max = 32;
+
+    pub fn network_text(q: *const Quick) []const u8 {
+        assert(q.network_len <= q.network.len);
+        return q.network[0..q.network_len];
+    }
 
     pub fn clock_text(q: *const Quick) []const u8 {
         assert(q.clock_len <= q.clock.len);
@@ -55,11 +66,13 @@ pub const Quick = struct {
         assert(b.clock_len <= b.clock.len);
         inline for (@typeInfo(Quick).@"struct".field_names) |name| {
             const as_drawn = comptime std.mem.eql(u8, name, "clock") or
-                std.mem.eql(u8, name, "clock_len") or std.mem.eql(u8, name, "wifi_bars");
+                std.mem.eql(u8, name, "clock_len") or std.mem.eql(u8, name, "wifi_bars") or
+                std.mem.eql(u8, name, "network") or std.mem.eql(u8, name, "network_len");
             if (as_drawn) continue;
             if (@field(a, name) != @field(b, name)) return false;
         }
         if (a.wifi_shown() != b.wifi_shown()) return false;
+        if (!std.mem.eql(u8, a.network_text(), b.network_text())) return false;
         return std.mem.eql(u8, a.clock_text(), b.clock_text());
     }
 };

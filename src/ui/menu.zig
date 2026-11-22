@@ -116,6 +116,8 @@ const Tile = struct {
     fills: bool = true,
     /// On while its state is off: the other side of the same switch.
     inverse: bool = false,
+    /// Whether, while on, the word under it is the network connected to, if one is.
+    names_network: bool = false,
     /// A bool of Quick while which the tile shows off, with `label_quiet` under it.
     quiet_while: ?[]const u8 = null,
     label_quiet: []const u8 = "",
@@ -143,6 +145,7 @@ const tiles = [_]Tile{
         .glyph = .wifi,
         .state = "airplane",
         .inverse = true,
+        .names_network = true,
         .label_on = "On",
         .label_off = "Off",
         // Off while reading by noface, to save the battery: a tap turns it back on
@@ -181,6 +184,8 @@ const tile_step_x = screen_width / (tiles_per_row + 1);
 const tile_reach_x = tile_step_x / 2;
 const tile_reach_y = row_step_y / 2;
 const tile_label_below = icon_radius + style.space.roomy;
+/// The widest a word under a tile is: its share of the row, a gap from the next one's.
+const tile_label_width: f32 = @floatFromInt(tile_step_x - style.space.wide);
 const first_row_y = style.space.band + style.space.tall; // The first row's middle, under the header
 const row_step_y = style.space.wide + style.space.tall;
 const tile_rows = (tiles.len + tiles_per_row - 1) / tiles_per_row;
@@ -253,7 +258,9 @@ fn tile_label(i: u32, quick: *const Quick) []const u8 {
         if (i == j) {
             if (t.quiet_while) |quiet| if (@field(quick, quiet)) return t.label_quiet;
             const field = t.state orelse return t.label_on;
-            const label = if (@field(quick, field) != t.inverse) t.label_on else t.label_off;
+            const on = @field(quick, field) != t.inverse;
+            if (on and t.names_network and quick.network_len > 0) return quick.network_text();
+            const label = if (on) t.label_on else t.label_off;
             assert(label.len > 0);
             return label;
         }
@@ -487,7 +494,10 @@ fn draw_tile(fonts: Fonts, page: Page, i: u32, quick: *const Quick) !void {
         const white = WhiteGlyph{ .glyph = t.glyph, .quick = quick };
         try icons.draw_white(page, tile_px, tile_px, c.x, c.y, white);
     }
-    try draw.centered(fonts.small, page, x, c.y + tile_label_below, tile_label(i, quick));
+    // Cut to the tile's own width, a network's name being as long as it likes
+    const label = tile_label(i, quick);
+    const width = @min(try fonts.small.measure(label), tile_label_width);
+    try draw.clipped(fonts.small, page, x - width / 2, c.y + tile_label_below, label, width);
 }
 
 pub fn render(fonts: Fonts, page: Page, quick: *const quick_model.Quick) !void {
@@ -640,6 +650,16 @@ test "Wi-Fi noface paused while reading shows as paused, not as the reader's air
     try std.testing.expectEqualStrings("Off", tile_label(0, &paused));
     try std.testing.expect(!tile_on(1, &paused));
     try std.testing.expectEqualStrings("Paused", tile_label(1, &paused));
+}
+
+test "Wi-Fi on says the network it's connected to, if it is" {
+    var named = quick_model.Quick{ .wifi_on = true };
+    @memcpy(named.network[0..4], "Casa");
+    named.network_len = 4;
+    try std.testing.expectEqualStrings("Casa", tile_label(1, &named));
+    named.airplane = true; // Off: no network, whatever was read before
+    try std.testing.expectEqualStrings("Off", tile_label(1, &named));
+    try std.testing.expectEqualStrings("On", tile_label(1, &quick_model.Quick{}));
 }
 
 test "bluetooth toggle shows its state" {

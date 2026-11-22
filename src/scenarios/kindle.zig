@@ -9,6 +9,7 @@ const expect = harness.expect;
 const levels_set = harness.levels_set;
 const play = harness.play;
 const play_on = harness.play_on;
+const Kindle = harness.Kindle;
 const same_place = harness.same_place;
 const taps = @import("taps.zig");
 const Step = taps.Step;
@@ -95,6 +96,35 @@ pub const all = [_]Scenario{
                 const end = menu_ui.level_place(row, row.max);
                 const to: input_mod.Point = .{ .x = end.x, .y = end.y };
                 return .{ tap_on(menu_ui.level_place(row, 0)), .{ .act = .{ .drag = to } }, lift };
+            }
+        }.run,
+    },
+    .{
+        .name = "the panel's Wi-Fi tile turns the radio on where it is, noface staying, and " ++
+            "it stays on through a book, as the reader chose",
+        .run = struct {
+            fn run() !void {
+                var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+                defer arena.deinit();
+                // In airplane mode, as noface leaves it a while into a book
+                const kindle: Kindle = .{ .airplane = true, .sets_into = arena.allocator() };
+                const r = try play_on(kindle, &.{
+                    pull_down,
+                    wait(100), // Seen, and its status read, before a finger reaches it
+                    tap_on(menu_ui.place(.wifi)),
+                    tap_on(menu_ui.place(.close)),
+                    wait(150_000), // Past when noface would turn Wi-Fi off while reading
+                    forward,
+                });
+                var turned_on = false;
+                for (r.sets) |set| {
+                    // Only noface's own screens: the Kindle's settings never asked for
+                    try expect(std.mem.indexOf(u8, set, "appmgrd") == null, "noface left");
+                    if (std.mem.eql(u8, set, "com.lab126.cmd wirelessEnable 1")) turned_on = true;
+                }
+                try expect(turned_on, "the Wi-Fi tile didn't turn the radio on");
+                try expect(!r.airplane_at_end, "Wi-Fi was turned off again while reading");
+                try expect(!r.wifi_note_left, "noface took the reader's choice for its own");
             }
         }.run,
     },

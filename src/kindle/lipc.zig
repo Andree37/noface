@@ -1,4 +1,4 @@
-//! Amazon's lipc services: light, warmth, wireless, Bluetooth, sync, settings and power
+//! Amazon's lipc services: light, warmth, wireless, Bluetooth, sync and power
 //! events. Every call goes through the lipc command line tools.
 const std = @import("std");
 const assert = std.debug.assert;
@@ -326,16 +326,6 @@ pub fn sync_now() void {
     var out: [32]u8 = undefined;
     // The sync runs on its own; what the command prints says nothing about how it went
     _ = process.run(&argv, &out);
-}
-
-pub fn open_settings() void {
-    const service = "com.lab126.appmgrd";
-    comptime assert(std.mem.startsWith(u8, service, service_prefix));
-    const app = "app://com.lab126.booklet.settings";
-    const argv = [_:null]?[*:0]const u8{ lipc_set, service, "start", app };
-    var buffer: [32]u8 = undefined;
-    // The settings open on their own, or don't: there's nothing noface could do instead
-    _ = process.run(&argv, &buffer);
 }
 
 pub fn set_brightness(level: u32) void {

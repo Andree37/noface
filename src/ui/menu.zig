@@ -95,7 +95,7 @@ pub const Hit = enum {
     schedule,
     airplane,
     bluetooth,
-    settings,
+    wifi,
     kindle,
     sync,
 };
@@ -114,6 +114,8 @@ const Tile = struct {
     state: ?[]const u8 = null,
     /// Whether the tile shows as on (filled) while its state is, as a toggle does.
     fills: bool = true,
+    /// On while its state is off: the other side of the same switch.
+    inverse: bool = false,
     label_on: []const u8,
     label_off: []const u8,
 };
@@ -128,13 +130,15 @@ const tiles = [_]Tile{
         .label_on = "On",
         .label_off = "Off",
     },
-    // Networks live in the Kindle's own settings
+    // Wi-Fi is the Kindle's one wireless switch, airplane mode's other side: on here is
+    // airplane mode off. Its icon's arcs say how good the connection is
     .{
-        .hit = .settings,
+        .hit = .wifi,
         .glyph = .wifi,
-        .state = "wifi_on",
-        .label_on = "Connected",
-        .label_off = "Wi-Fi Off",
+        .state = "airplane",
+        .inverse = true,
+        .label_on = "On",
+        .label_off = "Off",
     },
     .{
         .hit = .bluetooth,
@@ -226,7 +230,7 @@ fn tile_on(i: u32, quick: *const Quick) bool {
     inline for (tiles, 0..) |t, j| {
         if (i == j) {
             const field = t.state orelse return false;
-            return t.fills and @field(quick, field);
+            return t.fills and @field(quick, field) != t.inverse;
         }
     }
     unreachable;
@@ -238,7 +242,7 @@ fn tile_label(i: u32, quick: *const Quick) []const u8 {
     inline for (tiles, 0..) |t, j| {
         if (i == j) {
             const field = t.state orelse return t.label_on;
-            const label = if (@field(quick, field)) t.label_on else t.label_off;
+            const label = if (@field(quick, field) != t.inverse) t.label_on else t.label_off;
             assert(label.len > 0);
             return label;
         }
@@ -335,7 +339,7 @@ pub fn place(h: Hit) style.Point {
             .x = @divTrunc(schedule_left + style.screen_width, 2),
             .y = @divTrunc(schedule_top + schedule_bottom, 2),
         },
-        .airplane, .bluetooth, .settings, .kindle, .sync => tile: for (tiles, 0..) |t, i| {
+        .airplane, .bluetooth, .wifi, .kindle, .sync => tile: for (tiles, 0..) |t, i| {
             if (t.hit != h) continue;
             const c = tile_center(@intCast(i));
             break :tile .{ .x = c.x, .y = c.y };
@@ -576,7 +580,7 @@ test "a knob move redraws only around old and new knob" {
 test "toggle boxes stay apart and on screen" {
     const a = shortcut_box(.airplane).?;
     const b = shortcut_box(.bluetooth).?;
-    try std.testing.expect(a.x + a.w <= shortcut_box(.settings).?.x);
+    try std.testing.expect(a.x + a.w <= shortcut_box(.wifi).?.x);
     try std.testing.expect(b.x + b.w <= screen_width);
     try std.testing.expect(shortcut_box(.close) == null);
 }
@@ -603,8 +607,20 @@ test "toggles report their state" {
     const off = quick_model.Quick{};
     try std.testing.expect(tile_on(0, &on));
     try std.testing.expect(!tile_on(0, &off));
-    try std.testing.expect(tile_on(1, &on));
     try std.testing.expect(!tile_on(2, &on));
+}
+
+test "the Wi-Fi tile is airplane mode's other side, one switch shown twice" {
+    const flying = quick_model.Quick{ .airplane = true };
+    const radio_on = quick_model.Quick{ .wifi_on = true };
+    try std.testing.expect(!tile_on(1, &flying));
+    try std.testing.expectEqualStrings("Off", tile_label(1, &flying));
+    try std.testing.expect(tile_on(1, &radio_on));
+    try std.testing.expectEqualStrings("On", tile_label(1, &radio_on));
+    // Never both on, never both off
+    for ([_]quick_model.Quick{ flying, radio_on }) |q| {
+        try std.testing.expect(tile_on(0, &q) != tile_on(1, &q));
+    }
 }
 
 test "bluetooth toggle shows its state" {

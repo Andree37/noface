@@ -171,7 +171,7 @@ fn panel_control(
             try show_row(a, row, level);
             set_row_value(a, row, level);
         },
-        .airplane, .bluetooth, .sync => try panel_control_shortcut(a, choice),
+        .airplane, .wifi, .bluetooth, .sync => try panel_control_shortcut(a, choice),
         .schedule => {
             a.quick.schedule = !a.quick.schedule;
             try draw_menu(a, background);
@@ -179,17 +179,18 @@ fn panel_control(
         },
         // Not a control: closing and leaving are the caller's. Every Hit is named, so
         // a new tile doesn't compile until it's handled here or there
-        .none, .close, .settings, .kindle => return .not_one,
+        .none, .close, .kindle => return .not_one,
     }
     return .ran;
 }
 
-/// A round shortcut at the top of the panel: airplane mode, Bluetooth or sync. Its
-/// tile is redrawn first, and the Kindle told while the screen shows it.
+/// A round shortcut at the top of the panel: airplane mode, Wi-Fi (airplane mode's
+/// other side), Bluetooth or sync. Its tile is redrawn first, and the Kindle told
+/// while the screen shows it.
 fn panel_control_shortcut(a: *app.App, choice: menu.Hit) !void {
-    assert(choice == .airplane or choice == .bluetooth or choice == .sync);
+    assert(choice == .airplane or choice == .wifi or choice == .bluetooth or choice == .sync);
     switch (choice) {
-        .airplane => a.quick.airplane = !a.quick.airplane,
+        .airplane, .wifi => a.quick.airplane = !a.quick.airplane,
         .bluetooth => a.quick.bluetooth = !a.quick.bluetooth,
         .sync => a.quick.syncing = true,
         .none,
@@ -201,7 +202,6 @@ fn panel_control_shortcut(a: *app.App, choice: menu.Hit) !void {
         .warmer,
         .warmth,
         .schedule,
-        .settings,
         .kindle,
         => unreachable, // Not a shortcut: `panel_control` runs those
     }
@@ -216,7 +216,7 @@ fn panel_control_shortcut(a: *app.App, choice: menu.Hit) !void {
         .page,
     );
     switch (choice) {
-        .airplane => {
+        .airplane, .wifi => {
             // The reader's choice now: noface neither undoes nor redoes it
             wifi_saver.forget();
             a.wifi_hands_off = true;
@@ -238,18 +238,27 @@ fn panel_control_shortcut(a: *app.App, choice: menu.Hit) !void {
         .warmer,
         .warmth,
         .schedule,
-        .settings,
         .kindle,
         => unreachable, // Not a shortcut, as above
     }
     try a.display.screen.wait_complete(marker);
+    // Airplane mode and Wi-Fi are one switch shown on two tiles: the other follows
+    if (choice == .airplane) try redraw_tile(a, .wifi);
+    if (choice == .wifi) try redraw_tile(a, .airplane);
     if (choice == .sync and a.quick.airplane and wifi_saver.airplane() == .off) {
-        // The airplane tile said on: show it off now
+        // The tiles said airplane mode on: show it off now
         a.quick.airplane = false;
-        const plane = menu.shortcut_box(.airplane).?;
-        try menu.draw_shortcut(a.ui, a.display.on_screen(), .airplane, &a.quick);
-        try a.display.show_rect(plane.x, plane.y, plane.w, plane.h);
+        try redraw_tile(a, .airplane);
+        try redraw_tile(a, .wifi);
     }
+}
+
+/// Draws a shortcut's tile again as `a.quick` has it now, and shows it.
+fn redraw_tile(a: *app.App, tile: menu.Hit) !void {
+    const box = menu.shortcut_box(tile).?; // A shortcut, which has a tile
+    assert(box.y + box.h <= menu.height);
+    try menu.draw_shortcut(a.ui, a.display.on_screen(), tile, &a.quick);
+    try a.display.show_rect(box.x, box.y, box.w, box.h);
 }
 
 /// The quick panel, to open over the library or a book drawn in `background`.
@@ -317,11 +326,9 @@ pub const Panel = struct {
         }
         // Every control drew itself above: what's left closes the panel or leaves noface
         return switch (choice) {
-            .settings => {
-                lipc.open_settings();
-                return .{ .done = {} };
-            },
-            .kindle => .{ .done = {} }, // The Kindle's home comes back by the launcher
+            // The one way out of noface from the panel, said on its tile: the Kindle's
+            // home comes back by the launcher
+            .kindle => .{ .done = {} },
             .close => .close,
             .none => .stay,
             // Each ran above, as a control that draws itself
@@ -333,6 +340,7 @@ pub const Panel = struct {
             .warmth,
             .schedule,
             .airplane,
+            .wifi,
             .bluetooth,
             .sync,
             => unreachable,

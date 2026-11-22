@@ -132,7 +132,7 @@ pub const all = places: {
         list = list ++ .{Place{ .name = "more." ++ @tagName(o), .point = more.place(o) }};
     }
     for ([_]menu.Hit{
-        .close, .schedule, .airplane, .bluetooth, .settings, .kindle,
+        .close, .schedule, .airplane, .bluetooth, .wifi,   .kindle,
         .sync,  .dimmer,   .brighter, .cooler,    .warmer,
     }) |h| {
         list = list ++ .{Place{ .name = "panel." ++ @tagName(h), .point = menu.place(h) }};

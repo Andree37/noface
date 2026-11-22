@@ -66,15 +66,37 @@ pub fn handle(in: *Input, event: InputEvent) ?Action {
 /// A place on the screen, in screen pixels.
 const Point = struct { x: i32, y: i32 };
 
-/// Where the finger in `slot` is, from the panel's range to the screen's.
+/// Where the finger in `slot` is, from the panel's range to the screen's: a value
+/// past the panel's range (outside data) is held to its edge, so the point is always
+/// on the screen.
 pub fn screen_point(in: *const Input, slot: u32) Point {
     assert(slot < slots_count);
-    assert(in.x_max >= 1);
-    assert(in.y_max >= 1);
-    return .{
-        .x = @divTrunc(in.xs[slot] * in.width, in.x_max),
-        .y = @divTrunc(in.ys[slot] * in.height, in.y_max),
+    const point: Point = .{
+        .x = to_screen(in.xs[slot], in.x_max, in.width),
+        .y = to_screen(in.ys[slot], in.y_max, in.height),
     };
+    assert(point.x >= 0);
+    assert(point.x < in.width);
+    assert(point.y >= 0);
+    assert(point.y < in.height);
+    return point;
+}
+
+/// A panel value, 0 to `panel_max`, as a screen pixel, 0 to `screen` less one: in 64
+/// bits, so no value the panel sends can overflow.
+fn to_screen(value: i32, panel_max: i32, screen: i32) i32 {
+    assert(panel_max >= 1);
+    assert(screen >= 1);
+    const held: i64 = std.math.clamp(value, 0, panel_max);
+    const scaled = @divTrunc(held * screen, panel_max);
+    return @intCast(@min(scaled, screen - 1)); // The panel's last value: the last pixel
+}
+
+test "a touch past the panel's range is held to the screen's edge" {
+    try std.testing.expectEqual(@as(i32, 0), to_screen(-50, 1000, 600));
+    try std.testing.expectEqual(@as(i32, 599), to_screen(std.math.maxInt(i32), 1000, 600));
+    try std.testing.expectEqual(@as(i32, 599), to_screen(1000, 1000, 600));
+    try std.testing.expectEqual(@as(i32, 300), to_screen(500, 1000, 600));
 }
 
 /// A finger's slot, place, or touching down or lifting.
@@ -99,10 +121,13 @@ pub fn on_axis(in: *Input, event: InputEvent) ?Action {
     return null;
 }
 
-/// When the panel says an event happened, in microseconds.
+/// When the panel says an event happened, in microseconds: its microseconds, from the
+/// kernel, held below a second.
 fn event_us(event: InputEvent) u64 {
-    assert(event.usec < std.time.us_per_s);
-    return @as(u64, event.sec) * std.time.us_per_s + event.usec;
+    const usec = @min(event.usec, std.time.us_per_s - 1);
+    const us = @as(u64, event.sec) * std.time.us_per_s + usec;
+    assert(us >= @as(u64, event.sec) * std.time.us_per_s);
+    return us;
 }
 
 /// A finger lifting, at `up_us` by the panel's clock.

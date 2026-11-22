@@ -156,6 +156,16 @@ pub fn restart_watcher_if_dead(in: *Input) ?Action {
     };
 }
 
+/// The USB watcher died, or never started: another now and then, so plugging into a
+/// computer still hands the Kindle over to it.
+pub fn restart_usb_watcher_if_dead(in: *Input) void {
+    if (in.usb_watcher != null or now_us() < in.usb_retry_us) return;
+    in.usb_retry_us = now_us() + watcher_retry_ms * std.time.us_per_ms;
+    start_usb_watcher(in);
+    std.debug.print("usb watcher restarted: {}\n", .{in.usb_watcher != null});
+    assert(in.usb_retry_us > 0);
+}
+
 /// A computer setting up USB for files (not for a network, as SSH uses).
 pub fn from_usb_watcher(in: *Input) ?Action {
     const w = in.usb_watcher orelse return null;

@@ -9,8 +9,8 @@ const evdev = @import("input/evdev.zig");
 
 /// A kernel `long`, the width of each word of a capability mask.
 const MaskWord = c_ulong;
-/// The most words of a mask read: the key mask, the longest, has 768 bits.
-const mask_words_max = 16;
+/// The most bits a mask has: the key mask's, the longest (KEY_CNT).
+const mask_bits_max = 768;
 /// The input devices looked at: event0 to event15.
 const inputs_max = 16;
 /// The power supplies looked at, and the longest name kept of each.
@@ -19,30 +19,33 @@ const supply_name_bytes_max = 31;
 
 comptime {
     // Every bit asked about is inside the words a mask is read into
-    assert(evdev.abs_mt_x < mask_words_max * @bitSizeOf(MaskWord));
-    assert(evdev.key_power < mask_words_max * @bitSizeOf(MaskWord));
+    assert(evdev.abs_mt_x < mask_bits_max);
+    assert(evdev.key_power < mask_bits_max);
     // An event number is kept in a u8
     assert(inputs_max <= std.math.maxInt(u8));
 }
 
 /// Whether bit `bit` is set in a sysfs capability mask: hex words separated by spaces,
 /// the most significant first, each as wide as a kernel `long`.
+/// Counted from the end, where the least significant word is, so a mask of any length
+/// reads right.
 pub fn has_bit(mask: []const u8, bit: u32) bool {
     const word_bits = @bitSizeOf(MaskWord);
-    assert(bit < mask_words_max * word_bits);
-    var words: [mask_words_max][]const u8 = undefined;
-    var count: u32 = 0;
-    var tokens = std.mem.tokenizeAny(u8, mask, " \n");
-    while (tokens.next()) |word| {
-        if (count == words.len) break;
-        words[count] = word;
-        count += 1;
+    assert(bit < mask_bits_max);
+    const index = bit / word_bits; // Words from the end
+    var words = std.mem.splitBackwardsAny(u8, std.mem.trim(u8, mask, " \n"), " \n");
+    var seen: u32 = 0;
+    // Each turn passes a word, so this ends with the mask
+    while (words.next()) |word| {
+        if (word.len == 0) continue; // Two spaces: no word between them
+        if (seen == index) {
+            const value = std.fmt.parseInt(MaskWord, word, 16) catch return false;
+            return (value >> @intCast(bit % word_bits)) & 1 == 1;
+        }
+        seen += 1;
     }
-    assert(count <= words.len);
-    const index = bit / word_bits;
-    if (index >= count) return false;
-    const word = std.fmt.parseInt(MaskWord, words[count - 1 - index], 16) catch return false;
-    return (word >> @intCast(bit % word_bits)) & 1 == 1;
+    assert(seen <= index); // Fewer words than the one asked about: not set
+    return false;
 }
 
 /// A small sysfs file's contents, trimmed, at the path `format` makes of `arguments`.
@@ -175,6 +178,14 @@ test "capability masks read from the right word" {
     try std.testing.expect(!has_bit(touch, 0));
     const pwr = if (@bitSizeOf(usize) == 32) "100000 0 0 0" else "10000000000000 0";
     try std.testing.expect(has_bit(pwr, evdev.key_power));
+    // A mask longer than sixteen words (a 32-bit Kindle's key mask has 24), a key set
+    // in its first: the power key is still read from its word from the end
+    const long = if (@bitSizeOf(usize) == 32)
+        "1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 100000 0 0 0"
+    else
+        "1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 10000000000000 0";
+    try std.testing.expect(has_bit(long, evdev.key_power));
+    try std.testing.expect(!has_bit(long, evdev.key_power + 1));
 }
 
 test "the touch panel, the power button, and a device that claims every key" {

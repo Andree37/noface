@@ -228,6 +228,7 @@ pub const Input = struct {
     stashed: ?Action = null,
     locked: bool = false, // Nothing to check on a timer, so sleep until an event
     watcher_retry_us: u64 = 0, // When to restart a power-event watcher that died
+    usb_retry_us: u64 = 0, // When to restart a USB watcher that died, or never started
     told_powerd_us: u64 = 0, // When powerd last heard the reader is active
     script: ?*Script = null, // Set in scenario tests: actions to play instead of the panel
     /// Set in a test run on the Kindle: noface says in its log each time it goes back
@@ -456,6 +457,7 @@ pub const Input = struct {
         in.wait_for_events();
         if (in.from_power_key()) |action| return action;
         if (in.restart_watcher_if_dead()) |action| return action;
+        watchers.restart_usb_watcher_if_dead(in);
         if (in.from_usb_watcher()) |action| return action;
         return in.from_power_watcher();
     }

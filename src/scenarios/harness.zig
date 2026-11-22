@@ -125,6 +125,9 @@ pub const Kindle = struct {
     /// A book read a while already, so the library shows it to continue, and opens
     /// at its place.
     read_before: ?ReadBefore = null,
+    /// The first book's notes file before the run, as a sync or an older noface could
+    /// have left it: "<highlight|bookmark> <id> <start> <end>" lines. Empty for none.
+    notes_before: []const u8 = "",
     /// What the pages' region lets a layout after a settings change take: less than
     /// the Kindle's makes that layout run out of room.
     pages_bytes: u64 = setup.region_bytes.pages,
@@ -682,6 +685,13 @@ pub fn play_on_start(
     }
     try a.apply_settings();
 
+    if (kindle.notes_before.len > 0) {
+        var state_buf: [file.own_path_bytes_max]u8 = undefined;
+        const state_path = try a.state_path(&state_buf, book_paths[0]);
+        var notes_buf: [file.own_path_bytes_max]u8 = undefined;
+        const notes_path = try state.sibling(&notes_buf, state_path, "notes");
+        try write_file(notes_path, kindle.notes_before);
+    }
     if (kindle.read_before) |before| {
         var before_buf: [file.own_path_bytes_max]u8 = undefined;
         const before_path = try a.state_path(&before_buf, book_paths[before.book]);

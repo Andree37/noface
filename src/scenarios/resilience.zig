@@ -1,5 +1,6 @@
 //! What goes wrong: memory running out, a layout cut short, files that can't be read or saved, a
 //! screen that fails, and the app's memory limit.
+const std = @import("std");
 const app = @import("../app.zig");
 const input_mod = @import("../kindle/input.zig");
 const settings_model = @import("../model/settings.zig");
@@ -29,6 +30,7 @@ const list_back_to_library = taps.list_back_to_library;
 const lock_it = taps.lock_it;
 const not_in_a_series = taps.not_in_a_series;
 const size_step = taps.size_step;
+const swipe = taps.swipe;
 const tap_in = taps.tap_in;
 const tap_on = taps.tap_on;
 const text_settings_button = taps.text_settings_button;
@@ -113,6 +115,41 @@ pub const all = [_]Scenario{
                 const locked = try play(&(begin ++ [_]Step{ lock_it, wait(3_000), wake }));
                 try expect(locked.settings.size == own.size, "the lock changed the size");
                 try expect(locked.saved_settings.size == own.size, "the lock saved a size");
+            }
+        }.run,
+    },
+    .{
+        .name = "a book opens and pages through whatever highlights a sync leaves it",
+        .run = struct {
+            fn run() !void {
+                // Each as Amazon's sync or an older noface could leave it: empty, ending
+                // before it starts, one character, overlapping another, the same span
+                // twice, the same ID twice, across many paragraphs, past the book's end,
+                // and at the largest positions there are
+                const notes =
+                    \\highlight kindle.highlight-0 0 0
+                    \\highlight kindle.highlight-10 10 5
+                    \\highlight kindle.highlight-20 20 21
+                    \\highlight kindle.highlight-30 30 90
+                    \\highlight kindle.highlight-40 40 60
+                    \\highlight kindle.highlight-41 30 90
+                    \\highlight kindle.highlight-30 35 95
+                    \\highlight kindle.highlight-50 50 5000
+                    \\highlight kindle.highlight-100 100 1000000
+                    \\highlight kindle.highlight-4294967000 4294967000 4294967295
+                    \\bookmark kindle.bookmark-30 30 30
+                    \\
+                ;
+                // Swiped, as a tap on a highlighted word selects it instead of turning
+                const turns: [8]Step = @splat(swipe(1));
+                const steps = turns ++ .{ top, tool(.goto) };
+                const r = try play_on(.{ .notes_before = notes }, &steps);
+                const plain = try play(&steps);
+                try expect(same_place(r.saved, plain.saved), "the highlights moved the place");
+                // None is lost: what noface can't place it leaves for the device that made it
+                const stored = std.mem.count(u8, notes, "highlight ");
+                try expect(r.highlights == stored, "a stored note was dropped");
+                try expect(r.bookmarks == 1, "the stored bookmark was dropped");
             }
         }.run,
     },

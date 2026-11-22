@@ -59,11 +59,9 @@ comptime {
 
 pub const Hyphenator = struct {
     arena: std.heap.ArenaAllocator,
-    // Letters of a pattern, to the values between and around them: "1b2l" is "bl" -> 1,2,0
-    patterns: std.StringHashMapUnmanaged([]const u8) = .empty,
+    patterns: Patterns,
     // A word, to its breaks: "as-so-ciate" is "associate" -> 2,4
     exceptions: std.StringHashMapUnmanaged([]const u8) = .empty,
-    longest: u32 = 0, // The most letters in a pattern
     left: u32,
     right: u32,
 
@@ -71,39 +69,18 @@ pub const Hyphenator = struct {
         const chosen = source(lang);
         var h = Hyphenator{
             .arena = std.heap.ArenaAllocator.init(child),
+            .patterns = undefined, // Read below, into the arena in its place
             .left = chosen.left,
             .right = chosen.right,
         };
         errdefer h.arena.deinit();
-        try h.init_patterns(chosen.patterns);
+        // Through the arena `h` holds, never a copy of it, which `deinit` wouldn't free
+        h.patterns = try Patterns.read(h.arena.allocator(), child, chosen.patterns);
         try h.init_exceptions(chosen.exceptions);
         // The patterns are ours, built in: there are some, and none too long
-        assert(h.longest > 0);
-        assert(h.longest <= pattern_length_max);
+        assert(h.patterns.longest > 0);
+        assert(h.patterns.longest <= pattern_length_max);
         return h;
-    }
-
-    fn init_patterns(h: *Hyphenator, text: []const u8) !void {
-        assert(text.len > 0);
-        assert(h.patterns.count() == 0);
-        const alloc = h.arena.allocator();
-        var lines = std.mem.tokenizeAny(u8, text, " \n\r\t");
-        while (lines.next()) |pattern| {
-            const letters = try alloc.alloc(u8, pattern.len);
-            const values = try alloc.alloc(u8, pattern.len + 1);
-            var count: u32 = 0;
-            @memset(values, 0);
-            for (pattern) |c| {
-                if (c >= '0' and c <= '9') {
-                    values[count] = c - '0';
-                } else {
-                    letters[count] = c;
-                    count += 1;
-                }
-            }
-            try h.patterns.put(alloc, letters[0..count], values[0 .. count + 1]);
-            h.longest = @max(h.longest, count);
-        }
     }
 
     fn init_exceptions(h: *Hyphenator, text: []const u8) !void {
@@ -130,7 +107,7 @@ pub const Hyphenator = struct {
     }
 
     pub fn deinit(h: *Hyphenator) void {
-        assert(h.longest > 0); // Made by `init`
+        assert(h.patterns.longest > 0); // Made by `init`
         h.arena.deinit();
     }
 
@@ -169,20 +146,177 @@ pub const Hyphenator = struct {
     /// highest any pattern found in it gives each place.
     fn points_values(h: *const Hyphenator, word: []const u8, values: *Values) void {
         assert(word.len <= word_length_max);
-        assert(h.longest <= pattern_length_max);
+        assert(h.patterns.longest <= pattern_length_max);
         var padded: [word_length_max + 2]u8 = undefined;
         padded[0] = '.';
         @memcpy(padded[1..][0..word.len], word);
         padded[word.len + 1] = '.';
         const padded_len: u32 = @intCast(word.len + 2);
         for (0..padded_len) |i| {
-            var len: u32 = 1;
-            while (len <= h.longest and i + len <= padded_len) : (len += 1) {
-                const found = h.patterns.get(padded[i .. i + len]) orelse continue;
-                for (found, 0..) |v, k| values[i + k] = @max(values[i + k], v);
+            // Along the patterns that start with the letter at `i`, as long as one goes on
+            const p = &h.patterns;
+            var node: u32 = Patterns.root;
+            var end = i;
+            while (end < padded_len) : (end += 1) {
+                node = p.child_of(node, padded[end]) orelse break;
+                for (p.nodes[node].values, 0..) |v, k| values[i + k] = @max(values[i + k], v);
             }
+            assert(end - i <= p.longest); // No path is longer than a pattern
         }
     }
+};
+
+/// The patterns as a trie: each a path of letters from the root to the node holding
+/// the values between and around them ("1b2l" is b, l -> 1,2,0). A word is matched
+/// from each of its letters along the path its letters take, so a start no pattern
+/// begins with ends at once. The nodes are laid out level by level, each one's
+/// children side by side and in order of their byte, so finding one reads a few
+/// neighbours; the root's, which every walk starts from and which are the most, by
+/// their byte directly.
+const Patterns = struct {
+    nodes: []const Node,
+    starts: [256]u32, // The root's children by their byte: `none` for no pattern's start
+    longest: u32, // The most letters in a pattern
+
+    /// A letter on a pattern's path: the values of the pattern that ends with it, if
+    /// one does, and where the letters that can follow it are.
+    const Node = struct { values: []const u8 = &.{}, first: u32 = 0, count: u32 = 0, byte: u8 };
+    const root = 0;
+    const none = 0; // The root is no one's child
+
+    /// The node for `byte` after `node`, or null when no pattern goes on that way.
+    fn child_of(p: *const Patterns, node: u32, byte: u8) ?u32 {
+        assert(node < p.nodes.len);
+        if (node == root) {
+            const start = p.starts[byte];
+            return if (start == none) null else start;
+        }
+        const n = p.nodes[node];
+        // In order of their byte: past it, it isn't there
+        for (p.nodes[n.first..][0..n.count], n.first..) |c, at| {
+            if (c.byte == byte) return @intCast(at);
+            if (c.byte > byte) return null;
+        }
+        return null;
+    }
+
+    /// The patterns in `text` ("1b2l" and the like, one a line), in `arena`; `scratch`
+    /// holds the trie as it's read, given back once it's laid out.
+    fn read(arena: std.mem.Allocator, scratch: std.mem.Allocator, text: []const u8) !Patterns {
+        assert(text.len > 0);
+        var reading = std.heap.ArenaAllocator.init(scratch);
+        defer reading.deinit();
+        var tree = Tree{};
+        try tree.links.append(reading.allocator(), .{ .byte = 0 }); // The root
+        var longest: u32 = 0;
+        var lines = std.mem.tokenizeAny(u8, text, " \n\r\t");
+        while (lines.next()) |pattern| {
+            // A pattern's letters and digits: twice its letters, which fit a word
+            if (pattern.len > 2 * pattern_length_max + 1) return error.PatternTooLong;
+            var letters: [2 * pattern_length_max + 1]u8 = undefined;
+            const values = try arena.alloc(u8, pattern.len + 1);
+            @memset(values, 0);
+            var count: u32 = 0;
+            for (pattern) |c| {
+                if (c >= '0' and c <= '9') {
+                    values[count] = c - '0';
+                } else {
+                    letters[count] = c;
+                    count += 1;
+                }
+            }
+            try tree.add(reading.allocator(), letters[0..count], values[0 .. count + 1]);
+            longest = @max(longest, count);
+        }
+        return tree.laid_out(arena, reading.allocator(), longest);
+    }
+
+    /// The trie as it's read: each node linked to its first child and its next sibling.
+    const Tree = struct {
+        links: std.ArrayList(Link) = .empty,
+        starts: [256]u32 = @splat(none), // The root's children by their byte, as read
+
+        const Link = struct {
+            byte: u8,
+            child: u32 = none,
+            sibling: u32 = none,
+            values: []const u8 = &.{},
+        };
+
+        fn find(t: *const Tree, node: u32, byte: u8) ?u32 {
+            assert(node < t.links.items.len);
+            if (node == root) return if (t.starts[byte] == none) null else t.starts[byte];
+            var at = t.links.items[node].child;
+            // Bounded by the letters that can follow one
+            while (at != none) : (at = t.links.items[at].sibling) {
+                if (t.links.items[at].byte == byte) return at;
+            }
+            return null;
+        }
+
+        fn add(t: *Tree, gpa: std.mem.Allocator, letters: []const u8, values: []const u8) !void {
+            assert(letters.len > 0);
+            assert(values.len == letters.len + 1);
+            var node: u32 = root;
+            for (letters) |byte| {
+                node = t.find(node, byte) orelse added: {
+                    const new: u32 = @intCast(t.links.items.len);
+                    if (node == root) t.starts[byte] = new;
+                    const first = t.links.items[node].child;
+                    t.links.items[node].child = new;
+                    try t.links.append(gpa, .{ .byte = byte, .sibling = first });
+                    break :added new;
+                };
+            }
+            assert(node != root);
+            t.links.items[node].values = values;
+        }
+
+        /// The trie level by level, in `arena`, each node's children side by side.
+        fn laid_out(
+            t: *const Tree,
+            arena: std.mem.Allocator,
+            gpa: std.mem.Allocator,
+            longest: u32,
+        ) !Patterns {
+            const total = t.links.items.len;
+            assert(total > 1); // A root and a pattern at least
+            const nodes = try arena.alloc(Node, total);
+            const of = try gpa.alloc(u32, total); // Each laid-out node's link
+            nodes[root] = .{ .byte = 0 };
+            of[root] = root;
+            var placed: u32 = 1;
+            var next: u32 = 0; // The next laid-out node whose children to place
+            while (next < placed) : (next += 1) {
+                var children: [256]u32 = undefined; // At most one per byte
+                var count: u32 = 0;
+                var at = t.links.items[of[next]].child;
+                while (at != none) : (at = t.links.items[at].sibling) {
+                    children[count] = at;
+                    count += 1;
+                }
+                const sorted = children[0..count];
+                std.mem.sortUnstable(u32, sorted, t, by_byte);
+                nodes[next].first = placed;
+                nodes[next].count = count;
+                for (sorted) |link| {
+                    const l = t.links.items[link];
+                    nodes[placed] = .{ .byte = l.byte, .values = l.values };
+                    of[placed] = link;
+                    placed += 1;
+                }
+            }
+            assert(placed == total); // Every node placed once
+            var starts: [256]u32 = @splat(none);
+            const r = nodes[root];
+            for (nodes[r.first..][0..r.count], r.first..) |c, at| starts[c.byte] = @intCast(at);
+            return .{ .nodes = nodes, .starts = starts, .longest = longest };
+        }
+
+        fn by_byte(t: *const Tree, a: u32, b: u32) bool {
+            return t.links.items[a].byte < t.links.items[b].byte;
+        }
+    };
 };
 
 /// A place a word may break: before byte `at`, adding a hyphen or not.
@@ -331,6 +465,31 @@ fn joined(h: *const Hyphenator, word: []const u8, buf: []u8) []const u8 {
     const result = buf[0 .. n + word.len - last];
     assert(result.len == word.len + found.len);
     return result;
+}
+
+test "every pattern is found again along its letters, with its values" {
+    for ([_]Lang{ .english, .portuguese }) |lang| {
+        var h = try Hyphenator.init(std.testing.allocator, lang);
+        defer h.deinit();
+        var lines = std.mem.tokenizeAny(u8, source(lang).patterns, " \n\r\t");
+        var count: u32 = 0;
+        while (lines.next()) |pattern| : (count += 1) {
+            var node: u32 = Patterns.root;
+            var values: [2 * pattern_length_max + 2]u8 = @splat(0);
+            var letters: u32 = 0;
+            for (pattern) |c| {
+                if (c >= '0' and c <= '9') {
+                    values[letters] = c - '0';
+                } else {
+                    node = h.patterns.child_of(node, c) orelse return error.PatternLost;
+                    letters += 1;
+                }
+            }
+            const found = h.patterns.nodes[node].values;
+            try std.testing.expectEqualSlices(u8, values[0 .. letters + 1], found);
+        }
+        try std.testing.expect(count > 0);
+    }
 }
 
 test "English words break where TeX breaks them" {

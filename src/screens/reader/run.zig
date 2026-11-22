@@ -379,14 +379,18 @@ pub const Pause = struct {
 
     /// The card closed: the phrase screen back as it was, and what was chosen, carrying
     /// on for a card closed without a choice.
-    pub fn closed(p: *Pause, a: *app.App, ending: screen.Ending(u32)) !Paused {
+    /// None when something else took over (the lock): running stays as it was, paused.
+    pub fn closed(p: *Pause, a: *app.App, ending: screen.Ending(u32)) !?Paused {
         assert(p.under.len == a.display.screen.pixels.len); // Kept as the card opened
         try card_screen.closed(a, .{ .pixels = p.under });
-        const choice: Paused = switch (ending) {
+        const choice: ?Paused = switch (ending) {
             .done => |row| @fromBackingInt(@intCast(row)),
-            .closed, .interrupted => .resume_running,
+            // Closed by a tap: on again. Ended by the lock: left paused, so a reader who
+            // paused finds it so after unlocking, not running on by itself
+            .closed => .resume_running,
+            .interrupted => null,
         };
-        std.debug.print("running: {s}\n", .{@tagName(choice)});
+        if (choice) |c| std.debug.print("running: {s}\n", .{@tagName(c)});
         return choice;
     }
 };

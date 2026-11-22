@@ -213,10 +213,9 @@ pub const Session = struct {
     fn page_has_picture(s: *const Session, index: u32) bool {
         assert(index < s.pages.len);
         const first = s.pages[index].para;
-        const last = if (s.page_end(index)) |e| e.para else s.paragraphs.len - 1;
-        // Pages only move forward
+        const last = last_para_on(s.pages[index], s.page_end(index), @intCast(s.paragraphs.len));
         assert(first <= last);
-        for (s.paragraphs[first .. @min(last, s.paragraphs.len - 1) + 1]) |p| {
+        for (s.paragraphs[first .. last + 1]) |p| {
             if (p.image != null) return true;
         }
         return false;
@@ -609,6 +608,28 @@ pub fn save_progress(
     entry.last = now;
     entry.seconds_read = seconds;
     entry.words_left = words_left;
+}
+
+/// The last paragraph with any of it on the page from `start` to `end` (the next
+/// page's start, or null for the book's last page): one the next page starts at its
+/// first byte isn't on this one.
+fn last_para_on(start: book_model.Pos, end: ?book_model.Pos, paragraphs: u32) u32 {
+    assert(start.para < paragraphs);
+    const e = end orelse return paragraphs - 1;
+    assert(start.is_before(e)); // Pages only move forward
+    const last = if (e.byte == 0) e.para - 1 else e.para;
+    assert(last >= start.para);
+    assert(last < paragraphs);
+    return last;
+}
+
+test "a page ends at the paragraph before the next page's, when that one starts it" {
+    // The next page starts with paragraph 3 (a picture, say): not on this page
+    try std.testing.expectEqual(@as(u32, 2), last_para_on(.{ .para = 1 }, .{ .para = 3 }, 5));
+    // The next page starts partway into paragraph 3: some of it is on this one
+    const partway: book_model.Pos = .{ .para = 3, .byte = 9 };
+    try std.testing.expectEqual(@as(u32, 3), last_para_on(.{ .para = 1 }, partway, 5));
+    try std.testing.expectEqual(@as(u32, 4), last_para_on(.{ .para = 1 }, null, 5));
 }
 
 /// Where a session's pages point while a layout that failed partway had let go of the

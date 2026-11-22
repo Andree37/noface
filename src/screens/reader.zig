@@ -581,8 +581,12 @@ pub const Reader = struct {
     /// The lock screen over the book, the place saved first.
     fn on_lock(r: *Reader) screen.Step(Outcome) {
         r.s.pause_clock(); // Asleep isn't reading
-        // Running shows its screen whole again once it's unlocked
-        if (r.run) |*run| run.shown_us = null;
+        // Running shows its screen whole again once it's unlocked, and the Kindle may
+        // sleep under the lock: the tick after unlocking holds it awake again if it runs
+        if (r.run) |*run| {
+            run.shown_us = null;
+            run.release_awake();
+        }
         r.save(); // A lock is a natural stop, and anything after it may end noface
         assert(r.since_save == 0);
         r.open_child(.{ .lock = .{ .screen = lock.make(r.a, r.entry, .{}) } });
@@ -856,7 +860,10 @@ pub const Reader = struct {
         assert(r.run != null); // Only running opens the card
         const a = r.a;
         const run = &r.run.?;
-        const choice = try r.pause.closed(a, ending);
+        const choice = try r.pause.closed(a, ending) orelse {
+            assert(run.stopped()); // The card stopped it as it opened, and it stays so
+            return;
+        };
         // Resuming carries on, a stop made by the pause button too
         switch (choice) {
             .resume_running => {

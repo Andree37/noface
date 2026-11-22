@@ -143,6 +143,36 @@ pub const all = [_]Scenario{
         }.run,
     },
     .{
+        .name = "locking while the pause card is up leaves running paused, and the Kindle " ++
+            "free to sleep under the lock",
+        .run = struct {
+            fn run() !void {
+                const card_up = start_running ++ [_]Step{ wait(2_000), pause_tap };
+                const locked = try play(&(card_up ++ [_]Step{lock_it}));
+                try expect(!locked.awake_at_end, "the Kindle was held awake under the lock");
+                // Unlocked a while later: still where the card stopped it
+                const before = try play(&card_up);
+                const unlocked = try play(&(card_up ++ [_]Step{ lock_it, wake, wait(120_000) }));
+                const kept = same_place(unlocked.saved, before.saved);
+                try expect(kept, "running went on after the lock");
+                try expect(!unlocked.awake_at_end, "the Kindle was held awake while paused");
+            }
+        }.run,
+    },
+    .{
+        .name = "locking while running lets the Kindle sleep, and it's held awake again " ++
+            "once unlocked",
+        .run = struct {
+            fn run() !void {
+                const going = start_running ++ [_]Step{wait(2_000)};
+                const locked = try play(&(going ++ [_]Step{lock_it}));
+                try expect(!locked.awake_at_end, "the Kindle was held awake under the lock");
+                const unlocked = try play(&(going ++ [_]Step{ lock_it, wake, wait(2_000) }));
+                try expect(unlocked.awake_at_end, "running after unlocking let the Kindle sleep");
+            }
+        }.run,
+    },
+    .{
         .name = "the card's Resume carries on after the pause button stopped, and a tap " ++
             "back with nothing before leaves the pace",
         .run = struct {

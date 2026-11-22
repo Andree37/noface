@@ -134,22 +134,30 @@ pub const all = [_]Scenario{
                     \\highlight kindle.highlight-40 40 60
                     \\highlight kindle.highlight-41 30 90
                     \\highlight kindle.highlight-30 35 95
-                    \\highlight kindle.highlight-50 50 5000
-                    \\highlight kindle.highlight-100 100 1000000
+                    \\highlight kindle.highlight-50 50 1500
+                    \\highlight kindle.highlight-900000 900000 1000000
                     \\highlight kindle.highlight-4294967000 4294967000 4294967295
                     \\bookmark kindle.bookmark-30 30 30
                     \\
                 ;
                 // Swiped, as a tap on a highlighted word selects it instead of turning
+                // Past the highlights, all in the first few pages on the smallest screen,
+                // so the toolbar's tap at the top of the page reaches no highlighted word
                 const turns: [8]Step = @splat(swipe(1));
-                const steps = turns ++ .{ top, tool(.goto) };
-                const r = try play_on(.{ .notes_before = notes }, &steps);
-                const plain = try play(&steps);
-                try expect(same_place(r.saved, plain.saved), "the highlights moved the place");
-                // None is lost: what noface can't place it leaves for the device that made it
+                const kindle: Kindle = .{ .notes_before = notes };
+                // Go To's notes listed with them
+                const listed_steps = turns ++ .{ top, tool(.goto) };
+                const listed = try play_on(kindle, &listed_steps);
+                const plain = try play(&listed_steps);
+                try expect(same_place(listed.saved, plain.saved), "the highlights moved the place");
+                // A bookmark set, so the notes file is written again: none stored is lost,
+                // as what noface can't place it leaves for the device that made it
+                const marked_steps = turns ++ .{ top, tool(.bookmark) };
+                const marked = try play_on(kindle, &marked_steps);
+                try expect((try play(&marked_steps)).bookmarks == 1, "the bookmark wasn't set");
                 const stored = std.mem.count(u8, notes, "highlight ");
-                try expect(r.highlights == stored, "a stored note was dropped");
-                try expect(r.bookmarks == 1, "the stored bookmark was dropped");
+                try expect(marked.highlights == stored, "a stored note was dropped");
+                try expect(marked.bookmarks == 2, "the stored bookmark was dropped");
             }
         }.run,
     },

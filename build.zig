@@ -198,6 +198,9 @@ fn build_app(b: *std.Build, target: std.Build.ResolvedTarget, fast: bool) App {
         .jxr = jxr_helper(b),
     };
     b.getInstallStep().dependOn(&b.addInstallBinFile(app.noface.app, "noface").step);
+    // Beside it, the same build with its symbols, to read a crash of this one in
+    const symbols = b.addInstallBinFile(app.noface.symbols, "noface-symbols");
+    b.getInstallStep().dependOn(&symbols.step);
     b.installArtifact(app.launcher);
     b.installArtifact(app.jxr);
     return app;
@@ -225,6 +228,9 @@ fn noface_for(
         }),
     });
     src_imports(b, noface.root_module, model);
+    // An ID of this very build, which a crash logs and its symbols carry too, so a
+    // crash is never read against another build's symbols (sys/crash.zig)
+    noface.build_id = .fast;
     assert(noface.root_module.link_libc.?); // Asked for, as set above
     const strip = b.addRunArtifact(host_tool(b, "strip"));
     strip.addFileArg(noface.getEmittedBin());
@@ -508,6 +514,8 @@ fn build_scenarios(b: *std.Build, target: std.Build.ResolvedTarget) *std.Build.S
     assert(target.result.ptrBitWidth() == 32);
     if (host_scenarios(b, "noface-scenarios-host", layout_model)) |run| {
         scenarios_step.dependOn(&run.step);
+        // Installed too, to write reference screens on this computer (DEVELOPING.md)
+        scenarios_step.dependOn(&b.addInstallArtifact(run.producer.?, .{}).step);
     }
     const host_os = b.graph.host.result;
     if (host_os.os.tag == .linux and host_os.cpu.arch == .x86_64) {

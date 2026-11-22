@@ -7,7 +7,7 @@
 //! The power button locks, showing the current book's cover. Waking returns to the
 //! same place. The panel's Kindle button and Wi-Fi settings hand over to the stock UI.
 const std = @import("std");
-const frames = @import("sys/frames.zig");
+const crash = @import("sys/crash.zig");
 const assert = std.debug.assert;
 const scenarios = @import("scenarios.zig");
 const paths = @import("kindle/paths.zig");
@@ -32,7 +32,7 @@ const dict_download = @import("kindle/dict_download.zig");
 pub const std_options: std.Options = .{
     .logFn = plain_log,
     // Off, though the app is built with its symbols (build.zig `noface_for`): it walks
-    // its own stack (sys/frames.zig), and with this on the build would carry Zig's
+    // its own stack (sys/crash.zig), and with this on the build would carry Zig's
     // reader of symbols, two hundred kilobytes, and differ from its stripped copy
     .allow_stack_tracing = false,
 };
@@ -53,24 +53,30 @@ fn plain_log(
 const reader_arguments_count = 7;
 
 /// A crash during `noface selftest` must say why, though the scenarios hide the app's
-/// own messages while they run. And it says where: the app on the Kindle carries no
-/// symbols, so it logs the addresses of the calls that led to the crash, which the
-/// same build with its symbols kept turns into lines (build.zig `noface_for`).
+/// own messages while they run. And it says where, in which build (sys/crash.zig): the
+/// app on the Kindle carries no symbols, so it logs the addresses of the calls that
+/// led to the crash, which the same build with its symbols kept turns into lines.
 pub const panic = std.debug.FullPanic(struct {
-    // Assertions: a crash's own handler, where one failing would only hide the crash
-    fn crash(msg: []const u8, first: ?usize) noreturn { // usize: Zig's panic handler signature
+    fn on_panic(msg: []const u8, first: ?usize) noreturn { // usize: Zig's panic handler signature
         scenarios.show_crashes();
-        _ = first; // Where Zig's own walk would start: this one starts at the crash
-        var addresses: [crash_frames_max]usize = undefined; // usize: addresses
-        std.debug.print("panic: {s}\ncrash at:", .{msg});
-        for (frames.walk(&addresses)) |address| std.debug.print(" 0x{x}", .{address});
-        std.debug.print("\n", .{});
-        std.process.abort();
+        crash.on_panic(msg, first);
     }
-}.crash);
+}.on_panic);
 
-/// The most calls a crash's line lists: the innermost, where the cause is.
-const crash_frames_max = 24;
+/// A bad read, a bus error (a mapped file changed under it), an illegal instruction:
+/// reported as a panic is, from the registers the signal came with, where Zig's own
+/// handler would say only the address read.
+pub const debug = struct {
+    // Assertions: a crash's own handler, where one failing would only hide the crash
+    pub fn handleSegfault(
+        addr: ?usize, // usize: Zig's signal handler signature
+        name: []const u8,
+        registers: ?std.debug.CpuContextPtr,
+    ) noreturn {
+        scenarios.show_crashes();
+        crash.on_signal(addr, name, registers);
+    }
+};
 
 /// Whether a font of the reader's own can set text: it opens, has letters, and draws
 /// some. Run in a child process by find_own, so a damaged one only ends that.
@@ -91,6 +97,7 @@ fn sets_text(data: []const u8) bool {
 }
 
 pub fn main(init: std.process.Init.Minimal) !void {
+    crash.mark_stack_top(@frameAddress()); // No frame of noface's own is further up
     const argv = init.args.vector;
     assert(argv.len >= 1); // The program's own name comes first
     // `noface doctor`: what this Kindle has, and whether noface can run on it

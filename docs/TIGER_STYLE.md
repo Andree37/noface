@@ -169,7 +169,9 @@ doesn't look at, so the rules for the code it tests (assertions, ignored errors,
 ### Names
 
 - **snake_case** for functions, variables and files **[checked for functions]**. A
-  function returning a type keeps Zig's TitleCase (`fn Step(comptime T: type) type`).
+  function returning a type keeps Zig's TitleCase (`fn Step(comptime T: type) type`),
+  and one the standard library looks up in the program's root by name keeps the name
+  it asks for (`debug.handleSegfault` in `src/main.zig`).
 - No abbreviations (`index`, not `idx`), except the loop counter of a short numeric loop.
 - Units and qualifiers last, most significant first: `latency_ms_max`, `page_index`,
   `width_px`.

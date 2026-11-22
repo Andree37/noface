@@ -141,16 +141,21 @@ letters, so a dictionary built before it is rebuilt with `build_dictionary` to m
 ## Reading a crash
 
 The app on the Kindle carries no symbols, so a crash logs where it came from as
-addresses: `panic: <why>` and then `crash at: 0x… 0x…` in `noface.log`, the innermost
-call first (`src/sys/frames.zig` walks the frame pointers the app is built with).
-The app is built once with its symbols and lines, and the Kindle's copy is that file
-stripped (`tools/strip.zig`), so the code is the same, byte for byte. Each release
-carries that file as `noface-<version>-<model>-symbols`, and `zig build package`
-writes it to `zig-out/`. Read the addresses with LLVM's symbolizer (`brew install
-llvm` on a Mac):
+addresses, in `noface.log`: why (`panic: <why>`, or `Segmentation fault`, `Bus error`,
+`Illegal instruction` with the address read), then `crash in build <id> at: 0x… 0x…`,
+the innermost first (`src/sys/crash.zig` walks the frame pointers the app is built
+with). The app is built once with its symbols and lines, and the Kindle's copy is
+that file stripped (`tools/strip.zig`), so the code is the same, byte for byte, and
+both carry the same build ID. `zig build` writes it as `zig-out/bin/noface-symbols`
+beside `zig-out/bin/noface`, and each release carries it as
+`noface-<version>-<model>-symbols`. Read the addresses in the one whose build ID is
+the crash's (LLVM's tools: `brew install llvm` on a Mac, which leaves them out of the
+`PATH`):
 
 ```sh
-llvm-symbolizer --obj=noface-1.2.3-paperwhite_12-symbols --inlining 0x2a1f4 0x3b0c8
+llvm=$(brew --prefix llvm)/bin
+$llvm/llvm-readelf -n noface-symbols | grep "Build ID"   # the same as the crash's
+$llvm/llvm-symbolizer --obj=noface-symbols --inlining 0x2a1f3 0x3b0c7
 ```
 
 ## Packaging and releases
@@ -332,13 +337,15 @@ illustrations.
   opens with `.book = .notes`. When a screen changes on purpose, write new ones for
   each Kindle (`-Dlayout=<model>`), look at them, and convert them. When the page
   breaks move on purpose, the scenario that compares them prints the new digests for
-  `breaks.txt`. A Kindle added to `device.Model` starts the same way: its folder, a
-  `breaks.txt` of two zeros, then its screens written and its digests as printed:
+  `breaks.txt`. A Kindle added to `device.Model` starts from another's folder copied
+  as its own, so it builds; its screens are then written over and its digests put in
+  as printed. Write them on this computer, not on a Kindle: a large screen's thirteen
+  images (the Scribe's are 57 MB) don't fit the Kindle's `/tmp`.
 
 ```sh
-zig build -Dlayout=<model> scenarios host-tools      # builds zig-out/bin/noface-scenarios for the Kindle
-NOFACE_WRITE_SNAPSHOTS=/tmp/snaps <noface-scenarios> # on the Kindle or a computer: writes <name>.pgm
-for f in /tmp/snaps/*.pgm; do
+zig build -Dlayout=<model> scenarios host-tools   # zig-out/bin/noface-scenarios-host
+mkdir -p snaps && NOFACE_WRITE_SNAPSHOTS=$PWD/snaps zig-out/bin/noface-scenarios-host
+for f in snaps/*.pgm; do
   zig-out/bin/pgm2png "$f" src/testdata/recorded/<model>/$(basename "$f" .pgm).png
 done
 ```

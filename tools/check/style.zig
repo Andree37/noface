@@ -26,8 +26,9 @@ pub const Rule = enum {
     /// A function over 70 lines, signature to closing brace: it must fit on a screen.
     function_length,
     /// A function named in camelCase: functions are snake_case, as variables and files
-    /// are. A function returning a type keeps TitleCase, as Zig has it, and one copying
-    /// a C macro keeps its capitals.
+    /// are. A function returning a type keeps TitleCase, as Zig has it, one copying
+    /// a C macro keeps its capitals, and one the standard library looks up in the
+    /// program's root by name (`handleSegfault`) is named as it asks.
     function_name,
     /// Fewer than two assertions per function on average, over a file. Each function
     /// below two is listed, as the places to add them. One that can't honestly make
@@ -175,6 +176,18 @@ fn is_snake_case(name: []const u8) bool {
         if (std.ascii.isLower(c)) lower = true;
     }
     return !(upper and lower);
+}
+
+/// Functions the standard library looks up in a program's root by their own names
+/// (`root.debug.handleSegfault`): named as it asks, or it never finds them.
+const std_hooks = [_][]const u8{"handleSegfault"};
+
+fn is_std_hook(name: []const u8) bool {
+    assert(name.len > 0);
+    for (std_hooks) |hook| {
+        if (std.mem.eql(u8, name, hook)) return true;
+    }
+    return false;
 }
 
 /// The name of the function a line declares, if it declares one.
@@ -386,11 +399,20 @@ fn big_numbers(code: []const u8, in_points: bool) u32 {
         const length = before.len > 0 and before[before.len - 1] == '[' and
             end < code.len and code[end] == ']';
         // In a file of points of its own, a number given to its `pt(` is on the scale
-        const points = in_points and std.mem.endsWith(u8, before, "pt(");
+        const points = in_points and gives_to_pt(before);
         if (value >= 3 and !divisor and !counts_size and !length and !points) count += 1;
         i = end;
     }
     return count;
+}
+
+/// Whether the code `before` a number leaves it the first argument of a call to `pt`
+/// itself (`pt(48)`, `pt(-36)`), not of one whose name ends with it (`adapt(`).
+fn gives_to_pt(before: []const u8) bool {
+    const call = std.mem.trimEnd(u8, std.mem.trimEnd(u8, before, "-"), " ");
+    if (!std.mem.endsWith(u8, call, "pt(")) return false;
+    const name_start = call.len - "pt(".len;
+    return name_start == 0 or !is_word(call[name_start - 1]);
 }
 
 /// Whether `code` starts with a size named in another file, `style.fingertip` say: a
@@ -894,7 +916,7 @@ fn check_zig_code(scan: *Scan, line: *const Line, line_number: u32, said: Said) 
     var excuse_used = false;
     if (function_name(code)) |name| {
         const returns_type = std.mem.indexOf(u8, code, ") type") != null;
-        if (!returns_type and !is_snake_case(name)) {
+        if (!returns_type and !is_snake_case(name) and !is_std_hook(name)) {
             try scan.note(.function_name, line_number, 1);
         }
         const function: Scan.Function = .{
@@ -1063,7 +1085,8 @@ fn advice(rule: Rule) []const u8 {
         .import_inline => "move the import to the top of the file",
         .import_unused => "remove the import",
         .layout_number => "take it from style.zig's scale (style.space, style.text, " ++
-            "style.fingertip…) or work it out from the parts it sits by",
+            "style.fingertip…) or work it out from the parts it sits by; in a file of " ++
+            "points of its own (src/kindle/touch.zig), give it to its pt( in points",
     };
 }
 
@@ -1649,6 +1672,8 @@ test "a file of points of its own gives its numbers to its pt(, and no number ba
         \\const hold_slop = 36;
         \\const bottom_strip = pt(28.8);
         \\const corner_width = 300;
+        \\const pull_distance = pt(-19.2);
+        \\const swipe_distance = adapt(200);
     ;
     const in_points = try check_zig("src/kindle/touch.zig", source, std.testing.allocator);
     defer std.testing.allocator.free(in_points);
@@ -1656,7 +1681,7 @@ test "a file of points of its own gives its numbers to its pt(, and no number ba
     for (in_points) |b| {
         if (b.rule == .layout_number) bare += 1;
     }
-    try std.testing.expectEqual(@as(u32, 2), bare); // 36 and 300
+    try std.testing.expectEqual(@as(u32, 3), bare); // 36, 300 and 200: adapt( isn't pt(
     // Elsewhere a number given to a `pt(` is as bare as any: sizes come from style.zig
     const in_ui = try check_zig("src/ui/menu.zig", source, std.testing.allocator);
     defer std.testing.allocator.free(in_ui);
@@ -1664,5 +1689,5 @@ test "a file of points of its own gives its numbers to its pt(, and no number ba
     for (in_ui) |b| {
         if (b.rule == .layout_number) bare += 1;
     }
-    try std.testing.expectEqual(@as(u32, 4), bare);
+    try std.testing.expectEqual(@as(u32, 6), bare);
 }

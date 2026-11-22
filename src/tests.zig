@@ -65,6 +65,7 @@ test {
     _ = @import("kindle/input/gestures.zig");
     _ = @import("kindle/input/idle.zig");
     _ = @import("text/unicode.zig");
+    _ = @import("sys/crash.zig");
     _ = @import("kindle/input/watchers.zig");
     _ = @import("screens/books.zig");
     _ = @import("screens/book_actions.zig");

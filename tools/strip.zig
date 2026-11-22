@@ -84,6 +84,7 @@ fn strip(program: []u8) error{NotElf32}![]u8 {
     write16(program, shstrndx_at, 0);
     std.mem.writeInt(u32, program[shoff_at..][0..4], 0, .little);
     assert(end <= program.len);
+    assert(end >= header_size);
     return program[0..@intCast(end)];
 }
 
@@ -102,10 +103,11 @@ fn write16(bytes: []u8, at: u32, value: u16) void {
     std.mem.writeInt(u16, bytes[at..][0..2], value, .little);
 }
 
-test "a program is cut where its last mapped byte ends, its section table dropped" {
-    // A header, one program header mapping 100 bytes from 84, then "symbols" and a
-    // section table after them
+/// A small valid program for the tests: a header, one program header mapping 100 bytes
+/// from 84, then "symbols" and a section table at 300.
+fn test_program() [400]u8 {
     var program: [400]u8 = @splat(0xaa);
+    assert(program.len > 184); // Room past the mapped bytes for what's stripped
     @memcpy(program[0..4], "\x7fELF");
     program[ident_class] = class_32;
     program[ident_data] = data_little;
@@ -117,6 +119,12 @@ test "a program is cut where its last mapped byte ends, its section table droppe
     const phdr = header_size;
     std.mem.writeInt(u32, program[phdr + phdr_offset_at ..][0..4], 84, .little);
     std.mem.writeInt(u32, program[phdr + phdr_filesz_at ..][0..4], 100, .little);
+    assert(read16(&program, phnum_at) == 1);
+    return program;
+}
+
+test "a program is cut where its last mapped byte ends, its section table dropped" {
+    var program = test_program();
     const code = program[84..184].*;
     const kept = try strip(&program);
     try std.testing.expectEqual(@as(usize, 184), kept.len);
@@ -125,9 +133,32 @@ test "a program is cut where its last mapped byte ends, its section table droppe
     try std.testing.expectEqual(@as(u16, 0), read16(kept, shnum_at));
 }
 
-test "a file that isn't a 32-bit ELF program, or whose sections sit among its code, is refused" {
+test "a file that isn't a 32-bit little-endian ELF program is refused" {
     var short: [10]u8 = @splat(0);
     try std.testing.expectError(error.NotElf32, strip(&short));
-    var not_elf: [header_size]u8 = @splat(0);
+    var not_elf = test_program();
+    not_elf[0] = 0;
     try std.testing.expectError(error.NotElf32, strip(&not_elf));
+    var wide = test_program();
+    wide[ident_class] = 2; // 64-bit
+    try std.testing.expectError(error.NotElf32, strip(&wide));
+    var big_endian = test_program();
+    big_endian[ident_data] = 2;
+    try std.testing.expectError(error.NotElf32, strip(&big_endian));
+    var odd_headers = test_program();
+    write16(&odd_headers, phentsize_at, phdr_size + 4);
+    try std.testing.expectError(error.NotElf32, strip(&odd_headers));
+}
+
+test "headers or mapped bytes past the end, or sections among the code, are refused" {
+    var headers_past = test_program();
+    write16(&headers_past, phnum_at, 20); // 20 headers from 52 run past 400 bytes
+    try std.testing.expectError(error.NotElf32, strip(&headers_past));
+    var mapped_past = test_program();
+    const phdr = header_size;
+    std.mem.writeInt(u32, mapped_past[phdr + phdr_filesz_at ..][0..4], 1000, .little);
+    try std.testing.expectError(error.NotElf32, strip(&mapped_past));
+    var sections_inside = test_program();
+    std.mem.writeInt(u32, sections_inside[shoff_at..][0..4], 120, .little); // Inside 84..184
+    try std.testing.expectError(error.NotElf32, strip(&sections_inside));
 }

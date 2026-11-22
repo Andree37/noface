@@ -208,7 +208,6 @@ const Browser = struct {
     order: catalog.Order = .recent,
     query: search.Query = .{},
     index: u32 = 0, // The page of books shown
-    count: u32 = 0, // How many books the filter and search let through
     notice: []const u8 = "", // A line for the next drawing only
     /// Set only for a download started here: the library is reloaded every few seconds
     /// until then, and once more as it runs out. Catalog flags can stay stuck, so they
@@ -252,13 +251,13 @@ const Browser = struct {
     }
 
     pub fn draw(b: *Browser, part: screen.Part) !void {
+        assert(b.index < library.page_count(b.lib.count())); // A page of the books shown
         switch (part) {
             .all => try b.show_everything(),
             .changing => try b.show_page(),
         }
         // Whatever was drawn, the page shown is one there is, of the books let through
-        assert(b.count == b.lib.count());
-        assert(b.index < library.page_count(b.count));
+        assert(b.index < library.page_count(b.lib.count()));
     }
 
     /// Whether a download is being watched at `now`.
@@ -284,20 +283,18 @@ const Browser = struct {
     }
 
     pub fn on_tap(b: *Browser, t: screen.Tap) !screen.Step(void) {
-        assert(b.count == b.lib.count());
-        assert(b.index < library.page_count(b.count));
+        assert(b.index < library.page_count(b.lib.count()));
         return step(try b.on_tap_at(t.x, t.y));
     }
 
     pub fn on_tick(b: *Browser) !screen.Step(void) {
-        assert(b.count == b.lib.count());
-        assert(b.index < library.page_count(b.count));
+        assert(b.index < library.page_count(b.lib.count()));
         return step(try b.on_tick_next());
     }
 
     pub fn on_action(b: *Browser, action: input_mod.Action) !screen.Step(void) {
+        assert(b.index < library.page_count(b.lib.count())); // A page of the books shown
         assert(b.buf.len == b.a.display.screen.pixels.len);
-        assert(b.count == b.lib.count());
         const next: Next = switch (action) {
             .tap, .tick => unreachable, // `on_tap` and `on_tick` take those
             .hold => |h| try b.on_hold(h.x, h.y),
@@ -333,6 +330,7 @@ const Browser = struct {
     /// What's needed of it is taken before it's let go of, as the handler may open
     /// another in its place.
     pub fn on_resume(b: *Browser) !screen.Step(void) {
+        assert(b.index < library.page_count(b.lib.count())); // A page of the books shown
         // Only a screen the library opened ends back to it
         assert(b.over != .none);
         switch (b.over) {
@@ -394,9 +392,8 @@ const Browser = struct {
     fn arrange(b: *Browser) void {
         // While searching, every match is listed, the hero too
         b.lib.arrange(b.order, b.filter, b.query.words());
-        b.count = b.lib.count();
-        b.index = @min(b.index, library.page_count(b.count) - 1);
-        assert(b.index < library.page_count(b.count));
+        b.index = @min(b.index, library.page_count(b.lib.count()) - 1);
+        assert(b.index < library.page_count(b.lib.count()));
         if (b.lib.hero()) |h| assert(h.is_local());
     }
 
@@ -408,13 +405,13 @@ const Browser = struct {
     }
 
     fn render(b: *Browser) !void {
+        assert(b.index < library.page_count(b.lib.count())); // A page of the books shown
         const a = b.a;
-        assert(b.count == b.lib.count());
         assert(b.buf.len == a.display.screen.pixels.len);
         const books_shown: library.Books = .{
             .shown = b.lib.page(b.index),
             .hero = b.lib.hero(),
-            .count = b.count,
+            .count = b.lib.count(),
             .hero_minutes_left = hero_minutes_left(b.lib.hero(), &a.user),
         };
         try library.render(
@@ -436,7 +433,7 @@ const Browser = struct {
     fn show_everything(b: *Browser) !void {
         const a = b.a;
         b.arrange();
-        assert(b.index < library.page_count(b.count));
+        assert(b.index < library.page_count(b.lib.count()));
         // A book still coming down keeps Wi-Fi on, even once a book is open
         if (b.lib.downloading_count() > 0) {
             a.downloads_until = @max(a.downloads_until, now_us() + download_watch_us);
@@ -454,7 +451,7 @@ const Browser = struct {
 
     fn show_page(b: *Browser) !void {
         b.arrange();
-        assert(b.index < library.page_count(b.count));
+        assert(b.index < library.page_count(b.lib.count()));
         try b.render();
         try b.present(.screen);
         b.notice = "";
@@ -463,8 +460,7 @@ const Browser = struct {
     }
 
     fn present(b: *Browser, refresh: hwtcon.Refresh) !void {
-        assert(b.count == b.lib.count());
-        assert(b.index < library.page_count(b.count));
+        assert(b.index < library.page_count(b.lib.count()));
         try show_with_covers(b.a, &b.lib, b.buf, refresh, b.index);
         log_page(b.lib.page_shown(), b.index);
     }
@@ -505,8 +501,9 @@ const Browser = struct {
     // Actions
 
     fn on_tap_at(b: *Browser, x: i32, y: i32) !Next {
+        assert(b.index < library.page_count(b.lib.count())); // A page of the books shown
         const a = b.a;
-        switch (logged_hit(x, y, b.index, b.count, b.query.words().len > 0)) {
+        switch (logged_hit(x, y, b.index, b.lib.count(), b.query.words().len > 0)) {
             .none => return .nothing,
             .next => return b.turn(1),
             .prev => return b.turn(-1),
@@ -550,7 +547,7 @@ const Browser = struct {
             },
             .hero_dots => return b.act_on(b.lib.hero() orelse return .nothing),
             .book => |i| {
-                const entry = b.lib.book(i - library.page_range(b.index, b.count).first);
+                const entry = b.lib.book(i - library.page_range(b.index, b.lib.count()).first);
                 if (entry.is_local()) {
                     a.display.flash(library.book_rect(i, b.index));
                     return b.open_book(entry);
@@ -568,9 +565,10 @@ const Browser = struct {
 
     /// Holding a book brings up its actions.
     fn on_hold(b: *Browser, x: i32, y: i32) !Next {
+        assert(b.index < library.page_count(b.lib.count())); // A page of the books shown
         assert(b.over == .none); // In front, taking touches
-        return switch (logged_hit(x, y, b.index, b.count, b.query.words().len > 0)) {
-            .book => |i| b.act_on(b.lib.book(i - library.page_range(b.index, b.count).first)),
+        return switch (logged_hit(x, y, b.index, b.lib.count(), b.query.words().len > 0)) {
+            .book => |i| b.act_on(b.lib.book(i - library.page_range(b.index, b.lib.count()).first)),
             .hero, .hero_dots => b.act_on(b.lib.hero() orelse return .nothing),
             // Only a book has actions to hold for
             .none,
@@ -590,8 +588,8 @@ const Browser = struct {
     /// A page of books on (1) or back (-1), if there is one.
     fn turn(b: *Browser, direction: i32) Next {
         assert(direction == 1 or direction == -1);
-        assert(b.index < library.page_count(b.count));
-        if (direction > 0 and b.index + 1 < library.page_count(b.count)) {
+        assert(b.index < library.page_count(b.lib.count()));
+        if (direction > 0 and b.index + 1 < library.page_count(b.lib.count())) {
             b.index += 1;
             return .page;
         }
@@ -669,7 +667,7 @@ const Browser = struct {
         assert(!next.is_read());
         assert(next != entry);
         b.over = .{ .up_next = .{ .offer = .{}, .next = next } };
-        const offer = actions.up_next(a, next, b.buf, &b.over.up_next.offer) orelse {
+        const offer = actions.up_next(a, next, &b.over.up_next.offer) orelse {
             b.over = .none;
             return .everything;
         };
@@ -681,7 +679,7 @@ const Browser = struct {
         const next = b.over.up_next.next;
         assert(b.over.up_next.offer.ending != null);
         assert(next.is_local());
-        const chosen = try actions.up_next_closed(b.a, b.under(), &b.over.up_next.offer);
+        const chosen = actions.up_next_closed(b.a, &b.over.up_next.offer);
         b.over = .none;
         if (!chosen) return .everything;
         return b.open_book(next);
@@ -698,6 +696,7 @@ const Browser = struct {
 
     /// The book's actions ended, having changed `change`.
     fn acted(b: *Browser, change: actions.Change) Next {
+        assert(b.index < library.page_count(b.lib.count())); // A page of the books shown
         assert(b.buf.len == b.a.display.screen.pixels.len);
         switch (change) {
             .none => return .nothing,
@@ -716,6 +715,7 @@ const Browser = struct {
     }
 
     fn on_tick_next(b: *Browser) !Next {
+        assert(b.index < library.page_count(b.lib.count())); // A page of the books shown
         assert(b.over == .none); // In front, ticking
         const now = now_us();
         // The status: the whole screen while it's settling after a book; else just the
@@ -737,19 +737,22 @@ const Browser = struct {
     /// (the old one's files are then gone): a swap without a redraw would leave the
     /// screen showing books by places that moved.
     fn reload_if_downloaded(b: *Browser) Next {
-        assert(b.count == b.lib.count());
+        assert(b.index < library.page_count(b.lib.count())); // A page of the books shown
         // Only what's downloading is looked at, until it says the catalog moved on
         if (b.lib.watch_download() == .waiting) return .nothing;
         catalog_db.export_library();
         const before = b.lib.shelf();
+        const shown_before = b.lib.count();
         b.lib.reload();
-        if (std.meta.eql(before, b.lib.shelf())) return .nothing; // Nothing to show for it
+        // The books shown change with the shelf, or with a place merged in again (one a
+        // filter now lets through, or doesn't)
+        const same = std.meta.eql(before, b.lib.shelf()) and shown_before == b.lib.count();
+        if (same) return .nothing; // Nothing to show for it
         if (before.local != b.lib.local_count()) b.watch_until = null;
         return .everything;
     }
 
     fn on_lock(b: *Browser) Next {
-        assert(b.count == b.lib.count());
         const hero: ?*const catalog.Entry = b.lib.hero();
         // Not put back on waking: it's all drawn again, fresh
         assert(b.over == .none);

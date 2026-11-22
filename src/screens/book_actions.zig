@@ -157,13 +157,23 @@ pub const Sheet = struct {
         assert(s.background.holds(&s.a.display)); // What its cards sit over
         switch (s.phase) {
             .card => {
-                try card_screen.closed(s.a, s.background);
                 const picked = switch (s.card_ending.?) {
                     .done => |picked| picked,
-                    .closed, .interrupted => return .{ .done = .none },
+                    .closed, .interrupted => {
+                        try card_screen.closed(s.a, s.background);
+                        return .{ .done = .none };
+                    },
                 };
                 assert(picked < s.list.len);
-                return s.act(s.list[picked]);
+                const option = s.list[picked];
+                // Shown again only when nothing else is drawn after: every other choice
+                // opens a card or a screen, or has the library drawn afresh
+                if (option == .cancel) {
+                    try card_screen.closed(s.a, s.background);
+                } else {
+                    card_screen.closed_quietly(s.a, s.background);
+                }
+                return s.act(option);
             },
             .series => {
                 s.scratch.reset(.give_back);
@@ -176,19 +186,20 @@ pub const Sheet = struct {
         }
     }
 
-    /// The books on this Kindle, each with its title, author and series, in the library's
-    /// scratch region: null, the log saying so, when there's no room there for them all.
-    fn local_books(s: *Sheet) ?[]const catalog.Entry {
+    /// The books on this Kindle, their ids in the library's scratch region: null, the
+    /// log saying so, when there's no room there for them all (four bytes a book, more
+    /// than the library ever has).
+    fn local_books(s: *Sheet) ?books.LocalBooks {
         const region = &s.a.regions.library_scratch;
         assert(region.empty()); // The library is read in it only between screens
         s.scratch = .{ .name = "library scratch", .region = region, .limit = region.bytes.len };
-        const entries = s.lib.local_books(s.scratch.allocator()) catch |err| {
+        const listed = s.lib.local_books(s.scratch.allocator()) catch |err| {
             std.debug.print("series: books not listed ({s})\n", .{@errorName(err)});
             s.scratch.reset(.give_back);
             return null;
         };
-        assert(entries.len <= s.lib.local_count());
-        return entries;
+        assert(listed.count() == s.lib.local_count());
+        return listed;
     }
 
     /// What the action picked on the card does.
@@ -204,9 +215,9 @@ pub const Sheet = struct {
                 return s.show_round();
             },
             .series => {
-                const entries = s.local_books() orelse return .{ .done = .redraw };
+                const listed = s.local_books() orelse return .{ .done = .redraw };
                 s.phase = .series;
-                series_screen.begin(&s.series, a, entries, e);
+                series_screen.begin(&s.series, a, listed, e);
                 return .{ .push = screen.open(&s.series, &s.series_ending) };
             },
             .confirm_remove => {
@@ -229,23 +240,17 @@ pub const Sheet = struct {
 };
 
 /// The card offering `next`, the next of a series just finished, to read now, over
-/// `background` (the page just left); null when it isn't on the Kindle. Its small
-/// cover is let go of with `up_next_closed`, and what was under it put back.
-pub fn up_next(
-    a: *app.App,
-    next: *const catalog.Entry,
-    background: []u8, // The library's, written over with the page just left
-    offer: *UpNext,
-) ?screen.Frame {
+/// the screen as it is (the page just left); null when it isn't on the Kindle. Its
+/// small cover is let go of with `up_next_closed`.
+pub fn up_next(a: *app.App, next: *const catalog.Entry, offer: *UpNext) ?screen.Frame {
     if (next.availability != .local) return null;
     // The next of a series (`next_in_series`), so always in one
     const label = catalog.series_label(&offer.label_buffer, next.*).?;
     offer.subtitle = std.fmt.bufPrint(&offer.subtitle_buffer, "Up next in {s}", .{label}) catch
         "Up next";
     std.debug.print("up next: {s}\n", .{next.title});
-    // Over the page just left, not whatever the reader last kept in this buffer
-    assert(background.len == a.display.screen.pixels.len);
-    @memcpy(background, a.display.screen.pixels);
+    // Over the page just left, kept apart from the screen for the card's dimming
+    offer.under = a.display.keep_screen();
     // Its cover beside the title, half the grid's size, when it has one
     const cover_width = style.cover.width / 2;
     const cover_height = style.cover.height / 2;
@@ -259,17 +264,16 @@ pub fn up_next(
         book_cover = .{ .pixels = pixels, .width = cover_width, .height = cover_height };
     }
     const rows = &up_next_rows;
-    const under: display.Backdrop = .{ .pixels = background };
-    offer.card = card_screen.over(a, under, next.title, offer.subtitle, rows, book_cover);
+    offer.card = card_screen.over(a, offer.under, next.title, offer.subtitle, rows, book_cover);
     return screen.open(&offer.card, &offer.ending);
 }
 
-/// Once the up-next card has ended: whether to read the book now.
-pub fn up_next_closed(a: *app.App, background: display.Backdrop, offer: *UpNext) !bool {
+/// Once the up-next card has ended: whether to read the book now. Either way the
+/// screen is drawn afresh after (the book, or the library), so nothing's shown here.
+pub fn up_next_closed(a: *app.App, offer: *UpNext) bool {
     if (offer.small) |pixels| a.alloc.free(pixels);
     offer.small = null;
-    assert(background.holds(&a.display));
-    try card_screen.closed(a, background);
+    card_screen.closed_quietly(a, offer.under);
     switch (offer.ending.?) {
         .done => |row| {
             assert(row < up_next_rows.len);
@@ -287,6 +291,7 @@ pub const UpNext = struct {
     subtitle_buffer: [200]u8 = undefined,
     subtitle: []const u8 = "",
     small: ?[]u8 = null, // Its cover, half the grid's size
+    under: display.Backdrop = undefined, // The page just left, kept as the card opens
     card: card_screen.Card = undefined,
     ending: ?screen.Ending(u32) = null,
 };

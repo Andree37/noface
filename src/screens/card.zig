@@ -38,6 +38,14 @@ pub fn closed(a: *app.App, background: display.Backdrop) !void {
     try a.display.show_band(0, a.display.screen.height);
 }
 
+/// A card closed with something else to draw straight after (another card, a screen,
+/// the library afresh): what was under it put back, not shown, so the screen refreshes
+/// once, for what comes next.
+pub fn closed_quietly(a: *app.App, background: display.Backdrop) void {
+    assert(background.holds(&a.display));
+    a.display.put_back(background);
+}
+
 /// A card of rows over a dimmed screen: the row tapped, or closed by a tap above it.
 pub const Card = struct {
     a: *app.App,

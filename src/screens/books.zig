@@ -375,32 +375,22 @@ pub const Library = struct {
         return t;
     }
 
-    /// The books on this Kindle, each copied into `alloc` with its texts: for the
-    /// series screens, which list them. An error when `alloc` runs out of room.
-    pub fn local_books(l: *Library, alloc: std.mem.Allocator) ![]catalog.Entry {
+    /// The books on this Kindle, by their ids in the open index (`LocalBooks`), the ids
+    /// in `alloc`: for the series screens, which list them all. An error when `alloc`
+    /// runs out of room.
+    pub fn local_books(l: *Library, alloc: std.mem.Allocator) !LocalBooks {
         const s = l.state;
-        const ix = s.opened() orelse return &.{};
+        const ix = s.opened() orelse return .{ .ix = null, .ids = &.{} };
         assert(ix.header.local <= ix.header.count);
-        var list: std.ArrayList(catalog.Entry) = .empty;
-        try list.ensureTotalCapacity(alloc, ix.header.local);
+        const ids = try alloc.alloc(u32, ix.header.local);
+        var found: u32 = 0;
         for (0..ix.header.count) |id| {
-            const e = ix.entry(@intCast(id));
-            if (!e.is_local()) continue;
-            var copy = e;
-            copy.path = try alloc.dupeSentinel(u8, e.path, 0);
-            copy.title = try alloc.dupe(u8, e.title);
-            copy.author = try alloc.dupe(u8, e.author);
-            if (e.series) |series| {
-                copy.series = .{ .name = try alloc.dupe(u8, series.name), .index = series.index };
-            }
-            copy.thumbnail = null;
-            copy.key = "";
-            copy.kind = "";
-            copy.guid = "";
-            list.appendAssumeCapacity(copy);
+            if (ix.numbers(@intCast(id)).availability != .local) continue;
+            ids[found] = @intCast(id);
+            found += 1;
         }
-        assert(list.items.len == ix.header.local);
-        return list.items;
+        assert(found == ix.header.local);
+        return .{ .ix = ix, .ids = ids };
     }
 
     /// Reads the library again, in place: its index built again first if what it's
@@ -418,6 +408,27 @@ pub const Library = struct {
         if (s.page_read) |read| {
             if (read < library_ui.page_count(s.count)) _ = l.page(read);
         }
+    }
+};
+
+/// The books on this Kindle as ids in the library's open index, read from it as they're
+/// asked for, so nothing of them is copied but their ids: good while the library stays
+/// open, as it does under the screens given them.
+pub const LocalBooks = struct {
+    ix: ?*const index.Index, // Null: no index, and no books
+    ids: []const u32,
+
+    pub fn count(b: LocalBooks) u32 {
+        if (b.ix == null) assert(b.ids.len == 0);
+        return @intCast(b.ids.len);
+    }
+
+    /// Book `i` of them, its texts in the index's mapped files.
+    pub fn get(b: LocalBooks, i: u32) catalog.Entry {
+        assert(i < b.ids.len);
+        const e = b.ix.?.entry(b.ids[i]); // Books, so an index
+        assert(e.is_local());
+        return e;
     }
 };
 

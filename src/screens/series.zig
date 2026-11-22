@@ -19,6 +19,7 @@ const app = @import("../app.zig");
 const calls = @import("../sys/calls.zig");
 const os = @import("../sys/os.zig");
 const screen = @import("screen.zig");
+const LocalBooks = @import("books.zig").LocalBooks;
 const typing = @import("typing.zig");
 /// Lines for noface's log, which the tests keep quiet (main.zig's `std_options`).
 const log = std.log.scoped(.series);
@@ -155,7 +156,41 @@ const NameEntry = struct {
 };
 
 fn by_name(_: void, x: []const u8, y: []const u8) bool {
+    assert(x.len > 0); // A series always has a name
+    assert(y.len > 0);
     return unicode.less_ignoring_case(x, y);
+}
+
+/// `names` each once, as `catalog.same_series` tells them apart, in order by name: the
+/// start of `names`, sorted in place.
+fn each_series_once(names: [][]const u8) [][]const u8 {
+    std.mem.sort([]const u8, names, {}, by_series);
+    assert(names.len <= std.math.maxInt(u32)); // A series a book, and books fit a u32
+    var kept: u32 = 0;
+    for (names) |n| {
+        if (kept > 0 and catalog.same_series(names[kept - 1], n)) continue;
+        names[kept] = n;
+        kept += 1;
+    }
+    assert(kept <= names.len);
+    std.mem.sort([]const u8, names[0..kept], {}, by_name);
+    return names[0..kept];
+}
+
+test "each series is offered once, however its books write its name" {
+    var names = [_][]const u8{ "The Expanse", "Dune", "expanse", "Discworld", "DUNE" };
+    const once = each_series_once(&names);
+    try std.testing.expectEqual(@as(usize, 3), once.len);
+    try std.testing.expectEqualStrings("Discworld", once[0]);
+    try std.testing.expect(catalog.same_series(once[1], "Dune"));
+}
+
+/// Series names in the order `catalog.same_series` matches them: ignoring case and a
+/// leading "The", so names it calls one are side by side.
+fn by_series(_: void, x: []const u8, y: []const u8) bool {
+    assert(x.len > 0); // A series always has a name
+    assert(y.len > 0);
+    return unicode.less_ignoring_case(catalog.without_the(x), catalog.without_the(y));
 }
 
 /// Starts setting `e`'s series by hand, and then, in the series picked, any other
@@ -165,12 +200,12 @@ fn by_name(_: void, x: []const u8, y: []const u8) bool {
 pub fn begin(
     s: *Series,
     a: *app.App,
-    entries: []const catalog.Entry,
+    books: LocalBooks,
     e: *const catalog.Entry,
 ) void {
     // Offered only for books on the Kindle, which have a file to key it by
     assert(e.is_local());
-    s.* = .{ .a = a, .entries = entries, .e = e, .arena = .init(a.alloc) };
+    s.* = .{ .a = a, .books = books, .e = e, .arena = .init(a.alloc) };
     assert(s.phase == .choosing);
     assert(!s.changed);
 }
@@ -178,7 +213,7 @@ pub fn begin(
 pub const Series = struct {
     pub const Result = bool; // Whether anything changed
     a: *app.App,
-    entries: []const catalog.Entry,
+    books: LocalBooks, // Every book on the Kindle, read from the library as needed
     e: *const catalog.Entry,
     arena: std.heap.ArenaAllocator, // Emptied as it ends
     phase: Phase = .choosing,
@@ -223,14 +258,13 @@ pub const Series = struct {
     pub fn on_open(s: *Series) !screen.Step(bool) {
         assert(s.phase == .choosing);
         const alloc = s.arena.allocator();
-        for (s.entries) |o| {
-            const series = o.series orelse continue;
-            const seen = for (s.names.items) |n| {
-                if (catalog.same_series(n, series.name)) break true;
-            } else false;
-            if (!seen) try s.names.append(alloc, series.name);
+        // Every book's series, sorted, then each kept once: as many steps as books, by
+        // a sort, not every name against every other
+        for (0..s.books.count()) |i| {
+            const series = s.books.get(@intCast(i)).series orelse continue;
+            try s.names.append(alloc, series.name);
         }
-        std.mem.sort([]const u8, s.names.items, {}, by_name);
+        s.names.shrinkRetainingCapacity(each_series_once(s.names.items).len);
         try s.rows.append(alloc, .{ .label = "New series\u{2026}", .page = 0, .note = "" });
         try s.rows.append(alloc, .{ .label = "Not in a series", .page = 0, .note = "" });
         for (s.names.items) |n| {
@@ -282,18 +316,18 @@ pub const Series = struct {
     fn manage(s: *Series, name: []const u8) !screen.Step(bool) {
         assert(name.len > 0);
         assert(s.e.is_local());
-        const places = try s.arena.allocator().alloc(Place, s.entries.len);
-        for (s.entries, places) |e, *p| p.* = e.series;
+        const places = try s.arena.allocator().alloc(Place, s.books.count());
+        for (places, 0..) |*p, i| p.* = s.books.get(@intCast(i)).series;
         return s.list(.{ .name = name, .places = places });
     }
 
     fn list(s: *Series, m: Managing) !screen.Step(bool) {
         assert(m.name.len > 0);
-        assert(m.places.len == s.entries.len); // A place for every book in the library
+        assert(m.places.len == s.books.count()); // A place for every book in the library
         s.phase = .{ .listing = m };
         s.listed = try manage_list(
             s.arena.allocator(),
-            s.entries,
+            s.books,
             m.places,
             m.name,
             s.e,
@@ -313,7 +347,7 @@ pub const Series = struct {
         const i = s.order.items[tapped_index];
         if (tapped_index >= s.listed.in_series) {
             const place: Place = .{ .name = m.name, .index = s.listed.next };
-            if (try s.saved(s.entries[i].path, place)) m.places[i] = place;
+            if (try s.saved(s.books.get(i).path, place)) m.places[i] = place;
             return s.list(m);
         }
         s.phase = .{ .numbering = .{ .managing = m, .book = i } };
@@ -328,7 +362,7 @@ pub const Series = struct {
         const n = s.row_picked() orelse return s.list(m);
         assert(n <= numbers);
         const place: Place = if (n == 0) null else .{ .name = m.name, .index = @floatFromInt(n) };
-        if (try s.saved(s.entries[i].path, place)) m.places[i] = place;
+        if (try s.saved(s.books.get(i).path, place)) m.places[i] = place;
         return s.list(m);
     }
 
@@ -373,21 +407,22 @@ pub const Series = struct {
     /// The numbers offered for book `i` in the series, with the books already at each
     /// place beside them, or out of the series.
     fn number_for(s: *Series, m: Managing, i: u32) !screen.Step(bool) {
-        assert(i < s.entries.len);
-        assert(m.places.len == s.entries.len);
+        assert(i < s.books.count());
+        assert(m.places.len == s.books.count());
         const alloc = s.arena.allocator();
         s.number_rows[0] = .{ .label = "Take out of this series", .page = 0, .note = "" };
         for (s.number_rows[1..], 1..) |*r, n| {
             var taken: []const u8 = "";
-            for (s.entries, m.places, 0..) |o, place, j| {
+            for (m.places, 0..) |place, j| {
                 if (j == i or !is_in(place, m.name)) continue;
-                if (place.?.index == @as(f32, @floatFromInt(n))) taken = o.title;
+                if (place.?.index != @as(f32, @floatFromInt(n))) continue;
+                taken = s.books.get(@intCast(j)).title;
             }
             const label = try std.fmt.allocPrint(alloc, "#{d}  {s}", .{ n, taken });
             r.* = .{ .label = label, .page = 0, .note = "" };
         }
         const heading = try std.fmt.allocPrint(alloc, "Number in {s}", .{m.name});
-        return s.pick(heading, s.entries[i].title, &s.number_rows);
+        return s.pick(heading, s.books.get(i).title, &s.number_rows);
     }
 
     /// Done: what it kept is let go of, and whether anything changed said.
@@ -414,38 +449,34 @@ fn is_in(place: Place, name: []const u8) bool {
 /// next one added would take.
 const Listed = struct { in_series: u32, next: f32 };
 
-/// The books `manage` lists, in `order` (indexes into `entries`) with a row for each:
+/// The books `manage` lists, in `order` (indexes into `books`) with a row for each:
 /// how many of them are in the series, and the number the next one added would take.
 fn manage_list(
     alloc: std.mem.Allocator,
-    entries: []const catalog.Entry,
+    books: LocalBooks,
     places: []const Place,
     name: []const u8,
     first: *const catalog.Entry,
     order: *std.ArrayList(u32),
     rows: *std.ArrayList(goto_ui.Row),
 ) !Listed {
-    assert(places.len == entries.len);
+    assert(places.len == books.count());
     // In the series, by number; then the rest, the book this started from first
     order.clearRetainingCapacity();
     rows.clearRetainingCapacity();
-    for (entries, 0..) |e, i| {
-        if (e.is_local() and is_in(places[i], name)) {
-            try order.append(alloc, @intCast(i));
-        }
+    for (places, 0..) |place, i| {
+        if (is_in(place, name)) try order.append(alloc, @intCast(i));
     }
     std.mem.sort(u32, order.items, places, manage_list_less);
     const in_series: u32 = @intCast(order.items.len);
-    for (entries, 0..) |e, i| {
-        const is_first = std.mem.eql(u8, e.path, first.path);
-        if (is_first and !is_in(places[i], name)) {
-            try order.append(alloc, @intCast(i));
-        }
+    for (places, 0..) |place, i| {
+        if (is_in(place, name)) continue;
+        const is_first = std.mem.eql(u8, books.get(@intCast(i)).path, first.path);
+        if (is_first) try order.append(alloc, @intCast(i));
     }
-    for (entries, 0..) |e, i| {
-        if (!e.is_local()) continue;
-        if (is_in(places[i], name)) continue;
-        if (std.mem.eql(u8, e.path, first.path)) continue;
+    for (places, 0..) |place, i| {
+        if (is_in(place, name)) continue;
+        if (std.mem.eql(u8, books.get(@intCast(i)).path, first.path)) continue;
         try order.append(alloc, @intCast(i));
     }
     var next: f32 = 1;
@@ -454,11 +485,11 @@ fn manage_list(
         // In the series: listed first, as `is_in` chose them
         const index = places[i].?.index;
         next = @min(@max(next, @floor(index) + 1), catalog.max_index);
-        const label = try std.fmt.allocPrint(alloc, "#{d}  {s}", .{ index, entries[i].title });
+        const label = try std.fmt.allocPrint(alloc, "#{d}  {s}", .{ index, books.get(i).title });
         try rows.append(alloc, .{ .label = label, .page = 0, .note = "" });
     }
     for (order.items[in_series..]) |i| {
-        try rows.append(alloc, .{ .label = entries[i].title, .page = 0, .note = "Add" });
+        try rows.append(alloc, .{ .label = books.get(i).title, .page = 0, .note = "Add" });
     }
     assert(rows.items.len == order.items.len);
     assert(in_series <= order.items.len);

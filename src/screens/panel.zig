@@ -250,6 +250,13 @@ fn panel_control_shortcut(a: *app.App, choice: menu.Hit) !void {
     }
 }
 
+/// The header without the warning, drawn and shown alone.
+fn put_warning_away(a: *app.App) !void {
+    const box = menu.header_box(a.ui);
+    try menu.draw_header(a.ui, a.display.on_screen(), &a.quick, null);
+    try a.display.show_rect(box.x, box.y, box.w, box.h);
+}
+
 /// What the header says when the radio is to go off with Bluetooth on.
 const bluetooth_warning = "Bluetooth goes off too. Tap again to confirm.";
 
@@ -393,8 +400,9 @@ pub const Panel = struct {
             try draw_menu(p.a, p.background, bluetooth_warning);
             return .stay;
         }
-        // Any tap puts the warning away
-        if (warned != null) try draw_menu(p.a, p.background, null);
+        // Any tap puts the warning away: only the header drawn again, as the control
+        // draws its own part, and a tap that closes the panel needs neither
+        if (warned != null and choice != .close and choice != .kindle) try put_warning_away(p.a);
         switch (try panel_control(p.a, p.background, choice, t.x, &p.slider)) {
             .not_one => {},
             .ran => return .stay, // Drew itself

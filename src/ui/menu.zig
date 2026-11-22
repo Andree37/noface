@@ -513,6 +513,35 @@ fn draw_tile(fonts: Fonts, page: Page, i: u32, quick: *const Quick) !void {
     try draw.clipped(fonts.small, page, x - width / 2, c.y + tile_label_below, label, width);
 }
 
+/// The header, drawn alone over the panel (a warning shown or put away): the Kindle's
+/// name, the clock or `notice` under it, and the status, in `header_box`.
+pub fn draw_header(
+    fonts: Fonts,
+    page: Page,
+    quick: *const quick_model.Quick,
+    notice: ?[]const u8,
+) !void {
+    const box = header_box(fonts);
+    page.fill_rect(box.x, box.y, box.w, box.h, 0xff);
+    try fonts.title.draw(page, header_inset, header_baseline, "Kindle Paperwhite");
+    const header_width: f32 = @floatFromInt(page.width - 2 * header_inset);
+    const line = notice orelse quick.clock_text();
+    try draw.clipped(fonts.small, page, header_inset, clock_baseline, line, header_width);
+    const status_right: f32 = @floatFromInt(page.width - header_inset);
+    const centre = status_centre;
+    const baseline = header_baseline;
+    try icons.status_cluster(page, fonts.small, status_right, centre, baseline, quick, true);
+}
+
+/// The header's box: the panel's top, down to the clock line's lowest descent, clear of
+/// the first row of tiles.
+pub fn header_box(fonts: Fonts) style.Rect {
+    assert(fonts.small.descent >= 0);
+    const bottom: u32 = @intCast(clock_baseline + fonts.small.descent);
+    assert(bottom <= first_row_y - tile_reach_y); // Over the tiles, never into them
+    return .{ .x = 0, .y = 0, .w = style.screen_width, .h = bottom };
+}
+
 /// The panel, its header's second line `notice` in place of the clock when there's one
 /// (a warning a tap waits on).
 pub fn render(
@@ -524,15 +553,7 @@ pub fn render(
     const w: f32 = @floatFromInt(page.width);
     page.fill_rect(0, 0, page.width, height, 0xff);
     page.fill_rect(0, height - edge, page.width, edge, 0x00);
-
-    try fonts.title.draw(page, header_inset, header_baseline, "Kindle Paperwhite");
-    const header_width: f32 = @floatFromInt(page.width - 2 * header_inset);
-    const line = notice orelse quick.clock_text();
-    try draw.clipped(fonts.small, page, header_inset, clock_baseline, line, header_width);
-    const status_right = w - header_inset;
-    const centre = status_centre;
-    const baseline = header_baseline;
-    try icons.status_cluster(page, fonts.small, status_right, centre, baseline, quick, true);
+    try draw_header(fonts, page, quick, notice);
 
     for (0..tiles.len) |i| try draw_tile(fonts, page, @intCast(i), quick);
 

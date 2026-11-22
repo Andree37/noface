@@ -230,6 +230,21 @@ pub const Display = struct {
         assert(d.slot_for(page_index).? == slot);
     }
 
+    /// The screen as it is now, kept in a page slot given up for it and lent as a
+    /// backdrop: for a card over a screen nobody else keeps, such as the page a book
+    /// just closed on (no book is open, so its pages are free).
+    pub fn keep_screen(d: *Display) Backdrop {
+        const slot = &d.slots[0];
+        assert(slot.buf.len == d.screen.pixels.len);
+        slot.page = null;
+        slot.drawn +%= 1; // Lent before now: stale
+        slot.hits.clear();
+        @memcpy(slot.buf, d.screen.pixels);
+        const kept: Backdrop = .{ .pixels = slot.buf, .lent = .{ .slot = 0, .drawn = slot.drawn } };
+        assert(kept.holds(d));
+        return kept;
+    }
+
     /// Drops every cached page, after anything that changes how pages look.
     pub fn forget_pages(d: *Display) void {
         for (&d.slots) |*slot| {

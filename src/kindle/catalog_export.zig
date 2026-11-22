@@ -33,20 +33,32 @@ pub const time_max_ms = 60_000;
 /// One line per book: its file, title, author, progress, last opened, read state,
 /// cover, modified, whether it's on the Kindle (0), in the cloud (1) or downloading
 /// (2), and its ids for the store. src/kindle/catalog.zig reads it.
-pub const query =
-    \\select coalesce(p_location, ''), p_titles_0_nominal,
-    \\            coalesce(json_extract(j_credits, '$[0].name.display'), ''),
-    \\            coalesce(p_percentFinished, 0), coalesce(p_lastAccess, 0),
-    \\            coalesce(p_readState, 0), coalesce(p_thumbnail, ''),
-    \\            coalesce(p_modificationTime, 0),
-    \\            case when p_isDownloading = 1 then 2
-    \\                 when coalesce(p_location, '') = '' then 1
-    \\                 else 0 end,
-    \\            coalesce(p_cdeKey, ''), coalesce(p_cdeType, ''), coalesce(p_guid, '')
-    \\     from Entries
-    \\     where p_location like '%.kfx'
-    \\        or (p_isArchived = 1 and p_isVisibleInHome = 1 and p_type = 'Entry:Item')
-;
+pub const query = "select " ++
+    one_line("coalesce(p_location, '')") ++ ", " ++
+    one_line("p_titles_0_nominal") ++ ", " ++
+    one_line("coalesce(json_extract(j_credits, '$[0].name.display'), '')") ++ ", " ++
+    "coalesce(p_percentFinished, 0), coalesce(p_lastAccess, 0), " ++
+    "coalesce(p_readState, 0), " ++
+    one_line("coalesce(p_thumbnail, '')") ++ ", " ++
+    "coalesce(p_modificationTime, 0), " ++
+    "case when p_isDownloading = 1 then 2 " ++
+    "when coalesce(p_location, '') = '' then 1 else 0 end, " ++
+    one_line("coalesce(p_cdeKey, '')") ++ ", " ++
+    one_line("coalesce(p_cdeType, '')") ++ ", " ++
+    one_line("coalesce(p_guid, '')") ++
+    " from Entries where p_location like '%.kfx'" ++
+    " or (p_isArchived = 1 and p_isVisibleInHome = 1 and p_type = 'Entry:Item')";
+
+/// A text column with its tabs, line feeds and carriage returns made spaces: sqlite3
+/// writes values as they are, so a title with a tab would shift every column after it,
+/// and one with a line break would split its book in two.
+fn one_line(comptime column: []const u8) []const u8 {
+    const tab = "char(9)";
+    const line_feed = "char(10)";
+    const carriage_return = "char(13)";
+    return "replace(replace(replace(" ++ column ++ ", " ++ tab ++ ", ' '), " ++ line_feed ++
+        ", ' '), " ++ carriage_return ++ ", ' ')";
+}
 
 /// Where the catalog is copied for sqlite3 to read: RAM when it's small, as nearly
 /// every account's is; else the data folder on the user drive, slower but large. /tmp
@@ -165,4 +177,29 @@ test "the query lists the twelve columns the library reads" {
         if (c == ',' and depth == 0) columns += 1;
     }
     try std.testing.expectEqual(@as(u32, 12), columns);
+}
+
+test "a title with a tab or a line break stays one line of twelve columns" {
+    // Run by the sqlite3 there is, as on the Kindle: none on this computer, nothing to run
+    const sqlite = for (sqlite_places) |place| {
+        if (file.exists(place)) break place;
+    } else return error.SkipZigTest;
+    var path_buffer: [file.own_path_bytes_max]u8 = undefined;
+    const db_format = "/tmp/noface-catalog-test-{d}";
+    const db = try std.fmt.bufPrintSentinel(&path_buffer, db_format, .{calls.getpid()}, 0);
+    defer _ = calls.unlink(db); // Ignored: only /tmp is left fuller
+    const schema = "create table Entries (p_location, p_titles_0_nominal, j_credits, " ++
+        "p_percentFinished, p_lastAccess, p_readState, p_thumbnail, p_modificationTime, " ++
+        "p_isDownloading, p_cdeKey, p_cdeType, p_guid, p_isArchived, p_isVisibleInHome, p_type);" ++
+        "insert into Entries (p_location, p_titles_0_nominal) values " ++
+        "('/mnt/us/documents/a.kfx', 'One' || char(9) || 'Two' || char(10) || 'Three');";
+    var out: [1024]u8 = undefined;
+    const made = [_:null]?[*:0]const u8{ sqlite, db, schema };
+    _ = process.run(&made, &out) orelse return error.CantMake;
+    const asked = [_:null]?[*:0]const u8{ sqlite, "-separator", "\t", db, query };
+    const length = process.run(&asked, &out) orelse return error.CantQuery;
+    const rows = std.mem.trimEnd(u8, out[0..length], "\n");
+    try std.testing.expectEqual(@as(usize, 0), std.mem.count(u8, rows, "\n")); // One book
+    try std.testing.expectEqual(@as(usize, 11), std.mem.count(u8, rows, "\t")); // Twelve columns
+    try std.testing.expect(std.mem.indexOf(u8, rows, "One Two Three") != null);
 }

@@ -164,22 +164,29 @@ comptime {
     assert(copy_bytes_max % copy_chunk_bytes == 0);
 }
 
-/// Copies the file at `source` to `target`, replacing it. False when it couldn't
-/// be copied whole, in which case no partial copy is left.
+/// Copies the file at `source` to `target`, replacing it: written beside it, onto the
+/// drive, and renamed over, as `write_parts`, so a crash or a power cut leaves either
+/// the old target or the whole copy, never part of one. False when it wasn't copied.
 pub fn copy_file(source: [*:0]const u8, target: [*:0]const u8) bool {
     assert(source[0] == '/');
     assert(target[0] == '/');
+    var tmp: [path_bytes_max + ".tmp".len]u8 = undefined;
+    const name = std.mem.sliceTo(target, 0);
+    const tmp_path = std.fmt.bufPrintSentinel(&tmp, "{s}.tmp", .{name}, 0) catch {
+        return false; // Too long a path to have a file beside it
+    };
+    assert(std.mem.endsWith(u8, tmp_path, ".tmp")); // Beside the target, never it
     const in_rc = linux.open(source, .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0);
     if (failed(in_rc)) return false;
     const in: i32 = @intCast(in_rc);
-    defer _ = linux.close(in); // Only read: nothing is lost if closing fails
+    defer _ = linux.close(in); // Ignored: only read, nothing is lost if closing fails
     const out_flags: linux.O = .{
         .ACCMODE = .WRONLY,
         .CREAT = true,
         .TRUNC = true,
         .CLOEXEC = true,
     };
-    const out_rc = linux.open(target, out_flags, 0o644);
+    const out_rc = linux.open(tmp_path, out_flags, 0o644);
     if (failed(out_rc)) return false;
     const out: i32 = @intCast(out_rc);
     var chunk: [copy_chunk_bytes]u8 = undefined;
@@ -190,11 +197,27 @@ pub fn copy_file(source: [*:0]const u8, target: [*:0]const u8) bool {
         if (got == 0) break true;
         if (!write_all(out, chunk[0..got])) break false;
         copied += got;
-    } else false; // Larger than any catalog
+    } else false; // Larger than any file copied
+    // On the drive before the rename, as `write_parts`
+    const synced = whole and !failed(linux.fsync(out));
     const closed = !failed(linux.close(out)); // A copy that can't be closed may be short
-    if (!whole or !closed) _ = linux.unlink(target); // A partial copy goes
     assert(copied <= copy_bytes_max);
-    return whole and closed;
+    if (synced and closed and !failed(linux.rename(tmp_path, target))) return true;
+    _ = linux.unlink(tmp_path); // Ignored: one left over is only space, written over next time
+    return false;
+}
+
+/// Whether there's a file at a path: there, not there, or not known (it couldn't be
+/// opened for another reason), which a caller about to write there takes as there.
+pub const Presence = enum { here, absent, unknown };
+
+pub fn presence(path: [*:0]const u8) Presence {
+    assert(path[0] != 0);
+    const fd = linux.open(path, .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0);
+    if (os.not_found(fd)) return .absent;
+    if (failed(fd)) return .unknown;
+    _ = linux.close(@intCast(fd)); // Ignored: only opened to see that it could be
+    return .here;
 }
 
 /// Appends `text` to the file at `path`, as a shell's `echo text >> path` does.

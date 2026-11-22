@@ -269,8 +269,12 @@ fn info_cover(alloc: std.mem.Allocator, files: []const zip.Entry, p: *const Pack
         const named = if (p.cover_id) |id| std.mem.eql(u8, i.id, id) else false;
         if (!marked and !named) continue;
         const path = try resolve(alloc, p.dir, i.href);
-        // A cover that won't read means no picture, not no book
-        return read_file(alloc, files, path) catch null;
+        // A cover that won't read means no picture, not no book; one without the room
+        // is the caller's to retry without it
+        return read_file(alloc, files, path) catch |err| {
+            if (err == error.OutOfMemory) return err;
+            return null;
+        };
     }
     return null;
 }
@@ -646,7 +650,10 @@ fn read_contents(
     for (p.items) |i| {
         if (std.mem.indexOf(u8, i.properties, "nav") == null) continue;
         const path = try resolve(alloc, p.dir, i.href);
-        const nav = read_file(alloc, files, path) catch break;
+        const nav = read_file(alloc, files, path) catch |err| {
+            if (err == error.OutOfMemory) return err;
+            break; // Ignored: no contents to read there; the NCX's are tried
+        };
         try read_contents_nav(alloc, &out, path, nav, anchors);
         if (out.items.len > 0) return out.items;
     }
@@ -654,7 +661,10 @@ fn read_contents(
     const ncx_id = p.toc_ncx orelse return out.items;
     const ncx_item = p.item(ncx_id) orelse return out.items;
     const path = try resolve(alloc, p.dir, ncx_item.href);
-    const ncx = read_file(alloc, files, path) catch return out.items;
+    const ncx = read_file(alloc, files, path) catch |err| {
+        if (err == error.OutOfMemory) return err;
+        return out.items; // Ignored: a book without readable contents has none
+    };
     try read_contents_ncx(alloc, &out, path, ncx, anchors);
     return out.items;
 }
@@ -770,7 +780,14 @@ pub fn parse(alloc: std.mem.Allocator, scratch: *memory.Region, data: []const u8
         if (std.mem.indexOf(u8, item.media, "html") == null) continue;
         const path = try resolve(alloc, p.dir, item.href);
         markup.rewind(each_chapter);
-        const xhtml = read_chapter(alloc, &markup, files, path) catch continue;
+        const xhtml = read_chapter(alloc, &markup, files, path) catch |err| {
+            // Out of memory this time: the book doesn't open, rather than open without a
+            // chapter and every paragraph after it numbered differently from before
+            if (err == error.OutOfMemory) return err;
+            // Ignored: a chapter missing or damaged in the archive is passed, the same
+            // on every open, so the numbering holds
+            continue;
+        };
         b.section = @intCast(index + 1);
         try b.chapter(path, xhtml);
         try b.keep_pending();
@@ -804,6 +821,29 @@ fn parse_positions(paragraphs: []book.Paragraph) void {
 }
 
 const sample = @embedFile("testdata/sample.epub");
+
+test "running out of memory anywhere fails the open, never drops a chapter" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var scratch = try memory.Region.reserve("scratch", .bump, memory.unit_bytes);
+    defer scratch.release();
+    // No room in scratch either: every chapter's markup is read into the book's memory
+    scratch.end = @intCast(scratch.bytes.len - 16);
+    defer scratch.end = 0;
+    const whole = try parse(arena.allocator(), &scratch, sample);
+    // Counted once: the allocations a whole open makes, each made to fail in turn
+    var counting = std.testing.FailingAllocator.init(arena.allocator(), .{});
+    _ = try parse(counting.allocator(), &scratch, sample);
+    for (0..counting.allocations) |fail_at| {
+        const fail: std.testing.FailingAllocator.Config = .{ .fail_index = fail_at };
+        var failing = std.testing.FailingAllocator.init(arena.allocator(), fail);
+        const got = parse(failing.allocator(), &scratch, sample) catch |err| {
+            try std.testing.expectEqual(error.OutOfMemory, err);
+            continue;
+        };
+        try std.testing.expectEqual(whole.paragraphs.len, got.paragraphs.len);
+    }
+}
 
 test "a small EPUB reads into paragraphs, styles, links and contents" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);

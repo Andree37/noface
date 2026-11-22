@@ -841,12 +841,63 @@ test "files an older noface named by a book's file name move to its whole path's
     // Other's newer place is kept, its old one left where it was
     const other_now = state.load(try state.path_for(&path, dir, other));
     try std.testing.expectEqual(@as(?u32, 10), other_now.percent);
-    // Moved once: Dune's old files are gone, and the marker says it's done
+    // Moved: Dune's old files are gone
     try std.testing.expect(!file.exists(try test_old_path(&path, dir, "state", dune)));
     try std.testing.expect(!file.exists(try test_old_path(&path, dir, "notes", dune)));
-    const marker_name = builder.named_by_path_marker;
-    const marker = try std.fmt.bufPrintSentinel(&path, "{s}/{s}", .{ dir, marker_name }, 0);
-    try std.testing.expect(file.exists(marker));
+}
+
+test "a catalog that couldn't be read is read again at the next load, unchanged" {
+    var buffer: [64]u8 = undefined;
+    const root = try test_folder(&buffer, 3, 0, 1 << 10);
+    defer test_folder_remove(root);
+    var t: TestLibrary = undefined;
+    try t.init(root);
+    defer t.deinit();
+    var path: [file.own_path_bytes_max]u8 = undefined;
+    const catalog_file = try std.fmt.bufPrintSentinel(&path, "{s}/catalog", .{root}, 0);
+    try test_chmod("000", catalog_file); // There, but can't be read: none of its books
+    var unread = try load(t.sources);
+    unread.arrange(.recent, .all, "");
+    try std.testing.expectEqual(@as(u32, 0), unread.count());
+    unread.deinit();
+    // Readable again, its size and time as they were: built again all the same
+    try test_chmod("644", catalog_file);
+    var read = try load(t.sources);
+    defer read.deinit();
+    read.arrange(.recent, .all, "");
+    try std.testing.expectEqual(@as(u32, 3), read.count() + @intFromBool(read.hero() != null));
+}
+
+fn test_chmod(mode: [:0]const u8, path: [:0]const u8) !void {
+    var out: [64]u8 = undefined;
+    const argv = [_:null]?[*:0]const u8{ "/bin/chmod", mode, path };
+    _ = process.run(&argv, &out) orelse return error.CantChmod;
+}
+
+test "a move of a book's files cut short goes on at the next load, from what's left" {
+    var buffer: [64]u8 = undefined;
+    const root = try test_folder(&buffer, 0, 0, 1 << 10);
+    defer test_folder_remove(root);
+    var path: [file.own_path_bytes_max]u8 = undefined;
+    const dune = "/mnt/us/documents/Dune.azw3";
+    const rows = "\n" ++ dune ++ "\tDune\tA\t0\t0\t0\t\t0\t0\n";
+    try test_write(try std.fmt.bufPrintSentinel(&path, "{s}/catalog", .{root}, 0), rows);
+    var t: TestLibrary = undefined;
+    try t.init(root);
+    defer t.deinit();
+    const dir = t.sources.state_dir;
+    // Cut short after the place moved: only the notes still have the old name
+    const dune_state = try state.path_for(&path, dir, dune);
+    state.save(dune_state, .{ .para = 3, .percent = 42, .opened = 1000 });
+    try test_old_file(dir, "notes", dune, "highlight 1 0 5\n");
+    var library = try load(t.sources);
+    defer library.deinit();
+    var notes_buffer: [file.own_path_bytes_max]u8 = undefined;
+    const own_state = try state.path_for(&path, dir, dune);
+    try std.testing.expect(file.exists(try state.sibling(&notes_buffer, own_state, "notes")));
+    try std.testing.expect(!file.exists(try test_old_path(&path, dir, "notes", dune)));
+    const dune_now = state.load(try state.path_for(&path, dir, dune));
+    try std.testing.expectEqual(@as(?u32, 42), dune_now.percent);
 }
 
 /// Where noface 0.2 kept a `kind` of file about `book`.

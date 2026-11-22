@@ -2,6 +2,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const file = @import("file.zig");
+const calls = @import("calls.zig");
 
 pub const State = struct {
     para: u32 = 0,
@@ -135,16 +136,32 @@ fn read_value(comptime T: type, text: []const u8) ?T {
     };
 }
 
+/// The longest a state file can be: every value at its longest, each "<name> <value>\n".
+const file_bytes_max = longest: {
+    var total: u32 = 0;
+    for (@typeInfo(State).@"struct".field_names, @typeInfo(State).@"struct".field_types) |name, T| {
+        const digits_max = switch (T) {
+            bool => 1,
+            ?u32, u32 => std.fmt.count("{d}", .{std.math.maxInt(u32)}),
+            ?u64, u64 => std.fmt.count("{d}", .{std.math.maxInt(u64)}),
+            else => @compileError("a kind of value state files don't hold: " ++ @typeName(T)),
+        };
+        total += name.len + " ".len + digits_max + "\n".len;
+    }
+    break :longest total;
+};
+
 pub fn load(path: [*:0]const u8) State {
     assert(path[0] != 0);
-    var buf: [256]u8 = undefined;
+    var buf: [file_bytes_max]u8 = undefined;
     return parse(file.read_small(path, &buf));
 }
 
 /// Writes every value of `s`, by name, one a line.
 pub fn save(path: [*:0]const u8, s: State) void {
     assert(path[0] != 0);
-    var buf: [256]u8 = undefined;
+    // Sized for the longest state, so every one is written whole
+    var buf: [file_bytes_max]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
     inline for (@typeInfo(State).@"struct".field_names) |field| {
         const value = @field(s, field);
@@ -215,4 +232,24 @@ test "files are written by name and read back" {
     try std.testing.expectEqual(@as(?u64, null), parse("para 1\nbyte 2\n").words_left);
     // One it doesn't know is passed over
     try std.testing.expectEqual(@as(u32, 1), parse("para 1\nshiny 9\n").para);
+}
+
+test "the longest state there can be is saved whole" {
+    var buf: [file.own_path_bytes_max]u8 = undefined;
+    const format = "/tmp/noface-state-test-{d}";
+    const path = try std.fmt.bufPrintSentinel(&buf, format, .{calls.getpid()}, 0);
+    defer _ = calls.unlink(path); // Ignored: only /tmp is left fuller
+    // Every value at its longest, whatever values a state has
+    var longest: State = .{};
+    const info = @typeInfo(State).@"struct";
+    inline for (info.field_names, info.field_types) |name, T| {
+        @field(longest, name) = switch (T) {
+            bool => true,
+            ?u32, u32 => std.math.maxInt(u32),
+            ?u64, u64 => std.math.maxInt(u64),
+            else => @compileError("a kind of value state files don't hold"),
+        };
+    }
+    save(path, longest);
+    try std.testing.expectEqual(longest, load(path));
 }

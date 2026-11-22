@@ -135,6 +135,9 @@ const Build = struct {
     local: u32 = 0,
     downloading: u32 = 0,
     left_out: u32 = 0, // Past `index.books_max`, or the text file's most
+    /// Something there couldn't be read this time (not a book that isn't one): the
+    /// index is kept, but built again at the next load (`build`).
+    incomplete: bool = false,
 
     /// Adds book `e` to the index, as the next id. An EPUB read whole comes with its
     /// file's `facts`, so the next build reads it only if its file changed; without
@@ -215,13 +218,26 @@ pub fn build(
         .count = b.count,
         .local = b.local,
         .downloading = b.downloading,
-        .sources = sources,
+        // Built from less than is there: never matches, so the next load builds again
+        .sources = if (b.incomplete) never_matching(sources) else sources,
         .text_size = b.text.size,
     });
     errdefer ix.close();
-    try apply_overrides(&ix, buffers, items, places);
+    // A series that can't be set leaves the book as it is: the rest of the index stands
+    apply_overrides(&ix, buffers, items, places) catch |err| {
+        log("library: series set by hand not applied ({s})\n", .{@errorName(err)});
+    };
     try ix.write_header();
     return ix;
+}
+
+/// `sources` changed so no index built from what's there matches it: the next load
+/// builds again, as `sources_now` does for a folder not wholly listed.
+fn never_matching(sources: index.Sources) index.Sources {
+    var changed = sources;
+    changed.epubs +%= os.now_us() | 1; // Never 0: always another sum
+    assert(!std.meta.eql(changed, sources));
+    return changed;
 }
 
 /// A new data file, its head written.
@@ -238,14 +254,20 @@ fn create_data(folder: []const u8, name: []const u8, generation: u64, buffer: []
 /// The Kindle's books, a line of the exported catalog each.
 fn add_kindle_books(b: *Build) void {
     assert(b.count == 0);
-    var lines: files.Lines = .{
-        .reader = files.Reader.open(b.places.catalog_path, b.buffers.lines) catch return,
+    const reader = files.Reader.open(b.places.catalog_path, b.buffers.lines) catch |err| {
+        // No catalog: no Kindle books. One that's there but can't be read: some, later
+        if (err != error.NotFound) b.incomplete = true;
+        return;
     };
+    var lines: files.Lines = .{ .reader = reader };
     defer lines.close();
     // Each line moves on through the file, so there are fewer than it has bytes
     for (0..lines_max(&lines)) |_| {
         if (b.places.heartbeat) |path| watchers.beat_when_due(path, &b.beat_us);
-        const line = (lines.next() catch break) orelse break;
+        const line = (lines.next() catch {
+            b.incomplete = true; // The rest of the catalog, next time
+            break;
+        }) orelse break;
         if (line.len == 0) continue;
         var row_memory = std.heap.FixedBufferAllocator.init(b.buffers.row);
         // A row whose texts don't fit (longer than the line, many times over) is passed
@@ -284,7 +306,10 @@ fn add_epubs(b: *Build) void {
     defer b.scratch.rewind(start);
     const walked = dir.walk(b.scratch.allocator(), b.places.documents, ".epub", b, add_epub) catch
         dir.Walked{ .cut_short = true };
-    if (walked.cut_short) log("library: {s} only partly listed\n", .{b.places.documents});
+    if (walked.cut_short) {
+        log("library: {s} only partly listed\n", .{b.places.documents});
+        b.incomplete = true;
+    }
     assert(b.count <= index.books_max);
 }
 
@@ -293,7 +318,11 @@ fn add_epub(b: *Build, path: [:0]const u8) void {
     assert(path.len > 0);
     // Each EPUB, read or not: thousands, or a few slow to read, outlast the watchdog
     if (b.places.heartbeat) |heartbeat| watchers.beat_when_due(heartbeat, &b.beat_us);
-    const facts = file.facts_of(path) orelse return;
+    // Listed, then not there to look at: gone meanwhile, or the drive failed
+    const facts = file.facts_of(path) orelse {
+        b.incomplete = true;
+        return;
+    };
     var state_buffer: [files.path_bytes_max]u8 = undefined;
     var cover_buffer: [files.path_bytes_max]u8 = undefined;
     const state_path = state.path_for(&state_buffer, b.places.state_dir, path) catch return;
@@ -320,7 +349,15 @@ const About = struct {
 /// What an EPUB says of itself, read from the book, its cover saved the first time.
 fn read_epub(b: *Build, path: [:0]const u8, cover_path: [:0]const u8) ?About {
     assert(path.len > 0);
-    const data = file.map(path) catch return null;
+    const data = file.map(path) catch |err| {
+        // Not read this time (gone since listed, or the drive failed): read at the next
+        // load. An empty file or one too big to map stays so, and is passed for good
+        switch (err) {
+            error.NotFound, error.OpenFailed, error.SeekFailed => b.incomplete = true,
+            error.EmptyFile, error.MmapFailed => {},
+        }
+        return null;
+    };
     defer file.unmap(data);
     const have_cover = file.exists(cover_path);
     const about = read_about(b.scratch, data, !have_cover) orelse return null;
@@ -526,16 +563,13 @@ fn set_series(
     }
 }
 
-/// The file in the data folder saying its books' files are named by their whole path:
-/// once it's there, `rename_by_path` has nothing left to do.
-pub const named_by_path_marker = "named-by-path";
-
 /// Moves each book's files from the names noface 0.2 and before gave them, by the
-/// book's file name, to the names its whole path gives (`state.key_for`), once, before
-/// any are read. Two books of one name shared those files: each gets a copy, as each
-/// showed that place before. Files of a book no longer here keep their names, and a
-/// file already under its new name is never written over. Done when the marker is
-/// written, so a move cut short goes on at the next load.
+/// book's file name, to the names its whole path gives (`state.key_for`), before any
+/// are read. Two books of one name shared those files: each gets a copy, as each
+/// showed that place before. A file already under its new name is never written over,
+/// and one of a book not here (deleted, or still downloading) keeps its old name until
+/// the book is. Every load looks, so a move cut short goes on at the next, from any of
+/// the files left: the place moves last, the others before it.
 pub fn rename_by_path(
     ix: *const index.Index,
     items: []Item,
@@ -543,37 +577,46 @@ pub fn rename_by_path(
     scratch: *memory.Budget,
 ) !void {
     assert(places.state_dir.len > 0);
-    var marker_buffer: [files.path_bytes_max]u8 = undefined;
-    const marker = try files.path_in(&marker_buffer, places.state_dir, named_by_path_marker);
-    if (file.exists(marker)) return;
+    assert(items.len >= ix.header.count); // Room to sort every book
     // Listed first, then moved: a folder renamed in while it's listed can list a name twice
     var old = Listed{ .alloc = scratch.allocator() };
     var folder_buffer: [files.path_bytes_max]u8 = undefined;
     const folder = try std.fmt.bufPrintSentinel(&folder_buffer, "{s}", .{places.state_dir}, 0);
     calls.each_entry(folder.ptr, &old, Listed.entry);
     if (old.failed) return error.CantList;
+    if (old.keys.items.len == 0) return;
+    // Each key once, whichever of its kinds were listed
+    std.mem.sort(u64, old.keys.items, {}, std.sort.asc(u64));
+    const keys = unique(old.keys.items);
     const sorted = by_name_key(ix, items);
-    for (old.keys.items) |key| {
+    for (keys) |key| {
         const high: u32 = @truncate(key >> 32);
-        var books: [same_name_max]u32 = undefined;
+        const first = first_with(sorted, high);
+        // The books whose file name gave this key: those of `sorted` from `first` on
         var count: u32 = 0;
-        for (sorted[first_with(sorted, high)..]) |item| {
+        for (sorted[first..]) |item| {
             if (item.key != high) break;
-            if (state.key_by_name(ix.entry(item.id).path) != key) continue; // Same high half
-            if (count == books.len) break; // More of one name than kept: the rest start fresh
-            books[count] = item.id;
-            count += 1;
+            if (state.key_by_name(ix.entry(item.id).path) == key) count += 1;
         }
-        if (count > 0) try move_files(ix, places.state_dir, key, books[0..count]);
+        if (count > 0) try move_files(ix, places.state_dir, key, sorted[first..], count);
     }
-    file.write_small(marker, "1\n");
-    if (!file.exists(marker)) return error.CantMark; // Moved, so the next load does nothing again
 }
 
-/// The most books of one file name given the files they shared.
-const same_name_max = 16;
+/// `sorted`'s values each once, in place: the start of it.
+fn unique(sorted: []u64) []u64 {
+    if (sorted.len == 0) return sorted;
+    var kept: u32 = 1;
+    for (sorted[1..]) |value| {
+        assert(value >= sorted[kept - 1]); // Sorted, so a repeat is beside its first
+        if (value == sorted[kept - 1]) continue;
+        sorted[kept] = value;
+        kept += 1;
+    }
+    assert(kept <= sorted.len);
+    return sorted[0..kept];
+}
 
-/// The state files' keys in the data folder, as listed.
+/// The keys of the files named by a key in the data folder, as listed: of every kind.
 const Listed = struct {
     alloc: std.mem.Allocator,
     keys: std.ArrayList(u64) = .empty,
@@ -582,37 +625,79 @@ const Listed = struct {
     fn entry(l: *Listed, name: []const u8, is_dir: bool) void {
         assert(name.len > 0);
         if (is_dir or l.failed) return;
-        const key = state.key_of_name(name, "state") orelse return;
-        l.keys.append(l.alloc, key) catch {
-            l.failed = true;
-        };
+        for (state.kinds) |kind| {
+            const key = state.key_of_name(name, kind) orelse continue;
+            const before = l.keys.items.len;
+            l.keys.append(l.alloc, key) catch {
+                l.failed = true;
+                return;
+            };
+            assert(l.keys.items.len == before + 1);
+            return;
+        }
     }
 };
 
-/// Each kind of file named by `key` copied to the name of every book of `books` but the
-/// first, then moved to the first's.
-fn move_files(ix: *const index.Index, state_dir: []const u8, key: u64, books: []const u32) !void {
-    assert(books.len > 0);
-    assert(books.len <= same_name_max);
-    for (state.kinds) |kind| {
+/// Each kind of file named by `key` copied to the names of the `count` books of
+/// `sorted` (from the first with its high half) whose file name gave it, and moved to
+/// the last one's: the place last of all, so while it's there, so is the key.
+fn move_files(
+    ix: *const index.Index,
+    state_dir: []const u8,
+    key: u64,
+    sorted: []const Item,
+    count: u32,
+) !void {
+    assert(count > 0);
+    // Every kind but the place, then the place
+    comptime assert(std.mem.eql(u8, state.kinds[0], "state"));
+    const order = state.kinds[1..] ++ state.kinds[0..1];
+    inline for (order) |kind| {
         var from_buffer: [files.path_bytes_max]u8 = undefined;
         const named = .{ state_dir, kind, key };
         const from = try std.fmt.bufPrintSentinel(&from_buffer, "{s}/{s}-{x:0>16}", named, 0);
-        if (!file.exists(from)) continue;
-        for (books, 0..) |id, i| {
-            var state_buffer: [files.path_bytes_max]u8 = undefined;
-            const own_state = try state.path_for(&state_buffer, state_dir, ix.entry(id).path);
-            var to_buffer: [files.path_bytes_max]u8 = undefined;
-            const to = try state.sibling(&to_buffer, own_state, kind);
-            assert(!std.mem.eql(u8, from, to)); // A whole path's name is never a file name's
-            if (file.exists(to)) continue; // Saved under its new name already: newer
-            if (i + 1 < books.len) {
-                if (!file.copy_file(from, to)) return error.CantCopy;
-            } else {
-                if (os.failed(calls.rename(from, to))) return error.CantRename;
-            }
+        switch (file.presence(from)) {
+            .absent => {},
+            .unknown => return error.CantRead, // Tried again at the next load
+            .here => try move_file(ix, state_dir, kind, from, key, sorted, count),
         }
     }
+}
+
+/// The file `from` (of `kind`, named by `key`) copied to each of the `count` books but
+/// the last, and renamed to the last's: never over a file already there.
+fn move_file(
+    ix: *const index.Index,
+    state_dir: []const u8,
+    comptime kind: []const u8,
+    from: [:0]const u8,
+    key: u64,
+    sorted: []const Item,
+    count: u32,
+) !void {
+    var done: u32 = 0;
+    for (sorted) |item| {
+        if (done == count) break;
+        const path = ix.entry(item.id).path;
+        if (state.key_by_name(path) != key) continue; // Same high half, another name
+        done += 1;
+        var state_buffer: [files.path_bytes_max]u8 = undefined;
+        const own_state = try state.path_for(&state_buffer, state_dir, path);
+        var to_buffer: [files.path_bytes_max]u8 = undefined;
+        const to = try state.sibling(&to_buffer, own_state, kind);
+        assert(!std.mem.eql(u8, from, to)); // A whole path's name is never a file name's
+        switch (file.presence(to)) {
+            .here => continue, // Saved under its new name already: newer
+            .unknown => return error.CantRead, // Maybe there: never written over
+            .absent => {},
+        }
+        if (done < count) {
+            if (!file.copy_file(from, to)) return error.CantCopy;
+        } else {
+            if (os.failed(calls.rename(from, to))) return error.CantRename;
+        }
+    }
+    assert(done == count);
 }
 
 /// The books on this Kindle, their ids sorted by the key their file name gave their
@@ -677,15 +762,17 @@ const Merge = struct {
         var path_buffer: [files.path_bytes_max]u8 = undefined;
         const format = "{s}/{s}";
         const path = try std.fmt.bufPrintSentinel(&path_buffer, format, .{ m.state_dir, name }, 0);
-        const saved = state.load(path);
+        // Read only for a book here: the drive is slow, and a file may be a deleted book's
+        var saved: ?state.State = null;
         const high: u32 = @truncate(key >> 32);
         // Books whose keys share a high half: only the one with the whole key is merged
         for (m.sorted[first_with(m.sorted, high)..]) |item| {
             if (item.key != high) return;
             if (state.key_for(m.ix.entry(item.id).path) != key) continue; // Same high half
+            if (saved == null) saved = state.load(path);
             var r = m.ix.record(item.id);
             const before = r;
-            merged(&r, saved);
+            merged(&r, saved.?);
             if (!std.meta.eql(before, r)) try m.ix.write_record(item.id, &r);
         }
     }

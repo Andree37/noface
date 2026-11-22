@@ -30,10 +30,11 @@ jobs:
       - name: Checksum
         run: |
           cd zig-out
-          sha256sum noface-"${GITHUB_REF_NAME#v}"-*.zip > SHA256SUMS
+          sha256sum noface-"${GITHUB_REF_NAME#v}"-*.zip noface-"${GITHUB_REF_NAME#v}"-*-symbols \
+            > SHA256SUMS
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: zig-out/noface-*.zip
+          subject-path: zig-out/noface-*
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
@@ -43,6 +44,7 @@ jobs:
           # install it, the same each time
           cat "docs/releases/${GITHUB_REF_NAME#v}.md" zig-out/KINDLES.md \
             docs/RELEASE_NOTES.md > notes.md
+          # Each Kindle's app with its symbols kept, to read a crash's addresses in
           gh release create "$GITHUB_REF_NAME" zig-out/noface-"${GITHUB_REF_NAME#v}"-*.zip \
-            zig-out/SHA256SUMS \
+            zig-out/noface-"${GITHUB_REF_NAME#v}"-*-symbols zig-out/SHA256SUMS \
             --title "noface ${GITHUB_REF_NAME#v}" --notes-file notes.md

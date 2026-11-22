@@ -17,6 +17,7 @@ const host_tool_names = [_][]const u8{
     "pgm2png",
     "package",
     "kindles",
+    "strip",
 };
 
 comptime {
@@ -29,10 +30,15 @@ comptime {
 
 /// What goes on the Kindle, as `zig build` makes it.
 const App = struct {
-    noface: *std.Build.Step.Compile,
+    noface: Noface,
     launcher: *std.Build.Step.Compile,
     jxr: *std.Build.Step.Compile,
 };
+
+/// The app, built once with its symbols and lines, and stripped of them for the Kindle:
+/// the same code at the same addresses, so the addresses a crash logs (main.zig
+/// `panic`) are read in `symbols` (docs/DEVELOPING.md).
+const Noface = struct { app: std.Build.LazyPath, symbols: std.Build.LazyPath };
 
 pub fn build(b: *std.Build) void {
     const target = b.resolveTargetQuery(.{
@@ -197,7 +203,7 @@ fn build_app(b: *std.Build, target: std.Build.ResolvedTarget, fast: bool) App {
         .launcher = launcher_for(b, target, layout_model),
         .jxr = jxr_helper(b),
     };
-    b.installArtifact(app.noface);
+    b.getInstallStep().dependOn(&b.addInstallBinFile(app.noface.app, "noface").step);
     b.installArtifact(app.launcher);
     b.installArtifact(app.jxr);
     return app;
@@ -210,7 +216,7 @@ fn noface_for(
     target: std.Build.ResolvedTarget,
     model: []const u8,
     fast: bool,
-) *std.Build.Step.Compile {
+) Noface {
     assert(model.len > 0);
     const noface = b.addExecutable(.{
         .name = "noface",
@@ -218,13 +224,19 @@ fn noface_for(
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = if (fast) .ReleaseFast else .ReleaseSafe,
-            .strip = true,
+            .strip = false, // A copy is stripped below, so the symbols match its code
             .link_libc = true,
+            // So a crash can walk back through the calls that led to it
+            .omit_frame_pointer = false,
         }),
     });
     src_imports(b, noface.root_module, model);
     assert(noface.root_module.link_libc.?); // Asked for, as set above
-    return noface;
+    const strip = b.addRunArtifact(host_tool(b, "strip"));
+    strip.addFileArg(noface.getEmittedBin());
+    const stripped = strip.addOutputFileArg("noface");
+    assert(strip.argv.items.len == 3); // The tool, the program, the copy
+    return .{ .app = stripped, .symbols = noface.getEmittedBin() };
 }
 
 /// The launcher, for `model`: starts the app and always puts the Kindle's own screens
@@ -325,8 +337,10 @@ fn host_tool_module(b: *std.Build, name: []const u8) *std.Build.Module {
 /// `zig build package -Dversion=1.2.3`: everything built, then packed for each shipped
 /// Kindle as zig-out/noface-1.2.3-<model>.zip (see tools/package.zig), the zips a
 /// release carries, with zig-out/KINDLES.md, the table of them its notes open with
-/// (tools/kindles.zig). The app and launcher are laid out for each Kindle, always
-/// with runtime safety checks (Zig's cache reuses what `zig build` made alike).
+/// (tools/kindles.zig), and zig-out/noface-1.2.3-<model>-symbols: the same app with its
+/// symbols and lines kept, to read a crash's addresses in (docs/DEVELOPING.md). The app
+/// and launcher are laid out for each Kindle, always with runtime safety checks (Zig's
+/// cache reuses what `zig build` made alike).
 fn build_package(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
@@ -352,10 +366,12 @@ fn build_package(
         const zip_name = b.fmt("noface-{s}-{s}.zip", .{ version, model });
         const zip = pack_for(b, laid_out, zip_name, b.fmt("{s} for {s}", .{ version, model }));
         package_step.dependOn(&b.addInstallFile(zip, zip_name).step);
+        const symbols_name = b.fmt("noface-{s}-{s}-symbols", .{ version, model });
+        package_step.dependOn(&b.addInstallFile(laid_out.noface.symbols, symbols_name).step);
         table.addArg(model);
     }
     package_step.dependOn(&b.addInstallFile(table_file, "KINDLES.md").step);
-    assert(package_step.dependencies.items.len == shipped.len + 1);
+    assert(package_step.dependencies.items.len == 2 * shipped.len + 1);
 }
 
 /// `app` packed as `zip_name`, its VERSION file saying `version`.
@@ -371,7 +387,7 @@ fn pack_for(
     pack.addArg(version);
     const executable = "755";
     const plain = "644";
-    pack_file(pack, executable, "noface/noface", app.noface.getEmittedBin());
+    pack_file(pack, executable, "noface/noface", app.noface.app);
     pack_file(pack, executable, "noface/noface-launch", app.launcher.getEmittedBin());
     pack_file(pack, executable, "noface/jxr2pgm", app.jxr.getEmittedBin());
     pack_file(pack, plain, "noface/noface-autostart.conf", b.path("device/noface-autostart.conf"));

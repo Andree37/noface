@@ -138,6 +138,21 @@ upstream since the pinned commit, then
 run the gates and `e2e all` on a Kindle: a new Unicode version can fold a few more
 letters, so a dictionary built before it is rebuilt with `build_dictionary` to match.
 
+## Reading a crash
+
+The app on the Kindle carries no symbols, so a crash logs where it came from as
+addresses: `panic: <why>` and then `crash at: 0x… 0x…` in `noface.log`, the innermost
+call first (`src/sys/frames.zig` walks the frame pointers the app is built with).
+The app is built once with its symbols and lines, and the Kindle's copy is that file
+stripped (`tools/strip.zig`), so the code is the same, byte for byte. Each release
+carries that file as `noface-<version>-<model>-symbols`, and `zig build package`
+writes it to `zig-out/`. Read the addresses with LLVM's symbolizer (`brew install
+llvm` on a Mac):
+
+```sh
+llvm-symbolizer --obj=noface-1.2.3-paperwhite_12-symbols --inlining 0x2a1f4 0x3b0c8
+```
+
 ## Packaging and releases
 
 `zig build package -Dversion=1.2.3` builds everything and packs one zip per shipped

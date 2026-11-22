@@ -7,6 +7,7 @@
 //! The power button locks, showing the current book's cover. Waking returns to the
 //! same place. The panel's Kindle button and Wi-Fi settings hand over to the stock UI.
 const std = @import("std");
+const frames = @import("sys/frames.zig");
 const assert = std.debug.assert;
 const scenarios = @import("scenarios.zig");
 const paths = @import("kindle/paths.zig");
@@ -28,7 +29,13 @@ const autostart = @import("kindle/autostart.zig");
 const dict_download = @import("kindle/dict_download.zig");
 
 /// What noface logs goes to noface.log as plain lines, as its other output does.
-pub const std_options: std.Options = .{ .logFn = plain_log };
+pub const std_options: std.Options = .{
+    .logFn = plain_log,
+    // Off, though the app is built with its symbols (build.zig `noface_for`): it walks
+    // its own stack (sys/frames.zig), and with this on the build would carry Zig's
+    // reader of symbols, two hundred kilobytes, and differ from its stripped copy
+    .allow_stack_tracing = false,
+};
 
 fn plain_log(
     comptime level: std.log.Level,
@@ -46,13 +53,24 @@ fn plain_log(
 const reader_arguments_count = 7;
 
 /// A crash during `noface selftest` must say why, though the scenarios hide the app's
-/// own messages while they run.
+/// own messages while they run. And it says where: the app on the Kindle carries no
+/// symbols, so it logs the addresses of the calls that led to the crash, which the
+/// same build with its symbols kept turns into lines (build.zig `noface_for`).
 pub const panic = std.debug.FullPanic(struct {
+    // Assertions: a crash's own handler, where one failing would only hide the crash
     fn crash(msg: []const u8, first: ?usize) noreturn { // usize: Zig's panic handler signature
         scenarios.show_crashes();
-        std.debug.defaultPanic(msg, first);
+        _ = first; // Where Zig's own walk would start: this one starts at the crash
+        var addresses: [crash_frames_max]usize = undefined; // usize: addresses
+        std.debug.print("panic: {s}\ncrash at:", .{msg});
+        for (frames.walk(&addresses)) |address| std.debug.print(" 0x{x}", .{address});
+        std.debug.print("\n", .{});
+        std.process.abort();
     }
 }.crash);
+
+/// The most calls a crash's line lists: the innermost, where the cause is.
+const crash_frames_max = 24;
 
 /// Whether a font of the reader's own can set text: it opens, has letters, and draws
 /// some. Run in a child process by find_own, so a damaged one only ends that.

@@ -180,8 +180,7 @@ pub fn fold(buf: []u8, word: []const u8) ?[]const u8 {
         if (i + len > word.len) return null;
         var cp: u21 = std.unicode.utf8Decode(word[i..][0..len]) catch return null;
         i += len;
-        if (cp == 0x2019) cp = '\'';
-        cp = search.fold(cp);
+        cp = search.fold(cp); // A curly apostrophe plain too, as the search has it
         var out: [4]u8 = undefined;
         const m = std.unicode.utf8Encode(cp, &out) catch return null;
         if (n + m > buf.len) return null;

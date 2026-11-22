@@ -269,3 +269,15 @@ test "a smaller caption a list of pictures links to stays in the text" {
     mark_notes(&paras);
     try std.testing.expect(!paras[1].note_start);
 }
+
+test "a note's mark has a letter at most, counted in any script" {
+    // Which links are marks decides what flows on the page: changing this changes where
+    // saved pages break, so screens/reader/page_store.zig `layout_version` goes up with it
+    try std.testing.expect(is_mark("12"));
+    try std.testing.expect(is_mark("*"));
+    try std.testing.expect(is_mark("a"));
+    try std.testing.expect(is_mark("\u{8a33}")); // 訳: one letter
+    try std.testing.expect(!is_mark("\u{43f}\u{440}\u{438}\u{43c}")); // прим: a word
+    try std.testing.expect(!is_mark("\u{8a33}\u{6ce8}1")); // 訳注1
+    try std.testing.expect(!is_mark("see"));
+}

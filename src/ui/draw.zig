@@ -87,7 +87,11 @@ fn tail_start(font: *Font, s: []const u8, avail: f32, len_max: u32) !u32 {
     var high: u32 = len;
     while (low < high) {
         const middle = low + (high - low) / 2;
-        if (try font.measure(s[middle..]) <= avail) high = middle else low = middle + 1;
+        // Measured from the next character's start: inside one, the text isn't UTF-8
+        // and measures nothing, which would pass for fitting
+        var from = middle;
+        while (from < len and s[from] & 0xc0 == 0x80) from += 1;
+        if (try font.measure(s[from..]) <= avail) high = middle else low = middle + 1;
     }
     var start = low;
     while (start < len and s[start] & 0xc0 == 0x80) start += 1;
@@ -329,4 +333,12 @@ test "a long field shows the end of what's typed" {
     try std.testing.expect(start > 3);
     try std.testing.expect(accented[start] & 0xc0 != 0x80);
     try std.testing.expect(try font.measure(accented[start..]) <= narrow);
+    // Full of accented letters, at every width: what's shown always fits
+    const query = "a\u{e7}\u{e3}o \u{fc}ber Jo\u{e3}o Saramago Proust r\u{e9}sum\u{e9} Jos\u{e9}";
+    const whole = try font.measure(query);
+    var width: f32 = whole;
+    while (width > 0) : (width -= 7) {
+        const from = try tail_start(&font, query, width, query.len);
+        try std.testing.expect(try font.measure(query[from..]) <= width);
+    }
 }

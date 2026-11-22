@@ -150,6 +150,21 @@ pub const all = [_]Scenario{
         }.run,
     },
     .{
+        .name = "with Bluetooth on, turning Wi-Fi off warns first, and a second tap does it",
+        .run = struct {
+            fn run() !void {
+                var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+                defer arena.deinit();
+                const kindle: Kindle = .{ .bluetooth = true, .sets_into = arena.allocator() };
+                const wifi = tap_on(menu_ui.place(.wifi));
+                const once = try play_on(kindle, &.{ pull_down, wait(100), wifi });
+                try expect(!once.airplane_asked_on, "the radio went off without a warning");
+                const twice = try play_on(kindle, &.{ pull_down, wait(100), wifi, wifi });
+                try expect(twice.airplane_asked_on, "the second tap didn't turn the radio off");
+            }
+        }.run,
+    },
+    .{
         .name = "the quick panel's controls each ask the Kindle for what they show: a " ++
             "step of brightness and of warmth, the warmth's schedule, airplane mode, " ++
             "Bluetooth and a sync",

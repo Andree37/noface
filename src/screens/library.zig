@@ -111,20 +111,23 @@ const LibrarySearch = struct {
 
     pub fn on_tap(ls: *LibrarySearch, t: screen.Tap) !screen.Step(SearchEnd) {
         assert(ls.matches.len <= search_sheet.max_rows);
+        // Cancel and the books listed act at once, a letter's accents showing or not
+        if (t.y < keyboard.top) {
+            switch (search_sheet.hit(search_sheet.top, t.x, t.y, @intCast(ls.matches.len))) {
+                .cancel => return .close,
+                .row => |i| {
+                    // A row tapped is one of those listed
+                    assert(i < ls.matches.len);
+                    const entry = &ls.matches[i];
+                    if (!entry.is_local()) return .{ .done = .search };
+                    return .{ .done = .{ .open = entry } };
+                },
+                .field, .none => {}, // To the keyboard: a tap here puts accents away
+            }
+        }
         const edit = ls.typist.tap(ls.q, t.x, t.y, typing.anything);
         if (edit.enter) return .{ .done = .search };
-        if (edit.any()) return .{ .redraw = .changing };
-        return switch (search_sheet.hit(search_sheet.top, t.x, t.y, @intCast(ls.matches.len))) {
-            .cancel => .close,
-            .row => |i| {
-                // A row tapped is one of those listed
-                assert(i < ls.matches.len);
-                const entry = &ls.matches[i];
-                if (!entry.is_local()) return .{ .done = .search };
-                return .{ .done = .{ .open = entry } };
-            },
-            .field, .none => .stay,
-        };
+        return if (edit.any()) .{ .redraw = .changing } else .stay;
     }
 
     /// A key held shows its letter's accents; held anywhere else, it's a tap there.

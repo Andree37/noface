@@ -145,7 +145,7 @@ tap more.go_to_page
 log screen: PageEntry opened
 drawn 300
 still
-tap key.3
+tap key.123.3
 drawn 200
 tap key.search
 log screen: PageEntry done

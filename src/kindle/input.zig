@@ -220,6 +220,7 @@ pub const Input = struct {
     last_touched: u32 = 0,
     grips: bool = true, // Off while controls sit where a thumb usually rests
     edge_zones: bool = true, // Off while handles can sit at the screen edges
+    rolls_over: bool = false, // Typing: each finger's press is a key (`Modes.rolls_over`)
     tick_us: ?u64 = null, // How often `poll` returns .tick, or null for never
     last_tick: u64 = 0,
     drag_slot: ?u32 = null,
@@ -252,6 +253,10 @@ pub const Input = struct {
         grips: bool,
         deferred: bool,
         edge_zones: bool,
+        /// Typing: a press is a key however it ends. A second finger landing types the
+        /// first's at once, as thumbs typing fast overlap, and a press that slides
+        /// still types where it landed, never a swipe.
+        rolls_over: bool = false,
 
         /// A sheet, card or list over the page: every touch counts, even along the
         /// bottom edge where its buttons sit, and taps act as they land (nothing on it
@@ -302,7 +307,16 @@ pub const Input = struct {
     }
 
     pub fn modes(in: *const Input) Modes {
-        return .{ .grips = in.grips, .deferred = in.deferred, .edge_zones = in.edge_zones };
+        const m: Modes = .{
+            .grips = in.grips,
+            .deferred = in.deferred,
+            .edge_zones = in.edge_zones,
+            .rolls_over = in.rolls_over,
+        };
+        // Typing rolls over only while a key waits for its lift to know a hold
+        if (m.rolls_over) assert(m.deferred);
+        assert(m.deferred == in.deferred);
+        return m;
     }
 
     /// Takes touches as `m` says, from now on.
@@ -310,6 +324,7 @@ pub const Input = struct {
         in.grips = m.grips;
         in.deferred = m.deferred;
         in.edge_zones = m.edge_zones;
+        in.rolls_over = m.rolls_over;
         assert(std.meta.eql(in.modes(), m));
     }
 

@@ -109,6 +109,8 @@ pub fn essid_of(answer: []const u8, out: []u8) []const u8 {
         if (end > 0) name = quoted[1..end];
     }
     if (!connected) return out[0..0];
+    // A name not in UTF-8 (an old router's Latin-1) can't be drawn: none, so "On" shows
+    if (!std.unicode.utf8ValidateSlice(name)) return out[0..0];
     var length: u32 = @intCast(@min(name.len, out.len));
     // Never inside a character
     while (length > 0 and length < name.len and name[length] & 0xc0 == 0x80) length -= 1;
@@ -133,6 +135,9 @@ test "the network's name is read from wifid's table while it's connected" {
     try std.testing.expectEqualStrings("Caf\u{e9}", essid_of(accented, &short));
     var shorter: [4]u8 = undefined;
     try std.testing.expectEqualStrings("Caf", essid_of(accented, &shorter));
+    // Not UTF-8: no name, so the tile says On
+    const latin1 = "\tessid = \"Caf\xe9\"\n\tconnected = \"yes\"\n";
+    try std.testing.expectEqualStrings("", essid_of(latin1, &out));
 }
 
 /// Maps wifid's "5/5" to the three arcs of the icon.

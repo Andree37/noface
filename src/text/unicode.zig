@@ -10,6 +10,16 @@ const uucode = @import("uucode");
 
 /// The highest code point Unicode has room for.
 pub const code_point_max = 0x10ffff;
+/// The curly quotes books are set with, and the plain ones a keyboard types for them.
+const plain_quotes = [_]struct { curly: u21, plain: u21 }{
+    .{ .curly = 0x2018, .plain = '\'' }, // ‘
+    .{ .curly = 0x2019, .plain = '\'' }, // ’, the apostrophe in "don’t"
+    .{ .curly = 0x02bc, .plain = '\'' }, // ʼ, the letter apostrophe
+    .{ .curly = 0x201c, .plain = '"' }, // “
+    .{ .curly = 0x201d, .plain = '"' }, // ”
+    .{ .curly = 0x201e, .plain = '"' }, // „
+};
+
 /// The code points below this are ASCII, whose properties Unicode keeps as ASCII has
 /// them: answered without the tables, as most of a book's characters are ASCII (the
 /// tables give the same, as a test checks).
@@ -41,6 +51,10 @@ pub fn character_at(text: []const u8, i: u32) ?Character {
 pub fn fold(cp: u21) u21 {
     assert(cp <= code_point_max);
     if (cp < ascii_end) return std.ascii.toLower(@intCast(cp));
+    // Typographic quotes are the keyboard's plain ones: "don't" finds “don’t”
+    for (plain_quotes) |q| {
+        if (q.curly == cp) return q.plain;
+    }
     const folded = uucode.get(.case_folding_simple, base(uucode.get(.case_folding_simple, cp)));
     // Folding again changes nothing: a key folded once is found by its folded word
     assert(uucode.get(.case_folding_simple, folded) == folded);
@@ -61,6 +75,42 @@ fn base(cp: u21) u21 {
         at = parts[0];
     }
     unreachable; // See `decompositions_max`
+}
+
+/// `cp` with its case folded, as text is compared ignoring case: unlike `fold`, its
+/// accents kept ("Âmes" is "âmes", not "ames").
+pub fn fold_case(cp: u21) u21 {
+    assert(cp <= code_point_max);
+    if (cp < ascii_end) return std.ascii.toLower(@intCast(cp));
+    return uucode.get(.case_folding_simple, cp);
+}
+
+/// How `a` and `b` are ordered ignoring case, character by character in any script; a
+/// byte that starts no character is compared as it is.
+pub fn order_ignoring_case(a: []const u8, b: []const u8) std.math.Order {
+    var i: u32 = 0;
+    var j: u32 = 0;
+    // Bounded by the shorter text: each pass moves both on by a character or a byte
+    while (i < a.len and j < b.len) {
+        const ca = character_at(a, i) orelse Character{ .cp = a[i], .len = 1 };
+        const cb = character_at(b, j) orelse Character{ .cp = b[j], .len = 1 };
+        const order = std.math.order(fold_case(ca.cp), fold_case(cb.cp));
+        if (order != .eq) return order;
+        i += ca.len;
+        j += cb.len;
+    }
+    assert(i >= a.len or j >= b.len);
+    return std.math.order(a.len - i, b.len - j);
+}
+
+/// Whether `a` and `b` are the same text ignoring case, in any script.
+pub fn eql_ignoring_case(a: []const u8, b: []const u8) bool {
+    return order_ignoring_case(a, b) == .eq;
+}
+
+/// Whether `a` comes before `b` ignoring case, in any script: for sorting names.
+pub fn less_ignoring_case(a: []const u8, b: []const u8) bool {
+    return order_ignoring_case(a, b) == .lt;
 }
 
 /// `cp` in lowercase, by Unicode's simple mapping: one code point for one.
@@ -137,6 +187,14 @@ pub fn is_combining(cp: u21) bool {
     return one_of(Category, uucode.get(.general_category, cp), &combining);
 }
 
+/// Whether `cp` is drawn as nothing at all, taking no room: a variation selector (the
+/// one asking ❤ to show as a picture), a zero-width joiner or space, a word joiner.
+pub fn is_invisible(cp: u21) bool {
+    assert(cp <= code_point_max);
+    if (cp < ascii_end) return false;
+    return uucode.get(.is_default_ignorable, cp);
+}
+
 /// Whether `cp` is a space of any width, a line or paragraph break, or a tab, as
 /// Python's `str.isspace` has it.
 pub fn is_space(cp: u21) bool {
@@ -165,7 +223,7 @@ test "words match however their letters are accented or cased" {
         .{ 0xc6, 0xe6 }, // Æ: no base of its own, only lowercased
         .{ 0xd8, 0xf8 }, // Ø
         .{ 0xdf, 0xdf }, // ß: one code point for one
-        .{ '1', '1' }, .{ ' ', ' ' }, .{ 0x2019, 0x2019 }, // ’ is no letter
+        .{ '1', '1' }, .{ ' ', ' ' }, .{ 0x2019, '\'' }, .{ 0x201c, '"' }, // Quotes plain
     };
     for (pairs) |pair| try std.testing.expectEqual(pair[1], fold(pair[0]));
 }
@@ -184,6 +242,10 @@ test "letters are told from digits, marks, spaces and punctuation in any script"
     try std.testing.expect(!is_combining(0x93f)); // A vowel sign that takes room
     try std.testing.expect(is_combining(0x941)); // One that doesn't
     try std.testing.expect(!is_combining('e'));
+    for ([_]u21{ 0xfe0f, 0xe0100, 0x34f, 0x200d, 0x200b }) |cp| {
+        try std.testing.expect(is_invisible(cp));
+    }
+    for ([_]u21{ 'a', ' ', 0x301, 0x2764 }) |cp| try std.testing.expect(!is_invisible(cp));
     for ([_]u21{ ' ', '\t', '\n', 0xa0, 0x3000, 0x2029 }) |cp| try std.testing.expect(is_space(cp));
     for ([_]u21{ 'a', 0x200b, '-' }) |cp| try std.testing.expect(!is_space(cp));
     try std.testing.expectEqual(@as(u21, 0xe9), lowercase(0xc9)); // É
@@ -201,6 +263,15 @@ test "a word folded once folds to itself again, in every script" {
         const folded = fold(cp);
         try std.testing.expectEqual(folded, fold(folded));
     }
+}
+
+test "names compare ignoring case in any script, accents kept" {
+    try std.testing.expect(eql_ignoring_case("Les \u{e2}mes", "les \u{c2}MES"));
+    try std.testing.expect(!eql_ignoring_case("Les \u{e2}mes", "Les ames"));
+    try std.testing.expect(eql_ignoring_case("\u{3a3}\u{3bf}", "\u{3c3}\u{3bf}")); // Σο, σο
+    try std.testing.expect(less_ignoring_case("apple", "Banana"));
+    try std.testing.expect(less_ignoring_case("The", "the end")); // A start before more
+    try std.testing.expect(!less_ignoring_case("b", "B"));
 }
 
 test "the spaces are exactly those Python's str.split() splits on" {

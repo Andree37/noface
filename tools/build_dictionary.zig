@@ -526,7 +526,7 @@ fn fold(scratch: std.mem.Allocator, word: []const u8) ![]const u8 {
     var out: std.ArrayList(u8) = .empty;
     try out.ensureTotalCapacity(scratch, word.len);
     while (characters.nextCodepoint()) |code_point| {
-        const plain: u21 = if (code_point == 0x2019) '\'' else search.fold(code_point);
+        const plain = search.fold(code_point); // A curly apostrophe plain, as noface looks up
         var bytes: [4]u8 = undefined;
         const length = try std.unicode.utf8Encode(plain, &bytes);
         try out.appendSlice(scratch, bytes[0..length]);

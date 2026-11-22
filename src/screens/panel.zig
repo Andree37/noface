@@ -27,19 +27,25 @@ comptime {
 fn refresh_status(a: *app.App, background: display.Backdrop) !void {
     var fresh = lipc.read(a.quick);
     fresh.wifi_paused = paused_by_noface(fresh.airplane);
-    fresh.network_len = @intCast(lipc.network_name(&fresh.network).len);
+    // Asked only while connected: off, or with wifid not answering (its state read
+    // timed out), there's no name, and no second wait for one
+    fresh.network_len = 0;
+    if (fresh.wifi_on and !fresh.airplane) {
+        fresh.network_len = @intCast(lipc.network_name(&fresh.network).len);
+    }
     if (fresh.wifi_paused) assert(fresh.airplane); // A pause is airplane mode, noface's
     if (fresh.same(&a.quick)) return;
     a.quick = fresh;
-    try draw_menu(a, background);
+    try draw_menu(a, background, null);
     assert(fresh.same(&a.quick));
 }
 
-/// Draws the quick panel over `background` and shows it.
-fn draw_menu(a: *app.App, background: display.Backdrop) !void {
+/// Draws the quick panel over `background` and shows it, `notice` in its header if
+/// there's one.
+fn draw_menu(a: *app.App, background: display.Backdrop, notice: ?[]const u8) !void {
     assert(background.holds(&a.display));
     assert(menu.height <= a.display.screen.height);
-    try menu.render(a.ui, a.display.compose(background), &a.quick);
+    try menu.render(a.ui, a.display.compose(background), &a.quick, notice);
     a.display.put_composed();
     try a.display.show_band(0, menu.height);
 }
@@ -177,7 +183,7 @@ fn panel_control(
         .airplane, .wifi, .bluetooth, .sync => try panel_control_shortcut(a, choice),
         .schedule => {
             a.quick.schedule = !a.quick.schedule;
-            try draw_menu(a, background);
+            try draw_menu(a, background, null);
             lipc.set_schedule(a.quick.schedule);
         },
         // Not a control: closing and leaving are the caller's. Every Hit is named, so
@@ -227,6 +233,14 @@ fn panel_control_shortcut(a: *app.App, choice: menu.Hit) !void {
     // Airplane mode and Wi-Fi are one switch shown on two tiles: the other follows
     if (choice == .airplane) try redraw_tile(a, .wifi);
     if (choice == .wifi) try redraw_tile(a, .airplane);
+    if (choice == .airplane or choice == .wifi) {
+        // Airplane mode can take Bluetooth with it: shown as the Kindle has it now
+        const bluetooth = lipc.bluetooth_on() orelse a.quick.bluetooth;
+        if (bluetooth != a.quick.bluetooth) {
+            a.quick.bluetooth = bluetooth;
+            try redraw_tile(a, .bluetooth);
+        }
+    }
     if (choice == .sync and a.quick.airplane and wifi_saver.airplane() == .off) {
         // The tiles said airplane mode on, or Wi-Fi paused: show it on now
         a.quick.airplane = false;
@@ -234,6 +248,18 @@ fn panel_control_shortcut(a: *app.App, choice: menu.Hit) !void {
         try redraw_tile(a, .airplane);
         try redraw_tile(a, .wifi);
     }
+}
+
+/// What the header says when the radio is to go off with Bluetooth on.
+const bluetooth_warning = "Bluetooth goes off too. Tap again to confirm.";
+
+/// Whether tapping `choice` would turn the radio off (Wi-Fi off, airplane mode on)
+/// while Bluetooth is on, which airplane mode cuts too: warned of first.
+fn warns_first(quick: *const quick_model.Quick, choice: menu.Hit) bool {
+    if (choice != .wifi and choice != .airplane) return false;
+    if (!quick.bluetooth) return false;
+    const after = tapped(quick.*, choice);
+    return after.airplane and !quick.airplane;
 }
 
 /// What the panel shows once shortcut `choice` is tapped, from `quick` before it.
@@ -263,6 +289,11 @@ fn tapped(quick: quick_model.Quick, choice: menu.Hit) quick_model.Quick {
         .schedule,
         .kindle,
         => unreachable, // Not a shortcut: `panel_control` runs those
+    }
+    // The radio switched: connected to nothing yet, whatever was read before
+    if (choice == .airplane or choice == .wifi) {
+        next.wifi_on = false;
+        next.network_len = 0;
     }
     // Airplane mode is noface's pause only until the reader touches either tile
     if (choice == .airplane or choice == .wifi) assert(!next.wifi_paused);
@@ -326,6 +357,9 @@ pub const Panel = struct {
     /// a tap touched before that is dropped, so a read while drawing lost the taps of
     /// a reader who saw the panel and went on.
     status_read: bool = false,
+    /// The radio tile (Wi-Fi or airplane mode) tapped to turn the radio off while
+    /// Bluetooth is on: warned of in the header, it goes ahead only when tapped again.
+    confirming: ?menu.Hit = null,
 
     /// Touches as a sheet takes them, and one tick at once, to read the status.
     pub fn setting(p: *const Panel) input_mod.Input.Scope {
@@ -334,7 +368,8 @@ pub const Panel = struct {
     }
 
     pub fn draw(p: *Panel, _: screen.Part) !void {
-        try draw_menu(p.a, p.background);
+        const notice: ?[]const u8 = if (p.confirming != null) bluetooth_warning else null;
+        try draw_menu(p.a, p.background, notice);
     }
 
     pub fn on_tick(p: *Panel) !screen.Step(void) {
@@ -346,6 +381,16 @@ pub const Panel = struct {
 
     pub fn on_tap(p: *Panel, t: screen.Tap) !screen.Step(void) {
         const choice = menu.hit(t.x, t.y);
+        // The radio off cuts Bluetooth too: said first, done on a second tap
+        const warned = p.confirming;
+        p.confirming = null;
+        if (warned != choice and warns_first(&p.a.quick, choice)) {
+            p.confirming = choice;
+            try draw_menu(p.a, p.background, bluetooth_warning);
+            return .stay;
+        }
+        // Any tap puts the warning away
+        if (warned != null) try draw_menu(p.a, p.background, null);
         switch (try panel_control(p.a, p.background, choice, t.x, &p.slider)) {
             .not_one => {},
             .ran => return .stay, // Drew itself
@@ -395,4 +440,14 @@ test "a tap on either radio tile ends noface's pause, and only Wi-Fi's turns the
     try std.testing.expect(tapped(on, .airplane).airplane);
     try std.testing.expect(tapped(on, .wifi).airplane);
     try std.testing.expect(!tapped(tapped(on, .wifi), .wifi).airplane);
+}
+
+test "turning the radio off with Bluetooth on warns first; on, or without Bluetooth, it doesn't" {
+    const listening = quick_model.Quick{ .bluetooth = true };
+    try std.testing.expect(warns_first(&listening, .wifi)); // Wi-Fi off
+    try std.testing.expect(warns_first(&listening, .airplane)); // Airplane mode on
+    const flying = quick_model.Quick{ .bluetooth = true, .airplane = true };
+    try std.testing.expect(!warns_first(&flying, .wifi)); // Wi-Fi back on
+    try std.testing.expect(!warns_first(&quick_model.Quick{}, .wifi)); // No Bluetooth
+    try std.testing.expect(!warns_first(&listening, .bluetooth));
 }

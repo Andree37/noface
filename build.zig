@@ -107,6 +107,7 @@ const unicode_fields = [_][]const u8{
     "case_folding_simple",
     "simple_lowercase_mapping",
     "simple_uppercase_mapping",
+    "is_default_ignorable",
     "decomposition_type",
     "decomposition_mapping",
 };

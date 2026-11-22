@@ -184,16 +184,17 @@ const tile_step_x = screen_width / (tiles_per_row + 1);
 const tile_reach_x = tile_step_x / 2;
 const tile_reach_y = row_step_y / 2;
 const tile_label_below = icon_radius + style.space.roomy;
-/// The widest a word under a tile is: its share of the row, a gap from the next one's.
-const tile_label_width: f32 = @floatFromInt(tile_step_x - style.space.wide);
+/// The widest a word under a tile is: its box, which is redrawn when the tile changes.
+const tile_label_width: f32 = @floatFromInt(2 * tile_box_half_width);
 const first_row_y = style.space.band + style.space.tall; // The first row's middle, under the header
 const row_step_y = style.space.wide + style.space.tall;
 const tile_rows = (tiles.len + tiles_per_row - 1) / tiles_per_row;
 const last_row_y = first_row_y + (tile_rows - 1) * row_step_y;
 const tile_px = 2 * icon_radius + style.space.tiny;
-/// A toggle's box, redrawn alone: its icon's tile above its middle, and this far either
-/// side and below, round its word.
-const tile_box_half_width = style.space.tall;
+/// A toggle's box, redrawn alone: its icon's tile above its middle, and either side its
+/// share of the row less a gap from the next one's, round its word, so the longest
+/// word under it (a network's name) is cleared and drawn whole.
+const tile_box_half_width = (tile_step_x - style.space.wide) / 2;
 const tile_box_below = style.space.tall;
 
 /// Half the widest level text, and more than the knob: what a knob's move redraws round it.
@@ -215,8 +216,11 @@ comptime {
     assert(tile_label_below < tile_reach_y);
     assert(tiles_per_row * tile_step_x <= style.screen_width);
     assert(last_row_y + tile_reach_y <= brightness_row.y - row_reach);
-    // A toggle's box, redrawn alone, reaches no slider's band
+    // A toggle's box, redrawn alone, reaches no slider's band, holds its icon, and is
+    // apart from its neighbours' boxes
     assert(last_row_y + tile_box_below <= brightness_row.y - band_above);
+    assert(tile_px <= 2 * tile_box_half_width);
+    assert(2 * tile_box_half_width < tile_step_x);
     // Sliders, the schedule and the chevron, top to bottom, inside the panel
     assert(slider_left < slider_right);
     assert(slider_right <= style.screen_width);
@@ -500,13 +504,22 @@ fn draw_tile(fonts: Fonts, page: Page, i: u32, quick: *const Quick) !void {
     try draw.clipped(fonts.small, page, x - width / 2, c.y + tile_label_below, label, width);
 }
 
-pub fn render(fonts: Fonts, page: Page, quick: *const quick_model.Quick) !void {
+/// The panel, its header's second line `notice` in place of the clock when there's one
+/// (a warning a tap waits on).
+pub fn render(
+    fonts: Fonts,
+    page: Page,
+    quick: *const quick_model.Quick,
+    notice: ?[]const u8,
+) !void {
     const w: f32 = @floatFromInt(page.width);
     page.fill_rect(0, 0, page.width, height, 0xff);
     page.fill_rect(0, height - edge, page.width, edge, 0x00);
 
     try fonts.title.draw(page, header_inset, header_baseline, "Kindle Paperwhite");
-    try fonts.small.draw(page, header_inset, clock_baseline, quick.clock_text());
+    const header_width: f32 = @floatFromInt(page.width - 2 * header_inset);
+    const line = notice orelse quick.clock_text();
+    try draw.clipped(fonts.small, page, header_inset, clock_baseline, line, header_width);
     const status_right = w - header_inset;
     const centre = status_centre;
     const baseline = header_baseline;

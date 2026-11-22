@@ -6,6 +6,7 @@
 //! Built for Linux: GitHub runs it on every change, and on the Kindle it's the
 //! self-test (`noface-scenarios`), done in seconds.
 const std = @import("std");
+const crash = @import("sys/crash.zig");
 const assert = std.debug.assert;
 const folders = @import("sys/dir.zig");
 const hyphen = @import("layout/hyphen.zig");
@@ -113,6 +114,11 @@ fn selftest_files() bool {
         std.debug.print("{s}  font {s}\n", .{ if (usable) "ok  " else "FAIL", name });
         ok = ok and usable;
     }
+    // A crash's report names the build, to read it in that build's symbols
+    var id_buffer: [crash.build_id_max]u8 = undefined;
+    const id = crash.build_id(&id_buffer);
+    std.debug.print("{s}  build ID, {d} bytes\n", .{ if (id.len > 0) "ok  " else "FAIL", id.len });
+    ok = ok and id.len > 0;
     const dictionaries = [_][]const u8{ "dict-en", "dict-pt" };
     comptime assert(dictionaries.len == @typeInfo(hyphen.Lang)
         .@"enum".field_names.len);

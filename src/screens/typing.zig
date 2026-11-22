@@ -5,13 +5,19 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const keyboard = @import("../ui/keyboard.zig");
+const unicode = @import("../text/unicode.zig");
 const Query = @import("../model/search.zig").Query;
 const input_mod = @import("../kindle/input.zig");
 
 /// How a typing screen takes touches: every touch counts, along the bottom edge too
 /// where the keys are, and a key acts as the finger lifts, so one held shows its
 /// accents instead; held, a key without any types as if tapped.
-pub const touches = input_mod.Input.Modes{ .grips = false, .deferred = true, .edge_zones = true };
+pub const touches = input_mod.Input.Modes{
+    .grips = false,
+    .deferred = true,
+    .edge_zones = true,
+    .rolls_over = true,
+};
 
 /// What a key did: the text changed (its field to draw again), the keyboard changed
 /// (its keys to draw again), or Enter, for the screen to act on.
@@ -66,11 +72,9 @@ pub const Typist = struct {
         var edit: Edit = .{};
         switch (key) {
             .char => |c| {
+                const shift_before = t.keys.shift;
                 edit.text = t.type_char(text, c, accepts);
-                if (edit.text and t.keys.shift == .once) {
-                    t.keys.shift = .off; // A capital typed: the next letter is small
-                    edit.keys = true;
-                }
+                edit.keys = t.keys.shift != shift_before;
             },
             .space => edit.text = accepts(' ') and text.push(' '),
             .backspace => edit.text = text.pop(),
@@ -108,12 +112,17 @@ pub const Typist = struct {
         return t.tap(text, x, y, accepts);
     }
 
-    /// Types `c`, a capital while shifted, if `accepts` takes it and it fits.
-    fn type_char(t: *const Typist, text: *Query, c: u21, accepts: *const fn (u21) bool) bool {
+    /// Types `c`, a capital while shifted, if `accepts` takes it and it fits. A letter
+    /// typed uses up shift held for one letter, accented or not; a digit or a symbol
+    /// leaves it for the letter after.
+    fn type_char(t: *Typist, text: *Query, c: u21, accepts: *const fn (u21) bool) bool {
         assert(text.len <= text.buf.len);
         const cp = keyboard.typed(c, t.keys.shift);
         if (!accepts(cp)) return false;
-        return text.push(cp);
+        if (!text.push(cp)) return false;
+        if (t.keys.shift == .once and unicode.is_letter(c)) t.keys.shift = .off;
+        assert(text.len > 0); // Typed: there's something
+        return true;
     }
 };
 
@@ -158,6 +167,25 @@ test "letters, capitals once or locked, symbols and accents type as on the Kindl
     t = .{};
     _ = t.hold(&text, p(.{ .char = 't' }).x, p(.{ .char = 't' }).y, anything);
     try std.testing.expectEqualStrings("Aat", text.slice());
+}
+
+test "shift for one letter is used up by an accented capital too, and kept past a digit" {
+    var text: Query = .{};
+    var t: Typist = .{};
+    const p = keyboard.place;
+    _ = t.tap(&text, p(.shift).x, p(.shift).y, anything);
+    const e = p(.{ .char = 'e' });
+    _ = t.hold(&text, e.x, e.y, anything);
+    const acute = keyboard.accent_place(t.keys.accents.?, 1);
+    _ = t.tap(&text, acute.x, acute.y, anything); // É
+    _ = t.tap(&text, p(.{ .char = 'c' }).x, p(.{ .char = 'c' }).y, anything);
+    try std.testing.expectEqualStrings("\u{c9}c", text.slice()); // Éc, not ÉC
+    try std.testing.expectEqual(keyboard.Shift.off, t.keys.shift);
+    // Shift, then a digit: the next letter is still a capital
+    _ = t.tap(&text, p(.shift).x, p(.shift).y, anything);
+    _ = t.tap(&text, p(.{ .layer = .symbols }).x, p(.{ .layer = .symbols }).y, anything);
+    _ = t.tap(&text, p(.{ .char = '2' }).x, p(.{ .char = '2' }).y, anything);
+    try std.testing.expectEqual(keyboard.Shift.once, t.keys.shift);
 }
 
 test "a page number takes digits only, and starts on them" {

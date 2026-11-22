@@ -48,7 +48,8 @@ pub fn on_panic(msg: []const u8, first: ?usize) noreturn { // usize: an address
     // The call that failed, then those that led to it, from the caller of the one
     // Zig named on: the frames before it are the panic's own machinery
     if (first) |site| hex(call_site(site));
-    var walk = Walk.from(current_frame());
+    const start = current_frame();
+    var walk = Walk.from(start, start); // Every frame left is further up than this one
     if (first) |site| walk.skip_through(site);
     walk.say_rest();
     std.process.abort();
@@ -69,7 +70,9 @@ pub fn on_signal(addr: ?usize, name: []const u8, registers: anytype) noreturn { 
     if (registers) |r| {
         // The instruction that faulted, exactly, then the calls that led to it
         hex(r.getPc());
-        var walk = Walk.from(r.getFp());
+        // No frame is below the stack pointer: one there is damaged, not to be read
+        const sp: usize = if (builtin.cpu.arch == .arm) r.r[13] else 0; // usize: an address
+        var walk = Walk.from(r.getFp(), sp);
         walk.say_rest();
     }
     std.process.abort();
@@ -91,7 +94,7 @@ fn again() bool {
 fn start_trace() void {
     say("crash in build ");
     var id_buffer: [build_id_bytes_max]u8 = undefined;
-    const id = own_build_id(&id_buffer);
+    const id = build_id(&id_buffer);
     if (id.len == 0) say("(unknown)");
     for (id) |byte| {
         var two: [2]u8 = undefined;
@@ -110,10 +113,12 @@ fn call_site(return_address: usize) usize { // usize: an address
 /// A walk up the stack, frame by frame, from a frame pointer.
 const Walk = struct {
     frame: usize, // usize: an address
+    /// The lowest a frame can be: the stack pointer, or the walk's own start.
+    low: usize, // usize: an address
     steps: u32 = 0,
 
-    fn from(frame: usize) Walk { // usize: an address
-        const walk: Walk = .{ .frame = frame };
+    fn from(frame: usize, low: usize) Walk { // usize: addresses
+        const walk: Walk = .{ .frame = frame, .low = low };
         assert(walk.steps == 0);
         return walk;
     }
@@ -125,7 +130,8 @@ const Walk = struct {
         assert(w.steps <= frames_max);
         if (w.steps == frames_max) return null;
         const at = w.frame;
-        if (at == 0 or at % @alignOf(usize) != 0 or at > stack_top) return null; // usize: size
+        if (at == 0 or at % @alignOf(usize) != 0) return null; // usize: an address's size
+        if (at < w.low or at > stack_top) return null; // Outside the stack: damaged
         // The caller's frame, then where it returns to
         const pair: *const [2]usize = @ptrFromInt(at); // usize: two addresses
         const caller = pair[0];
@@ -195,14 +201,17 @@ const note_type_build_id = 3; // NT_GNU_BUILD_ID
 const program_type_note = 4; // PT_NOTE
 
 /// This program's build ID, from its program headers as the kernel mapped them, into
-/// `out`: empty when it has none or this isn't Linux.
-fn own_build_id(out: []u8) []const u8 {
+/// `out`: empty when it has none or this isn't Linux. `noface selftest` checks there's
+/// one, as a crash can't be read without it.
+pub fn build_id(out: []u8) []const u8 {
     assert(out.len > 0);
     if (builtin.os.tag != .linux) return out[0..0];
     // usize: the program's width
     const Phdr = if (@sizeOf(usize) == 4) std.elf.Elf32.Phdr else std.elf.Elf64.Phdr;
-    const headers_at = std.os.linux.getauxval(std.elf.AT.PHDR);
-    const count = std.os.linux.getauxval(std.elf.AT.PHNUM);
+    // Through the C library when it's linked in, as it starts the program and keeps the
+    // kernel's word: Zig's own getauxval knows only what Zig's own start was told
+    const headers_at = auxiliary(std.elf.AT.PHDR);
+    const count = auxiliary(std.elf.AT.PHNUM);
     if (headers_at == 0) return out[0..0];
     assert(headers_at % @alignOf(Phdr) == 0); // Where the kernel says they are
     const headers: [*]const Phdr = @ptrFromInt(headers_at);
@@ -214,6 +223,15 @@ fn own_build_id(out: []u8) []const u8 {
     }
     return out[0..0];
 }
+
+/// The kernel's auxiliary value `kind` for this program.
+fn auxiliary(kind: u32) usize { // usize: an address, or a count, as the kernel gives it
+    if (builtin.link_libc) return std.c.getauxval(kind);
+    return std.os.linux.getauxval(kind);
+}
+
+/// The longest build ID read, for a caller to hold one.
+pub const build_id_max = build_id_bytes_max;
 
 /// The build ID among the ELF notes in `notes`, into `out`, or null when there's none.
 fn build_id_in(notes: []const u8, out: []u8) ?[]const u8 {
@@ -251,23 +269,26 @@ test "a walk follows frames up the stack, and stops at one that doesn't look lik
     stack[3] = 0x2002;
     stack[4] = base; // Down the stack: damaged
     stack[5] = 0x3003;
-    var walk = Walk.from(base);
+    var walk = Walk.from(base, base);
     try std.testing.expectEqual(@as(?usize, 0x1001), walk.next());
     try std.testing.expectEqual(@as(?usize, 0x2002), walk.next());
     try std.testing.expectEqual(@as(?usize, 0x3003), walk.next()); // Its own return still counts
     try std.testing.expectEqual(@as(?usize, null), walk.next());
     // Skipping to a call site lands after it; one that isn't there leaves the walk whole
-    var skipping = Walk.from(base);
+    var skipping = Walk.from(base, base);
     skipping.skip_through(0x1001);
     try std.testing.expectEqual(@as(?usize, 0x2002), skipping.next());
-    var missing = Walk.from(base);
+    var missing = Walk.from(base, base);
     missing.skip_through(0x9999);
     try std.testing.expectEqual(@as(?usize, 0x1001), missing.next());
     // An unaligned frame pointer, or none, ends a walk at once
-    var unaligned = Walk.from(base + 1);
+    var unaligned = Walk.from(base + 1, base);
     try std.testing.expectEqual(@as(?usize, null), unaligned.next());
-    var none = Walk.from(0);
+    var none = Walk.from(0, 0);
     try std.testing.expectEqual(@as(?usize, null), none.next());
+    // A frame below the lowest a frame can be (a wild pointer) is never read
+    var below = Walk.from(base, base + 2 * word);
+    try std.testing.expectEqual(@as(?usize, null), below.next());
 }
 
 test "a call site is the instruction before the return" {

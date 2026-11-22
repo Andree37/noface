@@ -147,9 +147,9 @@ fn by_series(a: Entry, b: Entry) bool {
     const sb = b.series orelse return true;
     const key_a = series_key(sa);
     const key_b = series_key(sb);
-    if (!std.ascii.eqlIgnoreCase(key_a, key_b)) {
+    if (!unicode.eql_ignoring_case(key_a, key_b)) {
         if (sa.last != sb.last) return sa.last > sb.last;
-        return std.ascii.lessThanIgnoreCase(key_a, key_b);
+        return unicode.less_ignoring_case(key_a, key_b);
     }
     return by_title(a, b); // One series: in its order
 }
@@ -233,13 +233,13 @@ pub fn title_key(e: Entry) []const u8 {
 fn by_title(a: Entry, b: Entry) bool {
     const ka = title_key(a);
     const kb = title_key(b);
-    if (!std.ascii.eqlIgnoreCase(ka, kb)) return std.ascii.lessThanIgnoreCase(ka, kb);
+    if (!unicode.eql_ignoring_case(ka, kb)) return unicode.less_ignoring_case(ka, kb);
     // The books outside a series first, then the series in its order
     if (a.series) |x| {
         const y = b.series orelse return false;
         if (series_place(x) != series_place(y)) return series_place(x) < series_place(y);
     } else if (b.series != null) return true;
-    return std.ascii.lessThanIgnoreCase(a.title, b.title);
+    return unicode.less_ignoring_case(a.title, b.title);
 }
 
 /// A book's series: its name, never empty, and the book's place in it, 2 for "#2".
@@ -341,7 +341,7 @@ fn named(name_part: []const u8, number_part: []const u8, sureness: Sureness) ?Se
         while (words.next()) |w| {
             const bare = std.mem.trimEnd(u8, w, ".,");
             const is_bad = for (not_series) |bad| {
-                if (std.ascii.eqlIgnoreCase(bare, bad)) break true;
+                if (unicode.eql_ignoring_case(bare, bad)) break true;
             } else false;
             if (!is_bad) continue;
             const after = words.peek() orelse return null; // The last word
@@ -360,11 +360,11 @@ fn named(name_part: []const u8, number_part: []const u8, sureness: Sureness) ?Se
 pub fn same_series(a: []const u8, b: []const u8) bool {
     assert(a.len > 0); // A series always has a name
     assert(b.len > 0);
-    return std.ascii.eqlIgnoreCase(without_the(a), without_the(b));
+    return unicode.eql_ignoring_case(without_the(a), without_the(b));
 }
 
 pub fn without_the(name: []const u8) []const u8 {
-    const has_the = name.len > 4 and std.ascii.eqlIgnoreCase(name[0..4], "the ");
+    const has_the = name.len > 4 and unicode.eql_ignoring_case(name[0..4], "the ");
     const bare = if (has_the) name[4..] else name;
     assert(bare.len > 0 or name.len == 0);
     return bare;
@@ -399,12 +399,12 @@ pub fn surname(author: []const u8) []const u8 {
 fn by_author(a: Entry, b: Entry) bool {
     // An author's series in order, among their other books. First, as a sort compares
     // books of one author most: their surnames needn't be found
-    if (std.ascii.eqlIgnoreCase(a.author, b.author)) return by_title(a, b);
+    if (unicode.eql_ignoring_case(a.author, b.author)) return by_title(a, b);
     const sa = a.surname;
     const sb = b.surname;
     if ((sa.len == 0) != (sb.len == 0)) return sb.len == 0;
-    if (!std.ascii.eqlIgnoreCase(sa, sb)) return std.ascii.lessThanIgnoreCase(sa, sb);
-    return std.ascii.lessThanIgnoreCase(a.author, b.author);
+    if (!unicode.eql_ignoring_case(sa, sb)) return unicode.less_ignoring_case(sa, sb);
+    return unicode.less_ignoring_case(a.author, b.author);
 }
 
 pub fn sort(entries: []Entry, order: Order) void {
@@ -461,7 +461,7 @@ fn series_last_set(comptime T: type, items: []T, books: anytype) void {
     const Books = @TypeOf(books);
     const by_name = struct {
         fn less(b: Books, x: T, y: T) bool {
-            return std.ascii.lessThanIgnoreCase(group_key(b.entry(x)), group_key(b.entry(y)));
+            return unicode.less_ignoring_case(group_key(b.entry(x)), group_key(b.entry(y)));
         }
     }.less;
     std.mem.sort(T, items, books, by_name);
@@ -470,7 +470,7 @@ fn series_last_set(comptime T: type, items: []T, books: anytype) void {
     for (1..items.len + 1) |i| {
         const first = books.entry(items[run_first]);
         const ends = i == items.len or
-            !std.ascii.eqlIgnoreCase(group_key(books.entry(items[i])), group_key(first));
+            !unicode.eql_ignoring_case(group_key(books.entry(items[i])), group_key(first));
         if (!ends) continue;
         defer run_first = @intCast(i);
         // The books outside any series are one run, with nothing to set
@@ -1066,4 +1066,11 @@ test "series order gives each book its series' latest reading, as comparing all 
         }
         try std.testing.expectEqual(latest, s.last);
     }
+}
+
+test "a series is the same whatever the case of its accented letters" {
+    // "les âmes" typed is saved as "Les Âmes": the series the books' own say "Les âmes"
+    try std.testing.expect(same_series("Les \u{e2}mes", "Les \u{c2}mes"));
+    try std.testing.expect(same_series("The Hobbit", "the hobbit"));
+    try std.testing.expect(!same_series("Les \u{e2}mes", "Les ames"));
 }

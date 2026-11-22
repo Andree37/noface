@@ -49,6 +49,12 @@ pub const Query = struct {
     }
 };
 
+test "plain quotes typed find the curly ones books are set with" {
+    try std.testing.expect(contains("Ender\u{2019}s Game", "ender's"));
+    try std.testing.expect(contains("she said \u{201c}no\u{201d}", "\"no\""));
+    try std.testing.expect(!contains("Enders Game", "ender's"));
+}
+
 test "what's typed is added and taken back a whole character at a time" {
     var q: Query = .{};
     try std.testing.expect(q.push('A'));

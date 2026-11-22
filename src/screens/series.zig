@@ -2,6 +2,7 @@
 //! series, or type a new one, or none; then the book's number in it. Saved in the
 //! data folder's "series" file, which wins over what file names say.
 const std = @import("std");
+const unicode = @import("../text/unicode.zig");
 const assert = std.debug.assert;
 const catalog = @import("../model/catalog.zig");
 const overrides = @import("../model/series_override.zig");
@@ -129,9 +130,11 @@ const NameEntry = struct {
 
     pub fn on_tap(e: *NameEntry, t: screen.Tap) !screen.Step([]const u8) {
         assert(e.name.len <= e.name.buf.len);
-        const edit = e.typist.tap(&e.name, t.x, t.y, typing.anything);
-        if (edit.any()) return e.edited(edit);
-        return if (search_sheet.hit(sheet_top, t.x, t.y, 0) == .cancel) .close else .stay;
+        // Cancel acts at once, a letter's accents showing or not
+        if (t.y < keyboard.top and search_sheet.hit(sheet_top, t.x, t.y, 0) == .cancel) {
+            return .close;
+        }
+        return e.edited(e.typist.tap(&e.name, t.x, t.y, typing.anything));
     }
 
     /// A key held shows its letter's accents; held anywhere else, it's a tap there.
@@ -152,7 +155,7 @@ const NameEntry = struct {
 };
 
 fn by_name(_: void, x: []const u8, y: []const u8) bool {
-    return std.ascii.lessThanIgnoreCase(x, y);
+    return unicode.less_ignoring_case(x, y);
 }
 
 /// Starts setting `e`'s series by hand, and then, in the series picked, any other

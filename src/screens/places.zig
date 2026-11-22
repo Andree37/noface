@@ -150,10 +150,21 @@ pub const all = places: {
         const name = std.fmt.comptimePrint("library.found.{d}", .{r});
         list = list ++ .{Place{ .name = name, .point = search_sheet.place_row(r) }};
     }
-    for ("1234567890qwertyuiopasdfghjklzxcvbnm") |char| {
+    // The letters as the keyboard shows them first; the digits on its 123 keys
+    // ("key.123" to show them, "key.abc" back), as Go to page shows them first
+    for ("qwertyuiopasdfghjklzxcvbnm") |char| {
         const point = keyboard.place(.{ .char = char });
         list = list ++ .{Place{ .name = "key." ++ .{char}, .point = point }};
     }
+    for ("1234567890") |char| {
+        const point = keyboard.place(.{ .char = char });
+        list = list ++ .{Place{ .name = "key.123." ++ .{char}, .point = point }};
+    }
+    list = list ++ .{
+        Place{ .name = "key.123", .point = keyboard.place(.{ .layer = .symbols }) },
+        Place{ .name = "key.abc", .point = keyboard.place(.{ .layer = .letters }) },
+        Place{ .name = "key.shift", .point = keyboard.place(.shift) },
+    };
     // A card's rows, for cards of every length: "card.<rows>.<row>"
     for (1..card.rows_longest + 1) |rows| for (0..rows) |i| {
         const name = std.fmt.comptimePrint("card.{d}.{d}", .{ rows, i });

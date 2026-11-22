@@ -20,7 +20,9 @@ const magic = "NFPG";
 /// Raised by hand when the layout breaks pages differently, so saved breaks are laid
 /// out again; the scenario that checks the recorded page breaks says when
 /// (src/testdata/recorded/<model>/breaks.txt).
-const layout_version: u64 = 3;
+/// 4: a note's mark is told by its letters in any script (model/notes.zig `is_mark`),
+/// so a book with marks in Cyrillic or Japanese flows otherwise.
+const layout_version: u64 = 4;
 
 /// Everything the breaks depend on.
 pub fn key(a: *const app.App, book_bytes: u64) u64 {

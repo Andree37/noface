@@ -5,7 +5,7 @@
 //! Tapping the top of a page opens the toolbar. Dragging down from the top opens
 //! the quick panel, in a book or in the library.
 //! The power button locks, showing the current book's cover. Waking returns to the
-//! same place. The panel's Kindle button and Wi-Fi settings hand over to the stock UI.
+//! same place. The panel's Kindle button, its one way out, hands over to the stock UI.
 const std = @import("std");
 const crash = @import("sys/crash.zig");
 const assert = std.debug.assert;

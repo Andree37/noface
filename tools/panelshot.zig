@@ -191,7 +191,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     if (std.mem.eql(u8, mode, "toolbar")) return render_toolbar(&shot);
 
     quick.brightness = 11;
-    try menu.render(shot.fonts, shot.page, &quick);
+    try menu.render(shot.fonts, shot.page, &quick, null);
     write_image(pixels[0 .. screen_width * menu.height], screen_width, menu.height);
 }
 

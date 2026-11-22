@@ -128,7 +128,7 @@ pub fn finger_up(in: *Input, up_us: u64) ?Action {
 pub fn lifted(in: *Input, down: Press, up_us: u64) ?Action {
     assert(down.slot == in.slot); // The finger that lifted
     const point = screen_point(in, in.slot);
-    if (down.moved) {
+    if (down.moved and !in.rolls_over) {
         const swipe = touch_zones.swipe_direction(down.x, down.y, point.x, point.y);
         if (swipe) |direction| {
             assert(direction == 1 or direction == -1);
@@ -177,7 +177,12 @@ pub fn touched_down(in: *Input, slot: u32) ?Action {
     if (ignores(in, x, y)) return null;
     const watch = in.deferred or (in.edge_zones and y < touch_zones.top_zone);
     if (!watch) return .{ .tap = .{ .x = x, .y = y, .us = in.down_us } };
+    const earlier = in.top;
     in.top = .{ .slot = slot, .x = x, .y = y, .us = in.down_us };
+    // Typing with two thumbs: the first finger's key, still down, is typed now
+    if (in.rolls_over) if (earlier) |first| if (first.slot != slot) {
+        return .{ .tap = .{ .x = first.x, .y = first.y, .us = first.us } };
+    };
     return null;
 }
 
@@ -324,4 +329,26 @@ test "a second finger taps while a thumb rests" {
     var in = test_input();
     _ = press(&in, 0, 150, 1600, true); // Thumb, ignored
     try std.testing.expectEqual(@as(i32, 800), press(&in, 1, 800, 800, true).?.tap.x);
+}
+
+test "typing with two thumbs types both keys, in the order they landed" {
+    var in = test_input();
+    in.take(.{ .grips = false, .deferred = true, .edge_zones = true, .rolls_over = true });
+    // Left thumb on a key, the right lands on another before the left lifts
+    try std.testing.expect(press(&in, 0, 300, 1400, true) == null);
+    const first = press(&in, 1, 900, 1400, true).?;
+    try std.testing.expectEqual(@as(i32, 300), first.tap.x); // The first key, typed now
+    try std.testing.expect(lift(&in, 0) == null); // Its lift: typed already
+    try std.testing.expectEqual(@as(i32, 900), lift(&in, 1).?.tap.x);
+    // A key pressed and slid off sideways still types where it landed
+    try std.testing.expect(press(&in, 0, 300, 1400, true) == null);
+    _ = press(&in, 0, 600, 1400, false);
+    try std.testing.expectEqual(@as(i32, 300), lift(&in, 0).?.tap.x);
+}
+
+test "on a book's pages a second finger doesn't turn the first into a tap" {
+    var in = test_input();
+    in.deferred = true; // As a book's pages take touches: no rolling over
+    try std.testing.expect(press(&in, 0, 300, 900, true) == null);
+    try std.testing.expect(press(&in, 1, 900, 900, true) == null);
 }

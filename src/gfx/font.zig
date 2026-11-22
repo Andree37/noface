@@ -208,7 +208,7 @@ pub const Font = struct {
         var previous: ?Metrics = null;
         var it = (std.unicode.Utf8View.init(word) catch return 0).iterator();
         while (it.nextCodepoint()) |code_point| {
-            if (is_combining(code_point)) continue;
+            if (is_combining(code_point) or unicode.is_invisible(code_point)) continue;
             const g = f.metrics(cache, code_point);
             if (previous) |p| width += f.kern(p, g);
             width += g.advance;
@@ -229,7 +229,7 @@ pub const Font = struct {
         var last: u32 = 0;
         var it = (std.unicode.Utf8View.init(word) catch return @intCast(word.len)).iterator();
         while (it.nextCodepoint()) |code_point| {
-            if (is_combining(code_point)) {
+            if (is_combining(code_point) or unicode.is_invisible(code_point)) {
                 last = @intCast(it.i);
                 continue;
             }
@@ -259,8 +259,11 @@ pub const Font = struct {
         var base_x = x;
         while (it.nextCodepoint()) |code_point| {
             assert(code_point <= code_point_max);
+            if (unicode.is_invisible(code_point)) continue; // Nothing to see, no room
             const g = cache.drawn(f.reference(), code_point);
             if (is_combining(code_point)) {
+                // A mark no font has is left out, not a missing glyph's box over its letter
+                if (g.index == 0) continue;
                 // Centred over the letter it belongs to.
                 const letter = if (previous) |p| p.advance else 0;
                 const mark = @as(f32, @floatFromInt(g.width));

@@ -119,12 +119,16 @@ fn read_chapter(
     };
 }
 
-/// Joins a relative href onto a folder, resolving "..", and drops any "#fragment".
+/// Joins an href, as an attribute has it, onto a folder, resolving "..", and drops any
+/// "#fragment". Its entities are decoded first ("Q&amp;A.xhtml" is "Q&A.xhtml"), and
+/// one starting with "/" is from the archive's root, whatever the folder.
 fn resolve(alloc: std.mem.Allocator, dir: []const u8, href: []const u8) ![]const u8 {
-    const plain = href[0 .. std.mem.indexOfScalar(u8, href, '#') orelse href.len];
+    const decoded = try decode_attribute(alloc, href);
+    const plain = decoded[0 .. std.mem.indexOfScalar(u8, decoded, '#') orelse decoded.len];
     assert(std.mem.indexOfScalar(u8, plain, '#') == null);
     var parts: std.ArrayList([]const u8) = .empty;
-    var dirs = std.mem.tokenizeScalar(u8, dir, '/');
+    const from_root = plain.len > 0 and plain[0] == '/';
+    var dirs = std.mem.tokenizeScalar(u8, if (from_root) "" else dir, '/');
     while (dirs.next()) |d| try parts.append(alloc, d);
     var it = std.mem.tokenizeScalar(u8, plain, '/');
     while (it.next()) |part| {
@@ -137,6 +141,15 @@ fn resolve(alloc: std.mem.Allocator, dir: []const u8, href: []const u8) ![]const
     // Every part is a whole, non-empty piece of `dir` or `href`
     assert(parts.items.len <= dir.len + plain.len);
     return std.mem.join(alloc, "/", parts.items);
+}
+
+/// An attribute's value with its entities decoded, as XML has it.
+fn decode_attribute(alloc: std.mem.Allocator, value: []const u8) ![]const u8 {
+    if (std.mem.indexOfScalar(u8, value, '&') == null) return value; // Nothing to decode
+    var out: std.ArrayList(u8) = .empty;
+    try xml.decode(&out, alloc, value);
+    assert(out.items.len <= value.len); // An entity is longer than its character
+    return out.items;
 }
 
 /// "%20" and friends, as hrefs are URL-encoded.
@@ -162,8 +175,11 @@ fn unescape(alloc: std.mem.Allocator, text: []const u8) ![]const u8 {
     return out.items;
 }
 
-/// The text up to where `closing` closes, decoded and trimmed: a title, say.
-fn text_of(alloc: std.mem.Allocator, t: *xml.Tokenizer, closing: []const u8) ![]const u8 {
+/// The text inside `tag`, just read from `t`, up to where it closes, decoded and
+/// trimmed: a title, say. None for a tag that closes itself ("<dc:creator/>").
+fn text_of(alloc: std.mem.Allocator, t: *xml.Tokenizer, tag: *const xml.Tag) ![]const u8 {
+    if (tag.self_closing) return "";
+    const closing = tag.name;
     assert(closing.len > 0);
     var out: std.ArrayList(u8) = .empty;
     while (t.next()) |tok| switch (tok) {
@@ -186,7 +202,7 @@ fn read_package(alloc: std.mem.Allocator, files: []const zip.Entry) !Package {
             break;
         }
     }
-    const opf_path = path orelse return error.NoPackage;
+    const opf_path = try decode_attribute(alloc, path orelse return error.NoPackage);
     const opf = try read_file(alloc, files, opf_path);
     const dir = std.fs.path.dirnamePosix(opf_path) orelse "";
     assert(dir.len <= opf_path.len);
@@ -198,10 +214,10 @@ fn read_package(alloc: std.mem.Allocator, files: []const zip.Entry) !Package {
         if (tok != .open) continue;
         const o = tok.open;
         if (std.mem.eql(u8, o.name, "title") and p.title.len == 0) {
-            p.title = try text_of(alloc, &t, "title");
+            p.title = try text_of(alloc, &t, &o);
         }
         if (std.mem.eql(u8, o.name, "creator") and p.author.len == 0) {
-            p.author = try text_of(alloc, &t, "creator");
+            p.author = try text_of(alloc, &t, &o);
         }
         if (std.mem.eql(u8, o.name, "item")) try items.append(alloc, .{
             .id = xml.attribute(o.attributes, "id") orelse "",
@@ -325,7 +341,8 @@ const Builder = struct {
     italic: u32 = 0,
     run_start: ?u32 = null, // Where the current bold or italic stretch began
     // A link not yet closed: where its text starts, and where it goes
-    link: ?struct { start: u32, target: []const u8 } = null,
+    /// A link started: in which paragraph (the one being built), where, and to what.
+    link: ?struct { paragraph: u32, start: u32, target: []const u8 } = null,
     section: u32 = 0,
     file: []const u8 = "",
     dir: []const u8 = "", // The chapter file's folder, for the paths it refers to
@@ -523,9 +540,12 @@ const Builder = struct {
         }
         if (xml.attribute(tag.attributes, "id")) |id| try b.note_anchor(id);
         if (is_block(tag.name)) try b.start_block(tag.name);
-        if (eql_any(tag.name, &bold_names)) try b.nest_style(&b.bold, .in);
-        if (eql_any(tag.name, &italic_names)) try b.nest_style(&b.italic, .in);
-        if (std.mem.eql(u8, tag.name, "a")) b.start_link(tag);
+        // A tag that closes itself ("<i/>", "<a id='x'/>") holds no text to style or link
+        if (!tag.self_closing) {
+            if (eql_any(tag.name, &bold_names)) try b.nest_style(&b.bold, .in);
+            if (eql_any(tag.name, &italic_names)) try b.nest_style(&b.italic, .in);
+            if (std.mem.eql(u8, tag.name, "a")) b.start_link(tag);
+        }
         if (eql_any(tag.name, &picture_names)) {
             const src = xml.attribute(tag.attributes, "src") orelse
                 xml.attribute(tag.attributes, "href") orelse return;
@@ -588,7 +608,11 @@ const Builder = struct {
         const href = xml.attribute(tag.attributes, "href") orelse return;
         if (href.len == 0) return; // Nowhere to go, and `end_link` reads its first byte
         if (std.mem.indexOf(u8, href, "://") != null) return;
-        b.link = .{ .start = b.text_length(), .target = href };
+        b.link = .{
+            .paragraph = @intCast(b.paragraphs.items.len),
+            .start = b.text_length(),
+            .target = href,
+        };
         assert(href.len > 0);
     }
 
@@ -597,6 +621,9 @@ const Builder = struct {
     fn end_link(b: *Builder) !void {
         const link = b.link orelse return;
         b.link = null;
+        // A block ended inside it ("<p><a>x</p><p>y</a>"): its start is in a paragraph
+        // already kept, so it covers nothing whole
+        if (link.paragraph != b.paragraphs.items.len) return;
         const start = link.start;
         const end = b.text_length();
         if (end <= start) return;
@@ -693,7 +720,7 @@ fn read_contents_nav(
             if (std.mem.eql(u8, o.name, "ol")) depth +|= 1;
             if (std.mem.eql(u8, o.name, "a")) {
                 const href = xml.attribute(o.attributes, "href") orelse continue;
-                const title = try text_of(alloc, &t, "a");
+                const title = try text_of(alloc, &t, &o);
                 const found = try anchor_for(alloc, dir, href, anchors);
                 const paragraph = found orelse continue;
                 try out.append(alloc, .{ .title = title, .para = paragraph, .depth = depth -| 1 });
@@ -724,7 +751,7 @@ fn read_contents_ncx(
     while (t.next()) |tok| switch (tok) {
         .open => |o| {
             if (std.mem.eql(u8, o.name, "navPoint")) depth +|= 1;
-            if (std.mem.eql(u8, o.name, "text")) title = try text_of(alloc, &t, "text");
+            if (std.mem.eql(u8, o.name, "text")) title = try text_of(alloc, &t, &o);
             if (std.mem.eql(u8, o.name, "content")) {
                 const src = xml.attribute(o.attributes, "src") orelse continue;
                 const found = try anchor_for(alloc, dir, src, anchors);
@@ -1005,6 +1032,65 @@ test "hrefs resolve against their folder" {
     const picture_path = try resolve(alloc, "OEBPS/text", "../images/a%20b.jpg#x");
     try std.testing.expectEqualStrings("OEBPS/images/a b.jpg", picture_path);
     try std.testing.expectEqualStrings("c.xhtml", try resolve(alloc, "", "./c.xhtml"));
+}
+
+test "an href's entities are decoded, and one from the root ignores the folder" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    const decoded = try resolve(alloc, "OEBPS", "Q&amp;A.xhtml");
+    try std.testing.expectEqualStrings("OEBPS/Q&A.xhtml", decoded);
+    const from_root = try resolve(alloc, "OEBPS", "/OEBPS/ch1.xhtml");
+    try std.testing.expectEqualStrings("OEBPS/ch1.xhtml", from_root);
+}
+
+test "a package with an empty author or title still lists its chapters" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const container =
+        \\<container><rootfiles><rootfile full-path="OEBPS/c&amp;o.opf"/></rootfiles></container>
+    ;
+    const opf =
+        \\<package><metadata><dc:title/><dc:creator/></metadata>
+        \\<manifest>
+        \\<item id="c1" href="Q&amp;A.xhtml" media-type="application/xhtml+xml"/>
+        \\</manifest>
+        \\<spine><itemref idref="c1"/></spine></package>
+    ;
+    const stored = 0;
+    const container_entry: zip.Entry = .{
+        .name = "META-INF/container.xml",
+        .method = stored,
+        .data = container,
+        .size = container.len,
+    };
+    const opf_name = "OEBPS/c&o.opf";
+    const opf_entry: zip.Entry = .{
+        .name = opf_name,
+        .method = stored,
+        .data = opf,
+        .size = opf.len,
+    };
+    const files = [_]zip.Entry{ container_entry, opf_entry };
+    const p = try read_package(arena.allocator(), &files);
+    try std.testing.expectEqual(@as(usize, 1), p.spine.len);
+    try std.testing.expectEqualStrings("", p.author);
+    try std.testing.expectEqualStrings("", p.title);
+    const chapter = try resolve(arena.allocator(), p.dir, p.items[0].href);
+    try std.testing.expectEqualStrings("OEBPS/Q&A.xhtml", chapter);
+}
+
+test "a tag that closes itself styles and links nothing, and a link cut by a block is dropped" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var b = Builder{ .alloc = arena.allocator(), .files = &.{} };
+    const markup = "<html><body><p>An <i class=\"icon\"/>icon and <a href=\"#n\"/>more.</p>" ++
+        "<p>Long <a href=\"#n1\">x</p><p>other words</a> here.</p></body></html>";
+    try b.chapter("c.xhtml", markup);
+    const paragraphs = b.paragraphs.items;
+    try std.testing.expectEqualStrings("An icon and more.", paragraphs[0].text);
+    for (paragraphs[0].runs) |r| try std.testing.expect(!r.italic);
+    try std.testing.expectEqual(@as(usize, 0), b.links.items.len);
 }
 
 test "broken EPUBs are refused, never crash" {

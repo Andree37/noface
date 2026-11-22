@@ -6,6 +6,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const book_model = @import("book.zig");
+const unicode = @import("../text/unicode.zig");
 
 /// A phrase's time is its words at the pace, a little longer after a sentence or a
 /// paragraph, and between these bounds: e-ink takes a moment to change.
@@ -79,7 +80,7 @@ pub fn at(paras: []const book_model.Paragraph, from: book_model.Pos, fits: Fits)
 /// each other, at a clause's end near where an even cut falls, if there is one.
 fn in_text(text: []const u8, para: u32, start: u32, fits: Fits) Phrase {
     assert(start < text.len);
-    assert(!is_space(text[start]));
+    assert(!space_at(text, start));
     var sentence: Sentence = undefined;
     const n = sentence.read(text, start);
     assert(n > 0);
@@ -123,8 +124,7 @@ fn in_text(text: []const u8, para: u32, start: u32, fits: Fits) Phrase {
 fn phrase_to(text: []const u8, para: u32, start: u32, end: u32, words: u32) Phrase {
     assert(start < end);
     assert(end <= text.len);
-    var word_start = end;
-    while (word_start > start and !is_space(text[word_start - 1])) word_start -= 1;
+    const word_start = last_word_start(text, start, end);
     var ends = ending(text[word_start..end]);
     if (skip_spaces(text, end) == text.len) ends = .paragraph;
     return .{ .para = para, .start = start, .end = end, .words = words, .ends = ends };
@@ -197,9 +197,13 @@ fn ending(word: []const u8) End {
         }
         if (!cut) break;
     }
-    const sentence = [_][]const u8{ ".", "!", "?", "\u{2026}" };
+    // Chinese and Japanese end theirs with full-width marks
+    const sentence = [_][]const u8{ ".", "!", "?", "\u{2026}", "\u{3002}", "\u{FF01}", "\u{FF1F}" };
     for (sentence) |m| if (std.mem.endsWith(u8, trimmed, m)) return .sentence;
-    const clause = [_][]const u8{ ",", ";", ":", "\u{2014}", "\u{2013}" };
+    const clause = [_][]const u8{
+        ",",        ";",        ":",        "\u{2014}", "\u{2013}",
+        "\u{3001}", "\u{FF0C}", "\u{FF1B}", "\u{FF1A}",
+    };
     for (clause) |m| if (std.mem.endsWith(u8, trimmed, m)) return .clause;
     return .word;
 }
@@ -220,22 +224,55 @@ pub fn phrase_us(wpm: f64, p: Phrase) u64 {
     return result;
 }
 
-fn is_space(c: u8) bool {
-    return c == ' ' or c == '\t' or c == '\n' or c == '\r';
+/// Whether a space of any kind starts at byte `i` (no-break and ideographic ones too).
+fn space_at(text: []const u8, i: u32) bool {
+    assert(i < text.len);
+    return unicode.is_space(unicode.character_or_replacement(text, i).cp);
 }
 
+/// Past the spaces from `from`: the next word's first byte, or the text's end.
 fn skip_spaces(text: []const u8, from: u32) u32 {
+    var it = unicode.Characters{ .text = text, .at = from };
     var at_byte = from;
-    while (at_byte < text.len and is_space(text[at_byte])) at_byte += 1;
+    while (it.next()) |c| {
+        if (!unicode.is_space(c.cp)) break;
+        at_byte = it.at;
+    }
+    assert(at_byte <= text.len);
     return at_byte;
 }
 
+/// Where the word starting at `from` ends: at a space, or, for Chinese and Japanese,
+/// which put no spaces between words, after one character and the marks after it
+/// ("猫。"). A word in another script ends where such a character starts.
 fn word_end_at(text: []const u8, from: u32) u32 {
     assert(from < text.len);
-    var at_byte = from;
-    while (at_byte < text.len and !is_space(text[at_byte])) at_byte += 1;
+    var it = unicode.Characters{ .text = text, .at = from };
+    const first = it.next().?; // `from` is inside the text
+    const by_itself = unicode.is_word_by_itself(first.cp);
+    var at_byte = it.at;
+    while (it.next()) |c| {
+        if (unicode.is_space(c.cp) or unicode.is_word_by_itself(c.cp)) break;
+        // After a character that's a word by itself, only its marks stay with it
+        if (by_itself and unicode.is_letter_or_number(c.cp)) break;
+        at_byte = it.at;
+    }
     assert(at_byte > from);
     return at_byte;
+}
+
+/// Where the last word before `end`, from `start` on, starts.
+fn last_word_start(text: []const u8, start: u32, end: u32) u32 {
+    assert(start < end);
+    var word_start = start;
+    var at_byte = start;
+    // Each turn passes a word, so this ends by `end`
+    while (at_byte < end) {
+        word_start = at_byte;
+        at_byte = skip_spaces(text, word_end_at(text, at_byte));
+    }
+    assert(word_start < end);
+    return word_start;
 }
 
 /// Fits text of up to `bytes` bytes: a stand-in for a font's measure.
@@ -323,4 +360,20 @@ test "a phrase's time grows with its words and what it ends, within bounds" {
     var long = sentence;
     long.words = 400;
     try std.testing.expectEqual(phrase_us_max, phrase_us(60, long));
+}
+
+test "Chinese and Japanese, without spaces, are read a sentence at a time, a word a character" {
+    // 吾輩は猫である。名前はまだ無い。: two sentences of seven and six characters
+    const paras = [_]book_model.Paragraph{.{
+        .text = "\u{543e}\u{8f29}\u{306f}\u{732b}\u{3067}\u{3042}\u{308b}\u{3002}" ++
+            "\u{540d}\u{524d}\u{306f}\u{307e}\u{3060}\u{7121}\u{3044}\u{3002}",
+    }};
+    var out: [8][]const u8 = undefined;
+    // Room for one sentence (24 bytes) but not both
+    const count = try test_phrases(&paras, 30, &out);
+    try std.testing.expectEqual(@as(u32, 2), count);
+    try std.testing.expect(std.mem.endsWith(u8, out[0], "\u{3002}"));
+    const first = at(&paras, .{}, test_fits(&@as(u32, 30))).?;
+    try std.testing.expectEqual(@as(u32, 7), first.words);
+    try std.testing.expectEqual(End.sentence, first.ends);
 }

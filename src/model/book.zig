@@ -2,6 +2,7 @@
 //! links, pictures and contents. Parsers fill it; layout and screens read it.
 const std = @import("std");
 const assert = std.debug.assert;
+const unicode = @import("../text/unicode.zig");
 
 /// A byte range of a paragraph that links to another paragraph.
 /// `inside`: the target is an anchor partway into its paragraph (a page marker, say),
@@ -110,8 +111,9 @@ pub fn from_text_index(paragraphs: []const Paragraph, index: u32) u32 {
 pub fn char_offset(text: []const u8, byte: u32) u32 {
     var bytes: u32 = 0;
     var chars: u32 = 0;
+    // Each byte that isn't text a character of its own, as unicode.zig reads it
     while (bytes < byte and bytes < text.len) : (chars += 1) {
-        bytes += std.unicode.utf8ByteSequenceLength(text[bytes]) catch 1;
+        bytes += unicode.character_or_replacement(text, bytes).len;
     }
     // Every character takes at least one byte.
     assert(chars <= bytes);
@@ -125,7 +127,7 @@ pub fn byte_offset(text: []const u8, count: u64) u32 {
     var bytes: u32 = 0;
     var seen: u64 = 0;
     while (bytes < text.len and seen < count) : (seen += 1) {
-        bytes += std.unicode.utf8ByteSequenceLength(text[bytes]) catch 1;
+        bytes += unicode.character_or_replacement(text, bytes).len;
     }
     assert(seen <= count);
     assert(seen <= bytes);

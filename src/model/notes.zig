@@ -42,24 +42,52 @@ fn has_note_reference(p: *const book.Paragraph, paragraphs: []const book.Paragra
 /// Note marks are numbers or symbols. A word in a link is an ordinary cross-reference.
 pub fn is_mark(s: []const u8) bool {
     var letters: u32 = 0;
-    var it = (std.unicode.Utf8View.init(s) catch return false).iterator();
-    while (it.nextCodepoint()) |cp| {
-        if (unicode.is_letter(cp)) letters += 1;
+    var it = unicode.Characters{ .text = s };
+    while (it.next()) |c| {
+        if (unicode.is_letter(c.cp)) letters += 1;
     }
     assert(letters <= s.len); // A letter takes a byte at least
     return letters <= 1;
 }
 
-/// Whether `text` begins with the letters and digits of `mark`, ignoring brackets and
-/// spaces around either: "[12] See…" opens with "12", as does "12. See…".
+/// Whether `text` begins with the letters and digits of `mark`, ignoring the brackets,
+/// spaces and marks around either, whole characters each: "[12] See…" opens with "12",
+/// as does "12. See…".
 fn opens_with(text: []const u8, mark: []const u8) bool {
-    const core = std.mem.trim(u8, mark, " []().*\u{a0}");
+    const core_start = letters_start(mark);
+    // A mark of symbols only has no letters: nothing between its first and last
+    const core = mark[core_start..@max(core_start, letters_end(mark))];
     if (core.len == 0) return true; // An asterisk or dagger: nothing to compare
-    const start = std.mem.trimStart(u8, text, " [(\u{a0}");
+    const start = text[letters_start(text)..];
     if (!std.mem.startsWith(u8, start, core)) return false;
     assert(start.len >= core.len);
     // "1" opens "1 The note", not "12 Another"
-    return start.len == core.len or !std.ascii.isDigit(start[core.len]);
+    if (start.len == core.len) return true;
+    const after = unicode.character_or_replacement(start, @intCast(core.len));
+    return !unicode.is_letter_or_number(after.cp);
+}
+
+/// Where `s`'s first letter or digit starts, or its end when it has none.
+fn letters_start(s: []const u8) u32 {
+    var it = unicode.Characters{ .text = s };
+    var start: u32 = 0;
+    while (it.next()) |c| {
+        if (unicode.is_letter_or_number(c.cp)) break;
+        start = it.at;
+    }
+    assert(start <= s.len);
+    return start;
+}
+
+/// Where `s`'s last letter or digit ends, or its start when it has none.
+fn letters_end(s: []const u8) u32 {
+    var it = unicode.Characters{ .text = s };
+    var end: u32 = 0;
+    while (it.next()) |c| {
+        if (unicode.is_letter_or_number(c.cp)) end = it.at;
+    }
+    assert(end <= s.len);
+    return end;
 }
 
 /// A short link inside longer text pointing forward is a note reference.
@@ -280,4 +308,16 @@ test "a note's mark has a letter at most, counted in any script" {
     try std.testing.expect(!is_mark("\u{43f}\u{440}\u{438}\u{43c}")); // прим: a word
     try std.testing.expect(!is_mark("\u{8a33}\u{6ce8}1")); // 訳注1
     try std.testing.expect(!is_mark("see"));
+}
+
+test "a note's mark matches its note by whole characters, and a symbol matches any" {
+    try std.testing.expect(opens_with("[12] See the map.", "12"));
+    try std.testing.expect(opens_with("12. See the map.", "[12]"));
+    try std.testing.expect(!opens_with("12 Another note", "1"));
+    // A dagger or asterisk has nothing to compare: any note
+    try std.testing.expect(opens_with("\u{2021} Another note", "\u{2020}"));
+    try std.testing.expect(opens_with("A note", "*"));
+    // Marks in other scripts, around no-break spaces
+    try std.testing.expect(opens_with("\u{a0}\u{8a33}\u{a0}See", "\u{8a33}"));
+    try std.testing.expect(!opens_with("\u{8a33}\u{6ce8} See", "\u{8a33}"));
 }

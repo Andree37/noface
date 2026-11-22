@@ -54,6 +54,24 @@ pub fn character_or_replacement(text: []const u8, i: u32) Character {
     return character_at(text, i) orelse .{ .cp = replacement, .len = 1 };
 }
 
+/// The characters of `text` one after another, a byte that isn't text read as the
+/// replacement character (`character_or_replacement`): so text that isn't all UTF-8
+/// still has every byte in some character, and nothing of it disappears.
+pub const Characters = struct {
+    text: []const u8,
+    /// Where the next character starts.
+    at: u32 = 0,
+
+    pub fn next(it: *Characters) ?Character {
+        assert(it.at <= it.text.len);
+        if (it.at == it.text.len) return null;
+        const c = character_or_replacement(it.text, it.at);
+        it.at += c.len;
+        assert(it.at <= it.text.len);
+        return c;
+    }
+};
+
 /// Whether `byte` is inside a character written in more than one byte: none starts at it.
 pub fn inside_character(byte: u8) bool {
     return byte & 0xc0 == 0x80;
@@ -141,15 +159,24 @@ pub fn order_ignoring_case(a: []const u8, b: []const u8) std.math.Order {
     var j: u32 = 0;
     // Bounded by the shorter text: each pass moves both on by a character or a byte
     while (i < a.len and j < b.len) {
-        const ca = character_at(a, i) orelse Character{ .cp = a[i], .len = 1 };
-        const cb = character_at(b, j) orelse Character{ .cp = b[j], .len = 1 };
-        const order = std.math.order(fold_case(ca.cp), fold_case(cb.cp));
+        const ka = order_key(a, i);
+        const kb = order_key(b, j);
+        const order = std.math.order(ka.key, kb.key);
         if (order != .eq) return order;
-        i += ca.len;
-        j += cb.len;
+        i += ka.len;
+        j += kb.len;
     }
     assert(i >= a.len or j >= b.len);
     return std.math.order(a.len - i, b.len - j);
+}
+
+/// What the character at `i` sorts by, ignoring case: its case-folded code point, or
+/// for a byte that starts none, a key past every code point, the byte's own, so stray
+/// bytes sort after text and apart from each other, never as a letter (0xE3 isn't ã).
+fn order_key(text: []const u8, i: u32) struct { key: u32, len: u32 } {
+    assert(i < text.len);
+    if (character_at(text, i)) |c| return .{ .key = fold_case(c.cp), .len = c.len };
+    return .{ .key = code_point_max + 1 + @as(u32, text[i]), .len = 1 };
 }
 
 /// Whether `a` and `b` are the same text ignoring case, in any script.
@@ -402,4 +429,20 @@ test "a code point is encoded, and a byte no character starts reads as the repla
     try std.testing.expectEqual(Character{ .cp = replacement, .len = 1 }, not_utf8);
     const no_break_space = character_or_replacement("\u{a0}", 0);
     try std.testing.expectEqual(Character{ .cp = 0xa0, .len = 2 }, no_break_space);
+}
+
+test "a walk over characters reads every byte, one that isn't text as the replacement" {
+    var it = Characters{ .text = "a\xffb\u{e9}" };
+    try std.testing.expectEqual(@as(u21, 'a'), it.next().?.cp);
+    try std.testing.expectEqual(@as(u21, replacement), it.next().?.cp);
+    try std.testing.expectEqual(@as(u21, 'b'), it.next().?.cp);
+    try std.testing.expectEqual(Character{ .cp = 0xe9, .len = 2 }, it.next().?);
+    try std.testing.expect(it.next() == null);
+}
+
+test "a byte that isn't text is never taken for a letter, when sorting or matching" {
+    try std.testing.expect(!eql_ignoring_case("\xc3", "\u{e3}")); // Not ã
+    try std.testing.expect(!eql_ignoring_case("\xc3", "\xc4")); // Two stray bytes differ
+    try std.testing.expect(eql_ignoring_case("\xc3", "\xc3"));
+    try std.testing.expect(less_ignoring_case("zebra", "\xc3")); // After every letter
 }

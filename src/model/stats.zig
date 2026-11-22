@@ -161,9 +161,12 @@ const Count = struct {
     fn ascii_bytes(c: *Count, chunk: Bytes, len: u32) void {
         assert(len <= lanes);
         if (len == 0) return;
-        const sp: u32 = @as(u32, @bitCast(chunk == @as(Bytes, @splat(' ')))) |
-            @as(u32, @bitCast(chunk == @as(Bytes, @splat('\n')))) |
-            @as(u32, @bitCast(chunk == @as(Bytes, @splat('\t'))));
+        // As `ascii_space`, a range at a time
+        const controls = (chunk >= @as(Bytes, @splat('\t'))) &
+            (chunk <= @as(Bytes, @splat('\r')));
+        const separators = (chunk >= @as(Bytes, @splat(separators_first))) &
+            (chunk <= @as(Bytes, @splat(' ')));
+        const sp: u32 = @as(u32, @bitCast(controls)) | @as(u32, @bitCast(separators));
         const prev: u32 = (sp << 1) | @intFromBool(c.after_space);
         const all: u32 = std.math.maxInt(u32);
         const taken: u32 = if (len == lanes) all else (@as(u32, 1) << @intCast(len)) - 1;
@@ -172,9 +175,25 @@ const Count = struct {
     }
 };
 
-/// The ASCII that separates words, as `Count.ascii_bytes` compares.
+/// The ASCII that separates words, as unicode.zig's `is_space` has it (a test checks):
+/// tab to carriage return, and the four information separators just before the space.
 fn ascii_space(c: u8) bool {
-    return c == ' ' or c == '\n' or c == '\t';
+    return (c >= '\t' and c <= '\r') or (c >= separators_first and c <= ' ');
+}
+
+/// The first of the information separators (file, group, record, unit), which Unicode
+/// counts as spaces.
+const separators_first = 0x1c;
+
+test "the ASCII spaces counted between words are Unicode's" {
+    for (0..ascii_end) |c| {
+        try std.testing.expectEqual(unicode.is_space(@intCast(c)), ascii_space(@intCast(c)));
+    }
+    try std.testing.expectEqual(@as(u64, 2), count_words("a\rb"));
+    // The same 32 bytes at a time
+    const chunked = "a\rb\rc\rd\re\rf\rg\rh\ri\rj\rk\rl\rm\rn\ro\rp\r" ++
+        "a\x0bb\x0cc\x1cd\x1de\x1ff\rg\rh\ri\rj\rk\rl\rm\rn\ro\rp";
+    try std.testing.expectEqual(@as(u64, 32), count_words(chunked));
 }
 
 test "Chinese and Japanese count a word a character, beside spaced words, in any order" {

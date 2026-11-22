@@ -206,8 +206,9 @@ pub const Font = struct {
         const cache = try glyph_cache.get();
         var width: f32 = 0;
         var previous: ?Metrics = null;
-        var it = (std.unicode.Utf8View.init(word) catch return 0).iterator();
-        while (it.nextCodepoint()) |code_point| {
+        var it = unicode.Characters{ .text = word };
+        while (it.next()) |c| {
+            const code_point = c.cp;
             if (is_combining(code_point) or unicode.is_invisible(code_point)) continue;
             const g = f.metrics(cache, code_point);
             if (previous) |p| width += f.kern(p, g);
@@ -227,17 +228,18 @@ pub const Font = struct {
         var width: f32 = 0;
         var previous: ?Metrics = null;
         var last: u32 = 0;
-        var it = (std.unicode.Utf8View.init(word) catch return @intCast(word.len)).iterator();
-        while (it.nextCodepoint()) |code_point| {
+        var it = unicode.Characters{ .text = word };
+        while (it.next()) |c| {
+            const code_point = c.cp;
             if (is_combining(code_point) or unicode.is_invisible(code_point)) {
-                last = @intCast(it.i);
+                last = it.at;
                 continue;
             }
             const g = f.metrics(cache, code_point);
             if (previous) |p| width += f.kern(p, g);
             width += g.advance;
             if (width > avail and last > 0) break;
-            last = @intCast(it.i);
+            last = it.at;
             previous = g;
         }
         assert(last <= word.len);
@@ -255,9 +257,10 @@ pub const Font = struct {
         const cache = try glyph_cache.get();
         var x = x_start;
         var previous: ?Metrics = null;
-        var it = (std.unicode.Utf8View.init(word) catch return).iterator();
+        var it = unicode.Characters{ .text = word };
         var base_x = x;
-        while (it.nextCodepoint()) |code_point| {
+        while (it.next()) |c| {
+            const code_point = c.cp;
             assert(code_point <= code_point_max);
             if (unicode.is_invisible(code_point)) continue; // Nothing to see, no room
             const g = cache.drawn(f.reference(), code_point);
@@ -592,4 +595,15 @@ test "a label's capitals are centred in their band, an H standing as tall as the
     const over = baseline - font.cap_height - 100;
     const under = 100 + 112 - baseline;
     try std.testing.expect(@abs(over - under) <= 1);
+}
+
+test "a word with a byte that isn't text keeps its width, and only fits where it fits" {
+    const go = @embedFile("../testdata/fonts/Go-Regular.ttf");
+    var font = try Font.init(go, 40, 1.2);
+    // Latin-1's é, as an old file has it: the rest of the word is still there
+    const latin1 = "caf\xe9 au lait";
+    try std.testing.expect(try font.measure(latin1) > try font.measure("caf au lait"));
+    // Too narrow for all of it: only some of it fits
+    const narrow = try font.measure("caf");
+    try std.testing.expect(try font.fit(latin1, narrow) < latin1.len);
 }

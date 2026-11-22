@@ -81,10 +81,11 @@ pub fn words_of(typed: []const u8) []const u8 {
 const Folded = unicode.Character;
 
 /// The character at `i`, as words are matched (`unicode.fold`): a byte that starts no
-/// character stands for itself.
+/// character is the replacement character, which nothing typed is, so it matches
+/// nothing (a stray 0xE6 isn't æ).
 fn fold_at(s: []const u8, i: u32) Folded {
     assert(i < s.len);
-    const c = unicode.character_at(s, i) orelse return .{ .cp = s[i], .len = 1 };
+    const c = unicode.character_or_replacement(s, i);
     const folded: Folded = .{ .cp = unicode.fold(c.cp), .len = c.len };
     assert(folded.len >= 1);
     assert(i + folded.len <= s.len);
@@ -249,4 +250,10 @@ test "snippets of text without spaces start on a whole character" {
     const line = snippet(s, @intCast(at), 120);
     try std.testing.expect(std.unicode.utf8ValidateSlice(line));
     try std.testing.expect(std.mem.indexOf(u8, line, "探す") != null);
+}
+
+test "a stray byte in a book matches no letter typed" {
+    try std.testing.expect(!contains("Caf\xe6", "caf\u{e6}"));
+    try std.testing.expect(!contains("stra\xdfe", "stra\u{df}e"));
+    try std.testing.expect(contains("Caf\xe6 au lait", "au lait"));
 }

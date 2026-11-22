@@ -302,6 +302,7 @@ pub const Library = struct {
         r.percent = @intCast(@min(e.percent, 100));
         r.last = e.last;
         r.seconds_read = e.seconds_read;
+        r.set_words_left(e.words_left);
         if (e.finished) r.flags |= index.Record.finished else r.flags &= ~index.Record.finished;
         ix.write_record(id, &r) catch |err| {
             // What reading changed is in its state file too, saved as the book closed:

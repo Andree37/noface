@@ -16,6 +16,7 @@ const decoder_memory = @import("../gfx/decoder_memory.zig");
 const memory = @import("../base/memory.zig");
 const catalog = @import("../model/catalog.zig");
 const settings_model = @import("../model/settings.zig");
+const stats = @import("../model/stats.zig");
 const state = @import("../sys/state.zig");
 const page_store = @import("../screens/reader/page_store.zig");
 const os = @import("../sys/os.zig");
@@ -152,10 +153,18 @@ pub const Kindle = struct {
     text_size: u32 = (settings_model.Settings{}).size,
     /// Compares the screen at the end with the reference image of this name.
     snapshot: ?Snapshot = null,
+    /// The reader's speed, as learned before the run: a new reader's by default.
+    speed: stats.Speed = .{},
 };
 
 /// Which book was read before, and its place, as its state file keeps it.
-pub const ReadBefore = struct { book: u32 = 0, para: u32 = 0, byte: u32 = 0 };
+pub const ReadBefore = struct {
+    book: u32 = 0,
+    para: u32 = 0,
+    byte: u32 = 0,
+    /// Words from the place to the end, as noface saves them when a book closes.
+    words_left: ?u64 = null,
+};
 
 /// One of the reader's own books, as the self-test opens it.
 pub const RealBook = struct {
@@ -674,7 +683,7 @@ pub fn play_on_start(
     assert(kindle.text_size < settings_model.sizes.len);
     a.user.settings = .{ .bold_starts = kindle.bold_starts, .size = kindle.text_size };
     a.user.running_pace = null;
-    a.user.speed = .{};
+    a.user.speed = kindle.speed;
     a.user.journal = .{};
     // Every typeface the settings could pick is the test font: no Kindle fonts needed.
     // A real book is set in the Kindle's own, found by the app as it always does.
@@ -699,6 +708,7 @@ pub fn play_on_start(
             .percent = 5,
             .opened = 1_700_000_000,
             .seconds = 600,
+            .words_left = before.words_left,
         });
     }
 }

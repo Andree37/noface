@@ -57,11 +57,14 @@ pub const all = [_]Scenario{
                     try expect(r.looks_right, @tagName(shot[0]) ++ " looks different");
                 }
                 // Shelf enough for the grid's whole first row and part of its second, so
-                // its columns are seen as well as the hero
+                // its columns are seen as well as the hero, read a while: when it was last
+                // read, and at 300 words a minute, 1 h 40 min left
                 const shelf: Kindle = .{
                     .library = true,
                     .books = &shelf_books,
                     .snapshot = .library,
+                    .read_before = .{ .words_left = 30_000 },
+                    .speed = .{ .pages = 10, .words = 3000, .seconds = 600 },
                 };
                 const lib = try play_on(shelf, &.{});
                 try expect(lib.looks_right, "library looks different");

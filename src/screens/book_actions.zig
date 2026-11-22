@@ -36,7 +36,10 @@ pub fn mark_read(a: *app.App, e: *catalog.Entry, done: bool) void {
     const counted = e.finished; // The journal counts a book while it's marked finished
     store.mark_read(e.key, e.kind, done);
     e.finished = done;
-    if (!done) e.percent = 0;
+    if (!done) {
+        e.percent = 0;
+        e.words_left = null; // Counted from the old place: known again once read
+    }
     assert(e.is_read() == done);
     assert(e.percent <= 100);
     if (e.is_epub() or (!done and e.is_local())) {
@@ -64,6 +67,7 @@ fn save_marked(a: *app.App, e: *const catalog.Entry) !void {
         saved.para = 0;
         saved.byte = 0;
         saved.percent = 0;
+        saved.words_left = null;
         saved.back_para = null; // Nowhere to go back to from a fresh start
         // Saturating: both times come from files, and a broken one mustn't stop this
         saved.opened = @max(saved.opened, e.kindle_last) +| 1;

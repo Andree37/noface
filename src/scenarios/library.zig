@@ -19,6 +19,9 @@ const tap_in = taps.tap_in;
 const tap_on = taps.tap_on;
 const tool = taps.tool;
 const top = taps.top;
+const forward = taps.forward;
+const Step = taps.Step;
+const stats = @import("../model/stats.zig");
 const typed = taps.typed;
 const hold = taps.hold;
 const keyboard = @import("../ui/keyboard.zig");
@@ -107,6 +110,29 @@ pub const all = [_]Scenario{
                     tool(.home),
                 });
                 try expect(r.opened[0], "the book didn't open");
+            }
+        }.run,
+    },
+    .{
+        .name = "a book closed keeps the words left from its place, fewer the further in, " ++
+            "and the library shows the time they take",
+        .run = struct {
+            fn run() !void {
+                const hero = tap_in(library_ui.hero_rect(width));
+                const home = [_]Step{ wait(2_000), top, tool(.home) };
+                const opened = try play_on(.{ .library = true }, &(.{hero} ++ home));
+                const at_start = opened.saved.words_left orelse return error.WordsNotSaved;
+                const further = [_]Step{ hero, wait(2_000), forward, forward } ++ home;
+                const read_on = try play_on(.{ .library = true }, &further);
+                const words_left = read_on.saved.words_left orelse return error.WordsNotSaved;
+                try expect(words_left < at_start, "the words left didn't go down");
+                // Known words and speed: the card's line changes
+                const speed: stats.Speed = .{ .pages = 10, .words = 3000, .seconds = 600 };
+                const before: harness.ReadBefore = .{ .words_left = at_start };
+                const known = try play_on(.{ .library = true, .read_before = before }, &.{});
+                const timed: Kindle = .{ .library = true, .read_before = before, .speed = speed };
+                const shown = try play_on(timed, &.{});
+                try expect(known.screen_hash != shown.screen_hash, "no time left shown");
             }
         }.run,
     },

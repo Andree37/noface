@@ -591,6 +591,7 @@ fn merged(r: *index.Record, saved: state.State) void {
     r.invariants();
     if (r.availability != @backingInt(catalog.Availability.local)) return;
     r.seconds_read = saved.seconds;
+    r.set_words_left(saved.words_left);
     if (r.flags & index.Record.epub != 0) {
         r.percent = @intCast(@min(saved.percent orelse 0, 100));
         r.last = saved.opened;
@@ -599,7 +600,11 @@ fn merged(r: *index.Record, saved: state.State) void {
     }
     r.percent = r.kindle_percent;
     r.last = r.kindle_last;
-    if (state.prefer_kindle(saved, r.kindle_last)) return;
+    if (state.prefer_kindle(saved, r.kindle_last)) {
+        // The place is the stock reader's, so what noface counted from its own is old
+        r.set_words_left(null);
+        return;
+    }
     if (saved.percent) |p| r.percent = @intCast(@min(p, 100));
     r.last = @max(r.last, saved.opened);
     assert(r.percent <= 100);

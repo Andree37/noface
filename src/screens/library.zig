@@ -407,6 +407,7 @@ const Browser = struct {
             .shown = b.lib.page(b.index),
             .hero = b.lib.hero(),
             .count = b.count,
+            .hero_minutes_left = if (b.lib.hero()) |h| h.minutes_left(a.user.speed) else null,
         };
         try library.render(
             &a.regions.covers,

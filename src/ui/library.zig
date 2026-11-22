@@ -556,6 +556,7 @@ fn draw_hero(
     fonts: Fonts,
     page: Page,
     e: *catalog.Entry,
+    minutes_left: ?u64,
     now: Moment,
 ) !void {
     if (pool.hero_cover(e.thumbnail)) |c| {
@@ -599,11 +600,34 @@ fn draw_hero(
     }
 
     progress_bar(page, left_px, bar_y, @intFromFloat(avail), e.percent, hero_text.bar_thick);
-    var label: [24]u8 = undefined;
-    const pct = std.fmt.bufPrint(&label, "{d}% read", .{e.percent}) catch "";
+    var label: [48]u8 = undefined;
+    const pct = progress_label(&label, e.percent, minutes_left);
     const pct_y: i32 = @intCast(bar_y + hero_text.percent_drop);
-    try fonts.caption.draw(page, left, pct_y, pct);
+    try draw.clipped(fonts.caption, page, left, pct_y, pct, avail);
     fonts.caption.fade(page, left_px, pct_y, @intFromFloat(avail), style.faded);
+}
+
+/// Under the hero's bar: "62% read", and how long is left when known, as the reader's
+/// footer says it ("62% read  ·  3 h 20 min left").
+fn progress_label(buf: []u8, percent: u32, minutes_left: ?u64) []const u8 {
+    assert(percent <= 100);
+    const minutes = minutes_left orelse {
+        return std.fmt.bufPrint(buf, "{d}% read", .{percent}) catch "";
+    };
+    var time_buf: [32]u8 = undefined;
+    const time = stats.format_minutes(&time_buf, minutes);
+    const format = "{d}% read  \u{b7}  {s} left";
+    return std.fmt.bufPrint(buf, format, .{ percent, time }) catch "";
+}
+
+test "the hero's progress says how long is left once it's known" {
+    var buf: [48]u8 = undefined;
+    try std.testing.expectEqualStrings("62% read", progress_label(&buf, 62, null));
+    const both = progress_label(&buf, 62, 200);
+    try std.testing.expectEqualStrings("62% read  \u{b7}  3 h 20 min left", both);
+    // The longest it can be fits
+    const longest = progress_label(&buf, 100, std.math.maxInt(u64) / 60);
+    try std.testing.expect(std.mem.endsWith(u8, longest, " left"));
 }
 
 /// The author, and the series when there is one: "Liu, Cixin  ·  Three-Body #2".
@@ -786,6 +810,8 @@ pub const Books = struct {
     shown: []catalog.Entry,
     hero: ?*catalog.Entry,
     count: u32,
+    /// How long the hero has left at the reader's speed, when both are known.
+    hero_minutes_left: ?u64 = null,
 };
 
 pub fn render(
@@ -811,7 +837,7 @@ pub fn render(
         if (query.len > 0) {
             try draw_search_header(fonts, page, query, books.count);
         } else if (books.hero) |h| {
-            try draw_hero(pool, fonts, page, h, now);
+            try draw_hero(pool, fonts, page, h, books.hero_minutes_left, now);
             hero_drawn = true;
         }
     }

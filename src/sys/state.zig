@@ -9,6 +9,9 @@ pub const State = struct {
     percent: ?u32 = null,
     opened: u64 = 0,
     seconds: u64 = 0, // Time spent reading this book
+    /// Words from the place to the book's end, for the library to say how long is
+    /// left: null until a noface that counts them closes the book.
+    words_left: ?u64 = null,
     // Marked read: kept here for EPUBs, which the Kindle's catalog doesn't know
     finished: bool = false,
     // The Back button's place, when a jump left one, and the pages turned since: kept
@@ -102,10 +105,11 @@ pub fn parse(content: []const u8) State {
 
 fn read_value(comptime T: type, text: []const u8) ?T {
     // The kinds of value a state holds
-    comptime assert(T == bool or T == ?u32 or @typeInfo(T) == .int);
+    comptime assert(T == bool or T == ?u32 or T == ?u64 or @typeInfo(T) == .int);
     return switch (T) {
         bool => std.mem.eql(u8, text, "1"),
         ?u32 => std.fmt.parseInt(u32, text, 10) catch null,
+        ?u64 => std.fmt.parseInt(u64, text, 10) catch null,
         else => std.fmt.parseInt(T, text, 10) catch null,
     };
 }
@@ -125,7 +129,7 @@ pub fn save(path: [*:0]const u8, s: State) void {
         const value = @field(s, field);
         switch (@TypeOf(value)) {
             bool => w.print(field ++ " {d}\n", .{@intFromBool(value)}) catch return,
-            ?u32 => if (value) |v| w.print(field ++ " {d}\n", .{v}) catch return,
+            ?u32, ?u64 => if (value) |v| w.print(field ++ " {d}\n", .{v}) catch return,
             else => w.print(field ++ " {d}\n", .{value}) catch return,
         }
     }
@@ -174,12 +178,15 @@ test "files are written by name and read back" {
         .percent = 37,
         .opened = 1793990000,
         .seconds = 4200,
+        .words_left = 51000,
         .finished = true,
     };
-    const text = "para 12\nbyte 5\npercent 37\nopened 1793990000\nseconds 4200\nfinished 1\n";
+    const text = "para 12\nbyte 5\npercent 37\nopened 1793990000\nseconds 4200\n" ++
+        "words_left 51000\nfinished 1\n";
     try std.testing.expectEqual(want, parse(text));
     // A value an older version didn't write reads as its default
     try std.testing.expectEqual(@as(u64, 0), parse("para 1\nbyte 2\n").seconds);
+    try std.testing.expectEqual(@as(?u64, null), parse("para 1\nbyte 2\n").words_left);
     // One it doesn't know is passed over
     try std.testing.expectEqual(@as(u32, 1), parse("para 1\nshiny 9\n").para);
 }

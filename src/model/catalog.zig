@@ -4,6 +4,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const search = @import("search.zig");
 const unicode = @import("../text/unicode.zig");
+const stats = @import("stats.zig");
 
 pub const Availability = enum { local, cloud, downloading };
 
@@ -15,6 +16,9 @@ pub const Entry = struct {
     last: u64,
     finished: bool = false,
     seconds_read: u64 = 0, // Time spent reading it in noface
+    /// Words from its place to its end, as noface saved them when it was last closed:
+    /// null when not known, or when the place is now the stock reader's.
+    words_left: ?u64 = null,
     kindle_percent: u32 = 0,
     kindle_last: u64 = 0,
     thumbnail: ?[:0]const u8 = null, // Its cover's picture, if it has one
@@ -42,6 +46,15 @@ pub const Entry = struct {
     pub fn in_progress(e: Entry) bool {
         const going = !e.is_read() and e.percent > untouched_percent;
         return going;
+    }
+
+    /// How long is left to read at `speed`: null for a book read, or when the words
+    /// left or the speed aren't known yet.
+    pub fn minutes_left(e: Entry, speed: stats.Speed) ?u64 {
+        if (e.is_read()) return null;
+        const words = e.words_left orelse return null;
+        if (words == 0) return null; // At its end: nothing left to say
+        return speed.minutes_for(words);
     }
 
     /// An EPUB copied over the cable, which noface reads itself.
@@ -1073,4 +1086,18 @@ test "a series is the same whatever the case of its accented letters" {
     try std.testing.expect(same_series("Les \u{e2}mes", "Les \u{c2}mes"));
     try std.testing.expect(same_series("The Hobbit", "the hobbit"));
     try std.testing.expect(!same_series("Les \u{e2}mes", "Les ames"));
+}
+
+test "time left is shown only for a book being read, its words and the speed known" {
+    const speed: stats.Speed = .{ .pages = 10, .words = 3000, .seconds = 600 }; // 300 a minute
+    var e: Entry = .{ .path = "/b.epub", .title = "B", .author = "", .percent = 40, .last = 1 };
+    try std.testing.expectEqual(@as(?u64, null), e.minutes_left(speed)); // Not counted yet
+    e.words_left = 60000;
+    try std.testing.expectEqual(@as(?u64, 200), e.minutes_left(speed));
+    try std.testing.expectEqual(@as(?u64, null), e.minutes_left(.{})); // Still learning
+    e.words_left = 0;
+    try std.testing.expectEqual(@as(?u64, null), e.minutes_left(speed));
+    e.words_left = 60000;
+    e.finished = true;
+    try std.testing.expectEqual(@as(?u64, null), e.minutes_left(speed));
 }

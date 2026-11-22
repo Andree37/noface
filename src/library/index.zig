@@ -39,6 +39,7 @@ pub const Record = extern struct {
     added: u64,
     kindle_last: u64,
     seconds_read: u64,
+    words_left: u64, // Read only with `words_known`
     text_offset: u64, // Where its texts start in the text file
     /// An EPUB's file as it was read, so the next build needn't open it again; 0 for a
     /// Kindle book, which the catalog describes.
@@ -58,6 +59,15 @@ pub const Record = extern struct {
     pub const epub: u8 = 2;
     /// Its series was set by hand: what the book itself says is no longer kept.
     pub const series_by_hand: u8 = 4;
+    /// `words_left` is known.
+    pub const words_known: u8 = 8;
+
+    /// The words left from the book's place, or that they aren't known.
+    pub fn set_words_left(r: *Record, words: ?u64) void {
+        r.words_left = words orelse 0;
+        if (words != null) r.flags |= words_known else r.flags &= ~words_known;
+        assert((r.flags & words_known != 0) == (words != null));
+    }
 
     /// Sets the checksum, as the record is now: last, before it's written.
     pub fn seal(r: *Record) void {
@@ -85,7 +95,7 @@ pub const Record = extern struct {
 };
 
 comptime {
-    assert(@sizeOf(Record) == 72);
+    assert(@sizeOf(Record) == 80);
     assert(@as(u64, books_max) * @sizeOf(Record) + text_file_bytes_max <= 1400 << 20);
     assert(blob_bytes_max < std.math.maxInt(u16) * 8);
 }
@@ -100,7 +110,7 @@ pub const file_head_bytes: u32 = @sizeOf(FileHead);
 
 /// Its version: an index written by a noface that wrote records differently is built
 /// again.
-pub const header_magic = "NFLIB003".*;
+pub const header_magic = "NFLIB004".*;
 
 pub const Header = extern struct {
     magic: [8]u8 = header_magic,
@@ -367,6 +377,7 @@ fn entry_of(r: *const Record, texts: *const [8][:0]const u8) catalog.Entry {
         .last = r.last,
         .finished = r.flags & Record.finished != 0,
         .seconds_read = r.seconds_read,
+        .words_left = if (r.flags & Record.words_known != 0) r.words_left else null,
         .kindle_percent = r.kindle_percent,
         .kindle_last = r.kindle_last,
         // An empty path in the file: no cover
@@ -475,6 +486,7 @@ pub fn record_of(e: *const catalog.Entry, text_offset: u64, text_len: u32) Recor
         .added = e.added,
         .kindle_last = e.kindle_last,
         .seconds_read = e.seconds_read,
+        .words_left = 0,
         .text_offset = text_offset,
         .file_size = 0,
         .file_modified = 0,
@@ -485,6 +497,7 @@ pub fn record_of(e: *const catalog.Entry, text_offset: u64, text_len: u32) Recor
         .availability = @backingInt(e.availability),
         .flags = (if (e.finished) Record.finished else 0) | (if (e.is_epub()) Record.epub else 0),
     };
+    r.set_words_left(e.words_left);
     r.seal();
     assert(r.text_offset == text_offset);
     return r;
@@ -499,6 +512,7 @@ test "a book's record and texts read back as the entry they were made from" {
         .last = 99,
         .finished = true,
         .seconds_read = 600,
+        .words_left = 12000,
         .kindle_percent = 30,
         .kindle_last = 98,
         .thumbnail = "/t/dune.jpg",
@@ -561,6 +575,7 @@ fn test_check_path(path_len: u16) !void {
         .added = 0,
         .kindle_last = 0,
         .seconds_read = 0,
+        .words_left = 0,
         .text_offset = file_head_bytes,
         .file_size = 0,
         .file_modified = 0,

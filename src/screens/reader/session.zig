@@ -167,6 +167,14 @@ pub const Session = struct {
         return s.words.chapter_left(s.chapters, s.words.at(s.paragraphs, at));
     }
 
+    /// The words from `at` to the book's end, saved with the place for the library's
+    /// time left.
+    pub fn book_words_left(s: *const Session, at: book_model.Pos) u64 {
+        const here = s.words.at(s.paragraphs, at);
+        assert(here <= s.words.total());
+        return s.words.total() - here;
+    }
+
     /// The page being left: its time goes to the book and the day's journal, and a
     /// page read forward teaches the reading speed.
     fn leave_page(s: *Session, to: u32) void {
@@ -577,6 +585,8 @@ pub fn save_progress(
     saved.percent = percent;
     saved.opened = now;
     saved.seconds = seconds;
+    const words_left = s.book_words_left(pos);
+    saved.words_left = words_left;
     saved.finished = entry.finished;
     const back = s.back.place;
     saved.back_para = if (back) |b| book_model.text_index(s.paragraphs, b.para) else null;
@@ -588,6 +598,7 @@ pub fn save_progress(
     entry.percent = percent;
     entry.last = now;
     entry.seconds_read = seconds;
+    entry.words_left = words_left;
 }
 
 /// Where a session's pages point while a layout that failed partway had let go of the

@@ -492,6 +492,10 @@ fn open_index(sources: Sources, s: *State) void {
         log("library: index built, {d} books in {d} ms\n", .{ built.header.count, ms });
     }
     const ix = s.opened().?; // Opened as it was, or just built
+    // Before any book's files are read: those named by an older noface take new names
+    builder.rename_by_path(ix, items, places, &scratch) catch |err| {
+        log("library: files not renamed ({s}), again at the next load\n", .{@errorName(err)});
+    };
     builder.merge_states(ix, items, places) catch |err| {
         log("library: places not merged ({s})\n", .{@errorName(err)});
     };
@@ -798,6 +802,62 @@ test "a book's place is read from its state file, found by one listing of the fo
     try std.testing.expectEqualStrings(kindle, hero.path);
     try std.testing.expectEqual(@as(u32, 42), hero.percent);
     for (library.page(0)) |e| try std.testing.expectEqual(@as(u32, 0), e.percent);
+}
+
+test "files an older noface named by a book's file name move to its whole path's, once" {
+    var buffer: [64]u8 = undefined;
+    const root = try test_folder(&buffer, 0, 0, 1 << 10);
+    defer test_folder_remove(root);
+    var path: [file.own_path_bytes_max]u8 = undefined;
+    // Two books of one file name in two folders, and another
+    const dune = "/mnt/us/documents/Dune.azw3";
+    const old_dune = "/mnt/us/documents/old/Dune.azw3";
+    const other = "/mnt/us/documents/Other.azw3";
+    const rows = "\n" ++ dune ++ "\tDune\tA\t0\t0\t0\t\t0\t0\n" ++
+        old_dune ++ "\tDune\tA\t0\t0\t0\t\t0\t0\n" ++
+        other ++ "\tOther\tA\t0\t0\t0\t\t0\t0\n";
+    try test_write(try std.fmt.bufPrintSentinel(&path, "{s}/catalog", .{root}, 0), rows);
+    var t: TestLibrary = undefined;
+    try t.init(root);
+    defer t.deinit();
+    const dir = t.sources.state_dir;
+    // As 0.2 named them: Dune's place and notes, shared by both; Other's, old and new
+    try test_old_file(dir, "state", dune, "para 3\npercent 42\nopened 1000\n");
+    try test_old_file(dir, "notes", dune, "highlight 1 0 5\n");
+    try test_old_file(dir, "state", other, "para 3\npercent 77\nopened 1000\n");
+    const other_state = try state.path_for(&path, dir, other);
+    state.save(other_state, .{ .para = 1, .percent = 10, .opened = 2000 });
+    var library = try load(t.sources);
+    defer library.deinit();
+    library.arrange(.recent, .all, "");
+    for ([_][]const u8{ dune, old_dune }) |book| {
+        const saved = state.load(try state.path_for(&path, dir, book));
+        try std.testing.expectEqual(@as(?u32, 42), saved.percent);
+        var notes_buffer: [file.own_path_bytes_max]u8 = undefined;
+        const own_state = try state.path_for(&path, dir, book);
+        const notes = try state.sibling(&notes_buffer, own_state, "notes");
+        try std.testing.expect(file.exists(notes));
+    }
+    // Other's newer place is kept, its old one left where it was
+    const other_now = state.load(try state.path_for(&path, dir, other));
+    try std.testing.expectEqual(@as(?u32, 10), other_now.percent);
+    // Moved once: Dune's old files are gone, and the marker says it's done
+    try std.testing.expect(!file.exists(try test_old_path(&path, dir, "state", dune)));
+    try std.testing.expect(!file.exists(try test_old_path(&path, dir, "notes", dune)));
+    const marker_name = builder.named_by_path_marker;
+    const marker = try std.fmt.bufPrintSentinel(&path, "{s}/{s}", .{ dir, marker_name }, 0);
+    try std.testing.expect(file.exists(marker));
+}
+
+/// Where noface 0.2 kept a `kind` of file about `book`.
+fn test_old_path(buffer: []u8, dir: []const u8, kind: []const u8, book: []const u8) ![:0]u8 {
+    const key = state.key_by_name(book);
+    return std.fmt.bufPrintSentinel(buffer, "{s}/{s}-{x:0>16}", .{ dir, kind, key }, 0);
+}
+
+fn test_old_file(dir: []const u8, kind: []const u8, book: []const u8, text: []const u8) !void {
+    var buffer: [file.own_path_bytes_max]u8 = undefined;
+    try test_write(try test_old_path(&buffer, dir, kind, book), text);
 }
 
 test "a book read and saved moves up, and keeps its place through a reload" {

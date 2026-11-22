@@ -21,8 +21,7 @@ pub const State = struct {
     back_turns: u32 = 0,
 };
 
-/// `<dir>/state-<first 16 hex of md5 of "basename\n">`, matching earlier versions
-/// that named these files with `basename | md5sum`.
+/// `<dir>/state-<16 hex>`, named by the book's whole path (`key_for`).
 pub fn path_for(buf: []u8, dir: []const u8, book_path: []const u8) ![:0]u8 {
     assert(dir.len > 0);
     assert(book_path.len > 0);
@@ -34,19 +33,33 @@ pub fn path_for(buf: []u8, dir: []const u8, book_path: []const u8) ![:0]u8 {
 }
 
 /// What a book's files beside its state are named by: the first 16 hex of the md5 of
-/// "basename\n", as a number.
+/// its whole path, as a number, so two books of one file name in two folders are kept
+/// apart.
 pub fn key_for(book_path: []const u8) u64 {
     assert(book_path.len > 0);
-    const name = std.fs.path.basename(book_path);
+    return md5_key(book_path, "");
+}
+
+/// What noface 0.2 and before named a book's files by: the md5 of "basename\n", as
+/// `basename | md5sum` did, which two books of one file name shared. Read only to move
+/// those files to `key_for`'s names (library/builder.zig `rename_by_path`).
+pub fn key_by_name(book_path: []const u8) u64 {
+    assert(book_path.len > 0);
+    return md5_key(std.fs.path.basename(book_path), "\n");
+}
+
+fn md5_key(text: []const u8, ending: []const u8) u64 {
     var md5 = std.crypto.hash.Md5.init(.{});
-    md5.update(name);
-    md5.update("\n");
+    md5.update(text);
+    md5.update(ending);
     var digest: [16]u8 = undefined;
     md5.final(&digest);
-    const key = std.mem.readInt(u64, digest[0..8], .big);
-    assert(std.mem.readInt(u64, digest[0..8], .big) == key);
-    return key;
+    return std.mem.readInt(u64, digest[0..8], .big);
 }
+
+/// The kinds of file kept about a book, each "<kind>-<key>": its place, its page breaks,
+/// its notes and its cover. Every one is named through `sibling`, which takes only these.
+pub const kinds = [_][]const u8{ "state", "pages", "notes", "cover" };
 
 /// The book's key in a file name "<kind>-<16 hex>", as `path_for` and `sibling` write
 /// them; null for any other name.
@@ -62,6 +75,13 @@ pub fn key_of_name(name: []const u8, kind: []const u8) ?u64 {
     return std.fmt.parseInt(u64, hex, 16) catch null;
 }
 
+fn is_kind(kind: []const u8) bool {
+    for (kinds) |k| {
+        if (std.mem.eql(u8, k, kind)) return true;
+    }
+    return false;
+}
+
 /// True when the Kindle's own position should win over ours: we have nothing
 /// saved, or the stock reader had the book open more recently.
 pub fn prefer_kindle(saved: State, kindle_last: u64) bool {
@@ -74,6 +94,7 @@ pub fn prefer_kindle(saved: State, kindle_last: u64) bool {
 /// "<dir>/state-<book>". Used for saved page breaks, covers and local notes.
 pub fn sibling(buf: []u8, state_path: []const u8, kind: []const u8) ![:0]u8 {
     assert(kind.len > 0);
+    assert(is_kind(kind)); // So moving a book's files moves every one of them
     const dir = std.fs.path.dirname(state_path) orelse ".";
     const name = std.fs.path.basename(state_path);
     if (!std.mem.startsWith(u8, name, "state-")) return error.NotAStateFile;
@@ -138,11 +159,16 @@ pub fn save(path: [*:0]const u8, s: State) void {
     file.write_small(path, w.buffered());
 }
 
-test "state file name matches basename piped to md5sum" {
+test "a book's files are named by its whole path, as they were by its file name" {
     var buf: [128]u8 = undefined;
-    // The output of `printf 'abc\n' | md5sum` starts 0bee89b07a248e27
+    // The output of `printf '/books/abc' | md5sum` starts 4396dc83c45ebceb
     const p = try path_for(&buf, "/d", "/books/abc");
-    try std.testing.expectEqualStrings("/d/state-0bee89b07a248e27", p);
+    try std.testing.expectEqualStrings("/d/state-4396dc83c45ebceb", p);
+    // Two books of one name in two folders: apart now, one before
+    try std.testing.expect(key_for("/books/abc") != key_for("/old/abc"));
+    try std.testing.expectEqual(key_by_name("/books/abc"), key_by_name("/old/abc"));
+    // As 0.2 named them: `printf 'abc\n' | md5sum` starts 0bee89b07a248e27
+    try std.testing.expectEqual(@as(u64, 0x0bee89b07a248e27), key_by_name("/books/abc"));
     const key = key_of_name("state-0bee89b07a248e27", "state");
     try std.testing.expectEqual(@as(?u64, 0x0bee89b07a248e27), key);
     try std.testing.expectEqual(@as(?u64, null), key_of_name("state-0bee89b07a248e2", "state"));

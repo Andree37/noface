@@ -440,7 +440,7 @@ fn first_with(sorted: []const Item, key: u32) u32 {
 }
 
 /// The books on this Kindle, their ids sorted by their state file's key, to find each
-/// by halves: books with the same file name share one.
+/// by halves.
 fn by_state_key(ix: *const index.Index, items: []Item) []Item {
     assert(items.len >= ix.header.count);
     var count: u32 = 0;
@@ -526,6 +526,113 @@ fn set_series(
     }
 }
 
+/// The file in the data folder saying its books' files are named by their whole path:
+/// once it's there, `rename_by_path` has nothing left to do.
+pub const named_by_path_marker = "named-by-path";
+
+/// Moves each book's files from the names noface 0.2 and before gave them, by the
+/// book's file name, to the names its whole path gives (`state.key_for`), once, before
+/// any are read. Two books of one name shared those files: each gets a copy, as each
+/// showed that place before. Files of a book no longer here keep their names, and a
+/// file already under its new name is never written over. Done when the marker is
+/// written, so a move cut short goes on at the next load.
+pub fn rename_by_path(
+    ix: *const index.Index,
+    items: []Item,
+    places: Places,
+    scratch: *memory.Budget,
+) !void {
+    assert(places.state_dir.len > 0);
+    var marker_buffer: [files.path_bytes_max]u8 = undefined;
+    const marker = try files.path_in(&marker_buffer, places.state_dir, named_by_path_marker);
+    if (file.exists(marker)) return;
+    // Listed first, then moved: a folder renamed in while it's listed can list a name twice
+    var old = Listed{ .alloc = scratch.allocator() };
+    var folder_buffer: [files.path_bytes_max]u8 = undefined;
+    const folder = try std.fmt.bufPrintSentinel(&folder_buffer, "{s}", .{places.state_dir}, 0);
+    calls.each_entry(folder.ptr, &old, Listed.entry);
+    if (old.failed) return error.CantList;
+    const sorted = by_name_key(ix, items);
+    for (old.keys.items) |key| {
+        const high: u32 = @truncate(key >> 32);
+        var books: [same_name_max]u32 = undefined;
+        var count: u32 = 0;
+        for (sorted[first_with(sorted, high)..]) |item| {
+            if (item.key != high) break;
+            if (state.key_by_name(ix.entry(item.id).path) != key) continue; // Same high half
+            if (count == books.len) break; // More of one name than kept: the rest start fresh
+            books[count] = item.id;
+            count += 1;
+        }
+        if (count > 0) try move_files(ix, places.state_dir, key, books[0..count]);
+    }
+    file.write_small(marker, "1\n");
+    if (!file.exists(marker)) return error.CantMark; // Moved, so the next load does nothing again
+}
+
+/// The most books of one file name given the files they shared.
+const same_name_max = 16;
+
+/// The state files' keys in the data folder, as listed.
+const Listed = struct {
+    alloc: std.mem.Allocator,
+    keys: std.ArrayList(u64) = .empty,
+    failed: bool = false,
+
+    fn entry(l: *Listed, name: []const u8, is_dir: bool) void {
+        assert(name.len > 0);
+        if (is_dir or l.failed) return;
+        const key = state.key_of_name(name, "state") orelse return;
+        l.keys.append(l.alloc, key) catch {
+            l.failed = true;
+        };
+    }
+};
+
+/// Each kind of file named by `key` copied to the name of every book of `books` but the
+/// first, then moved to the first's.
+fn move_files(ix: *const index.Index, state_dir: []const u8, key: u64, books: []const u32) !void {
+    assert(books.len > 0);
+    assert(books.len <= same_name_max);
+    for (state.kinds) |kind| {
+        var from_buffer: [files.path_bytes_max]u8 = undefined;
+        const named = .{ state_dir, kind, key };
+        const from = try std.fmt.bufPrintSentinel(&from_buffer, "{s}/{s}-{x:0>16}", named, 0);
+        if (!file.exists(from)) continue;
+        for (books, 0..) |id, i| {
+            var state_buffer: [files.path_bytes_max]u8 = undefined;
+            const own_state = try state.path_for(&state_buffer, state_dir, ix.entry(id).path);
+            var to_buffer: [files.path_bytes_max]u8 = undefined;
+            const to = try state.sibling(&to_buffer, own_state, kind);
+            assert(!std.mem.eql(u8, from, to)); // A whole path's name is never a file name's
+            if (file.exists(to)) continue; // Saved under its new name already: newer
+            if (i + 1 < books.len) {
+                if (!file.copy_file(from, to)) return error.CantCopy;
+            } else {
+                if (os.failed(calls.rename(from, to))) return error.CantRename;
+            }
+        }
+    }
+}
+
+/// The books on this Kindle, their ids sorted by the key their file name gave their
+/// files before (`state.key_by_name`), to find each by halves.
+fn by_name_key(ix: *const index.Index, items: []Item) []Item {
+    assert(items.len >= ix.header.count);
+    var count: u32 = 0;
+    for (0..ix.header.count) |i| {
+        const id: u32 = @intCast(i);
+        const e = ix.entry(id);
+        if (!e.is_local() or e.path.len == 0) continue;
+        items[count] = .{ .id = id, .key = @truncate(state.key_by_name(e.path) >> 32) };
+        count += 1;
+    }
+    const sorted = items[0..count];
+    std.mem.sort(Item, sorted, {}, by_key);
+    assert(count <= ix.header.local);
+    return sorted;
+}
+
 /// Merges what noface keeps of each book it opened (place, time read, marked read) into
 /// the index's records, from one listing of the data folder: only the books with a
 /// state file are read.
@@ -572,7 +679,7 @@ const Merge = struct {
         const path = try std.fmt.bufPrintSentinel(&path_buffer, format, .{ m.state_dir, name }, 0);
         const saved = state.load(path);
         const high: u32 = @truncate(key >> 32);
-        // Books with the same file name share a state file: each is merged
+        // Books whose keys share a high half: only the one with the whole key is merged
         for (m.sorted[first_with(m.sorted, high)..]) |item| {
             if (item.key != high) return;
             if (state.key_for(m.ix.entry(item.id).path) != key) continue; // Same high half

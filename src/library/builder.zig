@@ -616,3 +616,40 @@ fn log(comptime format: []const u8, args: anytype) void {
     assert(format[format.len - 1] == '\n');
     if (!builtin.is_test) std.debug.print(format, args);
 }
+
+test "a saved place's words left are kept, unless the stock reader read the book since" {
+    const book: catalog.Entry = .{
+        .path = "/mnt/us/documents/Dune.kfx",
+        .title = "Dune",
+        .author = "",
+        .percent = 10,
+        .last = 0,
+        .kindle_percent = 10,
+        .kindle_last = 1_800_000_000,
+    };
+    const saved: state.State = .{
+        .para = 4,
+        .percent = 40,
+        .opened = 1_700_000_000,
+        .words_left = 9000,
+    };
+    // The stock reader read it last: its place, and no words left from noface's
+    var r = index.record_of(&book, 0, 0);
+    merged(&r, saved);
+    try std.testing.expectEqual(@as(u8, 10), r.percent);
+    try std.testing.expect(r.flags & index.Record.words_known == 0);
+    // Read in noface last: noface's place, and the words left from it
+    var newer = saved;
+    newer.opened = 1_900_000_000;
+    r = index.record_of(&book, 0, 0);
+    merged(&r, newer);
+    try std.testing.expectEqual(@as(u8, 40), r.percent);
+    try std.testing.expect(r.flags & index.Record.words_known != 0);
+    try std.testing.expectEqual(@as(u64, 9000), r.words_left);
+    // An EPUB's place is always noface's
+    var an_epub = book;
+    an_epub.path = "/mnt/us/documents/Dune.epub";
+    r = index.record_of(&an_epub, 0, 0);
+    merged(&r, saved);
+    try std.testing.expectEqual(@as(u64, 9000), r.words_left);
+}

@@ -155,6 +155,8 @@ pub const Kindle = struct {
     snapshot: ?Snapshot = null,
     /// The reader's speed, as learned before the run: a new reader's by default.
     speed: stats.Speed = .{},
+    /// "Show time left" (Aa, More), on as shipped.
+    time_left: bool = true,
 };
 
 /// Which book was read before, and its place, as its state file keeps it.
@@ -162,7 +164,7 @@ pub const ReadBefore = struct {
     book: u32 = 0,
     para: u32 = 0,
     byte: u32 = 0,
-    /// Words from the place to the end, as noface saves them when a book closes.
+    /// Words from the place to the end, as noface saves them with the place.
     words_left: ?u64 = null,
 };
 
@@ -681,7 +683,11 @@ pub fn play_on_start(
     a.regions.pages_budget.peak = 0;
     a.regions.pages_budget.limit = kindle.pages_bytes;
     assert(kindle.text_size < settings_model.sizes.len);
-    a.user.settings = .{ .bold_starts = kindle.bold_starts, .size = kindle.text_size };
+    a.user.settings = .{
+        .bold_starts = kindle.bold_starts,
+        .size = kindle.text_size,
+        .time_left = kindle.time_left,
+    };
     a.user.running_pace = null;
     a.user.speed = kindle.speed;
     a.user.journal = .{};

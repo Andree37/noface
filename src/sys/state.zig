@@ -10,7 +10,7 @@ pub const State = struct {
     opened: u64 = 0,
     seconds: u64 = 0, // Time spent reading this book
     /// Words from the place to the book's end, for the library to say how long is
-    /// left: null until a noface that counts them closes the book.
+    /// left: saved with the place, so null until a noface that counts them opens it.
     words_left: ?u64 = null,
     // Marked read: kept here for EPUBs, which the Kindle's catalog doesn't know
     finished: bool = false,

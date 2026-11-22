@@ -9,6 +9,7 @@ const catalog_db = @import("../kindle/catalog.zig");
 const lipc = @import("../kindle/lipc.zig");
 const now_us = os.now_us;
 const app = @import("../app.zig");
+const user_data = @import("../user_data.zig");
 const display = @import("../display.zig");
 const hwtcon = @import("../kindle/hwtcon.zig");
 const battery_screen = @import("battery.zig");
@@ -399,6 +400,13 @@ const Browser = struct {
         if (b.lib.hero()) |h| assert(h.is_local());
     }
 
+    /// The hero's time left, unless the reader turned time left off (Aa, More).
+    fn hero_minutes_left(hero: ?*catalog.Entry, user: *const user_data.UserData) ?u64 {
+        if (!user.settings.time_left) return null;
+        const h = hero orelse return null;
+        return h.minutes_left(user.speed);
+    }
+
     fn render(b: *Browser) !void {
         const a = b.a;
         assert(b.count == b.lib.count());
@@ -407,7 +415,7 @@ const Browser = struct {
             .shown = b.lib.page(b.index),
             .hero = b.lib.hero(),
             .count = b.count,
-            .hero_minutes_left = if (b.lib.hero()) |h| h.minutes_left(a.user.speed) else null,
+            .hero_minutes_left = hero_minutes_left(b.lib.hero(), &a.user),
         };
         try library.render(
             &a.regions.covers,

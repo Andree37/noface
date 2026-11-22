@@ -60,9 +60,6 @@ pub const Session = struct {
     book_bytes: u64 = 0, // The book file's size, part of the saved breaks' key
     // A first open still being laid out: pages count from the reader's place until done
     progress: ?*paginate.Progressive = null,
-    /// How far in the reader was, by the pages, as they were let go of to be laid out
-    /// again after a settings change: what's kept if that layout fails. Null before any.
-    percent_before_relayout: ?u32 = null,
     chapters: []const book_model.Chapter = &.{},
     words: Words = .{}, // Counted as the book opens, for time left and the speed
     clock: reading_clock.Clock = .{},
@@ -173,6 +170,17 @@ pub const Session = struct {
         const here = s.words.at(s.paragraphs, at);
         assert(here <= s.words.total());
         return s.words.total() - here;
+    }
+
+    /// How far in place `at` is by the words before it, for when the pages can't say:
+    /// null for a book without words (pictures only).
+    pub fn words_percent(s: *const Session, at: book_model.Pos) ?u32 {
+        const total = s.words.total();
+        if (total == 0) return null;
+        const before = total - s.book_words_left(at);
+        const in_percent: u32 = @intCast(before * 100 / total);
+        assert(in_percent <= 100);
+        return in_percent;
     }
 
     /// The page being left: its time goes to the book and the day's journal, and a
@@ -563,7 +571,8 @@ fn middle_of(h: text.Hit) style.Point {
 
 /// Saves the reader's place, `s.anchor`, which stays what they're at even while the
 /// pages are being laid out again or failed to be. `percent` is how far in they are,
-/// or null to keep the one saved: the pages don't say (see `Session.percent`).
+/// or null when the pages don't say (see `Session.percent`): then it's the words
+/// before the place, as the time left saved with it is the words after.
 pub fn save_progress(
     entry: *catalog.Entry,
     path: [*:0]const u8,
@@ -576,7 +585,7 @@ pub fn save_progress(
     const seconds = s.seconds_read_total();
     const pos = s.anchor;
     if (percent_read) |p| assert(p <= 100);
-    const percent = percent_read orelse entry.percent;
+    const percent = percent_read orelse s.words_percent(pos) orelse entry.percent;
     const now = unix_time();
     // Changed in place, so anything else kept with the place is kept too
     var saved = state.load(path);
@@ -619,9 +628,6 @@ pub fn relayout(a: *app.App, s: *Session) !void {
     };
     a.user.save_settings();
     a.display.forget_pages();
-    // Known now, from the pages about to go; a change made while the last one was still
-    // laid out keeps what was known before it
-    s.percent_before_relayout = s.percent() orelse s.percent_before_relayout;
     const t0 = now_us();
     const pages_key = page_store.key(a, s.book_bytes);
     s.progress = null; // A layout still running was for the old settings

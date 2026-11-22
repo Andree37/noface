@@ -5,6 +5,7 @@
 //! times vary), and older pages fade, so a slower or harder book is followed.
 const std = @import("std");
 const assert = std.debug.assert;
+const unicode = @import("../text/unicode.zig");
 
 /// Longer than this, the reader stepped away: not reading.
 pub const max_page_seconds = 300;
@@ -105,33 +106,104 @@ test "minutes at a pace are rounded up, and exact ones stay exact" {
     try std.testing.expectEqual(@as(u64, 0), minutes_at(150, 0));
 }
 
-/// Words in some text: runs of anything but spaces, tabs and newlines. Whole books
-/// are counted when opened, so this goes 32 bytes at a time.
+/// Words in some text: runs of anything but spaces, and each character of Chinese and
+/// Japanese, which put no spaces between words (`unicode.is_word_by_itself`). Whole
+/// books are counted when opened, so ASCII goes 32 bytes at a time.
 pub fn count_words(text: []const u8) u64 {
-    const lanes = 32;
-    const Bytes = @Vector(lanes, u8);
     // A paragraph's text, on a 32-bit Kindle: its length fits.
     assert(text.len <= std.math.maxInt(u32));
-    var n: u64 = 0;
-    var prev_space = true;
+    var count: Count = .{};
     var i: u32 = 0;
-    while (i + lanes <= text.len) : (i += lanes) {
-        const chunk: Bytes = text[i..][0..lanes].*;
+    // Each step takes a byte at least
+    while (i < text.len) {
+        const before = i;
+        if (i + lanes <= text.len) {
+            const chunk: Bytes = text[i..][0..lanes].*;
+            const high: u32 = @bitCast(chunk >= @as(Bytes, @splat(ascii_end)));
+            // The ASCII up to the first other character, all of it when none is
+            const ascii: u32 = @ctz(high);
+            count.ascii_bytes(chunk, ascii);
+            i += ascii;
+            if (high == 0) continue;
+        }
+        if (unicode.character_at(text, i)) |c| {
+            count.character(c.cp);
+            i += c.len;
+        } else {
+            count.character(text[i]); // Not UTF-8: a byte of a word
+            i += 1;
+        }
+        assert(i > before);
+    }
+    assert(count.words <= text.len); // A word takes a byte at least
+    return count.words;
+}
+
+const lanes = 32;
+const Bytes = @Vector(lanes, u8);
+const ascii_end = 0x80;
+
+/// Words counted so far, and whether the last character ended one.
+const Count = struct {
+    words: u64 = 0,
+    after_space: bool = true,
+
+    fn character(c: *Count, cp: u21) void {
+        if (cp >= ascii_end and unicode.is_word_by_itself(cp)) {
+            c.words += 1;
+            c.after_space = true; // What follows starts a word of its own
+            return;
+        }
+        const space = if (cp < ascii_end) ascii_space(@intCast(cp)) else unicode.is_space(cp);
+        if (!space and c.after_space) c.words += 1;
+        c.after_space = space;
+    }
+
+    /// The first `len` bytes of `chunk`, ASCII, at once: a word starts on a non-space
+    /// after a space.
+    fn ascii_bytes(c: *Count, chunk: Bytes, len: u32) void {
+        assert(len <= lanes);
+        if (len == 0) return;
         const sp: u32 = @as(u32, @bitCast(chunk == @as(Bytes, @splat(' ')))) |
             @as(u32, @bitCast(chunk == @as(Bytes, @splat('\n')))) |
             @as(u32, @bitCast(chunk == @as(Bytes, @splat('\t'))));
-        // A word starts on a non-space whose previous byte is a space.
-        const prev: u32 = (sp << 1) | @intFromBool(prev_space);
-        n += @popCount(~sp & prev);
-        prev_space = sp >> (lanes - 1) == 1;
+        const prev: u32 = (sp << 1) | @intFromBool(c.after_space);
+        const all: u32 = std.math.maxInt(u32);
+        const taken: u32 = if (len == lanes) all else (@as(u32, 1) << @intCast(len)) - 1;
+        c.words += @popCount(~sp & prev & taken);
+        c.after_space = (sp >> @intCast(len - 1)) & 1 == 1;
     }
-    for (text[i..]) |c| {
-        const space = c == ' ' or c == '\n' or c == '\t';
-        if (!space and prev_space) n += 1;
-        prev_space = space;
+};
+
+/// The ASCII that separates words, as `Count.ascii_bytes` compares.
+fn ascii_space(c: u8) bool {
+    return c == ' ' or c == '\n' or c == '\t';
+}
+
+test "Chinese and Japanese count a word a character, beside spaced words, in any order" {
+    const cat = "\u{543e}\u{8f29}\u{306f}\u{732b}\u{3067}\u{3042}\u{308b}"; // 吾輩は猫である
+    try std.testing.expectEqual(@as(u64, 7), count_words(cat));
+    try std.testing.expectEqual(@as(u64, 3), count_words("Hello \u{4e16}\u{754c}")); // Hello 世界
+    // A no-break space parts words too
+    try std.testing.expectEqual(@as(u64, 2), count_words("caf\u{e9}\u{a0}cr\u{e8}me"));
+    try std.testing.expectEqual(@as(u64, 2), count_words("\u{4e16}abc")); // 世 then a word
+}
+
+test "words are counted the same 32 bytes at a time as a character at a time" {
+    const text = "  The quick brown fox\tjumps over\nthe lazy dog, d\u{e9}j\u{e0} vu, " ++
+        "\u{732b} and more words to pass a chunk or two of thirty-two bytes each.";
+    for (0..text.len) |start| {
+        var one: Count = .{};
+        var at: u32 = @intCast(start);
+        while (at < text.len) {
+            const c = unicode.character_at(text, at) orelse break;
+            one.character(c.cp);
+            at += c.len;
+        }
+        // Counted from a character's start only: one inside é starts nowhere
+        if (unicode.character_at(text, @intCast(start)) == null) continue;
+        try std.testing.expectEqual(one.words, count_words(text[start..]));
     }
-    assert(n <= text.len); // A word takes a byte at least
-    return n;
 }
 
 /// Time counted toward a book: the time on a page, unless it was left open.

@@ -543,6 +543,16 @@ test "a book's record and texts read back as the entry they were made from" {
         }
     }
     try std.testing.expect(!split_blob(bytes[0 .. len - 1], &texts));
+    // Words left not known read back as not known, not as none left
+    var unknown = e;
+    unknown.words_left = null;
+    const r_unknown = record_of(&unknown, 0, len);
+    try std.testing.expect(r_unknown.sound());
+    try std.testing.expectEqual(@as(?u64, null), entry_of(&r_unknown, &texts).words_left);
+    var none_left = e;
+    none_left.words_left = 0;
+    const r_none = record_of(&none_left, 0, len);
+    try std.testing.expectEqual(@as(?u64, 0), entry_of(&r_none, &texts).words_left);
 }
 
 test "a header that changed after it was sealed doesn't read as whole" {

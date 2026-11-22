@@ -600,16 +600,19 @@ fn draw_hero(
     }
 
     progress_bar(page, left_px, bar_y, @intFromFloat(avail), e.percent, hero_text.bar_thick);
-    var label: [48]u8 = undefined;
+    var label: [progress_label_bytes_max]u8 = undefined;
     const pct = progress_label(&label, e.percent, minutes_left);
     const pct_y: i32 = @intCast(bar_y + hero_text.percent_drop);
     try draw.clipped(fonts.caption, page, left, pct_y, pct, avail);
     fonts.caption.fade(page, left_px, pct_y, @intFromFloat(avail), style.faded);
 }
 
+/// The longest progress label: 100%, and the most minutes a u64 holds.
+const progress_label_bytes_max = 47;
+
 /// Under the hero's bar: "62% read", and how long is left when known, as the reader's
 /// footer says it ("62% read  ·  3 h 20 min left").
-fn progress_label(buf: []u8, percent: u32, minutes_left: ?u64) []const u8 {
+fn progress_label(buf: *[progress_label_bytes_max]u8, percent: u32, minutes_left: ?u64) []const u8 {
     assert(percent <= 100);
     const minutes = minutes_left orelse {
         return std.fmt.bufPrint(buf, "{d}% read", .{percent}) catch "";
@@ -621,13 +624,15 @@ fn progress_label(buf: []u8, percent: u32, minutes_left: ?u64) []const u8 {
 }
 
 test "the hero's progress says how long is left once it's known" {
-    var buf: [48]u8 = undefined;
+    var buf: [progress_label_bytes_max]u8 = undefined;
     try std.testing.expectEqualStrings("62% read", progress_label(&buf, 62, null));
     const both = progress_label(&buf, 62, 200);
     try std.testing.expectEqualStrings("62% read  \u{b7}  3 h 20 min left", both);
-    // The longest it can be fits
-    const longest = progress_label(&buf, 100, std.math.maxInt(u64) / 60);
-    try std.testing.expect(std.mem.endsWith(u8, longest, " left"));
+    // The longest it can be fits whole
+    const longest = progress_label(&buf, 100, std.math.maxInt(u64));
+    const whole = "100% read  \u{b7}  307445734561825860 h 15 min left";
+    try std.testing.expectEqualStrings(whole, longest);
+    try std.testing.expectEqual(progress_label_bytes_max, longest.len);
 }
 
 /// The author, and the series when there is one: "Liu, Cixin  ·  Three-Body #2".

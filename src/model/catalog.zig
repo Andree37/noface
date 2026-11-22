@@ -16,8 +16,8 @@ pub const Entry = struct {
     last: u64,
     finished: bool = false,
     seconds_read: u64 = 0, // Time spent reading it in noface
-    /// Words from its place to its end, as noface saved them when it was last closed:
-    /// null when not known, or when the place is now the stock reader's.
+    /// Words from its place to its end, as noface last saved them with the place: null
+    /// when not known, or when the place is now the stock reader's.
     words_left: ?u64 = null,
     kindle_percent: u32 = 0,
     kindle_last: u64 = 0,

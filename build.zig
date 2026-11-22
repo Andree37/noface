@@ -110,6 +110,7 @@ const unicode_fields = [_][]const u8{
     "is_default_ignorable",
     "decomposition_type",
     "decomposition_mapping",
+    "script",
 };
 
 /// Gives `module`, rooted in src/, what src/ imports by name: the layout option

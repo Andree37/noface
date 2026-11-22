@@ -195,6 +195,19 @@ pub fn is_invisible(cp: u21) bool {
     return uucode.get(.is_default_ignorable, cp);
 }
 
+/// Scripts written without spaces between words, whose every character is counted as
+/// a word, as word counters count Chinese and Japanese.
+const word_per_character = [_]Script{ .han, .hiragana, .katakana };
+const Script = uucode.TypeOf(.script);
+
+/// Whether `cp` is read as a word by itself: a character of Chinese or Japanese, which
+/// put no spaces between words.
+pub fn is_word_by_itself(cp: u21) bool {
+    assert(cp <= code_point_max);
+    if (cp < ascii_end) return false;
+    return one_of(Script, uucode.get(.script, cp), &word_per_character);
+}
+
 /// Whether `cp` is a space of any width, a line or paragraph break, or a tab, as
 /// Python's `str.isspace` has it.
 pub fn is_space(cp: u21) bool {
@@ -305,4 +318,14 @@ test "ASCII is answered as Unicode's tables answer it" {
         const folded = uucode.get(.case_folding_simple, base(uucode.get(.case_folding_simple, cp)));
         try std.testing.expectEqual(folded, fold(cp));
     }
+}
+
+test "Chinese and Japanese characters are words by themselves, and other scripts' aren't" {
+    try std.testing.expect(is_word_by_itself(0x732b)); // 猫, Han
+    try std.testing.expect(is_word_by_itself(0x306f)); // は, Hiragana
+    try std.testing.expect(is_word_by_itself(0x30cd)); // ネ, Katakana
+    try std.testing.expect(!is_word_by_itself('a'));
+    try std.testing.expect(!is_word_by_itself(0xe9)); // é
+    try std.testing.expect(!is_word_by_itself(0xd55c)); // 한, Korean puts spaces between words
+    try std.testing.expect(!is_word_by_itself(0x0e01)); // ก, Thai
 }

@@ -114,8 +114,8 @@ pub const all = [_]Scenario{
         }.run,
     },
     .{
-        .name = "a book closed keeps the words left from its place, fewer the further in, " ++
-            "and the library shows the time they take",
+        .name = "a book's place keeps the words left from it, fewer the further in, " ++
+            "and the library shows the time they take unless time left is off",
         .run = struct {
             fn run() !void {
                 const hero = tap_in(library_ui.hero_rect(width));
@@ -133,6 +133,11 @@ pub const all = [_]Scenario{
                 const timed: Kindle = .{ .library = true, .read_before = before, .speed = speed };
                 const shown = try play_on(timed, &.{});
                 try expect(known.screen_hash != shown.screen_hash, "no time left shown");
+                // Time left turned off: none on the card either
+                var off = timed;
+                off.time_left = false;
+                const hidden = try play_on(off, &.{});
+                try expect(known.screen_hash == hidden.screen_hash, "time left shown while off");
             }
         }.run,
     },

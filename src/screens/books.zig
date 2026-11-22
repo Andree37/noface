@@ -816,15 +816,18 @@ test "a book read and saved moves up, and keeps its place through a reload" {
     e.percent = 50;
     e.last = 5000;
     e.seconds_read = 60;
+    e.words_left = 1234;
     library.save(e);
     library.arrange(.recent, .all, "");
     try std.testing.expectEqualStrings(title, library.hero().?.title);
+    try std.testing.expectEqual(@as(?u64, 1234), library.hero().?.words_left);
     library.deinit();
     var again = try load(t.sources);
     defer again.deinit();
     again.arrange(.progress, .unread, "");
     try std.testing.expectEqualStrings(title, again.hero().?.title);
     try std.testing.expectEqual(@as(u32, 50), again.hero().?.percent);
+    try std.testing.expectEqual(@as(?u64, 1234), again.hero().?.words_left);
 }
 
 test "a book with a long path is listed, where one past 320 bytes was silently dropped" {

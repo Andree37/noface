@@ -77,8 +77,13 @@ pub const all = [_]Scenario{
                     .pages_bytes = 1,
                 }, &([_]Step{ hero, wait(2_000) } ++ bigger));
                 try expect(same_place(kept_on.saved, failed.saved), "the place was lost");
-                const percent_kept = failed.saved.percent == kept_on.saved.percent;
-                try expect(percent_kept, "how far in it is changed");
+                // Its pages gone, how far in it is goes by the words before the place
+                const from_start = [_]Step{ hero, wait(2_000), top, home };
+                const at_start = try play_on(.{ .library = true }, &from_start);
+                const total = at_start.saved.words_left orelse return error.WordsNotSaved;
+                const left = failed.saved.words_left orelse return error.WordsNotSaved;
+                const by_words: u32 = @intCast((total - left) * 100 / total);
+                try expect(failed.saved.percent == by_words, "how far in it is changed");
             }
         }.run,
     },

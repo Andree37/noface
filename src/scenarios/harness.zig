@@ -171,17 +171,16 @@ pub const RealBook = struct {
 /// the reference images carried, so they don't weigh on the app.
 const with_snapshots = @import("root") == @import("../scenarios.zig");
 
-/// The Kindle this build is laid out for (`layout`), and whether its screens and page
-/// breaks are recorded to compare with (src/testdata/recorded/<model>/). One without
-/// them runs every scenario but those comparisons, pictures and digests of its screen.
-pub const recorded = layout.recorded;
+/// The Kindle this build is laid out for (`layout`). Its screens and page breaks are
+/// recorded to compare with in src/testdata/recorded/<model>/, as every Kindle's are:
+/// one added to device.Model is recorded as it's added (docs/DEVELOPING.md).
 pub const layout_model = layout.model;
 const recorded_dir = "../testdata/recorded/" ++ layout.model ++ "/";
 
 /// Where the test book's pages break, as recorded for this Kindle: as shipped, and with
-/// bold word starts on, which set words in other widths. Null with nothing recorded.
+/// bold word starts on, which set words in other widths.
 pub const Breaks = struct { plain: u64, bold_starts: u64 };
-pub const recorded_breaks: ?Breaks = if (recorded) breaks: {
+pub const recorded_breaks: Breaks = breaks: {
     @setEvalBranchQuota(10_000);
     var lines = std.mem.tokenizeScalar(u8, @embedFile(recorded_dir ++ "breaks.txt"), '\n');
     const plain = std.fmt.parseInt(u64, lines.next().?, 16) catch
@@ -189,14 +188,14 @@ pub const recorded_breaks: ?Breaks = if (recorded) breaks: {
     const bold_starts = std.fmt.parseInt(u64, lines.next().?, 16) catch
         @compileError(recorded_dir ++ "breaks.txt: its second line isn't a hex digest");
     break :breaks .{ .plain = plain, .bold_starts = bold_starts };
-} else null;
+};
 
 /// Set (from NOFACE_WRITE_SNAPSHOTS) to write each snapshot's screen to this folder as
 /// <name>.pgm, to make new reference images, instead of comparing.
 pub var write_snapshots: ?[]const u8 = null;
 
 pub fn reference_image(comptime name: []const u8) []const u8 {
-    if (!with_snapshots or !recorded) return "";
+    if (!with_snapshots) return "";
     return @embedFile(recorded_dir ++ name ++ ".png");
 }
 
@@ -229,7 +228,6 @@ pub fn matches_reference(alloc: std.mem.Allocator, which: Snapshot, pixels: []co
         return true;
     }
     if (!with_snapshots) return true; // The self-test doesn't carry them
-    if (!recorded) return true; // None recorded for this Kindle's screen
     const encoded = switch (which) {
         inline else => |w| reference_image(@tagName(w)),
     };

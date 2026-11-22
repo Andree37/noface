@@ -255,6 +255,7 @@ fn count_assertions(code: []const u8, expects_assert: bool) u32 {
 /// table offsets), not sizes on the screen.
 fn is_layout(path: []const u8) bool {
     assert(path.len > 0);
+    if (is_own_points(path)) return true;
     const screens = std.mem.startsWith(u8, path, "src/ui/") or
         std.mem.startsWith(u8, path, "src/screens/") or
         std.mem.startsWith(u8, path, "src/layout/") or
@@ -264,6 +265,19 @@ fn is_layout(path: []const u8) bool {
         if (std.mem.eql(u8, path, exempt)) return false;
     }
     return true;
+}
+
+/// Files below the interface that lay out in points too, though they may not import
+/// the scale (kindle/ may not import ui/): each turns points into pixels with its own
+/// `pt(`, so a number given to it is on the scale, and any other is bare.
+const own_points = [_][]const u8{"src/kindle/touch.zig"};
+
+fn is_own_points(path: []const u8) bool {
+    assert(path.len > 0);
+    for (own_points) |file| {
+        if (std.mem.eql(u8, path, file)) return true;
+    }
+    return false;
 }
 
 /// Whether `path` is a file of src/ itself, in no folder under it.
@@ -291,7 +305,7 @@ const size_words = [_][]const u8{
     "drop",   "rise",   "reach",  "radius",  "band",     "pad",      "margin", "step",
     "thick",  "stroke", "offset", "below",   "above",    "clear",    "corner", "edge",
     "indent", "outset", "arm",    "spacing", "baseline", "distance", "half",   "px",
-    "x",      "y",      "w",      "h",
+    "x",      "y",      "w",      "h",       "zone",     "slop",     "strip",
 };
 
 /// The drawing calls a size is given to.
@@ -302,14 +316,14 @@ const draw_calls = [_][]const u8{
 /// How many bare sizes a line of the screens' code writes: numbers of 3 or more in a
 /// declaration named like a size, or given to a drawing call. A divisor, an array's
 /// length and a number in an assertion aren't sizes.
-fn bare_sizes(code: []const u8) u32 {
+fn bare_sizes(code: []const u8, in_points: bool) u32 {
     assert(std.mem.indexOfScalar(u8, code, '\n') == null); // One line
     if (std.mem.indexOf(u8, code, "assert(") != null) return 0;
     if (std.mem.indexOf(u8, code, "parseInt(") != null) return 0; // A number's base
     var draws = false;
     for (draw_calls) |call| draws = draws or std.mem.indexOf(u8, code, call) != null;
     if (!draws and !declares_size(code)) return 0;
-    return big_numbers(code);
+    return big_numbers(code, in_points);
 }
 
 /// Whether a line declares a constant or variable named like a size: `const row_gap =`.
@@ -343,7 +357,7 @@ fn is_size_word(word: []const u8) bool {
 /// size from another file or an array's length: `[16]u8`, `/ 4` and
 /// `3 * style.fingertip` share out or count, they don't size. `2 * 150` and `100 * n`
 /// size, and count.
-fn big_numbers(code: []const u8) u32 {
+fn big_numbers(code: []const u8, in_points: bool) u32 {
     var count: u32 = 0;
     var i: u32 = 0;
     // Each pass moves on by a character at least
@@ -371,7 +385,9 @@ fn big_numbers(code: []const u8) u32 {
             names_size_elsewhere(std.mem.trimStart(u8, after[1..], " "));
         const length = before.len > 0 and before[before.len - 1] == '[' and
             end < code.len and code[end] == ']';
-        if (value >= 3 and !divisor and !counts_size and !length) count += 1;
+        // In a file of points of its own, a number given to its `pt(` is on the scale
+        const points = in_points and std.mem.endsWith(u8, before, "pt(");
+        if (value >= 3 and !divisor and !counts_size and !length and !points) count += 1;
         i = end;
     }
     return count;
@@ -708,6 +724,7 @@ const Scan = struct {
     light: std.ArrayList(u32) = .empty, // Where each function with fewer than two starts
     expects_assert: bool, // In the scenarios, where `expect(` is the assertion
     lays_out: bool, // In the screens' code, where a size comes from style.zig's scale
+    in_points: bool, // In a file of points of its own (`own_points`)
 
     /// A function being read: its name, first line, depth outside it, the assertions
     /// made in it so far, and the line of the `// Assertions:` marker above it, if any.
@@ -738,6 +755,7 @@ pub fn check_zig(path: []const u8, source: []const u8, gpa: std.mem.Allocator) !
         .gpa = gpa,
         .expects_assert = is_scenarios(path),
         .lays_out = is_layout(path),
+        .in_points = is_own_points(path),
     };
     errdefer scan.breaks.deinit(gpa);
     defer scan.light.deinit(gpa);
@@ -978,7 +996,7 @@ fn check_zig_statement(scan: *Scan, line: *const Line, line_number: u32, said: S
     }
     // A size in the screens' code comes from the scale, or says why it isn't one
     if (scan.lays_out) {
-        const bare = bare_sizes(code);
+        const bare = bare_sizes(code, scan.in_points);
         const marked = is_marker(line.comment, "// Not a size: ") or said.not_size_at != null;
         if (marked) {
             if (bare == 0) try scan.note(.marker_unused, said.not_size_at orelse line_number, 1);
@@ -1616,10 +1634,35 @@ test "the size rule covers the code that lays out the screen, and only that" {
     for ([_][]const u8{
         "src/ui/menu.zig",   "src/screens/reader.zig", "src/layout/text.zig",
         "src/gfx/image.zig", "src/app.zig",            "src/display.zig",
+        "src/kindle/touch.zig", // Below the interface, in points of its own
     }) |path| try std.testing.expect(is_layout(path));
     for ([_][]const u8{
         "src/ui/style.zig",     "src/ui/icons.zig", "src/gfx/jpeg.zig",
-        "src/gfx/truetype.zig", "src/sys/os.zig",   "src/kindle/touch.zig",
+        "src/gfx/truetype.zig", "src/sys/os.zig",   "src/kindle/input.zig",
         "src/model/book.zig",   "tools/e2e.zig",    "build.zig",
     }) |path| try std.testing.expect(!is_layout(path));
+}
+
+test "a file of points of its own gives its numbers to its pt(, and no number bare" {
+    const source =
+        \\const top_zone = pt(48);
+        \\const hold_slop = 36;
+        \\const bottom_strip = pt(28.8);
+        \\const corner_width = 300;
+    ;
+    const in_points = try check_zig("src/kindle/touch.zig", source, std.testing.allocator);
+    defer std.testing.allocator.free(in_points);
+    var bare: u32 = 0;
+    for (in_points) |b| {
+        if (b.rule == .layout_number) bare += 1;
+    }
+    try std.testing.expectEqual(@as(u32, 2), bare); // 36 and 300
+    // Elsewhere a number given to a `pt(` is as bare as any: sizes come from style.zig
+    const in_ui = try check_zig("src/ui/menu.zig", source, std.testing.allocator);
+    defer std.testing.allocator.free(in_ui);
+    bare = 0;
+    for (in_ui) |b| {
+        if (b.rule == .layout_number) bare += 1;
+    }
+    try std.testing.expectEqual(@as(u32, 4), bare);
 }

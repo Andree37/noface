@@ -222,7 +222,9 @@ doesn't look at, so the rules for the code it tests (assertions, ignored errors,
   TrueType, CFF) keep the formats' own numbers. `src/layout/` may not import the
   scale, so the page's sizes reach it in its `Layout`, set from the scale by whoever
   lays out. The touch zones (`src/kindle/touch.zig`), below the interface, are written
-  in points too, turned into pixels by the same density (`model/device.zig`).
+  in points too, turned into pixels by the same density (`model/device.zig`) with a
+  `pt(` of their own, and checked the same way: a number given to that `pt(` is on
+  the scale, any other is bare.
 
 ## Dependencies and tooling
 

@@ -324,20 +324,22 @@ illustrations.
   `noface selftest`.
 - The scenarios compare thirteen screens with reference images, and where the test
   book's pages break with recorded digests (`breaks.txt`), in
-  `src/testdata/recorded/<model>/`, for each Kindle that has that folder: today the
-  Paperwhite. A Kindle without one runs every scenario but those comparisons, and the
-  run says so. The screens: a page, the toolbar, Aa, a definition, a book's search,
+  `src/testdata/recorded/<model>/`, for every Kindle `zig build layouts` lays out, so
+  a change that moves anything on any of them is seen. The screens: a page, the toolbar, Aa, a definition, a book's search,
   the lock screen, running, the library, its search, a series list, a selected
   highlight, a note's panel and a picture shown whole. The last two are of
   `src/testdata/notes.epub`, a book with a footnote and a picture, which a scenario
-  opens with `.book = .notes`. When a screen changes on purpose, write new ones and
-  convert them:
+  opens with `.book = .notes`. When a screen changes on purpose, write new ones for
+  each Kindle (`-Dlayout=<model>`), look at them, and convert them. When the page
+  breaks move on purpose, the scenario that compares them prints the new digests for
+  `breaks.txt`. A Kindle added to `device.Model` starts the same way: its folder, a
+  `breaks.txt` of two zeros, then its screens written and its digests as printed:
 
 ```sh
-zig build scenarios host-tools                       # builds zig-out/bin/noface-scenarios for the Kindle
+zig build -Dlayout=<model> scenarios host-tools      # builds zig-out/bin/noface-scenarios for the Kindle
 NOFACE_WRITE_SNAPSHOTS=/tmp/snaps <noface-scenarios> # on the Kindle or a computer: writes <name>.pgm
 for f in /tmp/snaps/*.pgm; do
-  zig-out/bin/pgm2png "$f" src/testdata/recorded/paperwhite_12/$(basename "$f" .pgm).png
+  zig-out/bin/pgm2png "$f" src/testdata/recorded/<model>/$(basename "$f" .pgm).png
 done
 ```
 

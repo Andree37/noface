@@ -57,8 +57,8 @@ pub const all = [_]Scenario{
                 // Bold word starts lay words out at their own widths, and break there
                 const bold = try play_on(.{ .bold_starts = true }, &.{wait(3000)});
                 try expect(bold.breaks != 0, "no page breaks were saved with bold word starts");
-                // Compared where they're recorded, for this Kindle's screen
-                const want = harness.recorded_breaks orelse return;
+                // Compared with those recorded for this Kindle's screen
+                const want = harness.recorded_breaks;
                 if (laid_out.breaks != want.plain or bold.breaks != want.bold_starts) {
                     std.debug.print(
                         "page breaks moved: {x}, with bold word starts {x}. If the layout " ++

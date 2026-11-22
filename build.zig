@@ -123,12 +123,6 @@ fn src_imports(b: *std.Build, module: *std.Build.Module, model: []const u8) void
     module.addImport("uucode", uucode.module("uucode"));
     const options = b.addOptions();
     options.addOption([]const u8, "model", model);
-    // Whether this Kindle's screens and page breaks are recorded to compare with
-    // (src/testdata/recorded/<model>/): a layout without them skips those comparisons
-    const recorded_path = b.pathJoin(&.{ b.root.sub_path, "src/testdata/recorded", model });
-    const root_dir = b.root.root_dir.handle;
-    const recorded = if (root_dir.access(b.graph.io, recorded_path, .{})) true else |_| false;
-    options.addOption(bool, "recorded", recorded);
     module.addOptions("layout", options);
     assert(module.import_table.get("layout") != null);
     assert(module.import_table.get("uucode") != null);

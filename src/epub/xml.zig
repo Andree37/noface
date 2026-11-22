@@ -3,6 +3,7 @@
 //! fails: broken markup just yields fewer or odder tokens, since books are messy.
 const std = @import("std");
 const assert = std.debug.assert;
+const unicode = @import("../text/unicode.zig");
 
 pub const Tag = struct {
     name: []const u8, // Without any namespace prefix, so "dc:title" is "title"
@@ -193,10 +194,8 @@ pub fn decode(out: *std.ArrayList(u8), alloc: std.mem.Allocator, text: []const u
         if (std.mem.indexOfScalarPos(u8, window, ampersand + 1, ';')) |semicolon| {
             if (entity(text[ampersand + 1 .. semicolon])) |code_point| {
                 var encoded: [4]u8 = undefined;
-                const length = std.unicode.utf8Encode(code_point, &encoded) catch 0;
                 // `entity` gives only characters, which always encode
-                assert(length > 0);
-                try out.appendSlice(alloc, encoded[0..length]);
+                try out.appendSlice(alloc, unicode.encode(code_point, &encoded).?);
                 at = @intCast(semicolon + 1);
                 assert(at > start);
                 continue;
@@ -229,7 +228,7 @@ fn entity_numeric(name: []const u8) ?u21 {
     const value = std.fmt.parseInt(u21, digits, if (hex) 16 else 10) catch return null;
     if (value == 0) return null;
     if (value >= 0xd800 and value <= 0xdfff) return null; // Surrogates aren't characters
-    if (value > 0x10ffff) return null;
+    if (value > unicode.code_point_max) return null;
     return value;
 }
 
@@ -283,8 +282,8 @@ fn test_decode_unbounded(
         if (name.len < entity_name_length_limit) {
             if (entity(name)) |code_point| {
                 var encoded: [4]u8 = undefined;
-                const length = try std.unicode.utf8Encode(code_point, &encoded);
-                try out.appendSlice(alloc, encoded[0..length]);
+                // `entity` gives only characters, which always encode
+                try out.appendSlice(alloc, unicode.encode(code_point, &encoded).?);
                 at = @intCast(semicolon + 1);
                 continue;
             }

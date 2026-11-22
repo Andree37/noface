@@ -2,6 +2,7 @@
 //! events. Every call goes through the lipc command line tools.
 const std = @import("std");
 const assert = std.debug.assert;
+const unicode = @import("../text/unicode.zig");
 const linux = @import("../sys/calls.zig");
 const os = @import("../sys/os.zig");
 const process = @import("../sys/process.zig");
@@ -111,9 +112,8 @@ pub fn essid_of(answer: []const u8, out: []u8) []const u8 {
     if (!connected) return out[0..0];
     // A name not in UTF-8 (an old router's Latin-1) can't be drawn: none, so "On" shows
     if (!std.unicode.utf8ValidateSlice(name)) return out[0..0];
-    var length: u32 = @intCast(@min(name.len, out.len));
     // Never inside a character
-    while (length > 0 and length < name.len and name[length] & 0xc0 == 0x80) length -= 1;
+    const length = unicode.start_at_or_before(name, @intCast(@min(name.len, out.len)));
     @memcpy(out[0..length], name[0..length]);
     assert(length <= out.len);
     return out[0..length];

@@ -181,11 +181,14 @@ fn hex(address: usize) void { // usize: an address
     say(std.fmt.bufPrint(&buffer, " 0x{x}", .{address}) catch return);
 }
 
+/// How many times a short write to the log is tried again with what's left.
+const say_tries = 4;
+
 /// Writes `text` to the log as it is, retrying the rest of a short write a few times.
 // Assertions: a crash's own report, where one failing would only crash again
 fn say(text: []const u8) void {
     var left = text;
-    for (0..4) |_| {
+    for (0..say_tries) |_| {
         if (left.len == 0) return;
         const written = linux.write(log_fd, left.ptr, left.len);
         if (written == 0 or written > left.len) return; // Failed: nothing more to do
@@ -193,12 +196,14 @@ fn say(text: []const u8) void {
     }
 }
 
-/// The longest build ID read: a SHA-1's 20 bytes, with room to spare.
-const build_id_bytes_max = 32;
+/// The longest build ID read, for a caller to hold one: a SHA-1's 20 bytes, with room
+/// to spare.
+pub const build_id_bytes_max = 32;
 /// An ELF note's header: its name's length, its description's, and its type.
 const note_header_size = 12;
 const note_type_build_id = 3; // NT_GNU_BUILD_ID
 const program_type_note = 4; // PT_NOTE
+const program_type_headers = 6; // PT_PHDR: the program headers themselves
 
 /// This program's build ID, from its program headers as the kernel mapped them, into
 /// `out`: empty when it has none or this isn't Linux. `noface selftest` checks there's
@@ -215,10 +220,15 @@ pub fn build_id(out: []u8) []const u8 {
     if (headers_at == 0) return out[0..0];
     assert(headers_at % @alignOf(Phdr) == 0); // Where the kernel says they are
     const headers: [*]const Phdr = @ptrFromInt(headers_at);
-    // A static program, mapped where it was linked: a header's address is where it is
+    // Where the program was loaded past where it was linked: none for the Kindle's,
+    // mapped where it was linked, the size of the move for one loaded anywhere
+    var moved: usize = 0; // usize: an address's distance
+    for (headers[0..count]) |h| {
+        if (@backingInt(h.type) == program_type_headers) moved = headers_at -% h.vaddr;
+    }
     for (headers[0..count]) |h| {
         if (@backingInt(h.type) != program_type_note) continue;
-        const notes: [*]const u8 = @ptrFromInt(h.vaddr);
+        const notes: [*]const u8 = @ptrFromInt(h.vaddr +% moved);
         if (build_id_in(notes[0..h.filesz], out)) |id| return id;
     }
     return out[0..0];
@@ -229,9 +239,6 @@ fn auxiliary(kind: u32) usize { // usize: an address, or a count, as the kernel 
     if (builtin.link_libc) return std.c.getauxval(kind);
     return std.os.linux.getauxval(kind);
 }
-
-/// The longest build ID read, for a caller to hold one.
-pub const build_id_max = build_id_bytes_max;
 
 /// The build ID among the ELF notes in `notes`, into `out`, or null when there's none.
 fn build_id_in(notes: []const u8, out: []u8) ?[]const u8 {

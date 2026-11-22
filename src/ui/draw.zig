@@ -1,6 +1,7 @@
 //! Small drawing pieces several screens use.
 const std = @import("std");
 const assert = std.debug.assert;
+const unicode = @import("../text/unicode.zig");
 const Page = @import("../gfx/page.zig").Page;
 const Font = @import("../gfx/font.zig").Font;
 const style = @import("style.zig");
@@ -43,10 +44,9 @@ pub fn clipped(font: *Font, page: Page, x: f32, y: i32, s: []const u8, avail: f3
     const dots = "...";
     var buffer: [256]u8 = undefined;
     const dots_width = try font.measure(dots);
-    var cut = @min(try font.fit(s, avail - dots_width), buffer.len - dots.len);
-    assert(cut <= s.len);
-    // Never inside a character
-    while (cut > 0 and cut < s.len and s[cut] & 0xc0 == 0x80) cut -= 1;
+    const fits: u32 = @intCast(@min(try font.fit(s, avail - dots_width), buffer.len - dots.len));
+    assert(fits <= s.len);
+    const cut = unicode.start_at_or_before(s, fits); // Never inside a character
     const part = std.mem.trimEnd(u8, s[0..cut], " ");
     assert(part.len + dots.len <= buffer.len);
     @memcpy(buffer[0..part.len], part);
@@ -89,12 +89,10 @@ fn tail_start(font: *Font, s: []const u8, avail: f32, len_max: u32) !u32 {
         const middle = low + (high - low) / 2;
         // Measured from the next character's start: inside one, the text isn't UTF-8
         // and measures nothing, which would pass for fitting
-        var from = middle;
-        while (from < len and s[from] & 0xc0 == 0x80) from += 1;
+        const from = unicode.start_at_or_after(s, middle);
         if (try font.measure(s[from..]) <= avail) high = middle else low = middle + 1;
     }
-    var start = low;
-    while (start < len and s[start] & 0xc0 == 0x80) start += 1;
+    const start = unicode.start_at_or_after(s, low);
     assert(start <= len);
     return start;
 }
@@ -331,7 +329,7 @@ test "a long field shows the end of what's typed" {
     const narrow = try font.measure(accented[3..]) - 1;
     const start = try tail_start(&font, accented, narrow, accented.len);
     try std.testing.expect(start > 3);
-    try std.testing.expect(accented[start] & 0xc0 != 0x80);
+    try std.testing.expect(!unicode.inside_character(accented[start]));
     try std.testing.expect(try font.measure(accented[start..]) <= narrow);
     // Full of accented letters, at every width: what's shown always fits
     const query = "a\u{e7}\u{e3}o \u{fc}ber Jo\u{e3}o Saramago Proust r\u{e9}sum\u{e9} Jos\u{e9}";

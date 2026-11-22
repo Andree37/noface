@@ -74,11 +74,8 @@ pub fn title_case(alloc: std.mem.Allocator, typed: []const u8) ![]const u8 {
     var start = true;
     var i: u32 = 0;
     while (i < out.len) {
-        const c = unicode.character_at(out, i) orelse {
-            i += 1; // Not UTF-8 here: left as it is
-            start = false;
-            continue;
-        };
+        // Not UTF-8 here: the replacement character, which has no capital, left as it is
+        const c = unicode.character_or_replacement(out, i);
         if (start) capitalise_at(out, i, c);
         start = c.cp == ' ';
         i += c.len;
@@ -92,10 +89,7 @@ fn has_capital(text: []const u8) bool {
     assert(text.len > 0);
     var i: u32 = 0;
     while (i < text.len) {
-        const c = unicode.character_at(text, i) orelse {
-            i += 1;
-            continue;
-        };
+        const c = unicode.character_or_replacement(text, i);
         if (unicode.lowercase(c.cp) != c.cp) return true;
         i += c.len;
     }
@@ -108,9 +102,9 @@ fn capitalise_at(text: []u8, at: u32, c: unicode.Character) void {
     assert(at + c.len <= text.len);
     assert(c.len >= 1);
     var bytes: [4]u8 = undefined;
-    const length = std.unicode.utf8Encode(unicode.uppercase(c.cp), &bytes) catch return;
-    if (length != c.len) return; // A capital of another length: left as typed
-    @memcpy(text[at..][0..length], bytes[0..length]);
+    const capital = unicode.encode(unicode.uppercase(c.cp), &bytes) orelse return;
+    if (capital.len != c.len) return; // A capital of another length: left as typed
+    @memcpy(text[at..][0..capital.len], capital);
 }
 
 test "a line reads back as written, and is known by its book's path" {

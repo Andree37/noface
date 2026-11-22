@@ -22,8 +22,10 @@ const plain_quotes = [_]struct { curly: u21, plain: u21 }{
 
 /// The code points below this are ASCII, whose properties Unicode keeps as ASCII has
 /// them: answered without the tables, as most of a book's characters are ASCII (the
-/// tables give the same, as a test checks).
-const ascii_end = 0x80;
+/// tables give the same, as a test checks). In UTF-8 each is a byte of its own.
+pub const ascii_end = 0x80;
+/// What a byte that starts no character reads as, where text isn't UTF-8.
+pub const replacement = 0xfffd;
 /// How many times a canonical decomposition is followed to a letter's base: Unicode's
 /// deepest (ǖ is ü and a macron, ü is u and a diaeresis) is a few steps.
 const decompositions_max = 8;
@@ -42,6 +44,53 @@ pub fn character_at(text: []const u8, i: u32) ?Character {
     assert(len >= 1);
     assert(len <= 4);
     return .{ .cp = cp, .len = len };
+}
+
+/// The character starting at byte `i` of `text`, or where none does (text that isn't
+/// UTF-8), that byte read as the replacement character: so a walk over any text goes
+/// on a byte at a time past what isn't text.
+pub fn character_or_replacement(text: []const u8, i: u32) Character {
+    assert(i < text.len);
+    return character_at(text, i) orelse .{ .cp = replacement, .len = 1 };
+}
+
+/// Whether `byte` is inside a character written in more than one byte: none starts at it.
+pub fn inside_character(byte: u8) bool {
+    return byte & 0xc0 == 0x80;
+}
+
+/// The nearest place at or before `at` that's no character's inside: `at` itself, or
+/// the start of the character it's inside. `text.len` is such a place.
+pub fn start_at_or_before(text: []const u8, at: u32) u32 {
+    assert(at <= text.len);
+    var start = at;
+    // A character is at most four bytes: at most three to step back over
+    for (0..3) |_| {
+        if (start == 0 or start == text.len or !inside_character(text[start])) break;
+        start -= 1;
+    }
+    assert(start <= at);
+    return start;
+}
+
+/// The nearest place at or after `at` that's no character's inside: `at` itself, or
+/// the start of the next character. `text.len` is such a place.
+pub fn start_at_or_after(text: []const u8, at: u32) u32 {
+    assert(at <= text.len);
+    var start = at;
+    for (0..3) |_| {
+        if (start == text.len or !inside_character(text[start])) break;
+        start += 1;
+    }
+    assert(start >= at);
+    return start;
+}
+
+/// `cp` in UTF-8, in `out`, or null for a code point UTF-8 can't hold (a surrogate).
+pub fn encode(cp: u21, out: *[4]u8) ?[]const u8 {
+    assert(cp <= code_point_max);
+    const length = std.unicode.utf8Encode(cp, out) catch return null;
+    return out[0..length];
 }
 
 /// `cp` as words are matched, ignoring case and accents: its base letter (its
@@ -328,4 +377,29 @@ test "Chinese and Japanese characters are words by themselves, and other scripts
     try std.testing.expect(!is_word_by_itself(0xe9)); // é
     try std.testing.expect(!is_word_by_itself(0xd55c)); // 한, Korean puts spaces between words
     try std.testing.expect(!is_word_by_itself(0x0e01)); // ก, Thai
+}
+
+test "places in text are moved to a character's start, back or on" {
+    const text = "a\u{e7}\u{20ac}b"; // a, ç (2 bytes), € (3), b
+    try std.testing.expectEqual(@as(u32, 1), start_at_or_before(text, 2)); // Inside ç
+    try std.testing.expectEqual(@as(u32, 3), start_at_or_before(text, 5)); // Inside €
+    try std.testing.expectEqual(@as(u32, 6), start_at_or_before(text, 6)); // b
+    try std.testing.expectEqual(@as(u32, 7), start_at_or_before(text, 7)); // The end
+    try std.testing.expectEqual(@as(u32, 3), start_at_or_after(text, 2));
+    try std.testing.expectEqual(@as(u32, 6), start_at_or_after(text, 4));
+    try std.testing.expectEqual(@as(u32, 0), start_at_or_after(text, 0));
+    // A run of bytes inside characters longer than any is never walked past bounds
+    const broken = "\x80\x80\x80\x80\x80";
+    try std.testing.expect(start_at_or_before(broken, 4) <= 4);
+    try std.testing.expect(start_at_or_after(broken, 0) <= broken.len);
+}
+
+test "a code point is encoded, and a byte no character starts reads as the replacement" {
+    var out: [4]u8 = undefined;
+    try std.testing.expectEqualStrings("\u{20ac}", encode(0x20ac, &out).?);
+    try std.testing.expect(encode(0xd800, &out) == null); // A surrogate
+    const not_utf8 = character_or_replacement("\xa0", 0);
+    try std.testing.expectEqual(Character{ .cp = replacement, .len = 1 }, not_utf8);
+    const no_break_space = character_or_replacement("\u{a0}", 0);
+    try std.testing.expectEqual(Character{ .cp = 0xa0, .len = 2 }, no_break_space);
 }

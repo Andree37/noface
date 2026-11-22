@@ -62,6 +62,8 @@ const widest_row: comptime_int = letter_rows[0].len;
 const key_width = (style.screen_width - 2 * tray_pad - (widest_row - 1) * gap) / widest_row;
 const key_height = style.fingertip;
 const gap = style.space.tiny;
+/// From one key to the next along a row: a key and the gap after it.
+const key_step = key_width + gap;
 const row_step = key_height + gap;
 /// Three rows of characters, then the row with space and Search.
 const row_count: u32 = letter_rows.len + 1;
@@ -106,7 +108,7 @@ comptime {
     };
     // A letter's accents fit one row of keys
     for (accent_table) |a| assert(count_of(a.forms) <= accents_max);
-    assert(accents_max * (key_width + gap) - gap <= style.screen_width - 2 * tray_pad);
+    assert(accents_max * key_step - gap <= style.screen_width - 2 * tray_pad);
 }
 
 /// How many characters `row` has: written here, so it's UTF-8 or doesn't build.
@@ -130,11 +132,11 @@ fn decoded(comptime row: []const u8) [count_of(row)]u21 {
 fn centred_row(comptime chars: []const u21) [chars.len]Box {
     assert(chars.len > 0);
     assert(chars.len <= widest_row);
-    const width = chars.len * (key_width + gap) - gap;
+    const width = chars.len * key_step - gap;
     const left = (style.screen_width - width) / 2;
     var boxes: [chars.len]Box = undefined;
     for (chars, &boxes, 0..) |c, *b, i| {
-        b.* = .{ .x = left + i * (key_width + gap), .w = key_width, .key = .{ .char = c } };
+        b.* = .{ .x = left + i * key_step, .w = key_width, .key = .{ .char = c } };
     }
     return boxes;
 }
@@ -211,7 +213,7 @@ pub fn held_letter(state: State, x: i32, y: i32) ?Held {
         .char => |c| c,
         .backspace, .space, .enter, .shift, .layer => return null,
     };
-    if (c >= 0x80) return null;
+    if (c >= unicode.ascii_end) return null; // Accents are only for the letters a to z
     const letter: u8 = @intCast(c);
     if (forms_of(letter) == null) return null;
     return .{ .letter = letter, .row = row, .center_x = b.x + @divTrunc(b.w, 2) };
@@ -219,7 +221,7 @@ pub fn held_letter(state: State, x: i32, y: i32) ?Held {
 
 /// A letter's accented forms, decoded, or null when it has none.
 fn forms_of(letter: u8) ?[]const u21 {
-    assert(letter < 0x80); // A key's own letter, before any accent
+    assert(letter < unicode.ascii_end); // A key's own letter, before any accent
     inline for (accent_table) |a| {
         if (a.letter == letter) {
             const kept = struct {
@@ -242,7 +244,7 @@ fn accents_row(held_row: u32) u32 {
 fn accents_left(held: Held, count: u32) i32 {
     assert(count > 0);
     assert(count <= accents_max);
-    const width: i32 = @intCast(count * (key_width + gap) - gap);
+    const width: i32 = @intCast(count * key_step - gap);
     const left = held.center_x - @divTrunc(width, 2);
     return std.math.clamp(left, tray_pad, style.screen_width - tray_pad - width);
 }
@@ -257,7 +259,7 @@ pub fn accent_at(state: State, x: i32, y: i32) ?u21 {
     if (row != accents_row(held.row)) return null;
     const left = accents_left(held, @intCast(forms.len));
     if (x < left) return null;
-    const index: u32 = @intCast(@divTrunc(x - left, key_width + gap));
+    const index: u32 = @intCast(@divTrunc(x - left, key_step));
     if (index >= forms.len) return null;
     return forms[index];
 }
@@ -285,7 +287,7 @@ pub fn accent_place(held: Held, index: u32) style.Point {
     assert(index < forms.len);
     const left = accents_left(held, @intCast(forms.len));
     const point: style.Point = .{
-        .x = left + @as(i32, @intCast(index)) * (key_width + gap) + key_width / 2,
+        .x = left + @as(i32, @intCast(index)) * key_step + key_width / 2,
         .y = keys_top_y + @as(i32, @intCast(accents_row(held.row))) * row_step + key_height / 2,
     };
     assert(accent_at(.{ .accents = held }, point.x, point.y) == forms[index]);
@@ -358,8 +360,8 @@ fn render_key(fonts: Fonts, page: Page, b: Box, y: u32, shift: Shift) !void {
         .char => |c| {
             key_face(page, b.x, y, b.w, style.white);
             var bytes: [4]u8 = undefined;
-            const length = std.unicode.utf8Encode(typed(c, shift), &bytes) catch return;
-            try label(fonts, page, b.x, y, b.w, bytes[0..length]);
+            // A key's character, or its capital, is a character: it encodes
+            try label(fonts, page, b.x, y, b.w, unicode.encode(typed(c, shift), &bytes).?);
         },
         .space => {
             key_face(page, b.x, y, b.w, style.white);
@@ -433,7 +435,7 @@ fn render_accents(fonts: Fonts, page: Page, held: Held, shift: Shift) !void {
     const left = accents_left(held, @intCast(forms.len));
     const y: u32 = keys_top + accents_row(held.row) * row_step;
     for (forms, 0..) |form, i| {
-        const x = left + @as(i32, @intCast(i)) * (key_width + gap);
+        const x = left + @as(i32, @intCast(i)) * key_step;
         const ring_left: u32 = @intCast(x + inset - ring);
         const ring_width: u32 = @intCast(key_width - 2 * inset + 2 * ring);
         const ring_height = key_height - 2 * inset + 2 * ring;
@@ -441,8 +443,8 @@ fn render_accents(fonts: Fonts, page: Page, held: Held, shift: Shift) !void {
         page.round_rect(ring_left, ring_top, ring_width, ring_height, corner + ring, style.black);
         key_face(page, x, y, key_width, style.white);
         var bytes: [4]u8 = undefined;
-        const length = std.unicode.utf8Encode(typed(form, shift), &bytes) catch continue;
-        try label(fonts, page, x, y, key_width, bytes[0..length]);
+        // An accented letter, or its capital, is a character: it encodes
+        try label(fonts, page, x, y, key_width, unicode.encode(typed(form, shift), &bytes).?);
     }
 }
 
@@ -462,7 +464,7 @@ test "the layers hold letters, digits and symbols, and the keys between them" {
     // The digits are on the symbols: where the letters have q, the symbols have 1
     try std.testing.expectEqual(q, place(.{ .char = '1' }));
     // The euro, after six other symbols on the second row of the rest
-    const euro_x = place(.{ .char = '_' }).x + 6 * (key_width + gap);
+    const euro_x = place(.{ .char = '_' }).x + 6 * key_step;
     const more: State = .{ .layer = .more };
     const euro = hit(more, euro_x, place(.{ .char = '_' }).y).?;
     try std.testing.expectEqual(Key{ .char = 0x20ac }, euro);

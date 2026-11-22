@@ -233,7 +233,7 @@ fn panel_control_shortcut(a: *app.App, choice: menu.Hit) !void {
     // Airplane mode and Wi-Fi are one switch shown on two tiles: the other follows
     if (choice == .airplane) try redraw_tile(a, .wifi);
     if (choice == .wifi) try redraw_tile(a, .airplane);
-    if (choice == .airplane or choice == .wifi) {
+    if (is_radio(choice)) {
         // Airplane mode can take Bluetooth with it: shown as the Kindle has it now
         const bluetooth = lipc.bluetooth_on() orelse a.quick.bluetooth;
         if (bluetooth != a.quick.bluetooth) {
@@ -256,7 +256,7 @@ const bluetooth_warning = "Bluetooth goes off too. Tap again to confirm.";
 /// Whether tapping `choice` would turn the radio off (Wi-Fi off, airplane mode on)
 /// while Bluetooth is on, which airplane mode cuts too: warned of first.
 fn warns_first(quick: *const quick_model.Quick, choice: menu.Hit) bool {
-    if (choice != .wifi and choice != .airplane) return false;
+    if (!is_radio(choice)) return false;
     if (!quick.bluetooth) return false;
     const after = tapped(quick.*, choice);
     return after.airplane and !quick.airplane;
@@ -291,12 +291,12 @@ fn tapped(quick: quick_model.Quick, choice: menu.Hit) quick_model.Quick {
         => unreachable, // Not a shortcut: `panel_control` runs those
     }
     // The radio switched: connected to nothing yet, whatever was read before
-    if (choice == .airplane or choice == .wifi) {
+    if (is_radio(choice)) {
         next.wifi_on = false;
         next.network_len = 0;
     }
     // Airplane mode is noface's pause only until the reader touches either tile
-    if (choice == .airplane or choice == .wifi) assert(!next.wifi_paused);
+    if (is_radio(choice)) assert(!next.wifi_paused);
     if (next.wifi_paused) assert(quick.wifi_paused); // A tap never starts a pause
     return next;
 }
@@ -320,9 +320,13 @@ pub fn open(a: *app.App, background: display.Backdrop) Panel {
 /// Whether airplane mode, `on` as last read, is noface's own pause while reading: its
 /// note says so (kindle/wifi_saver.zig).
 fn paused_by_noface(on: bool) bool {
-    const paused = on and wifi_saver.marked();
-    if (paused) assert(on);
-    return paused;
+    return on and wifi_saver.marked();
+}
+
+/// Whether `choice` is one of the radio's two tiles: Wi-Fi, or airplane mode, its other
+/// side.
+fn is_radio(choice: menu.Hit) bool {
+    return choice == .airplane or choice == .wifi;
 }
 
 /// Once the panel has ended: true to go to the Kindle's own screens.

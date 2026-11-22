@@ -22,10 +22,10 @@ pub const Query = struct {
     pub fn push(q: *Query, cp: u21) bool {
         assert(q.len <= q.buf.len);
         var bytes: [4]u8 = undefined;
-        const length = std.unicode.utf8Encode(cp, &bytes) catch return false;
-        if (q.len + length > q.buf.len) return false;
-        @memcpy(q.buf[q.len..][0..length], bytes[0..length]);
-        q.len += length;
+        const encoded = unicode.encode(cp, &bytes) orelse return false;
+        if (q.len + encoded.len > q.buf.len) return false;
+        @memcpy(q.buf[q.len..][0..encoded.len], encoded);
+        q.len += @intCast(encoded.len);
         assert(q.len <= q.buf.len);
         return true;
     }
@@ -34,9 +34,8 @@ pub const Query = struct {
     pub fn pop(q: *Query) bool {
         assert(q.len <= q.buf.len);
         if (q.len == 0) return false;
-        q.len -= 1;
-        // Back over the rest of a character written in more than a byte
-        while (q.len > 0 and q.buf[q.len] & 0xc0 == 0x80) q.len -= 1;
+        // Back over all of a character written in more than a byte
+        q.len = unicode.start_at_or_before(q.buf[0..q.len], q.len - 1);
         assert(q.len < q.buf.len);
         return true;
     }
@@ -191,10 +190,9 @@ pub fn snippet(s: []const u8, byte: u32, max: u32) []const u8 {
     // With no space before the match (Chinese, Japanese, a long address), the lead
     // may land inside a character, and a line that starts there draws as nothing.
     // The match starts on a character, so this stops there at the latest.
-    while (start < byte and s[start] & 0xc0 == 0x80) start += 1;
-    var end = @min(s.len, start + max);
-    // Inside a character
-    while (end < s.len and end > start and s[end] & 0xc0 == 0x80) end -= 1;
+    start = unicode.start_at_or_after(s[0..byte], start);
+    // Never inside a character: the one `end` is in starts at `start` at the earliest
+    const end = unicode.start_at_or_before(s, @intCast(@min(s.len, start + max)));
     assert(start <= end);
     assert(end <= s.len);
     return s[start..end];
@@ -247,7 +245,7 @@ test "snippets of text without spaces start on a whole character" {
     const sentence = "日本語の文章です。";
     const s = sentence ++ sentence ++ sentence ++ sentence ++ "1探す言葉";
     const at = std.mem.indexOf(u8, s, "探す").?;
-    try std.testing.expect(s[at - 48] & 0xc0 == 0x80);
+    try std.testing.expect(unicode.inside_character(s[at - 48]));
     const line = snippet(s, @intCast(at), 120);
     try std.testing.expect(std.unicode.utf8ValidateSlice(line));
     try std.testing.expect(std.mem.indexOf(u8, line, "探す") != null);

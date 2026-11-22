@@ -182,10 +182,11 @@ fn is_snake_case(name: []const u8) bool {
 /// (`root.debug.handleSegfault`): named as it asks, or it never finds them.
 const std_hooks = [_][]const u8{"handleSegfault"};
 
-fn is_std_hook(name: []const u8) bool {
-    assert(name.len > 0);
-    for (std_hooks) |hook| {
-        if (std.mem.eql(u8, name, hook)) return true;
+/// Whether `text` is one of `list`.
+fn listed(list: []const []const u8, text: []const u8) bool {
+    assert(text.len > 0);
+    for (list) |item| {
+        if (std.mem.eql(u8, text, item)) return true;
     }
     return false;
 }
@@ -268,30 +269,19 @@ fn count_assertions(code: []const u8, expects_assert: bool) u32 {
 /// table offsets), not sizes on the screen.
 fn is_layout(path: []const u8) bool {
     assert(path.len > 0);
-    if (is_own_points(path)) return true;
+    if (listed(&own_points, path)) return true;
     const screens = std.mem.startsWith(u8, path, "src/ui/") or
         std.mem.startsWith(u8, path, "src/screens/") or
         std.mem.startsWith(u8, path, "src/layout/") or
         std.mem.startsWith(u8, path, "src/gfx/") or is_src_root(path);
     if (!screens) return false;
-    for (layout_exempt) |exempt| {
-        if (std.mem.eql(u8, path, exempt)) return false;
-    }
-    return true;
+    return !listed(&layout_exempt, path);
 }
 
 /// Files below the interface that lay out in points too, though they may not import
 /// the scale (kindle/ may not import ui/): each turns points into pixels with its own
 /// `pt(`, so a number given to it is on the scale, and any other is bare.
 const own_points = [_][]const u8{"src/kindle/touch.zig"};
-
-fn is_own_points(path: []const u8) bool {
-    assert(path.len > 0);
-    for (own_points) |file| {
-        if (std.mem.eql(u8, path, file)) return true;
-    }
-    return false;
-}
 
 /// Whether `path` is a file of src/ itself, in no folder under it.
 fn is_src_root(path: []const u8) bool {
@@ -777,7 +767,7 @@ pub fn check_zig(path: []const u8, source: []const u8, gpa: std.mem.Allocator) !
         .gpa = gpa,
         .expects_assert = is_scenarios(path),
         .lays_out = is_layout(path),
-        .in_points = is_own_points(path),
+        .in_points = listed(&own_points, path),
     };
     errdefer scan.breaks.deinit(gpa);
     defer scan.light.deinit(gpa);
@@ -916,7 +906,7 @@ fn check_zig_code(scan: *Scan, line: *const Line, line_number: u32, said: Said) 
     var excuse_used = false;
     if (function_name(code)) |name| {
         const returns_type = std.mem.indexOf(u8, code, ") type") != null;
-        if (!returns_type and !is_snake_case(name) and !is_std_hook(name)) {
+        if (!returns_type and !is_snake_case(name) and !listed(&std_hooks, name)) {
             try scan.note(.function_name, line_number, 1);
         }
         const function: Scan.Function = .{

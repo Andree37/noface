@@ -15,6 +15,7 @@
 //! file system faults on a mapped file renamed over, so the index is closed first.
 const std = @import("std");
 const assert = std.debug.assert;
+const unicode = @import("../text/unicode.zig");
 const catalog = @import("../model/catalog.zig");
 const calls = @import("../sys/calls.zig");
 const file = @import("../sys/file.zig");
@@ -465,12 +466,7 @@ fn cut(text: []const u8, max: u32) []const u8 {
 /// `text` cut to `text_bytes_max` bytes, at a whole UTF-8 character.
 pub fn clip(text: []const u8) []const u8 {
     if (text.len <= text_bytes_max) return text;
-    var end = text_bytes_max;
-    // A character is at most four bytes: at most three to step back over
-    for (0..3) |_| {
-        if (text[end] & 0xc0 != 0x80) break; // Not a character's continuation
-        end -= 1;
-    }
+    const end = unicode.start_at_or_before(text, text_bytes_max);
     assert(end <= text_bytes_max);
     assert(end + 3 >= text_bytes_max);
     return text[0..end];

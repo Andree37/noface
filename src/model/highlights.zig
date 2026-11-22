@@ -1,6 +1,7 @@
 //! Highlights in a book: where they sit in the text, and how they map to a page.
 const std = @import("std");
 const assert = std.debug.assert;
+const unicode = @import("../text/unicode.zig");
 const check = @import("../base/check.zig");
 const book_model = @import("book.zig");
 
@@ -89,13 +90,13 @@ pub fn excerpt(s: []const u8, max: u32) []const u8 {
     const trimmed = std.mem.trimStart(u8, s, " ");
     if (trimmed.len <= max) return trimmed;
     var end = max;
-    while (end > 0 and trimmed[end] & 0xc0 == 0x80) end -= 1; // Inside a UTF-8 character
+    end = unicode.start_at_or_before(trimmed, end); // Never inside a character
     if (std.mem.lastIndexOfScalar(u8, trimmed[0..end], ' ')) |space| {
         if (space > max / 2) end = @intCast(space); // Before `end`, so below `max`
     }
     assert(end <= max);
     // The excerpt stops before a character, never inside one.
-    assert(end == 0 or trimmed[end] & 0xc0 != 0x80);
+    assert(end == 0 or !unicode.inside_character(trimmed[end]));
     return trimmed[0..end];
 }
 

@@ -172,12 +172,13 @@ pub const Session = struct {
         return s.words.total() - here;
     }
 
-    /// How far in place `at` is by the words before it, for when the pages can't say:
-    /// null for a book without words (pictures only).
-    pub fn words_percent(s: *const Session, at: book_model.Pos) ?u32 {
+    /// How far in a place `words_left` words from the end is, by the words before it,
+    /// for when the pages can't say: null for a book without words (pictures only).
+    pub fn words_percent(s: *const Session, words_left: u64) ?u32 {
         const total = s.words.total();
+        assert(words_left <= total);
         if (total == 0) return null;
-        const before = total - s.book_words_left(at);
+        const before = total - words_left;
         const in_percent: u32 = @intCast(before * 100 / total);
         assert(in_percent <= 100);
         return in_percent;
@@ -585,7 +586,8 @@ pub fn save_progress(
     const seconds = s.seconds_read_total();
     const pos = s.anchor;
     if (percent_read) |p| assert(p <= 100);
-    const percent = percent_read orelse s.words_percent(pos) orelse entry.percent;
+    const words_left = s.book_words_left(pos);
+    const percent = percent_read orelse s.words_percent(words_left) orelse entry.percent;
     const now = unix_time();
     // Changed in place, so anything else kept with the place is kept too
     var saved = state.load(path);
@@ -594,7 +596,6 @@ pub fn save_progress(
     saved.percent = percent;
     saved.opened = now;
     saved.seconds = seconds;
-    const words_left = s.book_words_left(pos);
     saved.words_left = words_left;
     saved.finished = entry.finished;
     const back = s.back.place;

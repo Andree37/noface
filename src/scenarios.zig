@@ -115,7 +115,7 @@ fn selftest_files() bool {
         ok = ok and usable;
     }
     // A crash's report names the build, to read it in that build's symbols
-    var id_buffer: [crash.build_id_max]u8 = undefined;
+    var id_buffer: [crash.build_id_bytes_max]u8 = undefined;
     const id = crash.build_id(&id_buffer);
     std.debug.print("{s}  build ID, {d} bytes\n", .{ if (id.len > 0) "ok  " else "FAIL", id.len });
     ok = ok and id.len > 0;

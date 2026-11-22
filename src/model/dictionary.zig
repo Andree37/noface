@@ -157,8 +157,7 @@ pub fn trimmed(word: []const u8) []const u8 {
 fn last_start(word: []const u8, end: u32) u32 {
     assert(end > 0);
     assert(end <= word.len);
-    var i = end - 1;
-    while (i > 0 and word[i] & 0xc0 == 0x80) i -= 1;
+    const i = unicode.start_at_or_before(word, end - 1);
     assert(i < end);
     return i;
 }
@@ -176,16 +175,14 @@ pub fn fold(buf: []u8, word: []const u8) ?[]const u8 {
     var n: u32 = 0;
     var i: u32 = 0;
     while (i < word.len) {
-        const len = std.unicode.utf8ByteSequenceLength(word[i]) catch return null;
-        if (i + len > word.len) return null;
-        var cp: u21 = std.unicode.utf8Decode(word[i..][0..len]) catch return null;
-        i += len;
-        cp = search.fold(cp); // A curly apostrophe plain too, as the search has it
+        const c = unicode.character_at(word, i) orelse return null;
+        i += c.len;
+        // A curly apostrophe plain too, as the search has it
         var out: [4]u8 = undefined;
-        const m = std.unicode.utf8Encode(cp, &out) catch return null;
-        if (n + m > buf.len) return null;
-        @memcpy(buf[n..][0..m], out[0..m]);
-        n += m;
+        const folded = unicode.encode(search.fold(c.cp), &out) orelse return null;
+        if (n + folded.len > buf.len) return null;
+        @memcpy(buf[n..][0..folded.len], folded);
+        n += @intCast(folded.len);
     }
     assert(i == word.len);
     assert(n <= buf.len);

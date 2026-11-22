@@ -126,13 +126,10 @@ pub fn count_words(text: []const u8) u64 {
             i += ascii;
             if (high == 0) continue;
         }
-        if (unicode.character_at(text, i)) |c| {
-            count.character(c.cp);
-            i += c.len;
-        } else {
-            count.character(text[i]); // Not UTF-8: a byte of a word
-            i += 1;
-        }
+        // Not UTF-8: the replacement character, a byte of a word
+        const c = unicode.character_or_replacement(text, i);
+        count.character(c.cp);
+        i += c.len;
         assert(i > before);
     }
     assert(count.words <= text.len); // A word takes a byte at least
@@ -141,7 +138,7 @@ pub fn count_words(text: []const u8) u64 {
 
 const lanes = 32;
 const Bytes = @Vector(lanes, u8);
-const ascii_end = 0x80;
+const ascii_end = unicode.ascii_end;
 
 /// Words counted so far, and whether the last character ended one.
 const Count = struct {

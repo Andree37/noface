@@ -105,13 +105,21 @@ const Quick = quick_model.Quick;
 /// The icon on a tile.
 const Glyph = enum { airplane, wifi, bluetooth, sync, smile };
 
+/// A field of Quick, by name: each a tile reads is a bool (checked below).
+const QuickBool = std.meta.FieldEnum(Quick);
+
+/// Whether `field` of `quick` is on.
+fn on_in(quick: *const Quick, comptime field: QuickBool) bool {
+    return @field(quick, @tagName(field));
+}
+
 /// A round button at the top of the panel: what a tap on it does, its icon, the
 /// setting it follows, and the word under it with that setting on and off.
 const Tile = struct {
     hit: Hit,
     glyph: Glyph,
     /// The bool of Quick the tile follows, or null for a plain button.
-    state: ?[]const u8 = null,
+    state: ?QuickBool = null,
     /// Whether the tile shows as on (filled) while its state is, as a toggle does.
     fills: bool = true,
     /// On while its state is off: the other side of the same switch.
@@ -119,7 +127,7 @@ const Tile = struct {
     /// Whether, while on, the word under it is the network connected to, if one is.
     names_network: bool = false,
     /// A bool of Quick while which the tile shows off, with `label_quiet` under it.
-    quiet_while: ?[]const u8 = null,
+    quiet_while: ?QuickBool = null,
     label_quiet: []const u8 = "",
     label_on: []const u8,
     label_off: []const u8,
@@ -131,11 +139,11 @@ const tiles = [_]Tile{
     .{
         .hit = .airplane,
         .glyph = .airplane,
-        .state = "airplane",
+        .state = .airplane,
         .label_on = "On",
         .label_off = "Off",
         // A pause of noface's own while reading isn't the reader's airplane mode
-        .quiet_while = "wifi_paused",
+        .quiet_while = .wifi_paused,
         .label_quiet = "Off",
     },
     // Wi-Fi is the Kindle's one wireless switch, airplane mode's other side: on here is
@@ -143,19 +151,19 @@ const tiles = [_]Tile{
     .{
         .hit = .wifi,
         .glyph = .wifi,
-        .state = "airplane",
+        .state = .airplane,
         .inverse = true,
         .names_network = true,
         .label_on = "On",
         .label_off = "Off",
         // Off while reading by noface, to save the battery: a tap turns it back on
-        .quiet_while = "wifi_paused",
+        .quiet_while = .wifi_paused,
         .label_quiet = "Paused",
     },
     .{
         .hit = .bluetooth,
         .glyph = .bluetooth,
-        .state = "bluetooth",
+        .state = .bluetooth,
         .label_on = "On",
         .label_off = "Off",
     },
@@ -163,7 +171,7 @@ const tiles = [_]Tile{
     .{
         .hit = .sync,
         .glyph = .sync,
-        .state = "syncing",
+        .state = .syncing,
         .fills = false,
         .label_on = "Syncing",
         .label_off = "Sync",
@@ -207,7 +215,8 @@ pub const band_height = band_above + band_below;
 
 comptime {
     for (tiles) |t| {
-        if (t.state) |field| assert(@FieldType(Quick, field) == bool);
+        if (t.state) |field| assert(@FieldType(Quick, @tagName(field)) == bool);
+        if (t.quiet_while) |field| assert(@FieldType(Quick, @tagName(field)) == bool);
     }
     // Tiles take a fingertip and more, apart from each other, above the sliders
     assert(2 * tile_reach_x <= tile_step_x);
@@ -247,9 +256,9 @@ fn tile_on(i: u32, quick: *const Quick) bool {
     assert(i < tiles.len);
     inline for (tiles, 0..) |t, j| {
         if (i == j) {
-            if (t.quiet_while) |quiet| if (@field(quick, quiet)) return false;
+            if (t.quiet_while) |quiet| if (on_in(quick, quiet)) return false;
             const field = t.state orelse return false;
-            return t.fills and @field(quick, field) != t.inverse;
+            return t.fills and on_in(quick, field) != t.inverse;
         }
     }
     unreachable;
@@ -260,9 +269,9 @@ fn tile_label(i: u32, quick: *const Quick) []const u8 {
     assert(i < tiles.len);
     inline for (tiles, 0..) |t, j| {
         if (i == j) {
-            if (t.quiet_while) |quiet| if (@field(quick, quiet)) return t.label_quiet;
+            if (t.quiet_while) |quiet| if (on_in(quick, quiet)) return t.label_quiet;
             const field = t.state orelse return t.label_on;
-            const on = @field(quick, field) != t.inverse;
+            const on = on_in(quick, field) != t.inverse;
             if (on and t.names_network and quick.network_len > 0) return quick.network_text();
             const label = if (on) t.label_on else t.label_off;
             assert(label.len > 0);

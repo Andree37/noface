@@ -131,7 +131,7 @@ pub const Hyphenator = struct {
         var p = h.left;
         while (p + h.right <= word.len) : (p += 1) {
             if (values[p + 1] % 2 == 0) continue;
-            if (word[p] & 0xc0 == 0x80) continue; // Inside a two-byte letter
+            if (unicode.inside_character(word[p])) continue; // Inside a two-byte letter
             if (count == out.len) break;
             out[count] = p;
             count += 1;
@@ -329,14 +329,17 @@ fn is_letter_start(word: []const u8, i: u32) bool {
     return unicode.is_letter(c.cp);
 }
 
+const en_dash = 0x2013;
+const em_dash = 0x2014;
+
 /// How many bytes the dash at `word[i]` takes, or 0 when there's none there.
 fn is_dash_at(word: []const u8, i: u32) u32 {
     assert(i < word.len);
     if (word[i] == '-') return 1;
-    // En dash, em dash
-    if (i + 2 < word.len and word[i] == 0xe2 and word[i + 1] == 0x80) {
-        if (word[i + 2] == 0x93 or word[i + 2] == 0x94) return 3;
-    }
+    const c = unicode.character_at(word, i) orelse return 0;
+    const dash = c.cp == en_dash or c.cp == em_dash;
+    // With something after it to break before
+    if (dash and i + c.len < word.len) return c.len;
     return 0;
 }
 
@@ -369,8 +372,7 @@ pub fn breaks(h: ?*const Hyphenator, word: []const u8, out: []Break) []Break {
     var end: u32 = @intCast(word.len);
     while (end > start) {
         // Back to where the last character starts, over its continuation bytes
-        var lead = end - 1;
-        while (lead > start and word[lead] & 0xc0 == 0x80) lead -= 1;
+        const lead = @max(start, unicode.start_at_or_before(word, end - 1));
         assert(end - lead <= 4); // A character takes four bytes at most
         if (is_letter_start(word, lead)) break;
         end = lead;
@@ -402,9 +404,10 @@ fn breaks_lowered(core: []const u8, lower: *[word_length_max]u8) bool {
         const c = unicode.character_at(core, k) orelse return false;
         if (!unicode.is_letter(c.cp)) return false;
         const lowered = unicode.lowercase(c.cp);
-        const len = std.unicode.utf8CodepointSequenceLength(lowered) catch return false;
-        if (len != c.len) return false;
-        _ = std.unicode.utf8Encode(lowered, lower[k..][0..len]) catch return false;
+        var bytes: [4]u8 = undefined;
+        const encoded = unicode.encode(lowered, &bytes) orelse return false;
+        if (encoded.len != c.len) return false;
+        @memcpy(lower[k..][0..encoded.len], encoded);
         k += c.len;
     }
     assert(k == core.len);

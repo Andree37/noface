@@ -28,15 +28,15 @@ const actions = @import("book_actions.zig");
 const Library = books.Library;
 const load_library = books.load_library;
 
-pub const download_poll_us = 5 * 1000 * 1000;
+const download_poll_us = 5 * std.time.us_per_s;
 
 /// After leaving a book, how long and how often the status is read again, for Wi-Fi
 /// coming back from airplane mode.
-const status_watch_us = 40 * 1000 * 1000;
-const status_poll_us = 10 * 1000 * 1000;
+const status_watch_us = 40 * std.time.us_per_s;
+const status_poll_us = 10 * std.time.us_per_s;
 /// The library's tick while nothing else is going on: its clock and battery.
-const idle_tick_us = 60 * 1_000_000;
-pub const download_watch_us = 3 * 60 * 1000 * 1000;
+const idle_tick_us = 60 * std.time.us_per_s;
+const download_watch_us = 3 * std.time.us_per_min;
 
 comptime {
     // A watch reads more than once before it runs out, and more often than when idle
@@ -48,7 +48,7 @@ comptime {
     assert(search_sheet.top < keyboard.top);
 }
 
-pub fn logged_hit(x: i32, y: i32, page_index: u32, count: u32, searching: bool) library.Hit {
+fn logged_hit(x: i32, y: i32, page_index: u32, count: u32, searching: bool) library.Hit {
     assert(page_index < library.page_count(count));
     const h = library.hit(x, y, page_index, count, searching);
     std.debug.print("library tap {s} at {d},{d}\n", .{ @tagName(h), x, y });
@@ -62,7 +62,7 @@ pub fn logged_hit(x: i32, y: i32, page_index: u32, count: u32, searching: bool) 
 /// and holding a book can bring up its actions.
 const touches = input_mod.Input.Modes{ .grips = false, .deferred = true, .edge_zones = true };
 
-pub fn log_page(shown: []const catalog.Entry, page_index: u32) void {
+fn log_page(shown: []const catalog.Entry, page_index: u32) void {
     assert(shown.len <= library.page_books_max);
     assert(page_index < books.books_max);
     for (shown, 0..) |e, i| std.debug.print("cell {d} {d} {s}\n", .{ page_index, i, e.title });
@@ -241,8 +241,6 @@ const Browser = struct {
     /// The home screen: under every other, it takes the lock and leaving.
     pub const takes = screen.Takes{ .lock = true, .leave = true };
 
-    /// Everything drawn again with a flash (first, and back from a book or a reload),
-    /// or the page alone (a new filter, a page turn, a notice).
     /// The library as last drawn, for a sheet over it: its own, kept still while the
     /// sheet is open.
     fn under(b: *const Browser) display.Backdrop {
@@ -250,6 +248,8 @@ const Browser = struct {
         return .{ .pixels = b.buf };
     }
 
+    /// Everything drawn again with a flash (first, and back from a book or a reload),
+    /// or the page alone (a new filter, a page turn, a notice).
     pub fn draw(b: *Browser, part: screen.Part) !void {
         assert(b.index < library.page_count(b.lib.count())); // A page of the books shown
         switch (part) {
@@ -440,7 +440,7 @@ const Browser = struct {
         }
         const t0 = now_us();
         try b.render();
-        std.debug.print("library render {d} ms\n", .{(now_us() - t0) / 1000});
+        std.debug.print("library render {d} ms\n", .{(now_us() - t0) / std.time.us_per_ms});
         try b.present(.flash);
         b.notice = "";
         a.note_battery();
@@ -454,9 +454,7 @@ const Browser = struct {
         assert(b.index < library.page_count(b.lib.count()));
         try b.render();
         try b.present(.screen);
-        b.notice = "";
-        // A notice is for one drawing only
-        assert(b.notice.len == 0);
+        b.notice = ""; // A notice is for one drawing only
     }
 
     fn present(b: *Browser, refresh: hwtcon.Refresh) !void {

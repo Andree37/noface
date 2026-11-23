@@ -13,9 +13,9 @@ const lock_ui = @import("../ui/lock.zig");
 const screen = @import("screen.zig");
 const input_mod = @import("../kindle/input.zig");
 
-pub const lock_redraw_us = 1500 * std.time.us_per_ms;
+const lock_redraw_us = 1500 * std.time.us_per_ms;
 
-pub const lock_redraws = 2;
+const lock_redraws = 2;
 
 /// Pictures of the same proportions, within this many percent, count as one shape.
 const shape_tolerance_percent = 4;
@@ -266,7 +266,7 @@ fn draw_cover(a: *app.App, e: *const catalog.Entry, target: []u8) bool {
 
 /// Whether two pictures have the same proportions, within a few percent. Unknown
 /// sizes count as the same, so nothing is turned down for want of a header.
-pub fn same_shape(x: []const u8, y: []const u8) bool {
+fn same_shape(x: []const u8, y: []const u8) bool {
     const p = picture.size(x) orelse return true;
     const q = picture.size(y) orelse return true;
     const lhs = @as(u64, p.width) * q.height;

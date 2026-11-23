@@ -52,7 +52,7 @@ pub const Sources = struct {
 
 /// What tells that the Kindle's catalog changed without reading it: the size and change
 /// time of its database and of the log its changes go to first.
-pub const CatalogFacts = struct {
+const CatalogFacts = struct {
     database: ?calls.Facts = null,
     log: ?calls.Facts = null,
 
@@ -173,8 +173,9 @@ pub const Library = struct {
         assert(ix.header.downloading <= ix.header.count);
         if (ix.header.downloading > 0) {
             for (0..ix.header.count) |id| {
+                // Its number first: the texts (a page of the drive each) only of one coming
+                if (ix.numbers(@intCast(id)).availability != .downloading) continue;
                 const e = ix.entry(@intCast(id));
-                if (e.availability != .downloading) continue;
                 if (builder.is_complete_book(e.path)) return .arrived;
             }
             return .waiting;
@@ -499,7 +500,7 @@ fn open_index(sources: Sources, s: *State) void {
             return;
         };
         s.ix = built;
-        const ms = (os.now_us() - t0) / 1000;
+        const ms = (os.now_us() - t0) / std.time.us_per_ms;
         log("library: index built, {d} books in {d} ms\n", .{ built.header.count, ms });
     }
     const ix = s.opened().?; // Opened as it was, or just built

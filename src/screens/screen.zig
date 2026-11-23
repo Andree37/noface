@@ -72,6 +72,13 @@ pub fn Step(comptime Result: type) type {
 }
 
 /// What a screen may declare `pub`.
+/// The hooks, as a compile error lists them: from `hooks`, so never out of date.
+const hooks_said = said: {
+    var text: []const u8 = hooks[0];
+    for (hooks[1..]) |h| text = text ++ ", " ++ h;
+    break :said text;
+};
+
 const hooks = [_][]const u8{
     "Result",
     "touches",
@@ -308,7 +315,7 @@ fn check(comptime S: type) void {
         for (hooks) |h| {
             if (std.mem.eql(u8, decl, h)) break;
         } else @compileError(name ++ ": a screen has no `" ++ decl ++ "` (it may have " ++
-            "Result, touches, tick_us, draw, on_tap, on_tick, on_action); make a helper private");
+            hooks_said ++ "); make a helper private");
     }
     for ([_][]const u8{ "Result", "draw", "on_tap" }) |needed| {
         if (!@hasDecl(S, needed)) {
@@ -401,16 +408,16 @@ const Stack = struct {
     }
 
     /// Opens `f` in front, and draws it whole.
-    fn push(stack: *Stack, a: *app.App, f: Frame) !void {
+    fn push(stack: *Stack, f: Frame) !void {
         assert(stack.depth < depth_max);
         assert(f.inherited == null);
         stack.frames[stack.depth] = f;
-        stack.frames[stack.depth].inherited = a.input.modes(); // Those it opens over
+        stack.frames[stack.depth].inherited = stack.input.modes(); // Those it opens over
         stack.depth += 1;
         stack.changes +%= 1;
         assert(stack.top().screen == f.screen);
         log.info("screen: {s} opened", .{f.kind.name});
-        a.input.apply(stack.scope(), true);
+        stack.input.apply(stack.scope(), true);
         try f.draw(.all);
     }
 
@@ -437,10 +444,10 @@ const Stack = struct {
 
     /// Hands `action` to the screen that takes it: the one in front, or for a lock or a
     /// stop the first under it that takes those, the ones in front of it ended first.
-    fn route(stack: *Stack, a: *app.App, action: Action) !void {
+    fn route(stack: *Stack, action: Action) !void {
         assert(stack.depth > 0);
         const changes_before = stack.changes;
-        try stack.hand(a, action);
+        try stack.hand(action);
         assert(stack.depth <= depth_max);
         // Another screen is in front, drawn: from now on taps are meant for it. A
         // failed hand-off leaves the loop, so nothing more is meant for any
@@ -448,7 +455,7 @@ const Stack = struct {
     }
 
     /// `route`'s hand-off, the screens it opens or ends drawn by its end.
-    fn hand(stack: *Stack, a: *app.App, action: Action) !void {
+    fn hand(stack: *Stack, action: Action) !void {
         assert(stack.depth > 0);
         if (interrupts(action)) try stack.unwind(action);
         if (stack.depth == 0) return; // The root ended as the screens over it did
@@ -480,12 +487,12 @@ const Stack = struct {
             => {},
         }
         // Exactly one screen gets it: the one in front, and only once
-        try stack.settle(a, try f.kind.call(f.screen, f.ending, .{ .act = action }));
+        try stack.settle(try f.kind.call(f.screen, f.ending, .{ .act = action }));
     }
 
     /// Does what the screen in front asked: and as each screen ends, what the one
     /// under it asks on resuming.
-    fn settle(stack: *Stack, a: *app.App, first: Turn) !void {
+    fn settle(stack: *Stack, first: Turn) !void {
         // A screen asked, but for the root as it opens, with none under it
         if (first != .push) assert(stack.depth > 0);
         var t = first;
@@ -494,7 +501,7 @@ const Stack = struct {
                 .stay => return,
                 .redraw => |p| return stack.top().draw(p),
                 .push => |f| {
-                    try stack.push(a, f);
+                    try stack.push(f);
                     const opened = stack.top().*;
                     if (!opened.kind.opens) return;
                     // A screen that only leads to others opens its first at once
@@ -561,13 +568,13 @@ const Stack = struct {
     /// memory, which the next book, or the next scenario, expects to find empty. An
     /// error on the way is only logged, and the stop handed to the screens left: the
     /// first error is the one the loop's caller hears.
-    fn end_all(stack: *Stack, a: *app.App) void {
+    fn end_all(stack: *Stack) void {
         assert(stack.depth <= depth_max);
         // Each stop ends at least the first screen that takes it, so as many stops as
         // screens end them all
         for (0..depth_max) |_| {
             if (stack.depth == 0) return;
-            stack.route(a, .stop) catch |err| {
+            stack.route(.stop) catch |err| {
                 log.err("screen: a stop after an error failed too: {s}", .{@errorName(err)});
             };
         }
@@ -587,17 +594,17 @@ pub fn run_root(a: *app.App, root: anytype) !Ending(@TypeOf(root.*).Result) {
     }
     var ending: ?Ending(R) = null;
     var stack = Stack{ .input = a.input };
-    errdefer stack.end_all(a);
-    try stack.settle(a, .{ .push = open(root, &ending) });
+    errdefer stack.end_all();
+    try stack.settle(.{ .push = open(root, &ending) });
     stack.mark_shown();
     // The event loop, noface's only one, which runs for as long as the reader reads:
     // each turn waits once for something to happen, and hands what happened, if
     // anything, to the screen that takes it. The root can end as it opens (a book
     // whose first page fails), leaving nothing to wait for
     while (stack.depth > 0) {
-        a.input.apply(stack.scope(), false);
-        const action = a.input.poll() orelse continue;
-        try stack.route(a, action);
+        stack.input.apply(stack.scope(), false);
+        const action = stack.input.poll() orelse continue;
+        try stack.route(action);
     }
     assert(stack.depth == 0);
     return ending.?;

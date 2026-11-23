@@ -17,7 +17,7 @@ comptime {
 }
 
 /// What the screen shows, from the journal, the reading speed and the library.
-pub fn summarize(a: *const app.App, library: *books.Library) stats_ui.Summary {
+fn summarize(a: *const app.App, library: *books.Library) stats_ui.Summary {
     const j = &a.user.journal;
     const today = a.today();
     var s = stats_ui.Summary{

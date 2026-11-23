@@ -40,10 +40,10 @@ comptime {
     assert(2 * text_inset < width);
 }
 
-pub const Lines = struct { title: []const u8, detail: []const u8 };
+const Lines = struct { title: []const u8, detail: []const u8 };
 
 /// What the bubble says, from the log, the battery now, and recent reading per day.
-pub fn lines(
+fn lines(
     buffer: *[lines_size]u8,
     log: []const battery.Sample,
     now: ?battery.Sample,

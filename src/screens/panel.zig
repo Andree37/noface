@@ -57,30 +57,31 @@ fn close_menu(a: *app.App, background: display.Backdrop) !void {
 }
 
 fn row_value(a: *app.App, row: menu.Row) u32 {
-    assert(row.y == menu.warmth_row.y or row.y == menu.brightness_row.y);
-    if (row.y == menu.warmth_row.y) {
-        assert(row.max == menu.warmth_row.max);
-        return a.quick.warmth;
-    }
-    assert(row.max == menu.brightness_row.max);
-    return a.quick.brightness;
+    const value = switch (row.light) {
+        .warmth => a.quick.warmth,
+        .brightness => a.quick.brightness,
+    };
+    assert(value <= row.max); // Read and set as one of its steps
+    return value;
 }
 
 fn set_row_value(a: *app.App, row: menu.Row, level: u32) void {
-    assert(row.y == menu.warmth_row.y or row.y == menu.brightness_row.y);
-    if (row.y == menu.warmth_row.y) {
-        a.quick.warmth = level;
-        lipc.set_warmth(level, a.quick.schedule);
-    } else {
-        a.quick.brightness = level;
-        lipc.set_brightness(level);
+    assert(level <= row.max);
+    switch (row.light) {
+        .warmth => {
+            a.quick.warmth = level;
+            lipc.set_warmth(level, a.quick.schedule);
+        },
+        .brightness => {
+            a.quick.brightness = level;
+            lipc.set_brightness(level);
+        },
     }
     assert(row_value(a, row) == level);
 }
 
 /// Shows a slider row at rest after a step, without a flash.
 fn show_row(a: *app.App, row: menu.Row, level: u32) !void {
-    assert(row.y == menu.warmth_row.y or row.y == menu.brightness_row.y);
     assert(menu.band_top(row) + menu.band_height <= menu.height);
     try menu.draw_slider(a.ui, a.display.on_screen(), row, level, false);
     try a.display.show_band(menu.band_top(row), menu.band_height);
@@ -133,7 +134,7 @@ const SliderFollow = struct {
 /// Starts following a finger along slider `row`, from where it landed: the screen to
 /// open over the panel.
 fn drag_row(a: *app.App, sd: *SliderDrag, row: menu.Row, first_x: i32) !screen.Frame {
-    assert(row.y == menu.warmth_row.y or row.y == menu.brightness_row.y);
+    assert(row.max > 0); // A slider has steps
     sd.row = row;
     sd.knob = menu.knob_at(row, row_value(a, row));
     sd.path = .{ sd.knob, sd.knob };
@@ -147,6 +148,7 @@ fn drag_row(a: *app.App, sd: *SliderDrag, row: menu.Row, first_x: i32) !screen.F
 /// The finger lifted from a slider (or the Kindle locked): settles the stretch the
 /// knob crossed back to smooth edges.
 fn slider_ended(a: *app.App, sd: *SliderDrag) !void {
+    assert(sd.ending != null); // Called once the drag has ended
     _ = try drag.ended(&sd.drag, sd.ending.?);
     const row = sd.row;
     assert(sd.path[0] <= sd.path[1]);
@@ -391,6 +393,7 @@ pub const Panel = struct {
     }
 
     pub fn on_tap(p: *Panel, t: screen.Tap) !screen.Step(void) {
+        assert(p.background.holds(&p.a.display)); // What the panel is drawn over
         const choice = menu.hit(t.x, t.y);
         // The radio off cuts Bluetooth too: said first, done on a second tap
         const warned = p.confirming;

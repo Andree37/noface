@@ -45,7 +45,9 @@ const level_above = style.space.tiny + style.space.roomy; // The level's baselin
 /// How high the level's digits reach over their baseline, smooth edges and all.
 const level_reach = style.space.medium;
 
-pub const Row = struct { label: []const u8, y: u32, max: u32 };
+/// A slider row: which light it sets, its name, where, and its steps.
+pub const Row = struct { light: Light, label: []const u8, y: u32, max: u32 };
+pub const Light = enum { brightness, warmth };
 /// The brightness's name sits under the rule, its bar under that; the warmth's a slider
 /// step lower.
 const brightness_label_below_rule = style.space.wide;
@@ -54,11 +56,13 @@ const label_above_bar = band_above + words_below;
 const brightness_label_baseline = rule_y + brightness_label_below_rule;
 const slider_step = style.space.band + style.space.tall;
 pub const brightness_row = Row{
+    .light = .brightness,
     .label = "Brightness",
     .y = brightness_label_baseline + label_above_bar,
     .max = quick_model.max_brightness,
 };
 pub const warmth_row = Row{
+    .light = .warmth,
     .label = "Warmth",
     .y = brightness_row.y + slider_step,
     .max = quick_model.max_warmth,

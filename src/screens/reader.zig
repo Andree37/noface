@@ -40,15 +40,15 @@ const controls = @import("reader/controls.zig");
 const run_mode = @import("reader/run.zig");
 const card_screen = @import("card.zig");
 
-pub const save_every = 10;
+const save_every = 10;
 
-pub const clock_check_us = 10 * 1000 * 1000;
+const clock_check_us = 10 * std.time.us_per_s;
 
 /// Wi-Fi that couldn't go off yet (a download, Bluetooth) is tried again this often.
-const wifi_retry_us = 60 * 1000 * 1000;
+const wifi_retry_us = 60 * std.time.us_per_s;
 
 /// While a first open is laid out in idle moments, the loop ticks this often.
-const layout_tick_us = 1000;
+const layout_tick_us = std.time.us_per_ms;
 
 comptime {
     assert(save_every > 1);

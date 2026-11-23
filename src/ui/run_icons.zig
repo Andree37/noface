@@ -18,11 +18,19 @@ const arrow_half_px = style.pt(1.75); // The arrow's half width, and its height
 /// Steps of the sweep, as a clock's hours: each a refresh of the dial alone.
 pub const dial_steps = 12;
 pub const pause_radius_px = style.pt(5.75);
+/// The pause bars: each this far from the middle, and this wide; and how far right of
+/// the middle the carry-on triangle's left side sits, so it looks centred.
+const pause_bar_gap_half_px = style.pt(0.75);
+const pause_bar_width_px = style.pt(1);
+const play_shift_px = style.pt(0.75);
 
 comptime {
     assert(ring_px < sweep_px);
     assert(sweep_px + arrow_half_px < dial_radius_px);
     assert(dial_radius_px < pause_radius_px); // The button a little larger
+    // The bars sit inside the ring, clear of it
+    assert(pause_bar_gap_half_px + pause_bar_width_px < pause_radius_px - ring_px);
+    assert(play_shift_px < pause_radius_px / 2); // The triangle keeps its left side
 }
 
 /// Which way the dial's arrow points: up for a quicker pace, down for a slower.
@@ -82,10 +90,11 @@ const PauseShape = struct {
         if (@abs(y) > icon) return false;
         if (shape.stopped) {
             // A triangle pointing right, its middle a little right of the centre
-            const from = -icon + 3;
+            const from = -icon + play_shift_px;
             return x >= from and x - from <= 2 * (icon - @abs(y));
         }
-        return @abs(x) >= 3 and @abs(x) <= 3 + 4; // Two bars
+        const bar_in = pause_bar_gap_half_px;
+        return @abs(x) >= bar_in and @abs(x) <= bar_in + pause_bar_width_px; // Two bars
     }
 };
 

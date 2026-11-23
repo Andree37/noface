@@ -48,8 +48,7 @@ const row_count = 4;
 const bar_width = style.space.wide; // Thin bars with air between, rounded at the top only
 const bar_least = style.space.hair; // The sliver that shows any reading at all
 const bar_label_rise = style.space.small; // A bar's minutes' baseline over its top
-const bar_shade = 0x90; // Days before today, in gray
-const chart_rule_thick = 2;
+const chart_rule_thick = style.stroke;
 const days_shown = @typeInfo(@FieldType(Summary, "last7")).array.len;
 
 /// A tile's label over its number, faded: its baseline, down from the tiles' top.
@@ -74,7 +73,7 @@ comptime {
     // A letter for every day the chart shows.
     assert(day_letters.len == days_shown);
     // The three tiles' labels sit side by side without overlapping.
-    assert(3 * tile_label_width <= style.screen_width - 2 * style.margin);
+    assert(tiles * tile_label_width <= style.screen_width - 2 * style.margin);
 }
 
 /// Minutes, to the nearest, in `seconds`.
@@ -119,7 +118,7 @@ fn row(fonts: Fonts, page: Page, index: u32, label: []const u8, value: []const u
     assert(index < row_count);
     assert(label.len > 0);
     const y = rows_top + index * row_height;
-    page.fill_rect(style.margin, y, page.width - 2 * style.margin, 1, style.rule);
+    draw.rule(page, y);
     // Its label and value centred in the row under its rule
     const baseline = fonts.small.centred_baseline(@intCast(y), row_height);
     try fonts.small.draw(page, style.margin, baseline, label);
@@ -208,7 +207,7 @@ const Bar = struct {
 fn render_chart_bar(fonts: Fonts, page: Page, bar: Bar) !void {
     assert(bar.height > 0);
     assert(bar.height <= bar_room);
-    const shade: u8 = if (bar.today) style.black else bar_shade;
+    const shade: u8 = if (bar.today) style.black else style.past_days;
     const top = chart_baseline - bar.height;
     const left = bar.center_x - bar_width / 2;
     const corner = @min(bar_corner, @as(f32, @floatFromInt(bar.height)) / 2);
@@ -257,7 +256,7 @@ fn render_rows(fonts: Fonts, page: Page, s: *const Summary) !void {
     });
     try row(fonts, page, 3, "Library", library);
     const width = page.width - 2 * style.margin;
-    page.fill_rect(style.margin, rows_bottom, width, 1, style.rule);
+    page.fill_rect(style.margin, rows_bottom, width, style.fine_line, style.rule);
     const note = "Days and the streak count from when noface started its journal.";
     const baseline: i32 = @intCast(rows_bottom + note_drop);
     try fonts.caption.draw(page, style.margin, baseline, note);

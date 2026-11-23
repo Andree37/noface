@@ -419,12 +419,14 @@ const Browser = struct {
             a.ui,
             a.display.page(b.buf),
             books_shown,
-            b.index,
-            b.filter,
-            b.query.words(),
-            b.notice,
+            .{
+                .index = b.index,
+                .filter = b.filter,
+                .query = b.query.words(),
+                .notice = b.notice,
+                .now = moment(a),
+            },
             &a.quick,
-            moment(a),
         );
     }
 

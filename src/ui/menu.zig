@@ -30,7 +30,7 @@ const status_centre = style.space.tiny + style.space.wide;
 
 /// The rule between the tiles and the sliders, the toggles' boxes' depth under it.
 const rule_inset = style.space.tiny + style.space.roomy;
-const rule_thick = 2;
+const rule_thick = style.stroke;
 const rule_y = last_row_y + tile_box_below;
 
 /// A slider's bar in from each side; its dimmer and brighter marks centred in the room
@@ -510,7 +510,8 @@ fn draw_tile(fonts: Fonts, page: Page, i: u32, quick: *const Quick) !void {
         icons.ring(page, x, y, icon_radius);
         draw_glyph(page, quick, t.glyph, x, y);
     } else {
-        page.pill(x, x, y, icon_radius + 1.5, style.black);
+        // A disc over just where the ring was, so the tile keeps its size switched on
+        page.pill(x, x, y, icons.ring_outer(icon_radius), style.black);
         const white = WhiteGlyph{ .glyph = t.glyph, .quick = quick };
         try icons.draw_white(page, tile_px, tile_px, c.x, c.y, white);
     }
@@ -537,7 +538,15 @@ pub fn draw_header(
     const status_right: f32 = @floatFromInt(page.width - header_inset);
     const centre = status_centre;
     const baseline = header_baseline;
-    try icons.status_cluster(page, fonts.small, status_right, centre, baseline, quick, true);
+    try icons.status_cluster(
+        page,
+        fonts.small,
+        status_right,
+        centre,
+        baseline,
+        quick,
+        icons.cluster_large,
+    );
 }
 
 /// The header's box: the panel's top, down to the clock line's lowest descent, clear of

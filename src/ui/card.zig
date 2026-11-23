@@ -92,20 +92,20 @@ pub fn top(rows: u32) u32 {
 test "a row's middle is a tap on that row" {
     for (1..4) |rows| for (0..rows) |i| {
         const c = row_centre(@intCast(rows), @intCast(i));
-        const x = style.screen_width / 2;
-        try std.testing.expectEqual(@as(?u32, @intCast(i)), hit(x, @intCast(c), @intCast(rows)));
+        try std.testing.expectEqual(@as(?u32, @intCast(i)), hit(@intCast(c), @intCast(rows)));
     };
 }
 
-/// Which row a tap lands on: `rows` itself for the sheet's header, null above it.
-pub fn hit(x: i32, y: i32, rows: u32) ?u32 {
-    const result = hit_with(x, y, rows, null);
+/// Which row a tap at height `y` lands on: `rows` itself for on the sheet but on no row
+/// (its header, or the room below its last), null above it. Every row spans the sheet,
+/// so where across doesn't matter.
+pub fn hit(y: i32, rows: u32) ?u32 {
+    const result = hit_with(y, rows, null);
     if (result) |row| assert(row <= rows);
     return result;
 }
 
-pub fn hit_with(x: i32, y: i32, rows: u32, cover: ?Cover) ?u32 {
-    _ = x;
+pub fn hit_with(y: i32, rows: u32, cover: ?Cover) ?u32 {
     assert(rows * row_height < style.screen_height); // A sheet fits the screen
     const sheet_top: i32 = @intCast(style.screen_height - height_with(rows, cover));
     assert(sheet_top >= 0);
@@ -150,7 +150,8 @@ pub fn render_with(
         assert(cover_top + c.height <= cover_header);
         const cover_y = sheet_top + cover_top;
         page.copy_image(style.margin, cover_y, c.pixels, c.width, c.height);
-        page.fill_rect(style.margin, cover_y + c.height - 1, c.width, 1, style.rule);
+        const cover_foot = cover_y + c.height - style.fine_line;
+        page.fill_rect(style.margin, cover_foot, c.width, style.fine_line, style.rule);
         x = @floatFromInt(style.margin + c.width + cover_gap);
         title_y = cover_y + c.height / 2;
     }
@@ -163,7 +164,7 @@ pub fn render_with(
     const row_avail: f32 = @floatFromInt(page.width - 2 * style.margin);
     for (rows, 0..) |r, i| {
         const y = sheet_top + header_for(cover) + @as(u32, @intCast(i)) * row_height;
-        page.fill_rect(style.margin, y, page.width - 2 * style.margin, 1, style.rule);
+        draw.rule(page, y);
         const font = if (r.danger) fonts.title else fonts.small;
         const baseline = font.centred_baseline(@intCast(y), row_height);
         try draw.clipped(font, page, row_x, baseline, r.label, row_avail);
@@ -174,15 +175,14 @@ pub fn render_with(
 }
 
 test "taps map to rows, the header, or nothing above the sheet" {
-    const x = style.screen_width / 2;
     const first: i32 = @intCast(top(3) + header);
     const middle = row_height / 2;
-    try std.testing.expectEqual(@as(u32, 0), hit(x, first + middle, 3).?);
-    try std.testing.expectEqual(@as(u32, 2), hit(x, first + 2 * row_height + middle, 3).?);
-    try std.testing.expectEqual(@as(u32, 3), hit(x, first - 1, 3).?); // The header
+    try std.testing.expectEqual(@as(u32, 0), hit(first + middle, 3).?);
+    try std.testing.expectEqual(@as(u32, 2), hit(first + 2 * row_height + middle, 3).?);
+    try std.testing.expectEqual(@as(u32, 3), hit(first - 1, 3).?); // The header
     // The bottom padding
-    try std.testing.expectEqual(@as(u32, 3), hit(x, style.screen_height - 1, 3).?);
-    try std.testing.expect(hit(x, @as(i32, @intCast(top(3))) - 1, 3) == null);
+    try std.testing.expectEqual(@as(u32, 3), hit(style.screen_height - 1, 3).?);
+    try std.testing.expect(hit(@as(i32, @intCast(top(3))) - 1, 3) == null);
 }
 
 test "the longest sheet leaves the top of the screen to tap away" {

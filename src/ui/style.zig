@@ -129,9 +129,21 @@ pub const disabled = 0xc8; // Tint over a control that can't be used now
 pub const finished_cover = 0xa0; // Tint over the cover of a book that's been read
 pub const note_rule = 0xa0; // The line under a footnote's header
 pub const panel_rule = 0x80; // The line across the quick panel
+pub const type_paper = 0xf0; // A typed cover's paper: a shade off white, read as one
+pub const track = 0xb8; // A progress bar's track, under its black fill
+pub const past_days = 0x90; // The reading chart's days before today
+pub const placeholder = 0x90; // Tint over a search field's hint
+// The keyboard: a light tray, keys white on it with a soft shadow, and the keys that
+// aren't letters (delete, shift, the layers) a step darker
+pub const key_tray = 0xe2;
+pub const key_shadow = 0xa8;
+pub const key_special = 0xc4;
 
 // Shapes
 pub const stroke = pt(0.5); // A thin line: a rule, an icon's stroke
+/// The finest line the panel draws: one pixel on any screen, for a gray rule that only
+/// divides.
+pub const fine_line = 1;
 pub const border = pt(0.75); // Outline of boxes and cards
 pub const underline = pt(1.25); // Under the selected choice, and a highlight's words
 pub const flash_bar = pt(1.5); // The outline round a book as it's tapped, at once

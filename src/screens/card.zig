@@ -70,7 +70,7 @@ pub const Card = struct {
 
     pub fn on_tap(c: *Card, t: screen.Tap) !screen.Step(Result) {
         const rows: u32 = @intCast(c.rows.len);
-        const index = card.hit_with(t.x, t.y, rows, c.cover) orelse return .close; // Above it
+        const index = card.hit_with(t.y, rows, c.cover) orelse return .close; // Above it
         return if (index < c.rows.len) .{ .done = index } else .stay; // Its title: nothing
     }
 };

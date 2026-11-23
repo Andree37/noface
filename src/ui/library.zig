@@ -1,5 +1,6 @@
-//! Book list, read from the tab-separated file the launcher exports from the
-//! Kindle's own database: path, title, author, percent, last opened.
+//! The library screen, drawn and tapped: the status line, the book being read as the
+//! hero, the filter tabs, the grid of covers and its pager. The books themselves are
+//! read in src/library/.
 const std = @import("std");
 const assert = std.debug.assert;
 const line_of = @import("../text/line.zig").of;
@@ -33,7 +34,7 @@ const cell_title_below = style.space.roomy; // From the bar under a cover to its
 /// title's line step, and the corner icons' middles in from the cover's corners.
 const cell = struct {
     const bar_gap = style.space.tiny;
-    const bar_drop = 2;
+    const bar_drop = style.stroke;
     const bar_thick = style.space.tiny;
     const title_step = style.space.roomy;
     const cloud_inset = style.space.small + style.space.medium;
@@ -159,8 +160,7 @@ const type_title_step = style.line_step(style.text.sample); // The cover type's 
 const type_rule_height = style.space.hair;
 const type_rule_width = style.space.wide;
 const type_inset = style.space.medium; // The title and author in from the cover's sides
-const type_edge = 2; // Its outline
-const type_paper = 0xf0; // A shade off white, so the cover reads as one
+const type_edge = style.stroke; // Its outline
 const type_author_above = style.space.roomy; // From the cover's bottom up to the author's baseline
 /// How high the author's letters reach above their baseline, at most: the size of the
 /// caption font it's set in (setup.zig), which none of its letters outgrows.
@@ -437,7 +437,7 @@ fn progress_bar(page: Page, x: u32, y: u32, w: u32, percent: u32, thick: f32) vo
     const left: f32 = @floatFromInt(x);
     const cy: f32 = @floatFromInt(y);
     const r = thick / 2;
-    page.pill(left + r, left + @as(f32, @floatFromInt(w)) - r, cy, r / 2, 0xb8);
+    page.pill(left + r, left + @as(f32, @floatFromInt(w)) - r, cy, r / 2, style.track);
     if (percent == 0) return;
     const read: f32 = @floatFromInt(@min(percent, whole_percent));
     const filled = @as(f32, @floatFromInt(w)) * read / whole_percent;
@@ -471,7 +471,7 @@ fn draw_badge(font: *Font, page: Page, x: u32, cy: f32, s: []const u8) !void {
     const w = try font.measure(s) + 2 * badge.label_pad;
     const ends = [2]f32{ left + r, left + @max(w - r, r) };
     page.pill(ends[0], ends[1], cy, r, style.black);
-    page.pill(ends[0], ends[1], cy, r - 2, style.white);
+    page.pill(ends[0], ends[1], cy, r - style.stroke, style.white);
     try font.draw(page, left + badge.label_pad, font.centred_on(@intFromFloat(cy)), s);
 }
 
@@ -498,7 +498,7 @@ fn button_outline(page: Page, left: f32, right: f32, top: i32) void {
     const r: f32 = button_height / 2;
     const cy: f32 = @floatFromInt(top + button_top + button_height / 2);
     page.pill(left + r, right - r, cy, r, style.black);
-    page.pill(left + r, right - r, cy, r - 2, style.white);
+    page.pill(left + r, right - r, cy, r - style.stroke, style.white);
 }
 
 /// A book with no thumbnail still gets a real cover: its title set in type.
@@ -514,7 +514,7 @@ fn type_cover(
     // Room inside for the title, its rule and the author
     assert(w > 2 * type_inset);
     assert(h > type_title_top + type_author_above);
-    page.fill_rect(x, y, w, h, type_paper);
+    page.fill_rect(x, y, w, h, style.type_paper);
     page.fill_rect(x, y, w, type_edge, style.black);
     page.fill_rect(x, y + h - type_edge, w, type_edge, style.black);
     page.fill_rect(x, y, type_edge, h, style.black);
@@ -737,10 +737,16 @@ fn draw_status(fonts: Fonts, page: Page, quick: *const quick_model.Quick) !void 
     assert(baseline < status_height);
     comptime assert(centre > status_menu_rise);
     icons.menu(page, margin, centre - status_menu_rise);
-    const clock = quick.clock_text();
-    const time = clock[0 .. std.mem.indexOfScalar(u8, clock, ' ') orelse clock.len];
-    try draw.centered(fonts.caption, page, w / 2, baseline, time);
-    try icons.status_cluster(page, fonts.caption, w - margin, centre, baseline, quick, false);
+    try draw.centered(fonts.caption, page, w / 2, baseline, quick.clock_time());
+    try icons.status_cluster(
+        page,
+        fonts.caption,
+        w - margin,
+        centre,
+        baseline,
+        quick,
+        icons.cluster_small,
+    );
 }
 
 /// In the hero's place while searching: what was searched for, how many books have
@@ -819,18 +825,25 @@ pub const Books = struct {
     hero_minutes_left: ?u64 = null,
 };
 
+/// Which of the library's pages shows, and what's set over it.
+pub const View = struct {
+    index: u32, // Which page: the first, with the hero, is 0
+    filter: catalog.Filter,
+    query: []const u8 = "", // The search's words: a search's results show when set
+    notice: []const u8 = "", // A line said at the foot, if there's one
+    now: Moment,
+};
+
 pub fn render(
     pool: *covers.Pool,
     fonts: Fonts,
     page: Page,
     books: Books,
-    index: u32,
-    filter: catalog.Filter,
-    query: []const u8,
-    message: []const u8,
+    view: View,
     quick: *const quick_model.Quick,
-    now: Moment,
 ) !void {
+    const index = view.index;
+    const query = view.query;
     const with_hero = index == 0;
     assert(books.shown.len <= grid_size(with_hero));
     assert(books.shown.len <= books.count);
@@ -842,11 +855,11 @@ pub fn render(
         if (query.len > 0) {
             try draw_search_header(fonts, page, query, books.count);
         } else if (books.hero) |h| {
-            try draw_hero(pool, fonts, page, h, books.hero_minutes_left, now);
+            try draw_hero(pool, fonts, page, h, books.hero_minutes_left, view.now);
             hero_drawn = true;
         }
     }
-    try draw_tabs(fonts, page, tabs_top(with_hero), filter, query.len > 0);
+    try draw_tabs(fonts, page, tabs_top(with_hero), view.filter, query.len > 0);
 
     const top: u32 = @intCast(grid_top(with_hero));
     for (books.shown, 0..) |*e, i| {
@@ -859,7 +872,9 @@ pub fn render(
         try fonts.small.draw(page, margin, @intCast(top + empty_drop), empty);
     }
     try footer.render(fonts, page, index, page_count(books.count));
-    if (message.len > 0) try fonts.caption.draw(page, margin, message_baseline, message);
+    if (view.notice.len > 0) {
+        try fonts.caption.draw(page, margin, message_baseline, view.notice);
+    }
 }
 
 /// Where tests tap: the middle of the `slot`th cover on a page, of a filter's tab, of the

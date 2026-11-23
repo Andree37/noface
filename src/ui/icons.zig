@@ -133,6 +133,12 @@ pub fn ring(page: Page, cx: f32, cy: f32, radius: f32) void {
     page.arc(cx, cy, radius, 0, 2 * pi, stroke.fine * unit);
 }
 
+/// How far out a ring of `radius` reaches: to the outer side of its line.
+pub fn ring_outer(radius: f32) f32 {
+    assert(radius > 0);
+    return radius + stroke.fine * unit / 2;
+}
+
 pub fn airplane(page: Page, cx: f32, cy: f32) void {
     assert(inside(cx, page.width));
     assert(inside(cy, page.height));
@@ -453,9 +459,9 @@ pub fn menu(page: Page, x: f32, y: f32) void {
 
 /// The status cluster's spacing, large on the quick panel and small on the status
 /// strips: the gap between its parts, and the bolt's height while charging.
-const Cluster = struct { battery: Battery, gap: f32, bolt: f32 };
-const cluster_large: Cluster = .{ .battery = battery_large, .gap = 20, .bolt = 30 };
-const cluster_small: Cluster = .{ .battery = battery_small, .gap = 16, .bolt = 24 };
+pub const Cluster = struct { battery: Battery, gap: f32, bolt: f32 };
+pub const cluster_large: Cluster = .{ .battery = battery_large, .gap = 20, .bolt = 30 };
+pub const cluster_small: Cluster = .{ .battery = battery_small, .gap = 16, .bolt = 24 };
 /// The bolt's gap from the percent, Wi-Fi's size against its own drawing, and its
 /// middle's distance left of where its gap ends.
 const bolt_gap = 6;
@@ -470,11 +476,10 @@ pub fn status_cluster(
     cy: f32,
     baseline: i32,
     quick: *const quick_model.Quick,
-    large: bool,
+    c: Cluster,
 ) !void {
     assert(inside(right, page.width));
     assert(inside(cy, page.height));
-    const c = if (large) cluster_large else cluster_small;
     const gap = c.gap * unit;
     const battery_x = right - c.battery.span();
     battery(page, c.battery, battery_x, cy, quick.battery);

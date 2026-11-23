@@ -43,17 +43,14 @@ pub fn draw_toolbar(a: *app.App, s: *sess.Session, book: Book, drawn: Drawn) !vo
         fonts.family_first = a.aa_kept.family_first;
         fonts.family_names = a.families();
     }
-    try toolbar.render(
-        fonts,
-        page,
-        book.title,
-        at,
-        &a.quick,
-        if (drawn.sheet_open) a.aa_kept.tab else null,
-        a.user.settings,
-        book.running,
-        s.is_bookmarked(s.current),
-    );
+    const shown: toolbar.Book = .{
+        .title = book.title,
+        .at = at,
+        .running = book.running,
+        .bookmarked = s.is_bookmarked(s.current),
+    };
+    const sheet = if (drawn.sheet_open) a.aa_kept.tab else null;
+    try toolbar.render(fonts, page, shown, &a.quick, sheet, a.user.settings);
     a.display.put_composed();
     if (drawn.whole_page) {
         try a.display.screen.wait_complete(try s.show_band(0, a.display.screen.height));
@@ -239,7 +236,8 @@ pub fn tap_sheet(
 ) !SheetTap {
     assert(s.current < s.pages.len);
     const sheet_only: Drawn = .{ .sheet_open = true, .whole_page = false };
-    switch (aa.hit(a.aa_kept.tab, a.families(), x, y)) {
+    const grid: aa.Grid = .{ .families = a.families(), .first = a.aa_kept.family_first };
+    switch (aa.hit(a.aa_kept.tab, grid, x, y)) {
         .none => return .done,
         .tab => |tab| {
             a.aa_kept.tab = tab;
@@ -257,11 +255,9 @@ pub fn tap_sheet(
             a.user.settings.spacing = theme.spacing;
             a.user.settings.margin = theme.margin;
         },
-        .family => |cell| {
-            const family = a.aa_kept.family_first + cell;
-            // The last page may have fewer typefaces than cells
+        .family => |family| {
             const families = a.families();
-            if (family >= families.count()) return .done;
+            assert(family < families.count()); // One the grid shows
             a.user.settings.font = settings_model.Family.of(families.names[family]).?;
         },
         .more_families => {

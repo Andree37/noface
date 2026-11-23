@@ -71,7 +71,7 @@ pub const Hit = union(enum) {
     none,
     tab: Tab,
     theme: u32,
-    family: u32, // Which cell of the typefaces' grid, counted from its page's first
+    family: u32, // Which typeface, of all offered: one shown on the grid's page
     more_families, // The cell that turns the typefaces' grid to its next page
     text_size,
     spacing,
@@ -87,10 +87,13 @@ pub const Effect = enum { relayout, footer, nothing };
 /// What must be agreed, or ready, before a switch can turn on.
 pub const Guard = enum { none, autostart, lock_picture };
 
+/// A setting by its field of Settings.
+pub const Setting = std.meta.FieldEnum(settings_model.Settings);
+
 /// An on/off setting: its tab, the field of Settings it flips, and what it says.
 pub const Switch = struct {
     tab: Tab,
-    field: []const u8,
+    field: Setting,
     label: []const u8,
     inverted: bool = false, // On means the field is false ("Justify text" is !left_align)
     effect: Effect,
@@ -100,36 +103,36 @@ pub const Switch = struct {
 /// Every switch, in the order shown on each tab. Adding one is a line here: the
 /// sheet places it under the ones before, and taps and drawing follow.
 pub const switches = [_]Switch{
-    .{ .tab = .font, .field = "bold", .label = "Bold", .effect = .relayout },
-    .{ .tab = .font, .field = "bold_starts", .label = "Bold word starts", .effect = .relayout },
+    .{ .tab = .font, .field = .bold, .label = "Bold", .effect = .relayout },
+    .{ .tab = .font, .field = .bold_starts, .label = "Bold word starts", .effect = .relayout },
     .{
         .tab = .layout,
-        .field = "left_align",
+        .field = .left_align,
         .label = "Justify text",
         .inverted = true,
         .effect = .relayout,
     },
-    .{ .tab = .more, .field = "clock", .label = "Show clock while reading", .effect = .nothing },
+    .{ .tab = .more, .field = .clock, .label = "Show clock while reading", .effect = .nothing },
     .{
         .tab = .more,
-        .field = "refresh",
+        .field = .refresh,
         .label = std.fmt.comptimePrint(
             "Page refresh every {d} pages",
             .{settings_model.clean_every_pages},
         ),
         .effect = .nothing,
     },
-    .{ .tab = .more, .field = "time_left", .label = "Show time left", .effect = .footer },
+    .{ .tab = .more, .field = .time_left, .label = "Show time left", .effect = .footer },
     .{
         .tab = .more,
-        .field = "autostart",
+        .field = .autostart,
         .label = "Open noface when the Kindle starts",
         .effect = .nothing,
         .guard = .autostart,
     },
     .{
         .tab = .more,
-        .field = "lock_picture",
+        .field = .lock_picture,
         .label = "Your picture when locked",
         .effect = .nothing,
         .guard = .lock_picture,
@@ -137,10 +140,10 @@ pub const switches = [_]Switch{
 };
 
 comptime {
-    for (switches) |sw| {
-        if (!@hasField(settings_model.Settings, sw.field)) {
-            @compileError("aa: no setting named " ++ sw.field);
-        }
+    // Each flips a setting that's on or off, and only one switch flips it
+    for (switches, 0..) |sw, i| {
+        assert(@FieldType(settings_model.Settings, @tagName(sw.field)) == bool);
+        for (switches[i + 1 ..]) |other| assert(other.field != sw.field);
     }
 }
 
@@ -148,7 +151,7 @@ comptime {
 pub fn is_on(i: u32, s: settings_model.Settings) bool {
     assert(i < switches.len);
     inline for (switches, 0..) |sw, j| {
-        if (i == j) return @field(s, sw.field) != sw.inverted;
+        if (i == j) return @field(s, @tagName(sw.field)) != sw.inverted;
     }
     unreachable;
 }
@@ -158,17 +161,17 @@ pub fn flip(i: u32, s: *settings_model.Settings) void {
     assert(i < switches.len);
     const was_on = is_on(i, s.*);
     inline for (switches, 0..) |sw, j| {
-        if (i == j) @field(s, sw.field) = !@field(s, sw.field);
+        if (i == j) @field(s, @tagName(sw.field)) = !@field(s, @tagName(sw.field));
     }
     assert(is_on(i, s.*) != was_on);
 }
 
 /// The index of the switch for a setting, for tests and callers that name one.
-pub fn switch_for(comptime field: []const u8) u32 {
+pub fn switch_for(comptime field: Setting) u32 {
     inline for (switches, 0..) |sw, i| {
-        if (comptime std.mem.eql(u8, sw.field, field)) return i;
+        if (sw.field == field) return i;
     }
-    @compileError("aa: no switch for " ++ field);
+    @compileError("aa: no switch for " ++ @tagName(field));
 }
 
 /// Where a tab's switches start: under its other controls.
@@ -209,7 +212,7 @@ pub const size_row = Row{
     .slider = .text_size,
     .label = "Text size",
     // Under the Font tab's switches, where the last one's taps end
-    .top = switch_top(switch_for("bold_starts")) + toggle_height + toggle_reach,
+    .top = switch_top(switch_for(.bold_starts)) + toggle_height + toggle_reach,
     .steps = settings_model.sizes.len,
 };
 /// The middle of a slider row's taps, down the screen; along it, a tap is a value.
@@ -269,7 +272,7 @@ fn family_columns(families: Families) u32 {
 }
 
 /// The most cells the typefaces' grid has.
-pub const family_cells_max = 3 * family_rows;
+pub const family_cells_max = family_columns_with_own * family_rows;
 
 /// What the Aa sheet keeps from one book to the next, in the App: set as noface starts
 /// to the chosen typeface's page (setup.zig), then the reader's controls change the tab
@@ -353,6 +356,13 @@ const tile = struct {
     const lines_inset = style.space.medium;
     const lines_inset_step = style.space.snug;
     const line_thick = style.space.hair;
+    /// The largest theme's text size, whose lines are twice as thick: each smaller
+    /// grows them by its share of that, so the sample keeps its shape on any screen
+    const size_largest = largest: {
+        var most: u32 = 1;
+        for (themes) |t| most = @max(most, t.size);
+        break :largest most;
+    };
 };
 const theme_top = content_top + theme_gap_above;
 const theme_gap_above = style.space.snug; // Between the tabs and the tiles
@@ -467,6 +477,7 @@ fn slider_hit(s: Slider) Hit {
 /// the Font tab: with `families` that page, the cell after a page's last typeface turns
 /// the grid to its next page.
 pub fn family_place(families: Families, cell: u32) style.Point {
+    const grid: Grid = .{ .families = families };
     const cols = family_columns(families);
     assert(cell < cols * family_rows);
     const width: i32 = @intCast(family_width(families));
@@ -480,7 +491,7 @@ pub fn family_place(families: Families, cell: u32) style.Point {
         .more_families
     else
         .{ .family = cell };
-    assert(std.meta.eql(hit(.font, families, point.x, point.y), expected));
+    assert(std.meta.eql(hit(.font, grid, point.x, point.y), expected));
     return point;
 }
 
@@ -536,7 +547,14 @@ pub fn place(tab: Tab, h: Hit) style.Point {
     return point;
 }
 
-pub fn hit(tab: Tab, families: Families, x: i32, y: i32) Hit {
+/// The typefaces offered, and the first of them the grid's page shows: what a tap on
+/// the grid is measured against.
+pub const Grid = struct {
+    families: Families = .{},
+    first: u32 = 0,
+};
+
+pub fn hit(tab: Tab, grid: Grid, x: i32, y: i32) Hit {
     if (y < top + tabs_height) {
         const cell: i32 = screen_width / tab_labels.len;
         const at = @divTrunc(std.math.clamp(x, @as(i32, 0), screen_width - 1), cell);
@@ -560,7 +578,7 @@ pub fn hit(tab: Tab, families: Families, x: i32, y: i32) Hit {
             // The first row reaches up to the tabs, so both rows take a full fingertip
             const reach = family_reach_above;
             if (within(y, family_top - reach, family_rows * family_height + reach)) {
-                return hit_family(families, x, y);
+                return hit_family(grid, x, y);
             }
             if (within(y, size_row.top, row_height)) return .text_size;
         },
@@ -578,9 +596,12 @@ pub fn hit(tab: Tab, families: Families, x: i32, y: i32) Hit {
     return .none;
 }
 
-/// Which cell of the typefaces' grid a tap is on, if one of them is there, or the cell
-/// that turns it to the next page.
-fn hit_family(families: Families, x: i32, y: i32) Hit {
+/// Which typeface a tap on the grid is on, if one shows there, or the cell that turns
+/// it to the next page.
+fn hit_family(grid: Grid, x: i32, y: i32) Hit {
+    const families = grid.families;
+    assert(grid.first < families.count());
+    assert(grid.first % families_per_page(families) == 0); // A page's first
     const below_top: i32 = @max(y - family_top, 0);
     const row_reached: u32 = @intCast(@divTrunc(below_top, family_height));
     const row = @min(row_reached, family_rows - 1);
@@ -591,10 +612,9 @@ fn hit_family(families: Families, x: i32, y: i32) Hit {
     assert(col < cols);
     const i = row * cols + col;
     if (families_paged(families) and i == families_per_page(families)) return .more_families;
-    // A cell past the last typeface on the last page is checked by the caller, which
-    // knows the page
-    const shown = @min(families_per_page(families), families.count());
-    return if (i < shown) .{ .family = i } else .none;
+    // The last page may show fewer typefaces than it has cells
+    const shown = @min(families_per_page(families), families.count() - grid.first);
+    return if (i < shown) .{ .family = grid.first + i } else .none;
 }
 
 fn draw_toggle(fonts: Fonts, page: Page, y: u32, label: []const u8, on: bool) !void {
@@ -675,7 +695,7 @@ fn draw_tabs(fonts: Fonts, page: Page, tab: Tab) !void {
         const inset = tab_label.tint_inset;
         if (!active) fonts.small.fade(page, left + inset, baseline, cell - 2 * inset, style.faded);
     }
-    page.fill_rect(0, top + tabs_height - 2, page.width, 1, style.rule);
+    page.fill_rect(0, top + tabs_height - style.stroke, page.width, style.fine_line, style.rule);
 }
 
 fn draw_themes(fonts: Fonts, page: Page, chosen: settings_model.Settings) !void {
@@ -727,7 +747,7 @@ fn draw_themes_tile(fonts: Fonts, page: Page, t: Theme, left: u32, active: bool)
     // setting is this much more of each
     const gap: u32 = tile.line_gap + t.spacing * tile.line_gap_step;
     const inset: u32 = tile.lines_inset + t.margin * tile.lines_inset_step;
-    const thick: u32 = tile.line_thick + t.size;
+    const thick: u32 = tile.line_thick + t.size * tile.line_thick / tile.size_largest;
     var y: u32 = theme_top + tile.lines_top;
     while (y < theme_top + tile.lines_bottom) : (y += gap + thick) {
         page.fill_rect(left + inset, y, theme_width - 2 * inset, thick, style.quiet);
@@ -855,28 +875,30 @@ const test_x = screen_width / 2; // Across the sheet, clear of anything at its s
 
 test "with the reader's own typefaces, three to a row" {
     const families = Families.offer(&(settings_model.builtin_families ++ .{"Literata"}));
+    const grid: Grid = .{ .families = families };
     for (0..5) |cell| {
         const at = family_place(families, @intCast(cell));
         try std.testing.expectEqual(
             Hit{ .family = @intCast(cell) },
-            hit(.font, families, at.x, at.y),
+            hit(.font, grid, at.x, at.y),
         );
     }
     // No sixth
     // The second row's third cell: the first row's third, down to the second row
     const sixth_x = family_place(families, 2).x;
     const sixth_y = family_place(families, 3).y;
-    try std.testing.expectEqual(Hit.none, hit(.font, families, sixth_x, sixth_y));
+    try std.testing.expectEqual(Hit.none, hit(.font, grid, sixth_x, sixth_y));
     try std.testing.expectEqual(@as(u32, 6), families_per_page(families));
 }
 
 test "with more typefaces than cells, the last cell turns the page, round to the first" {
     const own = .{ "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K" };
     const families = Families.offer(&(settings_model.builtin_families ++ own));
+    const grid: Grid = .{ .families = families };
     const last = family_place(families, 5);
-    try std.testing.expectEqual(Hit.more_families, hit(.font, families, last.x, last.y));
+    try std.testing.expectEqual(Hit.more_families, hit(.font, grid, last.x, last.y));
     const fifth = family_place(families, 4);
-    try std.testing.expectEqual(Hit{ .family = 4 }, hit(.font, families, fifth.x, fifth.y));
+    try std.testing.expectEqual(Hit{ .family = 4 }, hit(.font, grid, fifth.x, fifth.y));
     try std.testing.expectEqual(@as(u32, 5), families_per_page(families));
     // Fifteen typefaces, five a page
     try std.testing.expectEqual(@as(u32, 5), next_family_page(families, 0));
@@ -884,6 +906,23 @@ test "with more typefaces than cells, the last cell turns the page, round to the
     try std.testing.expectEqual(@as(u32, 0), next_family_page(families, 10));
     try std.testing.expectEqual(@as(u32, 10), family_page_of(families, 14));
     try std.testing.expectEqual(@as(u32, 5), family_page_of(families, 5));
+    // On the second page, the second cell is the seventh typeface
+    const on_second: Grid = .{ .families = families, .first = 5 };
+    const second = family_place(families, 1);
+    try std.testing.expectEqual(Hit{ .family = 6 }, hit(.font, on_second, second.x, second.y));
+}
+
+test "a cell the last page leaves empty is no typeface" {
+    // Seven typefaces, five a page: the second page shows two
+    const own = .{ "A", "B", "C" };
+    const families = Families.offer(&(settings_model.builtin_families ++ own));
+    try std.testing.expectEqual(@as(u32, 7), families.count());
+    try std.testing.expectEqual(@as(u32, 5), families_per_page(families));
+    const last_page: Grid = .{ .families = families, .first = 5 };
+    const shown = family_place(families, 1);
+    try std.testing.expectEqual(Hit{ .family = 6 }, hit(.font, last_page, shown.x, shown.y));
+    const empty = family_place(families, 2);
+    try std.testing.expectEqual(Hit.none, hit(.font, last_page, empty.x, empty.y));
 }
 
 test "the tabs' and the Running button's places are taps on them" {
@@ -900,46 +939,48 @@ test "the tabs' and the Running button's places are taps on them" {
 test "tabs split the top row evenly" {
     const families: Families = .{}; // The Kindle's typefaces alone
     const cell = screen_width / tab_labels.len;
+    const grid: Grid = .{ .families = families };
     const y = top + tabs_height / 2;
     for (std.enums.values(Tab), 0..) |t, i| {
         const x: i32 = @intCast(i * cell + cell / 2);
-        try std.testing.expectEqual(Hit{ .tab = t }, hit(.font, families, x, y));
+        try std.testing.expectEqual(Hit{ .tab = t }, hit(.font, grid, x, y));
     }
 }
 
 test "each tab maps its own controls" {
     const families: Families = .{}; // The Kindle's typefaces alone
+    const grid: Grid = .{ .families = families };
     for (0..themes.len) |i| {
         const x: i32 = @intCast(margin + i * (theme_width + theme_gap) + theme_width / 2);
         const y = theme_top + theme_height / 2;
-        try std.testing.expectEqual(Hit{ .theme = @intCast(i) }, hit(.themes, families, x, y));
+        try std.testing.expectEqual(Hit{ .theme = @intCast(i) }, hit(.themes, grid, x, y));
     }
     for (0..4) |cell| {
         const at = family_place(families, @intCast(cell));
         try std.testing.expectEqual(
             Hit{ .family = @intCast(cell) },
-            hit(.font, families, at.x, at.y),
+            hit(.font, grid, at.x, at.y),
         );
     }
     try std.testing.expectEqual(
         Hit.text_size,
-        hit(.font, families, test_x, row_middle(size_row)),
+        hit(.font, grid, test_x, row_middle(size_row)),
     );
     try std.testing.expectEqual(
         Hit.spacing,
-        hit(.layout, families, test_x, row_middle(spacing_row)),
+        hit(.layout, grid, test_x, row_middle(spacing_row)),
     );
     try std.testing.expectEqual(
         Hit.margins,
-        hit(.layout, families, test_x, row_middle(margin_row)),
+        hit(.layout, grid, test_x, row_middle(margin_row)),
     );
     // Every switch answers on its own tab, where it's drawn
     for (switches, 0..) |sw, i| {
         const y = test_switch_middle(@intCast(i));
-        try std.testing.expectEqual(Hit{ .toggle = @intCast(i) }, hit(sw.tab, families, test_x, y));
+        try std.testing.expectEqual(Hit{ .toggle = @intCast(i) }, hit(sw.tab, grid, test_x, y));
     }
     const running_y = running_top + running_height / 2;
-    try std.testing.expectEqual(Hit.running, hit(.themes, families, test_x, running_y));
+    try std.testing.expectEqual(Hit.running, hit(.themes, grid, test_x, running_y));
 }
 
 test "the sheet stays inside itself" {
@@ -955,21 +996,22 @@ test "the sheet stays inside itself" {
 test "switches and fonts take a fingertip of height" {
     const families: Families = .{}; // The Kindle's typefaces alone
     // Inside a switch's reach above and below what's drawn of it, and above the grid
-    const bold = switch_for("bold");
+    const bold = switch_for(.bold);
+    const grid: Grid = .{ .families = families };
     const bold_top: i32 = @intCast(switch_top(bold));
     const reach: i32 = toggle_reach;
     // The first switch on Font reaches up to the typefaces' grid, its gap's worth
     const up_to_grid = bold_top - family_gap;
-    try std.testing.expectEqual(Hit{ .toggle = bold }, hit(.font, families, test_x, up_to_grid));
+    try std.testing.expectEqual(Hit{ .toggle = bold }, hit(.font, grid, test_x, up_to_grid));
     const bold_foot = bold_top + toggle_height + reach - 1;
-    try std.testing.expectEqual(Hit{ .toggle = bold }, hit(.font, families, test_x, bold_foot));
-    const clock = switch_for("clock");
+    try std.testing.expectEqual(Hit{ .toggle = bold }, hit(.font, grid, test_x, bold_foot));
+    const clock = switch_for(.clock);
     const clock_top: i32 = @intCast(switch_top(clock));
     const clock_reach = clock_top - reach + 1;
-    try std.testing.expectEqual(Hit{ .toggle = clock }, hit(.more, families, test_x, clock_reach));
+    try std.testing.expectEqual(Hit{ .toggle = clock }, hit(.more, grid, test_x, clock_reach));
     const first = family_place(families, 0);
     const above: i32 = family_top - family_reach_above + 1;
-    try std.testing.expectEqual(Hit{ .family = 0 }, hit(.font, families, first.x, above));
+    try std.testing.expectEqual(Hit{ .family = 0 }, hit(.font, grid, first.x, above));
 }
 
 test "sliders say what they're set to" {
@@ -984,13 +1026,14 @@ test "every control on every tab takes a fingertip of taps, top to bottom" {
     // Down the first column, where every row of every tab has a control, each run of
     // taps landing on one control is a fingertip tall at least
     const x: i32 = @intCast(margin + family_width(families) / 2);
+    const grid: Grid = .{ .families = families };
     for (std.enums.values(Tab)) |tab| {
         var run_start: i32 = 0;
         var run_hit: Hit = .none;
         const foot: i32 = @intCast(height_for(tab));
         var y: i32 = 0;
         while (y <= foot) : (y += 1) {
-            const h = if (y < foot) hit(tab, families, x, y) else Hit.none;
+            const h = if (y < foot) hit(tab, grid, x, y) else Hit.none;
             if (std.meta.eql(h, run_hit)) continue;
             if (run_hit != .none) {
                 try std.testing.expect(y - run_start >= style.fingertip);
@@ -1004,19 +1047,20 @@ test "every control on every tab takes a fingertip of taps, top to bottom" {
 test "a switch keeps a fingertip's taps where a slider row is next to it" {
     const families: Families = .{}; // The Kindle's typefaces alone
     // Sliders are asked first, so a row running into a switch's reach took its taps
-    const bold_starts = switch_for("bold_starts");
+    const bold_starts = switch_for(.bold_starts);
+    const grid: Grid = .{ .families = families };
     const bold_starts_end: i32 = @intCast(switch_top(bold_starts) + toggle_height + toggle_reach);
     const last_tap = bold_starts_end - 1;
     try std.testing.expectEqual(
         Hit{ .toggle = bold_starts },
-        hit(.font, families, test_x, last_tap),
+        hit(.font, grid, test_x, last_tap),
     );
-    try std.testing.expectEqual(Hit.text_size, hit(.font, families, test_x, bold_starts_end));
-    const left_align = switch_for("left_align");
+    try std.testing.expectEqual(Hit.text_size, hit(.font, grid, test_x, bold_starts_end));
+    const left_align = switch_for(.left_align);
     const left_align_top: i32 = @intCast(switch_top(left_align) - toggle_reach);
     try std.testing.expectEqual(
         Hit{ .toggle = left_align },
-        hit(.layout, families, test_x, left_align_top),
+        hit(.layout, grid, test_x, left_align_top),
     );
-    try std.testing.expectEqual(Hit.margins, hit(.layout, families, test_x, left_align_top - 1));
+    try std.testing.expectEqual(Hit.margins, hit(.layout, grid, test_x, left_align_top - 1));
 }

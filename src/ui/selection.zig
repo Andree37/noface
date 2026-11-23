@@ -83,7 +83,7 @@ pub fn draw(page: Page, selected: []const book_model.Word) void {
         const last_on_line = selected[j];
         const left = first_on_line.x;
         const right = last_on_line.x + last_on_line.w;
-        const underline_y = first_on_line.y + first_on_line.h - underline - 2;
+        const underline_y = first_on_line.y + first_on_line.h - underline - style.stroke;
         const width = right - left;
         const line_y: u32 = @intCast(underline_y);
         page.fill_rect(@intCast(left), line_y, @intCast(width), underline, style.black);
@@ -161,6 +161,8 @@ test "band includes the handles" {
 test "a finger near a handle grabs it" {
     const words = [_]book_model.Word{ word(100, 100), word(200, 100) };
     const end = end_handle(&words);
-    try std.testing.expect(near_handle(end, end.x + 20, end.y - 20));
-    try std.testing.expect(!near_handle(end, 600, 600));
+    const reach = grab_distance - 1; // The farthest a finger still grabs it
+    try std.testing.expect(near_handle(end, end.x + reach, end.y - reach));
+    try std.testing.expect(!near_handle(end, end.x + grab_distance, end.y));
+    try std.testing.expect(!near_handle(end, end.x, end.y - grab_distance));
 }

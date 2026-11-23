@@ -41,7 +41,6 @@ const field = struct {
     const cursor_inset = style.space.medium;
     const cursor_width = style.space.hair;
     const cursor_gap = style.space.hair;
-    const placeholder_shade = 0x90;
 };
 
 const rows_gap = style.space.medium; // Between the bar and the rows
@@ -135,7 +134,7 @@ pub fn render_bar(
     const left: f32 = style.margin;
     const right: f32 = field_right - field_gap;
     page.pill(left + r, right - r, cy, r, style.black);
-    page.pill(left + r, right - r, cy, r - 2, style.white);
+    page.pill(left + r, right - r, cy, r - style.stroke, style.white);
     const icon_x = left + field.icon_inset;
     if (icon == .search) icons.search_scaled(page, icon_x, cy, field.icon_scale);
     const inset: f32 = if (icon == .search) field.text_inset else field.text_inset_plain;
@@ -146,7 +145,7 @@ pub fn render_bar(
     if (query.len == 0) {
         try fonts.small.draw(page, text_x, baseline, placeholder);
         const avail_px: u32 = @intFromFloat(avail);
-        fonts.small.fade(page, @intFromFloat(text_x), baseline, avail_px, field.placeholder_shade);
+        fonts.small.fade(page, @intFromFloat(text_x), baseline, avail_px, style.placeholder);
     } else {
         // Its end, where letters are being typed, stays in view.
         typed = try draw.clipped_start(fonts.small, page, text_x, baseline, query, avail);
@@ -174,7 +173,7 @@ fn draw_row(fonts: Fonts, page: Page, y: u32, e: *const catalog.Entry) !void {
         try draw.clipped(fonts.caption, page, style.margin, author_y, e.author, avail);
         fonts.caption.fade(page, style.margin, author_y, @intFromFloat(avail), style.quiet);
     }
-    page.fill_rect(style.margin, y + row_height - 1, page.width - 2 * style.margin, 1, style.rule);
+    draw.rule(page, y + row_height - style.fine_line);
 }
 
 /// The sheet over the status strip's screen, with `typed` in its field as typed, spaces

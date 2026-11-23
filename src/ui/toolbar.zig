@@ -86,15 +86,30 @@ pub const Hit = enum {
     sheet,
 };
 
-const Tool = struct { hit: Hit, x: i32 };
+/// The five tools along the toolbar's row, each a Hit of its own (`Tool.as_hit`).
+const ToolKind = enum { text, goto, bookmark, search, more };
+const Tool = struct {
+    kind: ToolKind,
+    x: i32,
+
+    fn as_hit(t: Tool) Hit {
+        return switch (t.kind) {
+            .text => .text,
+            .goto => .goto,
+            .bookmark => .bookmark,
+            .search => .search,
+            .more => .more,
+        };
+    }
+};
 /// The tools, left to right, `tool_spacing` apart, the last `last_tool_inset` in from
 /// the right edge.
 const tools = tools: {
-    const order = [_]Hit{ .text, .goto, .bookmark, .search, .more };
+    const order = std.enums.values(ToolKind);
     var placed: [order.len]Tool = undefined;
     for (order, 0..) |h, i| {
         const from_last: i32 = @intCast(order.len - 1 - i);
-        placed[i] = .{ .hit = h, .x = screen_width - last_tool_inset - from_last * tool_spacing };
+        placed[i] = .{ .kind = h, .x = screen_width - last_tool_inset - from_last * tool_spacing };
     }
     break :tools placed;
 };
@@ -137,7 +152,7 @@ pub fn hit(x: i32, y: i32, sheet: ?aa.Tab) Hit {
         if (y >= tool_row + tool_taps_below) return .stay;
         if (x < home_right) return .home;
         for (tools) |t| {
-            if (@abs(x - t.x) < tool_reach) return t.hit;
+            if (@abs(x - t.x) < tool_reach) return t.as_hit();
         }
         return .stay;
     }
@@ -185,7 +200,7 @@ pub fn place(h: Hit) style.Point {
     const point: style.Point = switch (h) {
         .home => .{ .x = home_right / 2, .y = tools_middle },
         .text, .goto, .bookmark, .search, .more => for (tools) |t| {
-            if (t.hit == h) break .{ .x = t.x, .y = tools_middle };
+            if (t.as_hit() == h) break .{ .x = t.x, .y = tools_middle };
         } else unreachable, // Every tool is in the row
         .close => .{ .x = screen_width / 2, .y = (top_height + bottom_top) / 2 },
         .chapter_prev => .{ .x = chapter_prev_right / 2, .y = bottom_middle },
@@ -272,52 +287,64 @@ pub fn draw_scrub(fonts: Fonts, page: Page, at: ?Position, mono: bool) !void {
     if (mono) page.threshold(scrub_top, screen_height - scrub_top);
 }
 
+/// What the toolbar shows of the open book.
+pub const Book = struct {
+    title: []const u8,
+    at: ?Position, // Where in it the page is, for the scrubber: none before it's known
+    running: bool, // Read in Running mode: the Aa sheet's Running button shows it on
+    bookmarked: bool, // The page shown has a bookmark: its tool shows filled
+};
+
 pub fn render(
     fonts: Fonts,
     page: Page,
-    title: []const u8,
-    at: ?Position,
+    book: Book,
     quick: *const quick_model.Quick,
     sheet: ?aa.Tab,
     chosen: settings_model.Settings,
-    running: bool,
-    bookmarked: bool,
 ) !void {
     assert(page.width > 2 * margin);
     const w: f32 = @floatFromInt(page.width);
     page.fill_rect(0, 0, page.width, top_height, style.white);
 
-    const clock = quick.clock_text();
-    const time = clock[0 .. std.mem.indexOfScalar(u8, clock, ' ') orelse clock.len];
+    const time = quick.clock_time();
     // Centred, as on the page and in the library
     const baseline = fonts.caption.centred_on(status_centre);
     assert(baseline < status_band);
     try draw.centered(fonts.caption, page, w / 2, baseline, time);
     const right = w - margin;
-    try icons.status_cluster(page, fonts.caption, right, status_centre, baseline, quick, false);
+    try icons.status_cluster(
+        page,
+        fonts.caption,
+        right,
+        status_centre,
+        baseline,
+        quick,
+        icons.cluster_small,
+    );
 
     try draw.draw_back_link(fonts.small, page, tool_icon_y, "Home");
     // Each tool drawn where its entry says it takes taps
-    for (tools) |t| try draw_tool(fonts, page, t, bookmarked);
+    for (tools) |t| try draw_tool(fonts, page, t, book.bookmarked);
 
     const title_y = tool_row + title_baseline_drop;
-    try draw.clipped(fonts.caption, page, margin, title_y, title, w - 2 * margin);
+    try draw.clipped(fonts.caption, page, margin, title_y, book.title, w - 2 * margin);
     fonts.caption.fade(page, margin, title_y, page.width - 2 * margin, style.faded);
     page.fill_rect(0, top_height - edge, page.width, edge, style.black);
-    if (sheet) |tab| try aa.render(fonts, page, tab, chosen, running);
+    if (sheet) |tab| try aa.render(fonts, page, tab, chosen, book.running);
 
     page.fill_rect(0, bottom_top, page.width, screen_height - bottom_top, style.white);
     page.fill_rect(0, bottom_top, page.width, edge, style.black);
     icons.skip(page, skip_inset, bottom_top + chapter_icon_drop, false);
     icons.skip(page, w - skip_inset, bottom_top + chapter_icon_drop, true);
-    try draw_scrub(fonts, page, at, false);
+    try draw_scrub(fonts, page, book.at, false);
 }
 
 /// One tool's icon, at its place in `tools`.
 fn draw_tool(fonts: Fonts, page: Page, t: Tool, bookmarked: bool) !void {
     const x: f32 = @floatFromInt(t.x);
     assert(t.x >= home_right); // Right of Home, as the tools are
-    switch (t.hit) {
+    switch (t.kind) {
         .text => {
             // Centred on the tool, to the whole pixel, as the icons beside it are
             const half = @floor(try fonts.title.measure("Aa") / 2);
@@ -332,8 +359,6 @@ fn draw_tool(fonts: Fonts, page: Page, t: Tool, bookmarked: bool) !void {
         },
         .search => icons.search(page, x, tool_icon_y),
         .more => icons.dots(page, x, tool_icon_y),
-        // Only the five above are in `tools`; these are the toolbar's other parts
-        .close, .stay, .home, .chapter_prev, .chapter_next, .scrub, .sheet => unreachable,
     }
 }
 
@@ -348,7 +373,7 @@ test "every control's place is a tap on it" {
 test "toolbar buttons map to actions" {
     const y = tool_icon_y;
     try std.testing.expectEqual(Hit.home, hit(margin, y, null));
-    for (tools) |t| try std.testing.expectEqual(t.hit, hit(t.x, y, null));
+    for (tools) |t| try std.testing.expectEqual(t.as_hit(), hit(t.x, y, null));
     // Between Home and the first tool
     try std.testing.expectEqual(Hit.stay, hit(home_right + 1, y, null));
     const middle_y = (top_height + bottom_top) / 2;

@@ -162,6 +162,13 @@ pub fn box_with(page: Page, x: u32, y: u32, w: u32, h: u32, edge: u32, corner: f
     page.round_rect(x + edge, y + edge, w - 2 * edge, h - 2 * edge, inner_corner, style.white);
 }
 
+/// A gray rule across the page between its margins, `y` down: dividing rows or parts.
+pub fn rule(page: Page, y: u32) void {
+    assert(page.width > 2 * style.margin);
+    assert(y + style.fine_line <= page.height);
+    page.fill_rect(style.margin, y, page.width - 2 * style.margin, style.fine_line, style.rule);
+}
+
 /// A sheet rising from the bottom of the screen from `top`: outlined, rounded at the
 /// top (its bottom corners run off the screen), with a grab bar.
 pub fn sheet(page: Page, top: u32) void {
@@ -171,7 +178,8 @@ pub fn sheet(page: Page, top: u32) void {
     // Taller than the room left, so the bottom corners fall off the screen
     const tall = h + style.sheet_corner;
     page.round_rect(0, top, page.width, tall, style.sheet_corner, style.black);
-    const inner = style.sheet_corner - 1;
+    // The white inside follows the black's curve, one edge in, as `box_with`'s does
+    const inner = style.sheet_corner - sheet_edge;
     page.round_rect(0, top + sheet_edge, page.width, tall, inner, style.white);
     const grab_left = page.width / 2 - grab_bar_width / 2;
     const grab_top = top + grab_bar_drop;
@@ -180,7 +188,7 @@ pub fn sheet(page: Page, top: u32) void {
 }
 
 /// A sheet's black edge along its top, and the grab bar in its middle, down from its top.
-const sheet_edge = 2;
+const sheet_edge = style.stroke;
 const grab_bar_width = style.space.wider;
 const grab_bar_height = style.space.tiny;
 const grab_bar_drop = style.space.snug;
@@ -288,6 +296,9 @@ comptime {
     assert(Pager.next_left + Pager.button <= style.screen_width);
     assert(bottom_pager.top < bottom_pager.bottom);
     assert(bottom_pager.reach.? > bottom_pager.bottom);
+    // A sheet's edge is thinner than its corner is round, so its inside curves too
+    assert(sheet_edge > 0);
+    assert(sheet_edge < style.sheet_corner);
 }
 
 test "the shared pager takes taps to the bottom edge" {

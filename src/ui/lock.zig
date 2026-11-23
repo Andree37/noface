@@ -68,6 +68,8 @@ pub fn render_title(fonts: Fonts, page: Page, title: ?[]const u8, author: []cons
     const width_available: f32 = @floatFromInt(page.width - 2 * title_side);
     const font = fonts.hero;
     const step = font.line_height;
+    // Ignored below: what's drawn of the title names the book; the author's place
+    // under it isn't known then, so it's left out rather than drawn over it
     const lines = draw.wrapped(
         font,
         page,
@@ -77,7 +79,7 @@ pub fn render_title(fonts: Fonts, page: Page, title: ?[]const u8, author: []cons
         t,
         width_available,
         title_lines_max,
-    ) catch 1;
+    ) catch return; // Ignored: as said above
     assert(lines <= title_lines_max);
     if (author.len > 0) {
         const author_top = title_top + @as(i32, @intCast(lines)) * step + author_gap;

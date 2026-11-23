@@ -14,7 +14,7 @@ pub const max_parts = 8;
 /// and the black edge along the panel's top.
 const header = style.space.snug + style.space.wider;
 const header_baseline = style.space.wider;
-const header_rule = 2;
+const header_rule = style.stroke;
 const edge = style.space.hair;
 const margin = style.space.band;
 /// The panel's heights, smallest first, from the screen's; the smallest has room for a
@@ -76,21 +76,34 @@ pub fn fit(
 ) !Fit {
     assert(width > 2 * margin);
     // A fixed height is the one the note's first part was given.
-    if (fixed) |h| assert(is_panel_height(h));
     if (fixed) |h| {
-        const shape = geometry(width, h, stride);
-        const next = try text.layout_page(font, null, shape, parts, start, &layout, null);
-        return .{ .height = h, .next = if (next.para >= parts.len) null else next };
+        assert(is_panel_height(h));
+        return fit_in(font, parts, start, geometry(width, h, stride), h);
     }
-    for (heights) |h| {
-        const shape = geometry(width, h, stride);
-        const next = try text.layout_page(font, null, shape, parts, start, &layout, null);
-        if (next.para >= parts.len) return .{ .height = h, .next = null };
+    // The shortest panel the note fits in whole, laid out once each; the tallest, with
+    // the rest of the note to follow, if none holds it
+    const shorter = heights[0 .. heights.len - 1];
+    for (shorter) |h| {
+        const fitted = try fit_in(font, parts, start, geometry(width, h, stride), h);
+        if (fitted.next == null) return fitted;
     }
     const tallest = heights[heights.len - 1];
-    const shape = geometry(width, tallest, stride);
+    return fit_in(font, parts, start, geometry(width, tallest, stride), tallest);
+}
+
+/// The note from `start` laid out in a panel `height` tall: where the rest goes on,
+/// if it doesn't all fit.
+fn fit_in(
+    font: *Font,
+    parts: []const book_model.Paragraph,
+    start: book_model.Pos,
+    shape: Page,
+    height: u32,
+) !Fit {
+    assert(shape.height == height);
+    assert(is_panel_height(height));
     const next = try text.layout_page(font, null, shape, parts, start, &layout, null);
-    return .{ .height = tallest, .next = next };
+    return .{ .height = height, .next = if (next.para >= parts.len) null else next };
 }
 
 /// Draws into `panel`, whose buffer starts at the panel's top row.

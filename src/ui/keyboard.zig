@@ -303,9 +303,6 @@ pub fn typed(c: u21, shift: Shift) u21 {
 }
 
 // The keys sit on a light gray tray, white with rounded corners and a soft shadow
-const tray = 0xe2;
-const shadow = 0xa8;
-const special = 0xc4; // Delete, shift and the layer keys: a step darker than letters
 const corner = style.key_corner;
 // Drawn a little inside their tap area, so neighbours have a clear gap
 const inset = style.space.hair;
@@ -326,7 +323,7 @@ fn key_face(page: Page, x: i32, y: u32, w: i32, face: u8) void {
     const left: u32 = @intCast(x + inset);
     const width: u32 = @intCast(w - 2 * inset);
     const height = key_height - 2 * inset;
-    page.round_rect(left, y + inset + shadow_drop, width, height, corner, shadow);
+    page.round_rect(left, y + inset + shadow_drop, width, height, corner, style.key_shadow);
     page.round_rect(left, y + inset, width, height, corner, face);
 }
 
@@ -342,7 +339,7 @@ fn label(fonts: Fonts, page: Page, x: i32, y: u32, w: i32, text: []const u8) !vo
 pub fn render(fonts: Fonts, page: Page, state: State) !void {
     assert(page.height > keys_top);
     assert(page.width >= enter_left + enter_width);
-    page.fill_rect(0, top, page.width, page.height - top, tray);
+    page.fill_rect(0, top, page.width, page.height - top, style.key_tray);
     for (layouts[@backingInt(state.layer)], 0..) |row, r| {
         const y: u32 = keys_top + @as(u32, @intCast(r)) * row_step;
         for (row) |b| try render_key(fonts, page, b, y, state.shift);
@@ -367,11 +364,11 @@ fn render_key(fonts: Fonts, page: Page, b: Box, y: u32, shift: Shift) !void {
             try label(fonts, page, b.x, y, b.w, "space");
         },
         .backspace => {
-            key_face(page, b.x, y, b.w, special);
+            key_face(page, b.x, y, b.w, style.key_special);
             icons.backspace(page, cx, cy);
         },
         .layer => |to| {
-            key_face(page, b.x, y, b.w, special);
+            key_face(page, b.x, y, b.w, style.key_special);
             const text = switch (to) {
                 .letters => "ABC",
                 .symbols => "123",
@@ -381,7 +378,7 @@ fn render_key(fonts: Fonts, page: Page, b: Box, y: u32, shift: Shift) !void {
         },
         .shift => switch (shift) {
             .off => {
-                key_face(page, b.x, y, b.w, special);
+                key_face(page, b.x, y, b.w, style.key_special);
                 icons.shift(page, cx, cy, false);
             },
             // On: black like a key that's on, its arrow in white

@@ -136,7 +136,9 @@ test "a book being downloaded shows a card that says so, with nothing to pick" {
     // The card the sheet shows for it: no rows, so only a tap above it closes it
     var row_buffer: [4]card.Row = undefined;
     try std.testing.expectEqual(@as(usize, 0), rows(busy_options, &row_buffer).len);
-    try std.testing.expectEqual(@as(?u32, null), card.hit(636, 300, 0));
+    const above: i32 = @as(i32, @intCast(card.top(0))) - 1;
+    try std.testing.expectEqual(@as(?u32, null), card.hit(above, 0));
+    try std.testing.expectEqual(@as(?u32, 0), card.hit(above + 1, 0)); // On it: no row
 }
 
 test "removal asks first" {

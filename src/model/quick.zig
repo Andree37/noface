@@ -55,6 +55,14 @@ pub const Quick = struct {
         return q.clock[0..q.clock_len];
     }
 
+    /// The time alone, without the AM or PM after it: as the status bars show it.
+    pub fn clock_time(q: *const Quick) []const u8 {
+        const clock = q.clock_text();
+        const time = clock[0 .. std.mem.indexOfScalar(u8, clock, ' ') orelse clock.len];
+        assert(time.len <= clock.len);
+        return time;
+    }
+
     /// The Wi-Fi bars drawn: the signal while connected, none otherwise.
     pub fn wifi_shown(q: *const Quick) ?u32 {
         assert(q.wifi_bars <= wifi_bars_max);
@@ -80,6 +88,18 @@ pub const Quick = struct {
         return std.mem.eql(u8, a.clock_text(), b.clock_text());
     }
 };
+
+test "the time is shown without its AM or PM, a 24-hour one whole" {
+    var q = Quick{};
+    const twelve = "9:41 PM";
+    @memcpy(q.clock[0..twelve.len], twelve);
+    q.clock_len = twelve.len;
+    try std.testing.expectEqualStrings("9:41", q.clock_time());
+    const day = "21:41";
+    @memcpy(q.clock[0..day.len], day);
+    q.clock_len = day.len;
+    try std.testing.expectEqualStrings("21:41", q.clock_time());
+}
 
 test "readings compare by what they show" {
     var a = Quick{ .battery = 80 };

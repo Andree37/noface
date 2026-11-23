@@ -215,7 +215,7 @@ pub fn render(
     if (reading) |r| assert(r < list.len);
     assert(tab == .contents or reading == null);
     page.fill_rect(0, top, page.width, page.height - top, style.white);
-    page.fill_rect(0, top, page.width, 1, style.rule);
+    page.fill_rect(0, top, page.width, style.fine_line, style.rule);
     const half: f32 = @floatFromInt(page.width / 2);
     const baseline = fonts.small.centred_baseline(top, header_band);
     const underline_y: u32 = @intCast(baseline + tabs_underline_drop);
@@ -241,7 +241,7 @@ pub fn render_list(
 ) !void {
     const rule_y = list_top - list_rule_rise;
     page.fill_rect(0, rule_y, page.width, page.height - rule_y, style.white);
-    page.fill_rect(style.margin, rule_y, page.width - 2 * style.margin, 1, style.rule);
+    draw.rule(page, rule_y);
     if (list.len == 0) {
         const middle: f32 = @floatFromInt(page.width / 2);
         try draw.centered(fonts.small, page, middle, list_top + empty_drop, empty);

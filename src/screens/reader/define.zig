@@ -41,7 +41,7 @@ const Sheet = struct {
     pub fn on_tap(sh: *Sheet, t: screen.Tap) !screen.Step(Choice) {
         assert(sh.page_copy.len == sh.a.display.screen.pixels.len);
         assert(sh.word.para < sh.s.paragraphs.len);
-        return switch (definition.hit(t.x, t.y)) {
+        return switch (definition.hit(sh.found, t.x, t.y)) {
             .close => .close,
             .highlight => .{ .done = .highlight },
             .get_dictionary => sh.get_dictionary(),
@@ -51,8 +51,8 @@ const Sheet = struct {
 
     /// Downloads the book's dictionary from "Get dictionary".
     fn get_dictionary(sh: *Sheet) screen.Step(Choice) {
-        // Only where the button is drawn: a dictionary to get
-        const g = definition.gettable(sh.found) orelse return .stay;
+        // Tapped only where the button is drawn: a dictionary to get
+        const g = definition.gettable(sh.found).?;
         dict_get.begin(&sh.getting, sh.a, .{ .pixels = sh.page_copy }, g.lang);
         return .{ .push = screen.open(&sh.getting, &sh.getting_ending) };
     }

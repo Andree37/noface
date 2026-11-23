@@ -268,12 +268,8 @@ fn render_library(shot: *const Shot) !void {
         shot.fonts,
         shot.page,
         try page_books(entries, lead, visible[0..count], index),
-        index,
-        filter,
-        "",
-        "",
+        .{ .index = index, .filter = filter, .now = shot.now },
         shot.quick,
-        shot.now,
     );
     try write_image(shot.page.buf, screen_width, screen_height);
 }
@@ -294,12 +290,8 @@ fn render_library_search(shot: *const Shot) !void {
         shot.fonts,
         shot.page,
         try page_books(entries, lead, visible[0..count], 0),
-        0,
-        .all,
-        query,
-        "",
+        .{ .index = 0, .filter = .all, .query = query, .now = shot.now },
         shot.quick,
-        shot.now,
     );
     try write_image(shot.page.buf, screen_width, screen_height);
 }
@@ -352,12 +344,8 @@ fn render_sheet(shot: *const Shot) !void {
         shot.fonts,
         shot.page,
         try page_books(entries, lead, visible[0..count], 0),
-        0,
-        .all,
-        "",
-        "",
+        .{ .index = 0, .filter = .all, .now = shot.now },
         shot.quick,
-        shot.now,
     );
     var list: [4]sheet.Option = undefined;
     const confirming = shot.argv.len > 2;
@@ -521,15 +509,11 @@ fn render_sample_toolbar(shot: *const Shot, tab: ?core.aa.Tab) !void {
     assert(shot.page.width == screen_width);
     assert(shot.page.height == screen_height);
     const font_sheet = tab != null and tab.? == .font;
-    try toolbar.render(
-        shot.fonts,
-        shot.page,
-        sample_title,
-        .{ .index = sample_page_index, .total = sample_page_count },
-        shot.quick,
-        tab,
-        .{},
-        false,
-        font_sheet,
-    );
+    const book: toolbar.Book = .{
+        .title = sample_title,
+        .at = .{ .index = sample_page_index, .total = sample_page_count },
+        .running = false,
+        .bookmarked = font_sheet, // Its filled icon seen, beside the Font sheet's picture
+    };
+    try toolbar.render(shot.fonts, shot.page, book, shot.quick, tab, .{});
 }

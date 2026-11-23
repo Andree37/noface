@@ -307,7 +307,7 @@ const Progress = struct {
         assert(p.title_size > 0);
         const rows: u32 = cancel_rows.len;
         assert(rows == 1);
-        return if (card.hit_with(t.x, t.y, rows, null) == 0) .{ .done = .cancelled } else .stay;
+        return if (card.hit_with(t.y, rows, null) == 0) .{ .done = .cancelled } else .stay;
     }
 
     /// Every second: connected yet, or the download further along, or over.

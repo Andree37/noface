@@ -68,25 +68,30 @@ pub fn place(h: Hit) style.Point {
         .close => .{ .x = style.screen_width / 2, .y = top / 2 },
         .none => unreachable, // Not a control
     };
-    assert(hit(point.x, point.y) == h);
+    assert(hit_buttons(true, point.x, point.y) == h); // On a sheet that offers both
     return point;
 }
 
 test "every button's place is a tap on it" {
     for ([_]Hit{ .highlight, .get_dictionary, .close }) |h| {
         const p = place(h);
-        try std.testing.expectEqual(h, hit(p.x, p.y));
+        try std.testing.expectEqual(h, hit_buttons(true, p.x, p.y));
     }
 }
 
-pub fn hit(x: i32, y: i32) Hit {
+/// What a tap on the sheet showing `found` is on: "Get dictionary" only where it's drawn.
+pub fn hit(found: Found, x: i32, y: i32) Hit {
+    return hit_buttons(gettable(found) != null, x, y);
+}
+
+fn hit_buttons(offers_dictionary: bool, x: i32, y: i32) Hit {
     if (y < top) return .close;
     const reach = button_reach;
     const on_row = y >= actions_top and y < actions_top + row_taps_height;
     const on_highlight = x >= style.margin - reach and x < style.margin + button_width + reach;
     const on_get = x >= get_left - reach and x < get_left + get_width + reach;
     if (on_row and on_highlight) return .highlight;
-    if (on_row and on_get) return .get_dictionary;
+    if (on_row and on_get and offers_dictionary) return .get_dictionary;
     return .none;
 }
 
@@ -219,7 +224,7 @@ pub fn render(fonts: Fonts, page: Page, found: Found) !void {
 
     // Actions along the bottom: Highlight, and where the words come from
     const rule_y = actions_top - actions_rule_rise;
-    page.fill_rect(style.margin, rule_y, page.width - 2 * style.margin, 1, style.rule);
+    draw.rule(page, rule_y);
     const button_top = actions_top + button_drop;
     draw.box(page, style.margin, button_top, button_width, button_height);
     const highlight_x = style.margin + button_width / 2;
@@ -248,14 +253,25 @@ pub fn gettable(found: Found) ?Gettable {
 }
 
 test "taps above close, the button highlights, the rest stays" {
+    const offering: Found = .{
+        .word = "word",
+        .looked_up = .{ .no_dictionary = .{ .lang = .english, .name = "English" } },
+    };
     const x = style.screen_width / 2;
     const row_y = actions_top + row_taps_height / 2;
-    try std.testing.expectEqual(Hit.close, hit(x, top - 1));
+    try std.testing.expectEqual(Hit.close, hit(offering, x, top - 1));
     const highlight_x = style.margin + button_width / 2;
-    try std.testing.expectEqual(Hit.highlight, hit(highlight_x, row_y));
-    try std.testing.expectEqual(Hit.none, hit(x, text_top));
-    try std.testing.expectEqual(Hit.get_dictionary, hit(get_left + get_width / 2, row_y));
+    try std.testing.expectEqual(Hit.highlight, hit(offering, highlight_x, row_y));
+    try std.testing.expectEqual(Hit.none, hit(offering, x, text_top));
+    const get_x = get_left + get_width / 2;
+    try std.testing.expectEqual(Hit.get_dictionary, hit(offering, get_x, row_y));
     // Between the two buttons' taps
     const between = get_left - button_reach - 1;
-    try std.testing.expectEqual(Hit.none, hit(between, row_y));
+    try std.testing.expectEqual(Hit.none, hit(offering, between, row_y));
+    // Where no "Get dictionary" is drawn, its place is no button
+    const not_offering: Found = .{ .word = "word", .looked_up = .not_found };
+    try std.testing.expectEqual(Hit.none, hit(not_offering, get_x, row_y));
+    const none_to_get: Found = .{ .word = "word", .looked_up = .{ .no_dictionary = null } };
+    try std.testing.expectEqual(Hit.none, hit(none_to_get, get_x, row_y));
+    try std.testing.expectEqual(Hit.highlight, hit(not_offering, highlight_x, row_y));
 }

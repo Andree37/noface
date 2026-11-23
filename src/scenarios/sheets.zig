@@ -136,20 +136,13 @@ pub const all = [_]Scenario{
                 try expect(themed.settings.size == size, "the theme wasn't used");
                 try expect(themed.saved_settings.size == size, "the theme wasn't saved");
                 try expect(same_place(themed.saved, read.saved), "the theme moved the place");
-                const bold_index = comptime switch_index("bold");
+                const bold_index = comptime aa.switch_for(.bold);
                 const font_tab = tap_on(aa.place(.themes, .{ .tab = .font }));
                 const bold = tap_on(aa.place(.font, .{ .toggle = bold_index }));
                 const bolded = try play(&(aa_sheet ++ .{ font_tab, bold }));
                 try expect(bolded.settings.bold, "bold wasn't turned on");
                 try expect(bolded.saved_settings.bold, "bold wasn't saved");
                 try expect(same_place(bolded.saved, read.saved), "bold moved the place");
-            }
-
-            fn switch_index(comptime field: []const u8) u32 {
-                for (aa.switches, 0..) |sw, i| {
-                    if (std.mem.eql(u8, sw.field, field)) return i;
-                }
-                unreachable; // Every switch named here is in the table
             }
         }.run,
     },

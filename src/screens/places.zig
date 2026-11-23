@@ -109,7 +109,7 @@ pub const all = places: {
     // Each switch by the setting it flips: "aa.switch.bold"
     for (aa.switches, 0..) |sw, i| {
         const point = aa.place(sw.tab, .{ .toggle = i });
-        list = list ++ .{Place{ .name = "aa.switch." ++ sw.field, .point = point }};
+        list = list ++ .{Place{ .name = "aa.switch." ++ @tagName(sw.field), .point = point }};
     }
     // Each of the Kindle's typefaces by its name, "aa.family.bookerly": where the grid
     // puts them with no typefaces of the reader's own, as the tests' Kindles have none

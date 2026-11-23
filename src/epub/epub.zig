@@ -41,8 +41,6 @@ const Package = struct {
     };
 
     fn item(p: *const Package, id: []const u8) ?Item {
-        // `read_package` refuses a book without a reading order
-        assert(p.spine.len > 0);
         for (p.items) |i| {
             if (std.mem.eql(u8, i.id, id)) return i;
         }

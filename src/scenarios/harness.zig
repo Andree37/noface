@@ -34,6 +34,14 @@ const linux = @import("../sys/calls.zig");
 const book_model = @import("../model/book.zig");
 const placed = @import("../screens/placed.zig");
 const test_books = @import("../testdata/books.zig");
+/// How far a pixel's gray may stray from its reference snapshot's, as fonts render a
+/// little differently from one computer to the next, and how many pixels a snapshot
+/// holds for each one that may stray further before it differs.
+const snapshot_gray_slack = 48;
+const snapshot_pixels_per_miss = 5000;
+/// When a place a scenario sets as read before was last opened (November 2023): before
+/// any run, so a book opened in one reads later.
+const read_before_opened = 1_700_000_000;
 const go_regular = @embedFile("../testdata/fonts/Go-Regular.ttf");
 const go_bold = @embedFile("../testdata/fonts/Go-Bold.ttf");
 const taps = @import("taps.zig");
@@ -247,10 +255,10 @@ pub fn matches_reference(alloc: std.mem.Allocator, which: Snapshot, pixels: []co
     if (want.width != width or want.height != height) return false;
     var off: u32 = 0;
     for (pixels, want.pixels) |got, w| {
-        if (@max(got, w) - @min(got, w) > 48) off += 1;
+        if (@max(got, w) - @min(got, w) > snapshot_gray_slack) off += 1;
     }
     assert(off <= pixels.len);
-    if (@as(u64, off) * 5000 > pixels.len) {
+    if (@as(u64, off) * snapshot_pixels_per_miss > pixels.len) {
         std.debug.print("    {d} pixels differ from the {s} reference\n", .{ off, name });
         return false;
     }
@@ -718,7 +726,7 @@ pub fn play_on_start(
             .para = before.para,
             .byte = before.byte,
             .percent = 5,
-            .opened = 1_700_000_000,
+            .opened = read_before_opened,
             .seconds = 600,
             .words_left = before.words_left,
         });
@@ -827,7 +835,8 @@ pub fn play_on_outcome(
     for (kindle.books[0..@min(2, kindle.books.len)], 0..) |_, i| {
         var b: [file.own_path_bytes_max]u8 = undefined;
         const s = state.load(try a.state_path(&b, book_paths[i]));
-        opened[i] = s.opened > 1_700_000_000;
+        // Opened in the run, after the time a place read before it says
+        opened[i] = s.opened > read_before_opened;
         finished[i] = s.finished;
     }
     var looks_right = true;

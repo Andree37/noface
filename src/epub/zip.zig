@@ -1,6 +1,9 @@
 //! Reading files out of a zip archive held in memory, as an EPUB is.
 //! Only what EPUBs use: stored and deflated files, no encryption, no zip64.
 const std = @import("std");
+
+/// A zip entry's general-purpose flag bit 0: the entry is encrypted, unreadable here.
+const flag_encrypted = 1;
 const assert = std.debug.assert;
 
 pub const Entry = struct {
@@ -75,7 +78,7 @@ pub fn entries(alloc: std.mem.Allocator, data: []const u8) ![]Entry {
         if (at + central_header_size + name_length > data.len) return error.Truncated;
         at += central_header_size + @as(u64, name_length) + extra_length + comment_length;
         const flags = std.mem.readInt(u16, header[8..10], .little);
-        if (flags & 1 != 0) continue; // Encrypted
+        if (flags & flag_encrypted != 0) continue;
         const compressed = std.mem.readInt(u32, header[20..24], .little);
         const local = std.mem.readInt(u32, header[42..46], .little);
         const stored = entries_stored(data, local, compressed) orelse continue;

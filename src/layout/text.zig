@@ -55,12 +55,24 @@ fn is_marked(marks: []const book_model.Mark, para: u32, start: u32, end: u32) bo
     return false;
 }
 
+/// A note mark is raised a line's third above the text's baseline, as a superscript.
+const mark_raise_parts = 3;
+/// Half a line is left below a picture, before the text goes on.
+const picture_gap_parts = 2;
+
+/// The most a page records of each: note marks to tap, words to select and look up,
+/// and pictures to open. Past them, the page still draws whole; what's past is only
+/// not found by a tap. The words are more than the smallest text sets on a page.
+const hit_marks_max = 32;
+const hit_words_max = 1024;
+const hit_pictures_max = 16;
+
 pub const Hits = struct {
-    items: [32]Hit = undefined,
+    items: [hit_marks_max]Hit = undefined,
     len: u32 = 0,
-    words: [1024]book_model.Word = undefined,
+    words: [hit_words_max]book_model.Word = undefined,
     word_count: u32 = 0,
-    pictures: [16]Hit = undefined, // Where each picture sits; target is its paragraph
+    pictures: [hit_pictures_max]Hit = undefined, // Where each sits; target is its paragraph
     picture_count: u32 = 0,
 
     pub fn clear(h: *Hits) void {
@@ -403,7 +415,7 @@ fn layout_page_paragraphs(
             if (maybe_page) |p| {
                 draw_picture(p, l, img, line_width, size, top, @intCast(pos.para), hits);
             }
-            top += size.h + @divTrunc(font.line_height, 2);
+            top += size.h + @divTrunc(font.line_height, picture_gap_parts);
             continue;
         }
         const placed = try layout_page_lines(&.{
@@ -483,11 +495,16 @@ fn layout_page_lines(lines: *const Lines, top: *i32) !?u32 {
 
 /// The space between a line's words: justified lines spread them, up to a limit;
 /// others keep a space.
+/// How far a justified line's spaces stretch, as many spaces wide at most: a line
+/// with too few words to fill it stays a little short, rather than full of holes.
+const justify_stretch_max = 2.5;
+
 fn line_gap(line: *const Line, justify: bool, avail: f32, space: f32) f32 {
     assert(line.n > 0);
     assert(avail > 0);
     if (justify and !line.ends_para and line.n > 1) {
-        return @min((avail - line.width()) / @as(f32, @floatFromInt(line.n - 1)), space * 2.5);
+        const stretched = (avail - line.width()) / @as(f32, @floatFromInt(line.n - 1));
+        return @min(stretched, space * justify_stretch_max);
     }
     return space;
 }
@@ -686,7 +703,7 @@ fn hyphenated(
     room: f32,
 ) !?struct { at: u32, hyphen: bool, width: f32 } {
     assert(room > 0);
-    var found: [24]hyphen.Break = undefined;
+    var found: [hyphen.breaks_max]hyphen.Break = undefined;
     const breaks = hyphen.breaks(l.hyphenator, word, &found);
     var k = breaks.len;
     while (k > 0) {
@@ -866,7 +883,8 @@ fn draw_with_marks(
         if (a < drawn) continue;
         const before_mark = word.text[drawn..a];
         const mark_x = pen + try draw_piece(p, wf, word.bold, drawn, before_mark, pen, baseline);
-        try small.draw(p, mark_x, baseline - @divTrunc(pf.line_height, 3), word.text[a..b]);
+        const raised = baseline - @divTrunc(pf.line_height, mark_raise_parts);
+        try small.draw(p, mark_x, raised, word.text[a..b]);
         const mark_w = try small.measure(word.text[a..b]);
         if (place.hits) |h| h.add(.{
             .x = @intFromFloat(mark_x),
@@ -922,10 +940,12 @@ pub fn render_page(
     return layout_page(font, page, page, paras, start, l, hits);
 }
 
-/// Hard black and white, for waveforms that cannot show gray.
+/// Hard black and white, for waveforms that cannot show gray: darker than half way is
+/// black.
 pub fn threshold(src: []const u8, dst: []u8) void {
     assert(src.len == dst.len);
-    for (src, dst) |s, *d| d.* = if (s < 128) 0x00 else 0xff;
+    const half_way = 0x80;
+    for (src, dst) |s, *d| d.* = if (s < half_way) 0x00 else 0xff;
 }
 
 test "pictures fit the page and small ones stay small" {

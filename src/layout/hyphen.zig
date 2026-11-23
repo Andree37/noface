@@ -47,6 +47,11 @@ const word_length_max = 48;
 /// hold any of them.
 const pattern_length_max = 12;
 
+/// The most breaks `breaks` finds in a word: a pattern's points fall between the
+/// letters of a word no longer than `word_length_max`, and a word's dashes past that
+/// many are a URL's or the like, its first breaks kept.
+pub const breaks_max = word_length_max;
+
 /// Liang's values for a word and the dots either side: one before, between and after
 /// each of its letters.
 const Values = [word_length_max + 3]u8;
@@ -346,8 +351,7 @@ fn is_dash_at(word: []const u8, i: u32) u32 {
 /// Every place `word`, as it stands in the text, may break, shortest first. After a
 /// dash it breaks as it is; inside the letters of a word it takes a hyphen. Leading
 /// and trailing punctuation stay with the word.
-pub fn breaks(h: ?*const Hyphenator, word: []const u8, out: []Break) []Break {
-    assert(out.len > 0);
+pub fn breaks(h: ?*const Hyphenator, word: []const u8, out: *[breaks_max]Break) []Break {
     var count: u32 = 0;
     // After dashes already in the word, keeping at least two bytes either side
     var has_dash = false;
@@ -382,8 +386,10 @@ pub fn breaks(h: ?*const Hyphenator, word: []const u8, out: []Break) []Break {
     var lower: [word_length_max]u8 = undefined;
     if (!breaks_lowered(core, &lower)) return out[0..count]; // Left whole
     var at: [word_length_max]u32 = undefined;
-    for (hyphenator.points(lower[0..core.len], &at)) |p| {
-        if (count == out.len) break;
+    const points = hyphenator.points(lower[0..core.len], &at);
+    assert(count == 0); // A word with a dash has returned already
+    assert(points.len <= out.len); // Points fall between a word's letters, as many at most
+    for (points) |p| {
         out[count] = .{ .at = start + p, .hyphen = true };
         count += 1;
     }
@@ -433,11 +439,12 @@ pub fn detect(paragraphs: []const book_model.Paragraph) ?Lang {
         if (p.note or p.image != null) continue;
         var words = std.mem.tokenizeAny(u8, p.text, " \n,.;:!?\"'()");
         while (words.next()) |w| {
+            // By Unicode's case, so "NÃO" in a heading counts as "não"
             for (english) |e| {
-                if (std.ascii.eqlIgnoreCase(w, e)) en += 1;
+                if (unicode.eql_ignoring_case(w, e)) en += 1;
             }
             for (portuguese) |e| {
-                if (std.ascii.eqlIgnoreCase(w, e)) pt += 1;
+                if (unicode.eql_ignoring_case(w, e)) pt += 1;
             }
         }
         seen += 1;
@@ -452,7 +459,7 @@ pub fn detect(paragraphs: []const book_model.Paragraph) ?Lang {
 
 /// `word` with its breaks marked, '-' for a hyphen and '|' for none: for the tests.
 fn joined(h: *const Hyphenator, word: []const u8, buf: []u8) []const u8 {
-    var at: [16]Break = undefined;
+    var at: [breaks_max]Break = undefined;
     const found = breaks(h, word, &at);
     assert(buf.len >= word.len + found.len);
     var n: u32 = 0;
@@ -532,6 +539,9 @@ test "language comes from common words" {
     try std.testing.expectEqual(Lang.english, detect(&en).?);
     var pt: [30]book_model.Paragraph = undefined;
     for (&pt) |*p| p.* = .{ .text = "o gato que não tem uma casa de os" };
+    try std.testing.expectEqual(Lang.portuguese, detect(&pt).?);
+    // In capitals, its accented letters too: no other common word to go by
+    for (&pt) |*p| p.* = .{ .text = "NÃO, NÃO" };
     try std.testing.expectEqual(Lang.portuguese, detect(&pt).?);
     const none = [_]book_model.Paragraph{.{ .text = "hello" }};
     try std.testing.expect(detect(&none) == null);

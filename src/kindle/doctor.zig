@@ -25,7 +25,7 @@ pub fn supported_driver(name: []const u8) bool {
 
 fn read_trim(path: [*:0]const u8, buffer: []u8) []const u8 {
     assert(buffer.len > 0);
-    const text = std.mem.trim(u8, file.read_small(path, buffer), " \n\x00");
+    const text = std.mem.trim(u8, file.read_system(path, buffer), " \n\x00");
     assert(text.len <= buffer.len);
     return text;
 }

@@ -296,7 +296,7 @@ test "a long job beats once a beat's interval has passed, and not while the cloc
     try std.testing.expect(file.exists(path));
     try std.testing.expectEqual(os.fake_us.?, last_us);
     var stamp_buffer: [24]u8 = undefined;
-    const stamp = file.read_small(path, &stamp_buffer);
+    const stamp = file.read_system(path, &stamp_buffer);
     const beat_s = try std.fmt.parseInt(u64, stamp[0 .. stamp.len - 1], 10);
     try std.testing.expectEqual(os.unix_time(), beat_s);
     _ = linux.unlink(path); // Ignored: checked just below

@@ -187,29 +187,36 @@ const file_bytes_max = longest: {
     break :longest total;
 };
 
-pub fn load(path: [*:0]const u8) State {
-    assert(path[0] != 0);
+/// The state in `kept`: a fresh one when none is saved yet, or when it's there but
+/// unreadable, which leaves `kept` never to be saved over (`file.Kept`).
+pub fn load(kept: *file.Kept) State {
     var buf: [file_bytes_max]u8 = undefined;
-    return parse(file.read_small(path, &buf));
+    return parse(kept.read(&buf));
 }
 
-/// Writes every value of `s`, by name, one a line.
-pub fn save(path: [*:0]const u8, s: State) void {
-    assert(path[0] != 0);
+/// The state saved at `path`, only looked at, never saved back from it.
+pub fn look(path: [*:0]const u8) State {
+    var kept = file.Kept.at(path);
+    return load(&kept);
+}
+
+/// Writes every value of `s`, by name, one a line, unless what `kept` holds is unknown.
+/// Whether it was written.
+pub fn save(kept: *const file.Kept, s: State) bool {
     // Sized for the longest state, so every one is written whole
     var buf: [file_bytes_max]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
     inline for (@typeInfo(State).@"struct".field_names) |field| {
         const value = @field(s, field);
         switch (@TypeOf(value)) {
-            bool => w.print(field ++ " {d}\n", .{@intFromBool(value)}) catch return,
-            ?u32, ?u64 => if (value) |v| w.print(field ++ " {d}\n", .{v}) catch return,
-            else => w.print(field ++ " {d}\n", .{value}) catch return,
+            bool => w.print(field ++ " {d}\n", .{@intFromBool(value)}) catch return false,
+            ?u32, ?u64 => if (value) |v| w.print(field ++ " {d}\n", .{v}) catch return false,
+            else => w.print(field ++ " {d}\n", .{value}) catch return false,
         }
     }
     // What's written reads back as the same state
     assert(std.meta.eql(parse(w.buffered()), s));
-    file.write_small(path, w.buffered());
+    return kept.write(&.{w.buffered()});
 }
 
 test "a book's files are named by its whole path, as they were by its file name" {
@@ -290,8 +297,8 @@ test "the longest state there can be is saved whole" {
             else => @compileError("a kind of value state files don't hold"),
         };
     }
-    save(path, longest);
-    try std.testing.expectEqual(longest, load(path));
+    try std.testing.expect(save(&file.Kept.at(path), longest));
+    try std.testing.expectEqual(longest, look(path));
 }
 
 test "a book opened before its files were moved takes a copy of its old place, never over one" {
@@ -308,12 +315,12 @@ test "a book opened before its files were moved takes a copy of its old place, n
     var own_buffer: [file.own_path_bytes_max]u8 = undefined;
     const own = try path_for(&own_buffer, dir, book);
     defer _ = calls.unlink(own); // Ignored: only /tmp is left fuller
-    save(old, .{ .para = 7, .percent = 60 });
+    try std.testing.expect(save(&file.Kept.at(old), .{ .para = 7, .percent = 60 }));
     adopt_by_name(own, book);
-    try std.testing.expectEqual(@as(?u32, 60), load(own).percent);
-    try std.testing.expectEqual(@as(?u32, 60), load(old).percent); // Kept for its twins
+    try std.testing.expectEqual(@as(?u32, 60), look(own).percent);
+    try std.testing.expectEqual(@as(?u32, 60), look(old).percent); // Kept for its twins
     // Its own, once there, is never written over
-    save(own, .{ .para = 9, .percent = 70 });
+    try std.testing.expect(save(&file.Kept.at(own), .{ .para = 9, .percent = 70 }));
     adopt_by_name(own, book);
-    try std.testing.expectEqual(@as(?u32, 70), load(own).percent);
+    try std.testing.expectEqual(@as(?u32, 70), look(own).percent);
 }

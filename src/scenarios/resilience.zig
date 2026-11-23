@@ -168,6 +168,19 @@ pub const all = [_]Scenario{
         }.run,
     },
     .{
+        .name = "a book's place there but unreadable opens the book at its start, read and " ++
+            "left, and is never written over; the speed learned is still saved",
+        .run = struct {
+            fn run() !void {
+                const r = try play_on(.{ .place_unreadable = true }, &.{
+                    wait(60_000), forward, top, tool(.home),
+                });
+                try expect(r.place_kept, "the unreadable place was written over");
+                try expect(r.speed_pages > 0, "the speed learned wasn't kept");
+            }
+        }.run,
+    },
+    .{
         .name = "a reading journal that's there but can't be read is never written over",
         .run = struct {
             fn run() !void {

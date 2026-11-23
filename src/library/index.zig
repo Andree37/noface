@@ -346,7 +346,7 @@ fn read_header(dir: []const u8) !Header {
     var path_buffer: [files.path_bytes_max]u8 = undefined;
     const path = try files.path_in(&path_buffer, dir, "header");
     var buffer: [@sizeOf(Header) + 1]u8 = undefined;
-    const bytes = file.read_small(path, &buffer);
+    const bytes = file.read_system(path, &buffer);
     if (bytes.len != @sizeOf(Header)) return error.Damaged;
     const header = std.mem.bytesToValue(Header, bytes[0..@sizeOf(Header)]);
     if (!header.valid()) return error.Damaged;

@@ -321,8 +321,8 @@ pub fn assemble(p: Parts) !app.App {
         .reference = &k.reference,
     };
     const user: user_data.UserData = .load(.{
-        .settings = p.files.settings,
-        .speed = p.files.speed,
+        .settings = .at(p.files.settings),
+        .speed = .at(p.files.speed),
         .journal = p.files.journal,
     });
     const families = p.offered.families;

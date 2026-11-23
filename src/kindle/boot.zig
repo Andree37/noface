@@ -79,8 +79,8 @@ pub fn first_this_boot() bool {
 pub fn should_start() bool {
     var settings_buffer: [settings_bytes_max]u8 = undefined;
     var attempts_buffer: [32]u8 = undefined;
-    var settings = settings_model.parse(file.read_small(settings_path, &settings_buffer));
-    const attempts = file.read_small(attempts_path, &attempts_buffer);
+    var settings = settings_model.parse(file.read_system(settings_path, &settings_buffer));
+    const attempts = file.read_system(attempts_path, &attempts_buffer);
     switch (decide(&settings, attempts)) {
         .off => return false,
         .give_up => {

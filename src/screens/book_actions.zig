@@ -60,8 +60,8 @@ pub fn mark_read(a: *app.App, e: *catalog.Entry, done: bool) void {
 fn save_marked(a: *app.App, e: *const catalog.Entry) !void {
     assert(e.is_epub() or e.is_local()); // A file of its own to keep its place by
     var path_buffer: [file.own_path_bytes_max]u8 = undefined;
-    const path = try a.state_path(&path_buffer, e.path);
-    var saved = state.load(path);
+    var kept = file.Kept.at(try a.state_path(&path_buffer, e.path));
+    var saved = state.load(&kept);
     saved.finished = e.finished;
     if (!e.finished) {
         saved.para = 0;
@@ -73,7 +73,7 @@ fn save_marked(a: *app.App, e: *const catalog.Entry) !void {
         saved.opened = @max(saved.opened, e.kindle_last) +| 1;
         assert(!state.prefer_kindle(saved, e.kindle_last));
     }
-    state.save(path, saved);
+    if (!state.save(&kept, saved)) return error.PlaceNotSaved;
 }
 
 /// What a book's actions changed, which decides what the library does next: `reload`

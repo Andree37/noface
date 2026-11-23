@@ -153,6 +153,7 @@ fn open_book(r: *Reader) !void {
         .pages_path = opened.pages_path,
         .book_bytes = r.data.len,
         .back = .{ .place = opened.back, .turns_since_jump = opened.back_turns },
+        .place = opened.place,
     };
     if (r.progress) |*p| r.session.progress = p;
     r.s = &r.session;
@@ -234,7 +235,7 @@ pub const Reader = struct {
     fn show_first(r: *Reader) !void {
         assert(r.start < r.s.pages.len);
         try r.s.show(r.start, .jump, null, true);
-        sess.save_progress(r.entry, r.state_path, r.s, r.s.percent());
+        sess.save_progress(r.entry, r.s, r.s.percent());
         assert(r.s.current == r.start);
         r.reading_started = true;
         r.a.wifi_hands_off = false;
@@ -458,7 +459,7 @@ pub const Reader = struct {
                 // so how far in it is goes by the words before its place
                 .failed, .stopped => null,
             };
-            sess.save_progress(r.entry, r.state_path, r.s, percent);
+            sess.save_progress(r.entry, r.s, percent);
             wifi_saver.restore(); // Leaving the book, Wi-Fi comes back
         }
         r.release();
@@ -518,7 +519,7 @@ pub const Reader = struct {
 
     fn save(r: *Reader) void {
         assert(r.s.current < r.s.pages.len);
-        sess.save_progress(r.entry, r.state_path, r.s, r.s.percent());
+        sess.save_progress(r.entry, r.s, r.s.percent());
         r.since_save = 0;
         assert(r.s.clock.stopped()); // Saving stops the reading clock; the loop starts it
     }

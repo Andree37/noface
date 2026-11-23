@@ -54,7 +54,7 @@ fn read(comptime format: []const u8, arguments: anytype, buffer: []u8) []const u
     assert(buffer.len > 0);
     var path_buffer: [96]u8 = undefined;
     const path = std.fmt.bufPrintSentinel(&path_buffer, format, arguments, 0) catch return "";
-    const text = std.mem.trim(u8, file.read_small(path, buffer), " \n");
+    const text = std.mem.trim(u8, file.read_system(path, buffer), " \n");
     assert(text.len <= buffer.len);
     return text;
 }

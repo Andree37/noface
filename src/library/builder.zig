@@ -805,7 +805,7 @@ fn copy_to_twins(
         }
         if (!file.copy_file(from, to)) return error.CantCopy;
         // Merged now: the walk listed the folder before it was there
-        if (comptime std.mem.eql(u8, kind, "state")) try merge.merge_into(item.id, to);
+        if (comptime std.mem.eql(u8, kind, "state")) try merge.merge_at(item.id, to);
     }
 }
 
@@ -821,22 +821,23 @@ const Merge = struct {
         const path = try std.fmt.bufPrintSentinel(&path_buffer, format, .{ m.state_dir, key }, 0);
         assert(state.key_of_name(std.fs.path.basename(path), "state").? == key); // Its own
         // Read only for a book here: the drive is slow, and a file may be a deleted book's
-        var saved: ?state.State = null;
         const high: u32 = @truncate(key >> 32);
         // Books whose keys share a high half: only the one with the whole key is merged
         for (m.sorted[first_with(m.sorted, high)..]) |item| {
             if (item.key != high) return;
             if (state.key_for(m.ix.entry(item.id).path) != key) continue; // Same high half
-            if (saved == null) saved = state.load(path);
-            try m.write_merged(item.id, saved.?);
+            try m.merge_at(item.id, path);
         }
     }
 
-    /// The place at `path` merged into book `id`'s record: one just copied to its name.
-    fn merge_into(m: *Merge, id: u32, path: [:0]const u8) !void {
+    /// The place at `path` merged into book `id`'s record. One there but unreadable is
+    /// left out: merged as a fresh place, the record would show the book unread.
+    fn merge_at(m: *Merge, id: u32, path: [:0]const u8) !void {
         assert(id < m.ix.header.count);
         assert(path.len > 0);
-        try m.write_merged(id, state.load(path));
+        var kept = file.Kept.at(path);
+        const saved = state.load(&kept);
+        if (kept.known) try m.write_merged(id, saved);
     }
 
     fn write_merged(m: *Merge, id: u32, saved: state.State) !void {

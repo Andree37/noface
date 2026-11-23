@@ -187,7 +187,7 @@ pub const Screen = struct {
     pub fn open() !Screen {
         // Only MediaTek's driver understands the updates sent below
         var name_buffer: [64]u8 = undefined;
-        const name_read = file.read_small("/sys/class/graphics/fb0/name", &name_buffer);
+        const name_read = file.read_system("/sys/class/graphics/fb0/name", &name_buffer);
         const name = std.mem.trim(u8, name_read, " \n");
         if (!std.mem.startsWith(u8, name, "hwtcon")) return error.UnsupportedDisplay;
         const rc = linux.open("/dev/fb0", .{ .ACCMODE = .RDWR, .CLOEXEC = true }, 0);

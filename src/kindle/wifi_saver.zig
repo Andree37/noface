@@ -107,7 +107,7 @@ pub fn pause(downloading: bool) Outcome {
 pub fn marked() bool {
     assert(marker_is_note());
     var buffer: [8]u8 = undefined;
-    const note = file.read_small(marker, &buffer);
+    const note = file.read_system(marker, &buffer);
     assert(note.len <= buffer.len);
     return note.len > 0;
 }

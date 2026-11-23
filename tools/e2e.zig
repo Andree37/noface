@@ -645,7 +645,7 @@ const Found = struct {
         var path: [32]u8 = undefined;
         const comm = std.fmt.bufPrintSentinel(&path, "/proc/{d}/comm", .{pid}, 0) catch return;
         var buffer: [32]u8 = undefined;
-        const named = std.mem.trimEnd(u8, core.file.read_small(comm, &buffer), "\n");
+        const named = std.mem.trimEnd(u8, core.file.read_system(comm, &buffer), "\n");
         if (std.mem.eql(u8, named, f.name)) f.pid = pid;
     }
 };

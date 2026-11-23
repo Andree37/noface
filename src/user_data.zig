@@ -14,10 +14,12 @@ const os = @import("sys/os.zig");
 /// Lines for noface's log, which the tests keep quiet (main.zig's `std_options`).
 const log = std.log.scoped(.user_data);
 
-/// Where each of the reader's files is, in the data folder.
+/// Where each of the reader's files is, in the data folder. Settings and speed are read
+/// whole and written back whole: as `file.Kept`, so one there but unreadable as noface
+/// starts is never written over with the defaults this run uses instead.
 pub const Files = struct {
-    settings: [*:0]const u8,
-    speed: [*:0]const u8,
+    settings: file.Kept,
+    speed: file.Kept,
     journal: [*:0]const u8,
 };
 
@@ -35,10 +37,14 @@ pub const UserData = struct {
     /// Everything saved in `files`, or what a new reader starts with where a file
     /// isn't there or doesn't read.
     pub fn load(files: Files) UserData {
-        const speeds = load_speed(files.speed);
+        // Read through their own `Kept`s, which keep what each read found out: both
+        // read before the files are kept with the data
+        var kept = files;
+        const speeds = load_speed(&kept.speed);
+        const settings = load_settings(&kept.settings);
         const u: UserData = .{
-            .files = files,
-            .settings = load_settings(files.settings),
+            .files = kept,
+            .settings = settings,
             .speed = speeds.speed,
             .running_pace = speeds.running_pace,
             .journal = load_journal(files.journal),
@@ -49,17 +55,18 @@ pub const UserData = struct {
     }
 
     pub fn save_settings(u: *const UserData) void {
-        save_settings_to(u.files.settings, u.settings);
+        save_settings_to(&u.files.settings, u.settings);
     }
 
     /// The settings as last saved, for when the ones changed to can't be used.
-    pub fn saved_settings(u: *const UserData) settings_model.Settings {
-        return load_settings(u.files.settings);
+    pub fn saved_settings(u: *UserData) settings_model.Settings {
+        return load_settings(&u.files.settings);
     }
 
     /// Saves the reading speed and the running pace, after reading teaches them.
     pub fn save_speed(u: *const UserData) void {
-        save_speed_to(u.files.speed, .{ .speed = u.speed, .running_pace = u.running_pace });
+        const speeds: Speeds = .{ .speed = u.speed, .running_pace = u.running_pace };
+        save_speed_to(&u.files.speed, speeds);
     }
 
     pub fn save_journal(u: *const UserData) void {
@@ -78,45 +85,46 @@ comptime {
     assert(@sizeOf(stats.SpeedLine) + @sizeOf(running_model.PaceLine) <= speed_bytes_max);
 }
 
-pub fn load_settings(path: [*:0]const u8) settings_model.Settings {
+pub fn load_settings(kept: *file.Kept) settings_model.Settings {
     var buf: [settings_bytes_max]u8 = undefined;
-    const settings = settings_model.parse(file.read_small(path, &buf));
+    const settings = settings_model.parse(kept.read(&buf));
     // Parsing clamps every value to its steps
     assert(settings.size < settings_model.sizes.len);
     assert(settings.font.len > 0);
     return settings;
 }
 
-pub fn save_settings_to(path: [*:0]const u8, s: settings_model.Settings) void {
-    assert(path[0] != 0);
+pub fn save_settings_to(kept: *const file.Kept, s: settings_model.Settings) void {
     var buf: [settings_bytes_max]u8 = undefined;
     const content = settings_model.format(&buf, &s);
     // Every setting but the name is a word or a number: the name is the only long one
     assert(content.len > 0);
-    file.write_small(path, content);
+    // Unwritten only when it was unreadable as noface started: kept as it is, on purpose
+    _ = kept.write(&.{content});
 }
 
 /// How fast the reader reads, and the running pace (model/running.zig) once running
 /// mode has been used: words a minute on a treadmill, learned apart from `speed`.
 pub const Speeds = struct { speed: stats.Speed, running_pace: ?f64 };
 
-pub fn load_speed(path: [*:0]const u8) Speeds {
+pub fn load_speed(kept: *file.Kept) Speeds {
     var buf: [speed_bytes_max]u8 = undefined;
-    const content = file.read_small(path, &buf);
+    const content = kept.read(&buf);
     const speed = stats.parse(content);
     assert(speed.seconds >= 0); // Parsing starts over on anything else
     assert(speed.words >= 0);
     return .{ .speed = speed, .running_pace = running_model.parse_pace(content) };
 }
 
-pub fn save_speed_to(path: [*:0]const u8, speeds: Speeds) void {
+pub fn save_speed_to(kept: *const file.Kept, speeds: Speeds) void {
     var buf: stats.SpeedLine = undefined;
     var pace_buf: running_model.PaceLine = undefined;
     assert(speeds.speed.seconds >= 0);
     assert(speeds.speed.words >= 0);
     const wpm = speeds.running_pace;
     const pace = if (wpm) |w| running_model.format_pace(&pace_buf, w) else "";
-    file.write_parts(path, &.{ stats.format(&buf, speeds.speed), pace });
+    // Unwritten only when it was unreadable as noface started: kept as it is, on purpose
+    _ = kept.write(&.{ stats.format(&buf, speeds.speed), pace });
 }
 
 /// The journal saved at `path`: every day is in the file, which is mapped, never read
@@ -197,8 +205,9 @@ test "the longest typeface name a setting holds saves and comes back" {
     const families = settings_model.Families.offer(&(kept ++ .{&long}));
     var s = settings_model.Settings{};
     s.font = settings_model.Family.of(&long).?;
-    save_settings_to(path, s);
-    try std.testing.expectEqual(s.font, load_settings(path).font);
+    var settings_file = file.Kept.at(path);
+    save_settings_to(&settings_file, s);
+    try std.testing.expectEqual(s.font, load_settings(&settings_file).font);
     try std.testing.expect(s.family_index(families) + 1 == families.count());
 }
 
@@ -211,10 +220,42 @@ test "the speed and the running pace save and come back" {
         .speed = .{ .pages = 10, .words = 3000, .seconds = 600 },
         .running_pace = 150,
     };
-    save_speed_to(path, speeds);
-    const back = load_speed(path);
+    var kept = file.Kept.at(path);
+    save_speed_to(&kept, speeds);
+    const back = load_speed(&kept);
     try std.testing.expectEqual(speeds.speed.pages, back.speed.pages);
     try std.testing.expectEqual(speeds.speed.words, back.speed.words);
     try std.testing.expectEqual(speeds.speed.seconds, back.speed.seconds);
     try std.testing.expectEqual(speeds.running_pace, back.running_pace);
+}
+
+test "settings and a speed there but unreadable are never written over" {
+    var settings_buffer: [64]u8 = undefined;
+    const settings_path = try test_path(&settings_buffer, "settings-unreadable");
+    var speed_buffer: [64]u8 = undefined;
+    const speed_path = try test_path(&speed_buffer, "speed-unreadable");
+    var journal_buffer: [64]u8 = undefined;
+    const journal_path = try test_path(&journal_buffer, "journal-beside");
+    // Links to themselves are there but can't be opened, as on a drive failing a read
+    for ([_][:0]const u8{ settings_path, speed_path }) |path| {
+        try std.testing.expect(!os.failed(calls.symlink(path, path)));
+    }
+    defer for ([_][:0]const u8{ settings_path, speed_path, journal_path }) |path| {
+        _ = calls.unlink(path); // Ignored: only /tmp is left fuller
+    };
+    var u: UserData = .load(.{
+        .settings = .at(settings_path),
+        .speed = .at(speed_path),
+        .journal = journal_path,
+    });
+    // Found unreadable, and kept so with the data
+    try std.testing.expect(!u.files.settings.known);
+    try std.testing.expect(!u.files.speed.known);
+    u.settings.size = 4;
+    u.speed.pages = 9;
+    u.save_settings();
+    u.save_speed();
+    // Still the links: nothing was renamed over them
+    try std.testing.expectError(error.OpenFailed, file.map(settings_path));
+    try std.testing.expectError(error.OpenFailed, file.map(speed_path));
 }

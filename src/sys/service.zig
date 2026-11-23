@@ -190,7 +190,7 @@ pub fn read_cmdline(pid: i32, buffer: []u8) []const u8 {
     var path_buffer: [32]u8 = undefined;
     const path = std.fmt.bufPrintSentinel(&path_buffer, "/proc/{d}/cmdline", .{pid}, 0) catch
         return "";
-    return file.read_small(path, buffer);
+    return file.read_system(path, buffer);
 }
 
 /// Calls `each(context, pid, cmdline)` for every running process named `name`, but
@@ -210,7 +210,7 @@ pub fn each_named(
         var path_buffer: [32]u8 = undefined;
         const comm_path = std.fmt.bufPrintSentinel(&path_buffer, "/proc/{d}/comm", .{pid}, 0) catch
             continue;
-        const comm = file.read_small(comm_path, &comm_buffer);
+        const comm = file.read_system(comm_path, &comm_buffer);
         var cmdline_buffer: [cmdline_bytes_max]u8 = undefined;
         const cmdline = read_cmdline(pid, &cmdline_buffer);
         if (!is_named(comm, cmdline, name)) continue;

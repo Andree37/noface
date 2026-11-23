@@ -51,6 +51,7 @@ pub const Opened = struct {
     source: PagesSource,
     back: ?book_model.Pos, // The Back button's place, as the book was closed
     back_turns: u32,
+    place: file.Kept, // The place's file, as read: never saved over if unreadable
 };
 
 /// The pages: saved ones, or a first few laid out from the reader's place (the rest
@@ -73,7 +74,8 @@ pub fn find_pages(
     const pages_path = try alloc.dupeSentinel(u8, pages_name, 0);
     const pages_key = page_store.key(a, options.book_bytes);
     const stored_pages = page_store.load(alloc, pages_path, pages_key, paragraphs);
-    const saved = renumbered(state.load(options.state_path), paragraphs);
+    var place = file.Kept.at(options.state_path);
+    const saved = renumbered(state.load(&place), paragraphs);
     const from_kindle = state.prefer_kindle(saved, entry.kindle_last);
     // Without saved breaks, lay out a little from the reader's place and show it at
     // once; the rest follows in idle moments. Stock's place is a percent of the
@@ -114,6 +116,7 @@ pub fn find_pages(
         .source = source,
         .back = back,
         .back_turns = saved.back_turns,
+        .place = place,
     };
 }
 

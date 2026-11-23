@@ -15,6 +15,7 @@ const icons = @import("../../ui/icons.zig");
 const catalog = @import("../../model/catalog.zig");
 const os = @import("../../sys/os.zig");
 const state = @import("../../sys/state.zig");
+const file = @import("../../sys/file.zig");
 const text = @import("../../layout/text.zig");
 const now_us = os.now_us;
 const unix_time = os.unix_time;
@@ -58,6 +59,8 @@ pub const Session = struct {
     /// Highlights and bookmarks, and where they are kept.
     notes: book_notes.BookNotes = .{},
     pages_path: [:0]const u8 = "", // Where this book's page breaks are saved
+    /// The book's place file, as read when it opened: never saved over if unreadable.
+    place: file.Kept,
     book_bytes: u64 = 0, // The book file's size, part of the saved breaks' key
     // A first open still being laid out: pages count from the reader's place until done
     progress: ?*paginate.Progressive = null,
@@ -579,12 +582,7 @@ fn middle_of(h: text.Hit) style.Point {
 /// pages are being laid out again or failed to be. `percent` is how far in they are,
 /// or null when the pages don't say (see `Session.percent`): then it's the words
 /// before the place, as the time left saved with it is the words after.
-pub fn save_progress(
-    entry: *catalog.Entry,
-    path: [*:0]const u8,
-    s: *Session,
-    percent_read: ?u32,
-) void {
+pub fn save_progress(entry: *catalog.Entry, s: *Session, percent_read: ?u32) void {
     assert(s.current < s.pages.len);
     assert(s.anchor.para < s.paragraphs.len);
     s.pause_clock(); // The reader's loop starts it again
@@ -595,7 +593,7 @@ pub fn save_progress(
     const percent = percent_read orelse s.words_percent(words_left) orelse entry.percent;
     const now = unix_time();
     // Changed in place, so anything else kept with the place is kept too
-    var saved = state.load(path);
+    var saved = state.load(&s.place);
     saved.para = book_model.text_index(s.paragraphs, pos.para);
     saved.byte = pos.byte;
     saved.percent = percent;
@@ -608,9 +606,11 @@ pub fn save_progress(
     saved.back_byte = if (back) |b| b.byte else 0;
     saved.back_turns = s.back.turns_since_jump;
     saved.numbering = state.numbering_now; // The places above are numbered as now
-    state.save(path, saved);
+    const place_saved = state.save(&s.place, saved);
     s.app.user.save_speed();
     s.app.user.save_journal();
+    // The library shows what's saved: a place unreadable as the book opened isn't
+    if (!place_saved) return;
     entry.percent = percent;
     entry.last = now;
     entry.seconds_read = seconds;

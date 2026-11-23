@@ -84,19 +84,24 @@ pub fn size_of(path: [*:0]const u8) u64 {
     return @intCast(end);
 }
 
-/// A small file's contents, or nothing if it can't be read. Its start, as much as `buf`
-/// holds: a file noface writes is sized to fit the buffer it's read back into, so one
-/// longer was damaged or written by hand, and that's said in the log. A file that only
-/// grows, read for its newest part, is read with `read_end`.
-pub fn read_small(path: [*:0]const u8, buf: []u8) []const u8 {
+/// Why a small file wasn't read: there's none (`NotFound`, nothing to keep), or it's
+/// there and may hold something this read couldn't get (`CantRead`), which a caller about
+/// to write over it must never take for nothing.
+pub const ReadError = error{ NotFound, CantRead };
+
+/// A small file's contents. Its start, as much as `buf` holds: a file noface writes is
+/// sized to fit the buffer it's read back into, so one longer was damaged or written by
+/// hand, and that's said in the log. A file that only grows, read for its newest part, is
+/// read with `read_end`.
+pub fn read_small(path: [*:0]const u8, buf: []u8) ReadError![]const u8 {
     assert(path[0] != 0);
     assert(buf.len > 0);
     const rc = linux.open(path, .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0);
-    if (failed(rc)) return "";
+    if (failed(rc)) return if (os.not_found(rc)) error.NotFound else error.CantRead;
     const fd: i32 = @intCast(rc);
     defer _ = linux.close(fd); // Ignored: only read: nothing is lost if closing fails
     const n = linux.read(fd, buf.ptr, buf.len);
-    if (failed(n)) return "";
+    if (failed(n)) return error.CantRead;
     assert(n <= buf.len);
     if (n == buf.len) {
         var more: [1]u8 = undefined;
@@ -107,6 +112,51 @@ pub fn read_small(path: [*:0]const u8, buf: []u8) []const u8 {
     }
     return buf[0..n];
 }
+
+/// A file the system keeps (in /sys or /proc, a mark in /tmp): its text, or nothing
+/// when it's missing or can't be read, which for such a file says the same.
+pub fn read_system(path: [*:0]const u8, buf: []u8) []const u8 {
+    assert(path[0] != 0);
+    return read_small(path, buf) catch "";
+}
+
+/// One of the reader's own files that noface reads and writes back whole: a book's
+/// place, the settings, the reading speed. Missing, it's a new one. There but unreadable,
+/// what it holds is unknown: written over, it would be lost for good, so it never is.
+/// The rule lives here, with the file, so no caller decides it again.
+pub const Kept = struct {
+    path: [*:0]const u8,
+    /// Whether what the file holds is known: every read so far read it, or found none.
+    known: bool = true,
+
+    pub fn at(path: [*:0]const u8) Kept {
+        assert(path[0] != 0);
+        return .{ .path = path };
+    }
+
+    /// Its text: nothing when there's none yet, or when it's there but unreadable, which
+    /// leaves it unknown, never to be written over by this `Kept`.
+    pub fn read(k: *Kept, buf: []u8) []const u8 {
+        assert(buf.len > 0);
+        return read_small(k.path, buf) catch |err| switch (err) {
+            error.NotFound => "",
+            error.CantRead => {
+                std.debug.print("{s}: there but unreadable, never written over\n", .{k.path});
+                k.known = false;
+                return "";
+            },
+        };
+    }
+
+    /// Writes `parts` as the file's whole text, as `write_parts`, unless what it holds
+    /// is unknown. Whether it was written.
+    pub fn write(k: *const Kept, parts: []const []const u8) bool {
+        assert(parts.len > 0);
+        if (!k.known) return false;
+        write_parts(k.path, parts);
+        return true;
+    }
+};
 
 /// The end of a file that grows (a log), as much as `buf` holds, from a line's start:
 /// its newest lines. Nothing if it can't be read.
@@ -278,6 +328,38 @@ fn test_path(buffer: []u8, between: []const u8, name: []const u8) ![:0]u8 {
     const path = try std.fmt.bufPrintSentinel(buffer, format, fields, 0);
     _ = linux.unlink(path); // Ignored: only there after a run that stopped
     return path;
+}
+
+test "a kept file there but unreadable is never written over; a missing one is new" {
+    var buffer: [8]u8 = undefined;
+    var path_buffer: [64]u8 = undefined;
+    const format = "/tmp/noface-kept-{d}";
+    const path = try std.fmt.bufPrintSentinel(&path_buffer, format, .{linux.getpid()}, 0);
+    _ = linux.unlink(path); // Ignored: none there is what's wanted
+    var missing = Kept.at(path);
+    try std.testing.expectEqualStrings("", missing.read(&buffer));
+    try std.testing.expect(missing.known); // None there: a new one, written freely
+    // A link to itself is there but can't be opened, as on a drive failing a read
+    try std.testing.expect(!failed(linux.symlink(path, path)));
+    defer _ = linux.unlink(path); // Ignored: only /tmp is left fuller
+    var unreadable = Kept.at(path);
+    try std.testing.expectEqualStrings("", unreadable.read(&buffer));
+    try std.testing.expect(!unreadable.write(&.{"over it"}));
+    // Still the link: nothing was renamed over it
+    try std.testing.expectError(error.CantRead, read_small(path, &buffer));
+}
+
+test "a small file missing and one there but unreadable are told apart" {
+    var buffer: [8]u8 = undefined;
+    var path_buffer: [64]u8 = undefined;
+    const format = "/tmp/noface-read-small-{d}";
+    const path = try std.fmt.bufPrintSentinel(&path_buffer, format, .{linux.getpid()}, 0);
+    _ = linux.unlink(path); // Ignored: none there is what's wanted
+    try std.testing.expectError(error.NotFound, read_small(path, &buffer));
+    // A link to itself is there but can't be opened, as on a drive failing a read
+    try std.testing.expect(!failed(linux.symlink(path, path)));
+    defer _ = linux.unlink(path); // Ignored: only /tmp is left fuller
+    try std.testing.expectError(error.CantRead, read_small(path, &buffer));
 }
 
 test "only a file that isn't there, or is empty, maps as nothing in it" {

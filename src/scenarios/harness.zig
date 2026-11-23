@@ -91,6 +91,7 @@ pub const Outcome = struct {
     breaks: u64, // A digest of the page breaks saved for the book, 0 when none were
     notes: u64, // A digest of the book's notes file, 0 when it has none
     unreadable_kept: bool, // Every file made unreadable is still there, unread and unwritten
+    place_kept: bool, // The first book's place, made unreadable, was never written over
     shown: [3]?Shown, // As `Kindle.pages_into` asks: the pages buffered at the end
     running_pace: ?f64, // Running's pace, once it has one
     awake_at_end: bool, // The Kindle held awake as the steps ran out, before noface stopped
@@ -151,6 +152,8 @@ pub const Kindle = struct {
     /// Files of the data folder that are there but can't be read, as on a drive that
     /// fails a read: each a link to itself, which noface must never write over.
     unreadable: []const []const u8 = &.{},
+    /// The first book's place file there but unreadable, as `unreadable` makes its files.
+    place_unreadable: bool = false,
     /// Where the pages in the app's page buffers at the end are copied, for a scenario
     /// that looks at the words drawn: the run's own memory is gone once it returns.
     pages_into: ?std.mem.Allocator = null,
@@ -726,7 +729,7 @@ pub fn play_on_start(
     if (kindle.read_before) |before| {
         var before_buf: [file.own_path_bytes_max]u8 = undefined;
         const before_path = try a.state_path(&before_buf, book_paths[before.book]);
-        state.save(before_path, .{
+        const saved_before = state.save(&file.Kept.at(before_path), .{
             .para = before.para,
             .byte = before.byte,
             .percent = 5,
@@ -734,6 +737,12 @@ pub fn play_on_start(
             .seconds = 600,
             .words_left = before.words_left,
         });
+        if (!saved_before) return error.CantWrite; // The scenario's setting, not the app's
+    }
+    if (kindle.place_unreadable) {
+        var place_buf: [file.own_path_bytes_max]u8 = undefined;
+        const place_path = try a.state_path(&place_buf, book_paths[0]);
+        if (os.failed(linux.symlink(place_path, place_path))) return error.CantWrite;
     }
 }
 
@@ -838,7 +847,7 @@ pub fn play_on_outcome(
     var finished: [2]bool = @splat(false);
     for (kindle.books[0..@min(2, kindle.books.len)], 0..) |_, i| {
         var b: [file.own_path_bytes_max]u8 = undefined;
-        const s = state.load(try a.state_path(&b, book_paths[i]));
+        const s = state.look(try a.state_path(&b, book_paths[i]));
         // Opened in the run, after the time a place read before it says
         opened[i] = s.opened > read_before_opened;
         finished[i] = s.finished;
@@ -856,7 +865,7 @@ pub fn play_on_outcome(
         .screen_hash = std.hash.Wyhash.hash(0, ran.last_screen),
         .opened = opened,
         .finished = finished,
-        .saved = state.load(state_path),
+        .saved = state.look(state_path),
         .looked_up = a.languages.looked_up(),
         .offers_dictionary = a.user.settings.offer_dictionary,
         .highlights = count_notes(state_path, "highlight"),
@@ -866,6 +875,8 @@ pub fn play_on_outcome(
         .breaks = breaks_digest(state_path),
         .notes = notes_digest(state_path),
         .unreadable_kept = try unreadable_kept(ran.alloc, kindle, ran.dir),
+        // Still the link: nothing was renamed over it
+        .place_kept = !kindle.place_unreadable or std.meta.isError(file.map(state_path)),
         .shown = if (kindle.pages_into) |into| try pages_shown(into, a) else @splat(null),
         .updates = a.display.screen.updates,
         .running_pace = a.user.running_pace,
@@ -875,7 +886,7 @@ pub fn play_on_outcome(
         .saved_settings = a.user.saved_settings(),
         .airplane_asked_on = ran.fake.was_set(wifi_key ++ " 0"),
         .airplane_at_end = std.mem.eql(u8, ran.fake.get(wifi_key), "0"),
-        .wifi_note_left = file.read_small(wifi_saver.note_path(), &note_buf).len > 0,
+        .wifi_note_left = file.read_system(wifi_saver.note_path(), &note_buf).len > 0,
     };
 }
 

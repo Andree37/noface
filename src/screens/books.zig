@@ -806,11 +806,12 @@ test "a book's place is read from its state file, found by one listing of the fo
     defer t.deinit();
     var path_buffer: [file.own_path_bytes_max]u8 = undefined;
     const kindle = "/mnt/us/documents/Kindle 1.azw3";
-    state.save(try state.path_for(&path_buffer, t.sources.state_dir, kindle), .{
+    const kindle_state = try state.path_for(&path_buffer, t.sources.state_dir, kindle);
+    try std.testing.expect(state.save(&file.Kept.at(kindle_state), .{
         .para = 3,
         .percent = 42,
         .opened = 1000,
-    });
+    }));
     var library = try load(t.sources);
     defer library.deinit();
     library.arrange(.recent, .all, "");
@@ -843,12 +844,13 @@ test "files an older noface named by a book's file name move to its whole path's
     try test_old_file(dir, "notes", dune, "highlight 1 0 5\n");
     try test_old_file(dir, "state", other, "para 3\npercent 77\nopened 1000\n");
     const other_state = try state.path_for(&path, dir, other);
-    state.save(other_state, .{ .para = 1, .percent = 10, .opened = 2000 });
+    const other_place: state.State = .{ .para = 1, .percent = 10, .opened = 2000 };
+    try std.testing.expect(state.save(&file.Kept.at(other_state), other_place));
     var library = try load(t.sources);
     defer library.deinit();
     library.arrange(.recent, .all, "");
     for ([_][]const u8{ dune, old_dune }) |book| {
-        const saved = state.load(try state.path_for(&path, dir, book));
+        const saved = state.look(try state.path_for(&path, dir, book));
         try std.testing.expectEqual(@as(?u32, 42), saved.percent);
         var notes_buffer: [file.own_path_bytes_max]u8 = undefined;
         const own_state = try state.path_for(&path, dir, book);
@@ -867,7 +869,7 @@ test "files an older noface named by a book's file name move to its whole path's
     }
     try std.testing.expectEqual(@as(u32, 2), placed);
     // Other's newer place is kept, its old one left where it was
-    const other_now = state.load(try state.path_for(&path, dir, other));
+    const other_now = state.look(try state.path_for(&path, dir, other));
     try std.testing.expectEqual(@as(?u32, 10), other_now.percent);
     // Moved: Dune's old files are gone
     try std.testing.expect(!file.exists(try test_old_path(&path, dir, "state", dune)));
@@ -899,7 +901,7 @@ test "0.2.0's shared files stay for a book of the same name still downloading, a
         defer library.deinit();
     }
     // The one here has its copy; the one coming will want the old one, which stays
-    const here_now = state.load(try state.path_for(&path, dir, here));
+    const here_now = state.look(try state.path_for(&path, dir, here));
     try std.testing.expectEqual(@as(?u32, 42), here_now.percent);
     try std.testing.expect(file.exists(try test_old_path(&path, dir, "state", here)));
     // A cover's made again from the book: the old one goes now
@@ -912,7 +914,7 @@ test "0.2.0's shared files stay for a book of the same name still downloading, a
         var library = try load(t.sources);
         defer library.deinit();
     }
-    const coming_now = state.load(try state.path_for(&path, dir, coming));
+    const coming_now = state.look(try state.path_for(&path, dir, coming));
     try std.testing.expectEqual(@as(?u32, 42), coming_now.percent);
     try std.testing.expect(!file.exists(try test_old_path(&path, dir, "state", here)));
 }
@@ -959,7 +961,8 @@ test "a move of a book's files cut short goes on at the next load, from what's l
     const dir = t.sources.state_dir;
     // Cut short after the place moved: only the notes still have the old name
     const dune_state = try state.path_for(&path, dir, dune);
-    state.save(dune_state, .{ .para = 3, .percent = 42, .opened = 1000 });
+    const dune_place: state.State = .{ .para = 3, .percent = 42, .opened = 1000 };
+    try std.testing.expect(state.save(&file.Kept.at(dune_state), dune_place));
     try test_old_file(dir, "notes", dune, "highlight 1 0 5\n");
     var library = try load(t.sources);
     defer library.deinit();
@@ -967,8 +970,49 @@ test "a move of a book's files cut short goes on at the next load, from what's l
     const own_state = try state.path_for(&path, dir, dune);
     try std.testing.expect(file.exists(try state.sibling(&notes_buffer, own_state, "notes")));
     try std.testing.expect(!file.exists(try test_old_path(&path, dir, "notes", dune)));
-    const dune_now = state.load(try state.path_for(&path, dir, dune));
+    const dune_now = state.look(try state.path_for(&path, dir, dune));
     try std.testing.expectEqual(@as(?u32, 42), dune_now.percent);
+}
+
+test "a place there but unreadable leaves the book's record as it was, never shown unread" {
+    var buffer: [64]u8 = undefined;
+    const root = try test_folder(&buffer, 0, 0, 1 << 10);
+    defer test_folder_remove(root);
+    var path: [file.own_path_bytes_max]u8 = undefined;
+    const dune = "/mnt/us/documents/Dune.azw3";
+    const rows = "\n" ++ dune ++ "\tDune\tA\t0\t0\t0\t\t0\t0\n";
+    try test_write(try std.fmt.bufPrintSentinel(&path, "{s}/catalog", .{root}, 0), rows);
+    var t: TestLibrary = undefined;
+    try t.init(root);
+    defer t.deinit();
+    const dune_state = try state.path_for(&path, t.sources.state_dir, dune);
+    const place: state.State = .{ .para = 3, .percent = 42, .opened = 1000 };
+    try std.testing.expect(state.save(&file.Kept.at(dune_state), place));
+    {
+        var library = try load(t.sources);
+        defer library.deinit();
+        try std.testing.expectEqual(@as(u32, 42), test_percent_of(&library, "Dune"));
+    }
+    // Unreadable at the next load, as on a drive failing a read
+    _ = calls.unlink(dune_state); // Ignored: checked by the link made in its place
+    try std.testing.expect(!os.failed(calls.symlink(dune_state, dune_state)));
+    var library = try load(t.sources);
+    defer library.deinit();
+    try std.testing.expectEqual(@as(u32, 42), test_percent_of(&library, "Dune"));
+}
+
+/// The percent the library shows for the book titled `title`, hero or not.
+fn test_percent_of(library: *Library, title: []const u8) u32 {
+    library.arrange(.recent, .all, "");
+    if (library.hero()) |h| {
+        if (std.mem.eql(u8, h.title, title)) return h.percent;
+    }
+    _ = library.page(0);
+    for (0..library.count()) |i| {
+        const e = library.book(@intCast(i));
+        if (std.mem.eql(u8, e.title, title)) return e.percent;
+    }
+    unreachable; // Every test names one of its books
 }
 
 /// Where noface 0.2 kept a `kind` of file about `book`.

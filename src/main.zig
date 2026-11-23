@@ -234,7 +234,7 @@ fn main_reader_configure(
     init: std.process.Init.Minimal,
     files: *const setup.DataFiles,
 ) !void {
-    assert(shared.user.files.settings == files.settings.ptr); // Assembled from these files
+    assert(shared.user.files.settings.path == files.settings.ptr); // Assembled from these files
     // A different folder for EPUBs, for a demo or test run beside the real library
     const documents = init.environ.getPosix(paths.test_documents_env);
     shared.documents = documents orelse paths.documents;

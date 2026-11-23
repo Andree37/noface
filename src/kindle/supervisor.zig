@@ -310,7 +310,7 @@ const PowerCheck = struct {
 fn heartbeat_stale(path: [*:0]const u8) bool {
     assert(path[0] == '/');
     var beat_buffer: [32]u8 = undefined;
-    const beat = file.read_small(path, &beat_buffer);
+    const beat = file.read_system(path, &beat_buffer);
     assert(beat.len <= beat_buffer.len);
     return stuck(os.unix_time(), beat);
 }

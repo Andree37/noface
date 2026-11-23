@@ -31,15 +31,19 @@ pub const Quick = struct {
     battery: u32 = 0,
     plugged: bool = false, // On a charger or a computer: the status bar shows a bolt
     wifi_on: bool = false, // Connected
-    wifi_bars: u32 = 0, // The signal, 0 to 3: shown only while connected
+    wifi_bars: u32 = 0, // The signal, 0 to `wifi_bars_max`: shown only while connected
     /// The name of the network connected to, as long as a Wi-Fi name can be: read
     /// when the panel opens, empty when not connected.
     network: [network_bytes_max]u8 = undefined,
     network_len: u32 = 0,
-    clock: [40]u8 = undefined,
+    clock: [clock_bytes_max]u8 = undefined,
     clock_len: u32 = 0,
 
     pub const network_bytes_max = 32;
+    /// The Wi-Fi icon's arcs, each a step of the signal.
+    pub const wifi_bars_max = 3;
+    /// The clock as the Kindle writes it, "12:34 PM" and its like, with room to spare.
+    pub const clock_bytes_max = 40;
 
     pub fn network_text(q: *const Quick) []const u8 {
         assert(q.network_len <= q.network.len);
@@ -53,7 +57,7 @@ pub const Quick = struct {
 
     /// The Wi-Fi bars drawn: the signal while connected, none otherwise.
     pub fn wifi_shown(q: *const Quick) ?u32 {
-        assert(q.wifi_bars <= 3);
+        assert(q.wifi_bars <= wifi_bars_max);
         return if (q.wifi_on) q.wifi_bars else null;
     }
 

@@ -141,14 +141,18 @@ test "the network's name is read from wifid's table while it's connected" {
     try std.testing.expectEqualStrings("", essid_of(latin1, &out));
 }
 
-/// Maps wifid's "5/5" to the three arcs of the icon.
+/// The most the Wi-Fi daemon says the signal is.
+const signal_max = 5;
+
+/// Maps wifid's "5/5" to the arcs of the icon.
 pub fn signal_bars(signal: []const u8) u32 {
+    comptime assert(quick_model.Quick.wifi_bars_max * 2 - 1 == signal_max); // Two steps an arc
     const slash = std.mem.indexOfScalar(u8, signal, '/') orelse return 0;
     const value = std.fmt.parseInt(u32, signal[0..slash], 10) catch return 0;
-    // Out of 5, rounded up to three arcs. wifid's number is outside data: clamped first,
+    // Out of 5, rounded up to the arcs. wifid's number is outside data: clamped first,
     // so rounding it up can't overflow
-    const bars = @divFloor(@min(value, 5) + 1, 2);
-    assert(bars <= 3);
+    const bars = @divFloor(@min(value, signal_max) + 1, 2);
+    assert(bars <= quick_model.Quick.wifi_bars_max);
     return bars;
 }
 

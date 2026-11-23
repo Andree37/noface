@@ -4,6 +4,7 @@ const assert = std.debug.assert;
 const unicode = @import("../text/unicode.zig");
 const check = @import("../base/check.zig");
 const book_model = @import("book.zig");
+const Pos = book_model.Pos;
 
 /// A highlight, plus the Amazon ID that keeps edits on the same record.
 pub const Highlight = struct { mark: book_model.Mark, id: []const u8 };
@@ -35,12 +36,14 @@ pub fn extent(list: []const Highlight, id: []const u8) ?Span {
         if (!std.mem.eql(u8, h.id, id)) continue;
         const m = h.mark;
         if (out) |*s| {
-            if (m.para < s.first_para or (m.para == s.first_para and m.start < s.first_byte)) {
+            const mark_start: Pos = .{ .para = m.para, .byte = m.start };
+            if (mark_start.is_before(.{ .para = s.first_para, .byte = s.first_byte })) {
                 s.first_para = m.para;
                 s.first_byte = m.start;
             }
             assert(s.first_para <= m.para);
-            if (m.para > s.last_para or (m.para == s.last_para and m.end > s.last_byte)) {
+            const mark_end: Pos = .{ .para = m.para, .byte = m.end };
+            if ((Pos{ .para = s.last_para, .byte = s.last_byte }).is_before(mark_end)) {
                 s.last_para = m.para;
                 s.last_byte = m.end;
             }
@@ -124,7 +127,8 @@ pub fn locate(
 /// the Kindle's database's and noface's own file's alike.
 pub const Note = struct { id: []const u8, start: u32, end: u32 };
 
-/// Reads "id|start|end" lines from the annotation database.
+/// Reads "id|start|end" lines from the annotation database: each laid on the book as
+/// `add` lays a highlight made here, its id copied once into `alloc`.
 pub fn parse(
     alloc: std.mem.Allocator,
     paragraphs: []const book_model.Paragraph,
@@ -132,25 +136,17 @@ pub fn parse(
 ) ![]Highlight {
     var out: std.ArrayList(Highlight) = .empty;
     for (notes) |note| {
-        const id = note.id;
         const from = locate(paragraphs, note.start) orelse continue;
         const to = locate(paragraphs, note.end) orelse continue;
         assert(from.para < paragraphs.len);
         assert(to.para < paragraphs.len);
-        if (from.para != to.para) {
-            // One mark per paragraph, so every paragraph it crosses is drawn.
-            var para = from.para;
-            while (para <= to.para) : (para += 1) {
-                const first = if (para == from.para) from.byte else 0;
-                const para_len: u32 = @intCast(paragraphs[para].text.len);
-                const last = if (para == to.para) to.byte else para_len;
-                const mark = piece(para, first, last) orelse continue;
-                try out.append(alloc, .{ .mark = mark, .id = try alloc.dupe(u8, id) });
-            }
-            continue;
-        }
-        const mark = piece(from.para, from.byte, to.byte) orelse continue;
-        try out.append(alloc, .{ .mark = mark, .id = try alloc.dupe(u8, id) });
+        const span: Span = .{
+            .first_para = from.para,
+            .first_byte = from.byte,
+            .last_para = to.para,
+            .last_byte = to.byte,
+        };
+        try add(&out, alloc, paragraphs, try alloc.dupe(u8, note.id), span);
     }
     return out.toOwnedSlice(alloc);
 }
@@ -235,8 +231,8 @@ pub fn add(
 
 /// `span` with its ends swapped if it ends before it starts.
 fn ordered(span: Span) Span {
-    const in_order = span.first_para < span.last_para or
-        (span.first_para == span.last_para and span.first_byte <= span.last_byte);
+    const last: Pos = .{ .para = span.last_para, .byte = span.last_byte };
+    const in_order = !last.is_before(.{ .para = span.first_para, .byte = span.first_byte });
     if (in_order) return span;
     const swapped: Span = .{
         .first_para = span.last_para,

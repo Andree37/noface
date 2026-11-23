@@ -27,8 +27,8 @@ pub fn parse(
 }
 
 fn at_or_after(b: Bookmark, pos: book_model.Pos) bool {
-    const after = b.para > pos.para or (b.para == pos.para and b.byte >= pos.byte);
-    return after;
+    const at: book_model.Pos = .{ .para = b.para, .byte = b.byte };
+    return !at.is_before(pos);
 }
 
 /// True when bookmark `b` falls on the page from `from` up to `to` (the next page's start).

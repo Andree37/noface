@@ -68,7 +68,7 @@ pub const UserData = struct {
 };
 
 /// Room for every setting with the longest typeface name a setting holds.
-const settings_bytes_max = settings_model.family_bytes_max + 1024;
+const settings_bytes_max = settings_model.file_bytes_max;
 
 /// The speed file: the reader's speed, then the running pace once there is one.
 const speed_bytes_max = 128;

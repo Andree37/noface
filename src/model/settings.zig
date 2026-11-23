@@ -2,6 +2,7 @@
 //! and how they're saved.
 const std = @import("std");
 const assert = std.debug.assert;
+const line_of = @import("../text/line.zig").of;
 const device = @import("device.zig");
 const check = @import("../base/check.zig");
 
@@ -245,19 +246,42 @@ pub fn parse(content: []const u8) Settings {
     return s;
 }
 
-pub fn format(buf: []u8, s: *const Settings) []const u8 {
+/// The longest the settings' file can be: every setting at its longest, a name of a
+/// typeface of the most a family's name holds.
+pub const file_bytes_max = longest: {
+    var total = 0;
+    for (saved) |f| {
+        const T = @FieldType(Settings, f.field);
+        const value_max = if (std.mem.eql(u8, f.field, "font"))
+            family_bytes_max
+        else switch (T) {
+            bool => "off".len,
+            u32 => std.fmt.count("{d}", .{std.math.maxInt(u32)}),
+            else => @compileError("settings: how is " ++ f.field ++ " written"),
+        };
+        total += f.name.len + " ".len + value_max + "\n".len;
+    }
+    break :longest total;
+};
+
+/// Writes every saved setting, one a line, into `buf`: sized for the longest, so whole.
+pub fn format(buf: *[file_bytes_max]u8, s: *const Settings) []const u8 {
     assert(s.font.len > 0);
     var w: std.Io.Writer = .fixed(buf);
     inline for (saved) |f| {
         const value = @field(s, f.field);
-        if (comptime std.mem.eql(u8, f.field, "font")) {
-            w.print(f.name ++ " {s}\n", .{value.name()}) catch return "";
-        } else switch (@TypeOf(value)) {
-            bool => w.print(f.name ++ " {s}\n", .{on_off(value != f.inverted)}) catch return "",
-            u32 => w.print(f.name ++ " {d}\n", .{value}) catch return "",
+        var number: [std.fmt.count("{d}", .{std.math.maxInt(u32)})]u8 = undefined;
+        const text: []const u8 = if (comptime std.mem.eql(u8, f.field, "font"))
+            value.name()
+        else switch (@TypeOf(value)) {
+            bool => on_off(value != f.inverted),
+            u32 => line_of(&number, "{d}", .{value}),
             else => @compileError("settings: how is " ++ f.field ++ " written"),
-        }
+        };
+        // Ignored: the buffer holds the longest settings there can be (`file_bytes_max`)
+        w.print(f.name ++ " {s}\n", .{text}) catch unreachable;
     }
+    assert(w.buffered().len > 0);
     return w.buffered();
 }
 
@@ -279,7 +303,7 @@ fn on_off(on: bool) []const u8 {
 }
 
 test "settings survive being saved" {
-    var buf: [256]u8 = undefined;
+    var buf: [file_bytes_max]u8 = undefined;
     const s = Settings{
         .size = 4,
         .spacing = 3,
@@ -331,7 +355,7 @@ test "the reader's own typefaces are offered after the Kindle's, by name" {
     const offered = Families.offer(&all);
     const s = parse("font Open Sans\n");
     try std.testing.expectEqual(all.len - 1, s.family_index(offered));
-    var buf: [256]u8 = undefined;
+    var buf: [file_bytes_max]u8 = undefined;
     try std.testing.expectEqual(s.font, parse(format(&buf, &s)).font);
     const own_7 = parse("font Own 7\n").family_index(offered);
     try std.testing.expectEqual(builtin_families.len + 7, own_7);

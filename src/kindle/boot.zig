@@ -24,7 +24,7 @@ const log_path = paths.data_dir ++ "/" ++ paths.data.log;
 /// Boots in a row without noface running a minute before autostart turns itself off.
 pub const attempts_max = 3;
 /// The settings file at its largest: its longest line is the typeface's name.
-const settings_bytes_max = settings_model.family_bytes_max + 1024;
+const settings_bytes_max = settings_model.file_bytes_max;
 
 comptime {
     assert(attempts_max >= 2); // One bad boot alone never turns it off

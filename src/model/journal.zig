@@ -172,7 +172,9 @@ pub fn weekday(day: i32) u32 {
 const format_tag = "journal 1";
 
 /// The longest line a day can take: an i32, two u32s and a u16, three spaces, a newline.
-const day_line_size_max = 11 + 10 + 10 + 5 + 3 + 1;
+const day_line_size_max = std.fmt.count("{d} {d} {d} {d}\n", .{
+    std.math.minInt(i32), std.math.maxInt(u32), std.math.maxInt(u32), std.math.maxInt(u16),
+});
 
 comptime {
     assert(kept > 366); // Over a year, so a year so far always fits
@@ -283,20 +285,22 @@ pub fn older_lines(content: []const u8, first_day: ?i32) [2][]const u8 {
 /// The journal's tag line, which `format` starts with, so older lines can follow it.
 pub const tag_line_bytes: u32 = format_tag.len + 1;
 
-/// Writes the journal into `buf` (one line per day, under 40 bytes each).
-pub fn format(buf: []u8, j: *const Journal) []const u8 {
-    assert(buf.len >= max_format_bytes);
+/// Writes the journal into `buf`, a line a day: sized for the longest, so whole.
+pub fn format(buf: *[max_format_bytes]u8, j: *const Journal) []const u8 {
     assert(j.len <= kept);
     var w: std.Io.Writer = .fixed(buf);
-    w.print("{s}\n", .{format_tag}) catch return "";
+    // Ignored: the buffer holds the tag and every day kept at its longest
+    w.print("{s}\n", .{format_tag}) catch unreachable;
     for (j.days[0..j.len]) |d| {
         const fields = .{ d.day, d.seconds, d.pages, d.finished };
-        w.print("{d} {d} {d} {d}\n", fields) catch return "";
+        // Ignored: as above
+        w.print("{d} {d} {d} {d}\n", fields) catch unreachable;
     }
+    assert(w.buffered().len >= tag_line_bytes);
     return w.buffered();
 }
 
-pub const max_format_bytes = 16 + kept * 40;
+pub const max_format_bytes = tag_line_bytes + kept * day_line_size_max;
 
 test "days add up and a new day starts its own entry" {
     var j = Journal{};

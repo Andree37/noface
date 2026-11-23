@@ -140,41 +140,57 @@ const entries_max = 1 << 20;
 
 /// The names in a folder, each passed to `each` with whether it's a folder (without
 /// "." and ".."). Linux reads them with getdents64; elsewhere the C library's readdir.
+/// Whether every name was: false when the folder couldn't be opened or read to its
+/// end, which a caller that acts on what's missing from it must not take for empty.
 pub fn each_entry(
     dir: [*:0]const u8,
     context: anytype,
     comptime each: fn (@TypeOf(context), []const u8, bool) void,
-) void {
+) bool {
     assert(dir[0] != 0);
     // `each` keeps what it's given through the context, so it must point somewhere
     comptime assert(@typeInfo(@TypeOf(context)) == .pointer);
-    if (is_linux) {
-        each_entry_linux(dir, context, each);
-    } else {
-        each_entry_libc(dir, context, each);
-    }
+    if (is_linux) return each_entry_linux(dir, context, each);
+    return each_entry_libc(dir, context, each);
+}
+
+/// A struct linux_dirent64, as getdents64 writes them: its inode (u64), offset (i64),
+/// record length (u16), type (u8), then its name.
+const dirent_reclen_at = 16;
+const dirent_type_at = 18;
+const dirent_name_at = 19;
+/// A folder's type in a dirent (DT_DIR), on Linux and the C libraries alike.
+const dirent_type_folder = 4;
+/// What one getdents64 call reads into: many names, at least one.
+const dirents_bytes = 4096;
+
+comptime {
+    assert(dirent_name_at == dirent_type_at + 1);
+    assert(dirent_type_at == dirent_reclen_at + 2);
 }
 
 fn each_entry_linux(
     dir: [*:0]const u8,
     context: anytype,
     comptime each: fn (@TypeOf(context), []const u8, bool) void,
-) void {
+) bool {
     comptime assert(is_linux);
     assert(dir[0] != 0);
     const rc = linux.open(dir, .{ .ACCMODE = .RDONLY, .DIRECTORY = true, .CLOEXEC = true }, 0);
-    if (failed(rc)) return;
+    if (failed(rc)) return false;
     const fd: i32 = @intCast(rc);
     // Ignored: only read
     defer _ = linux.close(fd);
-    var buffer: [4096]u8 align(8) = undefined;
+    var buffer: [dirents_bytes]u8 align(8) = undefined;
     // Each read gives at least one name, so this many reads list every name allowed
     for (0..entries_max) |_| {
         const got = linux.getdents64(fd, &buffer, buffer.len);
-        if (got == 0 or failed(got)) break;
+        if (got == 0) return true; // The end: every name passed on
+        if (failed(got)) return false;
         assert(got <= buffer.len);
-        if (!each_entry_linux_records(buffer[0..got], context, each)) return;
+        if (!each_entry_linux_records(buffer[0..got], context, each)) return false;
     }
+    return false; // More names than are read
 }
 
 /// Passes on each name in what getdents64 read. False when a record is damaged.
@@ -184,15 +200,14 @@ fn each_entry_linux_records(
     comptime each: fn (@TypeOf(context), []const u8, bool) void,
 ) bool {
     assert(records.len > 0);
-    assert(records.len <= 4096);
+    assert(records.len <= dirents_bytes);
     var at: u32 = 0;
     while (at < records.len) {
-        // A struct linux_dirent64: inode u64, offset i64, record length u16, type u8, name
-        if (at + 19 > records.len) return false;
-        const record_len = std.mem.readInt(u16, records[at + 16 ..][0..2], .little);
-        if (record_len < 19 or at + record_len > records.len) return false;
-        const is_dir = records[at + 18] == 4; // DT_DIR
-        const name = std.mem.sliceTo(records[at + 19 .. at + record_len], 0);
+        if (at + dirent_name_at > records.len) return false;
+        const record_len = std.mem.readInt(u16, records[at + dirent_reclen_at ..][0..2], .little);
+        if (record_len < dirent_name_at or at + record_len > records.len) return false;
+        const is_dir = records[at + dirent_type_at] == dirent_type_folder;
+        const name = std.mem.sliceTo(records[at + dirent_name_at .. at + record_len], 0);
         at += record_len;
         if (is_listed(name)) each(context, name, is_dir);
     }
@@ -204,16 +219,18 @@ fn each_entry_libc(
     dir: [*:0]const u8,
     context: anytype,
     comptime each: fn (@TypeOf(context), []const u8, bool) void,
-) void {
+) bool {
     comptime assert(!is_linux);
     assert(dir[0] != 0);
-    const stream = c.opendir(dir) orelse return;
+    const stream = c.opendir(dir) orelse return false;
     defer _ = c.closedir(stream);
     for (0..entries_max) |_| {
         const entry = c.readdir(stream) orelse break;
         const name = std.mem.sliceTo(@as([*:0]const u8, @ptrCast(&entry.name)), 0);
-        if (is_listed(name)) each(context, name, entry.type == 4); // DT_DIR
-    }
+        if (is_listed(name)) each(context, name, entry.type == dirent_type_folder);
+    } else return false; // More names than are read
+    // The C library's readdir ends the same on an error as at the end: taken as the end
+    return true;
 }
 
 /// Whether a folder's entry is a name to pass on: not "." or "..".

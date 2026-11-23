@@ -322,7 +322,8 @@ fn list_dir(alloc: std.mem.Allocator, dir: [*:0]const u8) []const []const u8 {
         }
     };
     var into = Into{ .alloc = alloc };
-    linux.each_entry(dir, &into, Into.add);
+    // Ignored: a font not listed isn't offered, until the next look
+    _ = linux.each_entry(dir, &into, Into.add);
     return into.out.items;
 }
 

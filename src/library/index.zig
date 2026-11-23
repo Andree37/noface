@@ -476,7 +476,8 @@ pub fn clip(text: []const u8) []const u8 {
 pub fn record_of(e: *const catalog.Entry, text_offset: u64, text_len: u32) Record {
     assert(text_len <= blob_bytes_max);
     const series_index = if (e.series) |s| s.index else 0;
-    const finite = std.math.isFinite(series_index) or std.math.isNan(series_index);
+    // A number to keep, or NaN, a place none was given (kept so); infinity is none of them
+    const storable = std.math.isFinite(series_index) or std.math.isNan(series_index);
     var r: Record = .{
         .last = e.last,
         .added = e.added,
@@ -487,7 +488,7 @@ pub fn record_of(e: *const catalog.Entry, text_offset: u64, text_len: u32) Recor
         .file_size = 0,
         .file_modified = 0,
         .text_len = text_len,
-        .series_index = if (finite) series_index else 0,
+        .series_index = if (storable) series_index else 0,
         .percent = @intCast(@min(e.percent, 100)),
         .kindle_percent = @intCast(@min(e.kindle_percent, 100)),
         .availability = @backingInt(e.availability),

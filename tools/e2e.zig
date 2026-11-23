@@ -620,7 +620,8 @@ fn pid_of(name: []const u8) ?i32 {
     assert(name.len > 0);
     assert(name.len <= comm_bytes_max); // Linux keeps no more of a name in comm
     var found: Found = .{ .name = name };
-    core.calls.each_entry("/proc", &found, Found.each);
+    // Ignored: one not found is looked for again, as a start or a stop is waited on
+    _ = core.calls.each_entry("/proc", &found, Found.each);
     return found.pid;
 }
 

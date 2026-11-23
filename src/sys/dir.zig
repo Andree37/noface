@@ -164,7 +164,8 @@ const Frame = struct {
             .walked = walked,
             .context = context,
         };
-        sys.each_entry(frame.path, &listing, Listing.entry);
+        // A folder not listed whole: what's past where it stopped isn't known to be gone
+        if (!sys.each_entry(frame.path, &listing, Listing.entry)) walked.cut_short = true;
         if (listing.failed) return error.OutOfMemory;
         assert(frame.folder_next == 0);
         return frame;

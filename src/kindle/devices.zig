@@ -183,7 +183,8 @@ fn list_supplies(
         }
     };
     var into = Into{ .names = names, .lengths = lengths };
-    calls.each_entry("/sys/class/power_supply", &into, Into.add);
+    // Ignored: a supply not listed is one not shown, until the next look
+    _ = calls.each_entry("/sys/class/power_supply", &into, Into.add);
     assert(into.count <= names.len);
     return into.count;
 }

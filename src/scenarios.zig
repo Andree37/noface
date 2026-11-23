@@ -10,6 +10,7 @@ const crash = @import("sys/crash.zig");
 const assert = std.debug.assert;
 const folders = @import("sys/dir.zig");
 const hyphen = @import("layout/hyphen.zig");
+const languages = @import("languages.zig");
 const file = @import("sys/file.zig");
 const fonts_db = @import("kindle/fonts.zig");
 const Font = @import("gfx/font.zig").Font;
@@ -118,11 +119,10 @@ fn selftest_files() bool {
     const id = crash.build_id(&id_buffer);
     std.debug.print("{s}  build ID, {d} bytes\n", .{ if (id.len > 0) "ok  " else "FAIL", id.len });
     ok = ok and id.len > 0;
-    const dictionaries = [_][]const u8{ "dict-en", "dict-pt" };
-    comptime assert(dictionaries.len == @typeInfo(hyphen.Lang)
-        .@"enum".field_names.len);
-    for (dictionaries) |name| {
-        var buf: [96]u8 = undefined;
+    // Each language's, by the name the app looks it up by
+    for (std.enums.values(hyphen.Lang)) |lang| {
+        const name = languages.dictionary_file(lang);
+        var buf: [file.own_path_bytes_max]u8 = undefined;
         const path = std.fmt.bufPrintSentinel(
             &buf,
             paths.data_dir ++ "/{s}",

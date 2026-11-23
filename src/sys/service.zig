@@ -202,7 +202,8 @@ pub fn each_named(
 ) u32 {
     assert(name.len > 0);
     var pids: Pids = .{ .own = linux.getpid() };
-    calls.each_entry("/proc", &pids, Pids.add);
+    // Ignored: /proc lists what runs now; one missed has ended or is looked for again
+    _ = calls.each_entry("/proc", &pids, Pids.add);
     var found: u32 = 0;
     for (pids.ids[0..pids.count]) |pid| {
         var comm_buffer: [32]u8 = undefined;

@@ -931,7 +931,11 @@ fn close_functions(scan: *Scan, line_number: u32) !void {
 
 /// Whether a comment is a marker: it starts with `prefix`, and gives a reason after it.
 /// The calls that reach the system, whose results say whether they worked.
-const system_calls = [_][]const u8{ "linux.", "calls.", "std.posix.", "std.os.linux.", "process." };
+const system_calls = [_][]const u8{
+    "linux.",      "calls.",        "std.posix.", "std.os.linux.", "process.",
+    // As the tools reach the same calls, through src/core.zig
+    "core.calls.", "core.process.",
+};
 
 /// How many of a line's catches give up without a word (`catch return;`, `catch break`,
 /// `catch continue`): a reason may be given for them, as for an error ignored.

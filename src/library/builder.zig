@@ -105,8 +105,9 @@ const EpubHash = struct {
 
     fn add(h: *EpubHash, path: [:0]const u8) void {
         assert(path.len > 0);
+        const before = h.sum;
         h.sum +%= std.hash.Wyhash.hash(0x65, path);
-        assert(@sizeOf(@TypeOf(h.sum)) == 8);
+        assert(h.sum != before or std.hash.Wyhash.hash(0x65, path) == 0); // Counted
     }
 };
 
@@ -197,9 +198,9 @@ pub fn build(
     var last_open = last;
     defer if (last_open) |ix| ix.close();
     b.records = try create_data(places.dir, "records.new", generation, buffers.records);
-    errdefer b.records.abandon();
+    errdefer abandon_data(places.dir, "records.new", &b.records);
     b.text = try create_data(places.dir, "text.new", generation, buffers.text);
-    errdefer b.text.abandon();
+    errdefer abandon_data(places.dir, "text.new", &b.text);
     add_kindle_books(&b);
     add_epubs(&b);
     if (b.left_out > 0) log("library: {d} books past the most kept\n", .{b.left_out});
@@ -238,6 +239,17 @@ fn never_matching(sources: index.Sources) index.Sources {
     changed.epubs +%= os.now_us() | 1; // Never 0: always another sum
     assert(!std.meta.eql(changed, sources));
     return changed;
+}
+
+/// A new data file given up on, and removed: a build that failed leaves no part of
+/// one (up to a gigabyte and more) on the drive.
+fn abandon_data(folder: []const u8, name: []const u8, w: *files.Writer) void {
+    assert(name.len > 0);
+    w.abandon();
+    var path_buffer: [files.path_bytes_max]u8 = undefined;
+    // Ignored: a path that can't be made is one that was never made either
+    const path = files.path_in(&path_buffer, folder, name) catch return;
+    files.remove(path);
 }
 
 /// A new data file, its head written.
@@ -479,13 +491,19 @@ fn first_with(sorted: []const Item, key: u32) u32 {
 /// The books on this Kindle, their ids sorted by their state file's key, to find each
 /// by halves.
 fn by_state_key(ix: *const index.Index, items: []Item) []Item {
+    return sorted_by(ix, items, state.key_for);
+}
+
+/// The books on this Kindle, their ids sorted by `key_of` their path (a key's high half),
+/// to find each by halves: by the names their files have now, or had before.
+fn sorted_by(ix: *const index.Index, items: []Item, comptime key_of: fn ([]const u8) u64) []Item {
     assert(items.len >= ix.header.count);
     var count: u32 = 0;
     for (0..ix.header.count) |i| {
         const id: u32 = @intCast(i);
         const e = ix.entry(id);
         if (!e.is_local() or e.path.len == 0) continue;
-        items[count] = .{ .id = id, .key = @truncate(state.key_for(e.path) >> 32) };
+        items[count] = .{ .id = id, .key = @truncate(key_of(e.path) >> 32) };
         count += 1;
     }
     const sorted = items[0..count];
@@ -582,13 +600,14 @@ pub fn rename_by_path(
     var old = Listed{ .alloc = scratch.allocator() };
     var folder_buffer: [files.path_bytes_max]u8 = undefined;
     const folder = try std.fmt.bufPrintSentinel(&folder_buffer, "{s}", .{places.state_dir}, 0);
-    calls.each_entry(folder.ptr, &old, Listed.entry);
+    // Every name, or none acted on: the files of a book missed now are moved next time
+    if (!calls.each_entry(folder.ptr, &old, Listed.entry)) return error.CantList;
     if (old.failed) return error.CantList;
     if (old.keys.items.len == 0) return;
     // Each key once, whichever of its kinds were listed
     std.mem.sort(u64, old.keys.items, {}, std.sort.asc(u64));
     const keys = unique(old.keys.items);
-    const sorted = by_name_key(ix, items);
+    const sorted = sorted_by(ix, items, state.key_by_name);
     for (keys) |key| {
         const high: u32 = @truncate(key >> 32);
         const first = first_with(sorted, high);
@@ -700,24 +719,6 @@ fn move_file(
     assert(done == count);
 }
 
-/// The books on this Kindle, their ids sorted by the key their file name gave their
-/// files before (`state.key_by_name`), to find each by halves.
-fn by_name_key(ix: *const index.Index, items: []Item) []Item {
-    assert(items.len >= ix.header.count);
-    var count: u32 = 0;
-    for (0..ix.header.count) |i| {
-        const id: u32 = @intCast(i);
-        const e = ix.entry(id);
-        if (!e.is_local() or e.path.len == 0) continue;
-        items[count] = .{ .id = id, .key = @truncate(state.key_by_name(e.path) >> 32) };
-        count += 1;
-    }
-    const sorted = items[0..count];
-    std.mem.sort(Item, sorted, {}, by_key);
-    assert(count <= ix.header.local);
-    return sorted;
-}
-
 /// Merges what noface keeps of each book it opened (place, time read, marked read) into
 /// the index's records, from one listing of the data folder: only the books with a
 /// state file are read.
@@ -732,8 +733,10 @@ pub fn merge_states(ix: *const index.Index, items: []Item, places: Places) !void
     };
     var folder_buffer: [files.path_bytes_max]u8 = undefined;
     const folder = try std.fmt.bufPrintSentinel(&folder_buffer, "{s}", .{places.state_dir}, 0);
-    calls.each_entry(folder.ptr, &merge, Merge.entry);
+    const whole = calls.each_entry(folder.ptr, &merge, Merge.entry);
     if (merge.failed) return error.CantMerge;
+    // What was listed is merged; a book whose state wasn't is merged at the next load
+    if (!whole) return error.CantList;
     assert(merge.sorted.len <= ix.header.local);
 }
 

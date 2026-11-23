@@ -130,7 +130,7 @@ pub fn run(envp: [*:null]const ?[*:0]const u8, folders: Folders) u32 {
     run_paths.make(folders) catch return exit_not_started;
     // Where noface keeps its Wi-Fi note (src/main.zig): a test's folder too, so the
     // stock screens put back below turn on a radio a test's noface left off
-    wifi_saver.use_data_dir(folders.data);
+    wifi_saver.use_data_dir(folders.data) catch return exit_not_started;
     const p = &run_paths;
     // Everything noface writes goes in its data folder, its log too, so a new one (a
     // test's, a first install's) is made here

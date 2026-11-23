@@ -29,7 +29,6 @@ const toolbar = @import("../ui/toolbar.zig");
 const dictionary = @import("../model/dictionary.zig");
 const FakeKindle = @import("../testing/fake_kindle.zig").FakeKindle;
 const wifi_saver = @import("../kindle/wifi_saver.zig");
-const paths = @import("../kindle/paths.zig");
 const setup = @import("../setup.zig");
 const linux = @import("../sys/calls.zig");
 const book_model = @import("../model/book.zig");
@@ -388,8 +387,8 @@ pub fn play_on(kindle: Kindle, steps: []const Step) !Outcome {
     var fake = try play_on_fake(harness, kindle);
     fake.install();
     defer fake.release();
-    wifi_saver.use_data_dir(dir);
-    defer wifi_saver.use_data_dir(paths.data_dir);
+    try wifi_saver.use_data_dir(dir);
+    defer wifi_saver.use_default();
 
     const devices = try play_on_devices(harness, steps, &fake);
 

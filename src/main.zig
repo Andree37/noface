@@ -149,7 +149,7 @@ fn main_reader(init: std.process.Init.Minimal) !void {
     defer input_mod.release(&input);
 
     input_mod.install_signals();
-    wifi_saver.use_data_dir(state_dir);
+    try wifi_saver.use_data_dir(state_dir);
     wifi_saver.restore(); // Left off by a crash or a reboot mid-book
     const saved_screen = try alloc.alloc(u8, screen.pixels.len);
     assert(saved_screen.len == screen.pixels.len); // Put back whole as noface leaves

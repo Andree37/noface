@@ -19,13 +19,16 @@ const paths = @import("paths.zig");
 /// How long into a book before the radio goes off: a quick look in doesn't toggle it.
 pub const after_us: u64 = 2 * 60 * 1000 * 1000;
 
-/// The note, in the data folder noface was started with (see `use_data_dir`).
-var marker: [*:0]const u8 = paths.data_dir ++ "/" ++ paths.data.wifi_paused;
-var marker_buffer: [256]u8 = undefined;
+/// The note, in the data folder noface was started with (see `use_data_dir`), or the
+/// reader's own, where the launcher, which is given none, looks for it.
+const default_marker = paths.data_dir ++ "/" ++ paths.data.wifi_paused;
+var marker: [*:0]const u8 = default_marker;
+/// Room for the note in any data folder noface takes, and its closing zero.
+var marker_buffer: [file.own_path_bytes_max + 1 + paths.data.wifi_paused.len + 1]u8 = undefined;
 
 comptime {
     // The default note's path fits the buffer another folder's is written to
-    assert(paths.data_dir.len + 1 + paths.data.wifi_paused.len < marker_buffer.len);
+    assert(default_marker.len < marker_buffer.len);
     // A file's name, not a path: `marker_is_note` finds it after the last slash
     assert(paths.data.wifi_paused.len > 0);
     assert(std.mem.indexOfScalar(u8, paths.data.wifi_paused, '/') == null);
@@ -34,11 +37,19 @@ comptime {
 }
 
 /// Keeps the note in `dir`: the data folder noface was started with, or a test's own.
-/// A folder too long to fit keeps the note where it was.
-pub fn use_data_dir(dir: []const u8) void {
+/// A folder longer than any noface takes is refused, never quietly left pointing at
+/// another folder's note (the reader's, while a test runs).
+pub fn use_data_dir(dir: []const u8) error{PathTooLong}!void {
     assert(dir.len > 0);
     const format = "{s}/" ++ paths.data.wifi_paused;
-    marker = std.fmt.bufPrintSentinel(&marker_buffer, format, .{dir}, 0) catch return;
+    marker = std.fmt.bufPrintSentinel(&marker_buffer, format, .{dir}, 0) catch
+        return error.PathTooLong;
+    assert(marker_is_note());
+}
+
+/// Keeps the note in the reader's own data folder again, as before any `use_data_dir`.
+pub fn use_default() void {
+    marker = default_marker;
     assert(marker_is_note());
 }
 
@@ -134,4 +145,13 @@ pub fn forget() void {
     assert(marker_is_note());
     // Ignored: A note already gone is what forgetting wants, so its failing to go is no matter
     _ = linux.unlink(marker);
+}
+
+test "the note goes in any data folder noface takes, and a longer one is refused" {
+    defer use_default();
+    const longest: [file.own_path_bytes_max]u8 = @splat('d');
+    try use_data_dir(&longest);
+    try std.testing.expect(std.mem.startsWith(u8, std.mem.span(note_path()), &longest));
+    const longer: [file.own_path_bytes_max + marker_buffer.len]u8 = @splat('d');
+    try std.testing.expectError(error.PathTooLong, use_data_dir(&longer));
 }

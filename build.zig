@@ -65,13 +65,15 @@ pub fn build(b: *std.Build) void {
         "fast",
         "Build the app without Zig's runtime safety checks",
     ) orelse false;
-    const app = build_app(b, target, fast);
+    // The computer's tools, each built once whatever asks for it
+    const host = HostTools.init(b);
+    const app = build_app(b, &host, target, fast);
     const check = build_checks(b);
     const tools = build_tools(b, target);
-    const host_tools = build_host_tools(b);
-    build_package(b, target, app.jxr);
+    const host_tools = build_host_tools(b, &host);
+    build_package(b, &host, target, app.jxr);
     const scenarios = build_scenarios(b, target);
-    const tests = build_tests(b);
+    const tests = build_tests(b, &host);
     build_clean(b);
     const layouts = build_layouts(b, target);
     // The computer's tools built whole too: their tests alone compile only what they reach,
@@ -195,11 +197,16 @@ fn build_clean(b: *std.Build) void {
 }
 
 /// The app, its launcher, and the picture helper it runs.
-fn build_app(b: *std.Build, target: std.Build.ResolvedTarget, fast: bool) App {
+fn build_app(
+    b: *std.Build,
+    host: *const HostTools,
+    target: std.Build.ResolvedTarget,
+    fast: bool,
+) App {
     assert(target.result.os.tag == .linux);
     assert(target.result.abi == .musleabihf); // Static: it runs on any Kindle
     const app = App{
-        .noface = noface_for(b, target, layout_model, fast),
+        .noface = noface_for(b, host, target, layout_model, fast),
         .launcher = launcher_for(b, target, layout_model),
         .jxr = jxr_helper(b),
     };
@@ -216,6 +223,7 @@ fn build_app(b: *std.Build, target: std.Build.ResolvedTarget, fast: bool) App {
 /// asked to be `fast`.
 fn noface_for(
     b: *std.Build,
+    host: *const HostTools,
     target: std.Build.ResolvedTarget,
     model: []const u8,
     fast: bool,
@@ -238,7 +246,7 @@ fn noface_for(
     // crash is never read against another build's symbols (sys/crash.zig)
     noface.build_id = .fast;
     assert(noface.root_module.link_libc.?); // Asked for, as set above
-    const strip = b.addRunArtifact(host_tool(b, "strip"));
+    const strip = b.addRunArtifact(host.tool("strip"));
     strip.addFileArg(noface.getEmittedBin());
     const stripped = strip.addOutputFileArg("noface");
     assert(strip.argv.items.len == 3); // The tool, the program, the copy
@@ -296,50 +304,54 @@ fn jxr_helper(b: *std.Build) *std.Build.Step.Compile {
     return jxr;
 }
 
-/// Tools that run on this computer: the dictionary builder, the snapshot converter and
-/// the packer. Built into zig-out/bin with `zig build host-tools`.
-fn build_host_tools(b: *std.Build) *std.Build.Step {
+/// Tools that run on this computer: the dictionary builder, the snapshot converter, the
+/// packer, the release's table and the stripper. Built into zig-out/bin with
+/// `zig build host-tools`.
+fn build_host_tools(b: *std.Build, host: *const HostTools) *std.Build.Step {
     assert(host_tool_names.len > 0);
     const host_tools_step = b.step("host-tools", "Build the tools that run on this computer");
-    for (host_tool_names) |name| {
-        const tool = host_tool(b, name);
-        host_tools_step.dependOn(&b.addInstallArtifact(tool, .{}).step);
-    }
+    for (host.tools) |tool| host_tools_step.dependOn(&b.addInstallArtifact(tool, .{}).step);
     assert(host_tools_step.dependencies.items.len == host_tool_names.len);
     return host_tools_step;
 }
 
-fn host_tool(b: *std.Build, name: []const u8) *std.Build.Step.Compile {
-    assert(name.len > 0);
-    const tool = b.addExecutable(.{
-        .name = name,
-        .root_module = host_tool_module(b, name),
-    });
-    assert(tool.root_module.resolved_target != null);
-    return tool;
-}
+/// The tools that run on this computer, each compiled once with src/ to hand as `core`,
+/// itself made once: the dictionary builder folds words as the app's search does, and
+/// the release's table names the Kindles (the same on any layout, so the one built).
+const HostTools = struct {
+    tools: [host_tool_names.len]*std.Build.Step.Compile,
 
-/// A host tool's code, with src/ to hand as `core`: the dictionary builder folds words
-/// as the app's search does, and the release's table names the Kindles (the same on
-/// any layout, so the one built).
-fn host_tool_module(b: *std.Build, name: []const u8) *std.Build.Module {
-    assert(name.len > 0);
-    const module = b.createModule(.{
-        .root_source_file = b.path(b.fmt("tools/{s}.zig", .{name})),
-        .target = b.graph.host,
-        .optimize = .ReleaseSafe,
-    });
-    const core = b.createModule(.{
-        .root_source_file = b.path("src/core.zig"),
-        .target = b.graph.host,
-        .optimize = .ReleaseSafe,
-        .link_libc = true,
-    });
-    src_imports(b, core, layout_model);
-    module.addImport("core", core);
-    assert(module.import_table.count() > 0);
-    return module;
-}
+    fn init(b: *std.Build) HostTools {
+        const core = b.createModule(.{
+            .root_source_file = b.path("src/core.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseSafe,
+            .link_libc = true,
+        });
+        src_imports(b, core, layout_model);
+        var host: HostTools = undefined;
+        for (&host.tools, host_tool_names) |*made, name| {
+            made.* = b.addExecutable(.{
+                .name = name,
+                .root_module = b.createModule(.{
+                    .root_source_file = b.path(b.fmt("tools/{s}.zig", .{name})),
+                    .target = b.graph.host,
+                    .optimize = .ReleaseSafe,
+                    .imports = &.{.{ .name = "core", .module = core }},
+                }),
+            });
+        }
+        return host;
+    }
+
+    /// The tool `name` names: one of `host_tool_names`, or the build stops.
+    fn tool(host: *const HostTools, comptime name: []const u8) *std.Build.Step.Compile {
+        inline for (host_tool_names, 0..) |known, index| {
+            if (comptime std.mem.eql(u8, known, name)) return host.tools[index];
+        }
+        @compileError("no host tool is named " ++ name);
+    }
+};
 
 /// `zig build package -Dversion=1.2.3`: everything built, then packed for each shipped
 /// Kindle as zig-out/noface-1.2.3-<model>.zip (see tools/package.zig), the zips a
@@ -350,6 +362,7 @@ fn host_tool_module(b: *std.Build, name: []const u8) *std.Build.Module {
 /// cache reuses what `zig build` made alike).
 fn build_package(
     b: *std.Build,
+    host: *const HostTools,
     target: std.Build.ResolvedTarget,
     jxr: *std.Build.Step.Compile,
 ) void {
@@ -360,18 +373,19 @@ fn build_package(
         "package",
         "Pack the app as zig-out/noface-<version>-<model>.zip for each shipped Kindle",
     );
-    const table = b.addRunArtifact(host_tool(b, "kindles"));
+    const table = b.addRunArtifact(host.tool("kindles"));
     const table_file = table.addOutputFileArg("KINDLES.md");
     table.addArg(version);
     for (shipped) |layout| {
         const model = @tagName(layout);
         const laid_out: App = .{
-            .noface = noface_for(b, target, model, false),
+            .noface = noface_for(b, host, target, model, false),
             .launcher = launcher_for(b, target, model),
             .jxr = jxr,
         };
         const zip_name = b.fmt("noface-{s}-{s}.zip", .{ version, model });
-        const zip = pack_for(b, laid_out, zip_name, b.fmt("{s} for {s}", .{ version, model }));
+        const version_for = b.fmt("{s} for {s}", .{ version, model });
+        const zip = pack_for(b, host, laid_out, zip_name, version_for);
         package_step.dependOn(&b.addInstallFile(zip, zip_name).step);
         const symbols_name = b.fmt("noface-{s}-{s}-symbols", .{ version, model });
         package_step.dependOn(&b.addInstallFile(laid_out.noface.symbols, symbols_name).step);
@@ -384,12 +398,13 @@ fn build_package(
 /// `app` packed as `zip_name`, its VERSION file saying `version`.
 fn pack_for(
     b: *std.Build,
+    host: *const HostTools,
     app: App,
     zip_name: []const u8,
     version: []const u8,
 ) std.Build.LazyPath {
     assert(std.mem.endsWith(u8, zip_name, ".zip"));
-    const pack = b.addRunArtifact(host_tool(b, "package"));
+    const pack = b.addRunArtifact(host.tool("package"));
     const zip = pack.addOutputFileArg(zip_name);
     pack.addArg(version);
     const executable = "755";
@@ -535,13 +550,13 @@ fn build_scenarios(b: *std.Build, target: std.Build.ResolvedTarget) *std.Build.S
 }
 
 /// `zig build test`: every unit test, listed in src/tests.zig, on this computer.
-fn build_tests(b: *std.Build) *std.Build.Step {
+fn build_tests(b: *std.Build, host: *const HostTools) *std.Build.Step {
     const test_step = b.step("test", "Run unit tests on the host");
     const tests = unit_tests(b, b.graph.host, layout_model);
     test_step.dependOn(&b.addRunArtifact(tests).step);
     // The tools that run on this computer, each with its own tests
-    for (host_tool_names) |name| {
-        const tool_tests = b.addTest(.{ .root_module = host_tool_module(b, name) });
+    for (host.tools) |tool| {
+        const tool_tests = b.addTest(.{ .root_module = tool.root_module });
         test_step.dependOn(&b.addRunArtifact(tool_tests).step);
     }
     // The Kindle's tools, built for this computer to run their own tests: only what a

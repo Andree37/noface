@@ -195,7 +195,7 @@ pub const Screen = struct {
         const rc = linux.open(path, flags, 0o644);
         if (core.os.failed(rc)) return false;
         const fd: i32 = @intCast(rc);
-        // Ignored: only read
+        // Ignored: the writes say whether the shot was saved; a shot's close adds nothing
         defer _ = linux.close(fd);
         return screen.write_pgm(fd, 0, screen.height);
     }

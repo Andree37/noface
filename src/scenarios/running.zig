@@ -60,10 +60,13 @@ pub const all = [_]Scenario{
                 const first = running_model.first_pace(.{});
                 const turned = start_running ++ [_]Step{ wait(2_000), forward };
                 const on = try play(&turned);
-                try expect(on.running_pace.? > first, "going on early didn't quicken the pace");
+                const on_pace = on.running_pace orelse
+                    return expect(false, "no pace after going on");
+                try expect(on_pace > first, "going on early didn't quicken the pace");
                 const went_back = try play(&(turned ++ [_]Step{ wait(1_000), back }));
-                const slowed = went_back.running_pace.? < on.running_pace.?;
-                try expect(slowed, "going back didn't slow it");
+                const back_pace = went_back.running_pace orelse
+                    return expect(false, "no pace after going back");
+                try expect(back_pace < on_pace, "going back didn't slow it");
                 // Two taps a second apart, and two a moment apart, of which one counts
                 const two = try play(&(turned ++ [_]Step{ wait(1_000), forward }));
                 const bumped = try play(&(turned ++ [_]Step{forward}));
@@ -186,7 +189,9 @@ pub const all = [_]Scenario{
                 // The first phrase since running began has none before it to go back to
                 const first = running_model.first_pace(.{});
                 const backed = try play(&(start_running ++ [_]Step{ wait(500), back }));
-                try expect(backed.running_pace.? == first, "a back tap with nothing before slowed");
+                const backed_pace = backed.running_pace orelse
+                    return expect(false, "no pace after a back tap");
+                try expect(backed_pace == first, "a back tap with nothing before slowed");
             }
         }.run,
     },

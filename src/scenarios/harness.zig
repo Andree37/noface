@@ -324,9 +324,11 @@ pub fn count_notes(state_path: []const u8, kind: []const u8) u32 {
     assert(state_path.len > 0);
     var path_buf: [file.own_path_bytes_max]u8 = undefined;
     const path = state.sibling(&path_buf, state_path, "notes") catch return 0;
-    var buf: [8192]u8 = undefined;
+    // Mapped whole, however many notes it has: none when there's no file
+    const content = file.map(path) catch return 0;
+    defer file.unmap(content);
     var n: u32 = 0;
-    var lines = std.mem.tokenizeScalar(u8, file.read_small(path, &buf), '\n');
+    var lines = std.mem.tokenizeScalar(u8, content, '\n');
     while (lines.next()) |l| {
         if (std.mem.startsWith(u8, l, kind)) n += 1;
     }
@@ -899,9 +901,10 @@ pub fn notes_digest(state_path: []const u8) u64 {
     var path_buf: [file.own_path_bytes_max]u8 = undefined;
     const path = state.sibling(&path_buf, state_path, "notes") catch return 0;
     assert(std.mem.startsWith(u8, path, std.fs.path.dirname(state_path) orelse ""));
-    var buf: [8192]u8 = undefined;
-    const content = file.read_small(path, &buf);
-    if (content.len == 0) return 0;
+    // Mapped whole, so two files differing anywhere differ here: 0 when there's none
+    const content = file.map(path) catch return 0;
+    defer file.unmap(content);
+    assert(content.len > 0); // An empty file doesn't map
     return std.hash.Wyhash.hash(0, content);
 }
 
@@ -925,7 +928,7 @@ pub fn write_file(path: [*:0]const u8, data: []const u8) !void {
     if (os.failed(rc)) return error.CantWrite;
     const fd: i32 = @intCast(rc);
     assert(fd >= 0);
-    // Ignored: only read
+    // Ignored: the write says whether it worked; its close adds nothing to a test's file
     defer _ = linux.close(fd);
     if (linux.write(fd, data.ptr, data.len) != data.len) return error.CantWrite;
 }
@@ -937,8 +940,10 @@ pub fn clean_up(dir: [:0]const u8) void {
     assert(std.mem.indexOf(u8, dir, "..") == null);
     var out: [64]u8 = undefined;
     const argv = [_:null]?[*:0]const u8{ "/bin/rm", "-rf", dir };
-    // Ignored: a folder left over is only space in /tmp
+    // Ignored: its output says nothing; whether the folder's gone is looked at below
     _ = process.run(&argv, &out);
+    // Left over, it takes room in /tmp, which on the Kindle is small: said, so it's seen
+    if (file.presence(dir) != .absent) std.debug.print("not removed: {s}\n", .{dir});
 }
 
 pub fn same_place(a: state.State, b: state.State) bool {

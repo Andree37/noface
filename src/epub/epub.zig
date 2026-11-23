@@ -913,16 +913,21 @@ test "a small EPUB reads into paragraphs, styles, links and contents" {
 test "a heading's text after a picture and a line break stays a heading" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    var b = Builder{ .alloc = arena.allocator(), .files = &.{} };
+    // The picture there, stored, so it's added between the heading's tag and its text
+    const jpeg = &picture.test_jpeg;
+    const files = [_]zip.Entry{.{ .name = "x.jpg", .method = 0, .data = jpeg, .size = jpeg.len }};
+    var b = Builder{ .alloc = arena.allocator(), .files = &files };
     try b.chapter(
         "c.xhtml",
         "<html><body><h2><img src=\"x.jpg\"/><br/><br/>Chapter I.</h2>" ++
             "<p>It is a truth.</p></body></html>",
     );
     try b.flush();
-    try std.testing.expectEqualStrings("Chapter I.", b.paragraphs.items[0].text);
-    try std.testing.expect(b.paragraphs.items[0].look.size != book.normal_size);
-    try std.testing.expectEqual(book.normal_size, b.paragraphs.items[1].look.size);
+    const paragraphs = b.paragraphs.items;
+    try std.testing.expect(paragraphs[0].image != null); // The picture, first
+    try std.testing.expectEqualStrings("Chapter I.", paragraphs[1].text);
+    try std.testing.expect(paragraphs[1].look.size != book.normal_size); // Still a heading
+    try std.testing.expectEqual(book.normal_size, paragraphs[2].look.size);
 }
 
 test "a note reference ending in a space at a paragraph's end stays inside it" {
@@ -1108,5 +1113,59 @@ test "broken EPUBs are refused, never crash" {
         _ = parse(arena.allocator(), &scratch, buf[0..len]) catch {};
         try std.testing.expect(scratch.empty());
         _ = info(arena.allocator(), buf[0..len], true) catch {};
+    }
+}
+
+test "broken markup is read or refused, never crashes, in each of the book's readers" {
+    // Straight to the readers, past the archive: a byte changed in a deflated file
+    // almost always fails to inflate, so the markup readers would seldom see it broken
+    const chapter = "<html><body><h2 id=\"c\">Ch<i>a</i>p</h2>" ++
+        "<p>Some <b>bold <a href=\"#n\">1</a></b> text.<br/><img src=\"x.jpg\"/></p>" ++
+        "<p id=\"n\">A note &amp; more.</p></body></html>";
+    const opf = "<package><metadata><dc:title>T</dc:title><dc:creator>A</dc:creator>" ++
+        "</metadata><manifest>" ++
+        "<item id=\"c\" href=\"c.xhtml\" media-type=\"application/xhtml+xml\"/>" ++
+        "</manifest><spine toc=\"ncx\"><itemref idref=\"c\"/></spine></package>";
+    const container = "<container><rootfiles><rootfile full-path=\"p.opf\"/>" ++
+        "</rootfiles></container>";
+    const nav = "<nav epub:type=\"toc\"><ol><li><a href=\"c.xhtml#c\">One</a></li></ol></nav>";
+    const ncx = "<ncx><navMap><navPoint><navLabel><text>One</text></navLabel>" ++
+        "<content src=\"c.xhtml#c\"/></navPoint></navMap></ncx>";
+    const seeds = [_][]const u8{ chapter, opf, nav, ncx };
+    var prng = std.Random.DefaultPrng.init(0x6d61726b);
+    const random = prng.random();
+    var buf: [512]u8 = undefined;
+    for (0..2000) |round| {
+        const seed = seeds[round % seeds.len];
+        assert(seed.len <= buf.len);
+        @memcpy(buf[0..seed.len], seed);
+        const broken = buf[0..seed.len];
+        for (0..1 + round % 6) |_| broken[random.uintLessThan(usize, broken.len)] = random.int(u8);
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        const alloc = arena.allocator();
+        // The chapter's markup, as the book is built
+        var b = Builder{ .alloc = alloc, .files = &.{} };
+        b.chapter("c.xhtml", broken) catch {}; // Ignored: refused is as good as read
+        // The package, from a container that points at it
+        const stored = 0;
+        const package_size: u32 = @intCast(broken.len);
+        const files = [_]zip.Entry{
+            .{
+                .name = "META-INF/container.xml",
+                .method = stored,
+                .data = container,
+                .size = container.len,
+            },
+            .{ .name = "p.opf", .method = stored, .data = broken, .size = package_size },
+        };
+        _ = read_package(alloc, &files) catch {}; // Ignored: refused is as good as read
+        // The contents, either kind, against an anchor there is
+        var anchors: Anchors = .empty;
+        try anchors.put(alloc, "c.xhtml#c", 0);
+        var out: std.ArrayList(book.Chapter) = .empty;
+        read_contents_nav(alloc, &out, "nav.xhtml", broken, &anchors) catch {}; // Ignored: as above
+        out.clearRetainingCapacity();
+        read_contents_ncx(alloc, &out, "toc.ncx", broken, &anchors) catch {}; // Ignored: as above
     }
 }

@@ -81,6 +81,8 @@ pub const all = [_]Scenario{
                 const at_start = try play_on(.{ .library = true }, &from_start);
                 const total = at_start.saved.words_left orelse return error.WordsNotSaved;
                 const left = failed.saved.words_left orelse return error.WordsNotSaved;
+                // Checked, not assumed: a scenario reports and goes on, never crashes
+                if (total == 0 or left > total) return expect(false, "the words left don't add up");
                 const by_words: u32 = @intCast((total - left) * 100 / total);
                 try expect(failed.saved.percent == by_words, "how far in it is changed");
             }

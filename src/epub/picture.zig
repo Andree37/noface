@@ -138,8 +138,9 @@ test "sizes come from PNG and JPEG headers" {
     try std.testing.expect(size("GIF89a") == null);
 }
 
-/// SOI, an APP0 segment of length 4, then SOF0 with height 50 and width 80.
-const test_jpeg = [_]u8{
+/// SOI, an APP0 segment of length 4, then SOF0 with height 50 and width 80: the start
+/// of a JPEG, for tests here and of the books that hold one.
+pub const test_jpeg = [_]u8{
     0xff, 0xd8, 0xff, 0xe0, 0x00, 0x04, 0x00, 0x00, 0xff,
     0xc0, 0x00, 0x11, 0x08, 0x00, 0x32, 0x00, 0x50, 0x03,
 };

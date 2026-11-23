@@ -86,7 +86,7 @@ pub fn should_start() bool {
         .give_up => {
             // Written as noface writes it: every other setting stays as it was
             settings.autostart = false;
-            file.write_small(settings_path, settings_model.format(&settings_buffer, settings));
+            file.write_small(settings_path, settings_model.format(&settings_buffer, &settings));
             // Ignored: gone already: the count starts over either way
             _ = calls.unlink(attempts_path);
             const message = "autostart: noface failed to start 3 boots in a row, " ++
@@ -120,7 +120,7 @@ test "giving up turns the setting off and keeps the rest, the reader's own typef
     var buffer: [settings_bytes_max]u8 = undefined;
     var s = settings_model.parse("size 4\nfont Open Sans\nautostart on\n");
     s.autostart = false;
-    const again = settings_model.parse(settings_model.format(&buffer, s));
+    const again = settings_model.parse(settings_model.format(&buffer, &s));
     try std.testing.expect(!again.autostart);
     try std.testing.expectEqual(@as(u32, 4), again.size);
     try std.testing.expectEqualStrings("Open Sans", again.font.name());

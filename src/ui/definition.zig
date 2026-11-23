@@ -2,6 +2,7 @@
 //! button to highlight it instead. Tapping above the sheet closes it.
 const std = @import("std");
 const assert = std.debug.assert;
+const line_of = @import("../text/line.zig").of;
 const Page = @import("../gfx/page.zig").Page;
 const draw = @import("draw.zig");
 const style = @import("style.zig");
@@ -194,7 +195,7 @@ pub fn render(fonts: Fonts, page: Page, found: Found) !void {
         .no_dictionary => |to_get| if (to_get) |g| {
             var buffer: [96]u8 = undefined;
             const missing = "The {s} dictionary isn't on this Kindle yet.";
-            const line = std.fmt.bufPrint(&buffer, missing, .{g.name}) catch "";
+            const line = line_of(&buffer, missing, .{g.name});
             try fonts.small.draw(page, style.margin, w.y, line);
         } else {
             const none = "No dictionary for this book's language.";

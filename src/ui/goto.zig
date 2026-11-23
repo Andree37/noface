@@ -2,6 +2,7 @@
 //! highlights, a page of rows at a time.
 const std = @import("std");
 const assert = std.debug.assert;
+const line_of = @import("../text/line.zig").of;
 const Page = @import("../gfx/page.zig").Page;
 const book_model = @import("../model/book.zig");
 const draw = @import("draw.zig");
@@ -271,8 +272,8 @@ pub fn render_list(
             const bar_w = reading_bar_width;
             page.fill_rect(bar_left, bar_top, bar_w, reading_bar_height, style.black);
         }
-        var label: [16]u8 = undefined;
-        const number = r.note orelse std.fmt.bufPrint(&label, "{d}", .{r.page + 1}) catch "";
+        var label: [std.fmt.count("{d}", .{std.math.maxInt(u32)})]u8 = undefined;
+        const number = r.note orelse line_of(&label, "{d}", .{r.page + 1});
         try fonts.caption.draw(page, right - try fonts.caption.measure(number), baseline, number);
     }
     try pager.render(fonts, page, list_page, page_count(@intCast(list.len)));

@@ -1,6 +1,7 @@
 //! An open book: its pages, where the reader is, and its highlights.
 const std = @import("std");
 const assert = std.debug.assert;
+const line_of = @import("../../text/line.zig").of;
 const page_store = @import("page_store.zig");
 const paginate = @import("paginate.zig");
 const check = @import("../../base/check.zig");
@@ -362,19 +363,19 @@ pub const Session = struct {
         const left = s.time_left(index);
         const y: i32 = @intCast(a.display.screen.height - footer_baseline_above_bottom_px);
         const margin: f32 = @floatFromInt(a.layout.margin_x);
-        var minutes_buffer: [48]u8 = undefined;
+        var minutes_buffer: stats.Minutes = undefined;
         var line: [64]u8 = undefined;
         // The Back button takes the left side while it's there
         if (left.chapter) |m| if (s.back.place == null) {
             const minutes = stats.format_minutes(&minutes_buffer, m);
-            const t = std.fmt.bufPrint(&line, "{s} left in chapter", .{minutes}) catch "";
+            const t = line_of(&line, "{s} left in chapter", .{minutes});
             try a.footer.draw(page, margin, y, t);
         };
         // Like the Kindle, say so while the speed is still being learned rather than guess.
         var t: []const u8 = "Learning reading speed";
         if (left.book) |m| {
             const minutes = stats.format_minutes(&minutes_buffer, m);
-            t = std.fmt.bufPrint(&line, "{s} left in book", .{minutes}) catch "";
+            t = line_of(&line, "{s} left in book", .{minutes});
         }
         const right: f32 = @as(f32, @floatFromInt(a.display.screen.width)) - margin;
         try a.footer.draw(page, right - try a.footer.measure(t), y, t);
@@ -396,11 +397,13 @@ pub const Session = struct {
         layout.stop = s.page_end(index);
         _ = try text.render_page(a.body, page, s.paragraphs, s.pages[index], &layout, hits);
 
-        var label: [32]u8 = undefined;
+        const pages: u32 = @intCast(s.pages.len); // A book's pages fit a u32, as indexes
+        const most = std.math.maxInt(u32);
+        var label: [std.fmt.count("{d} / {d}", .{ most, most })]u8 = undefined;
         // Left out until the whole book is laid out, rather than a wrong number
         var counter: []const u8 = "";
         if (s.progress == null) {
-            counter = std.fmt.bufPrint(&label, "{d} / {d}", .{ index + 1, s.pages.len }) catch "";
+            counter = line_of(&label, "{d} / {d}", .{ index + 1, pages });
         }
         const x = @as(f32, @floatFromInt(a.display.screen.width / 2 - counter_left_of_middle_px));
         const y: i32 = @intCast(a.display.screen.height - footer_baseline_above_bottom_px);

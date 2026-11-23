@@ -8,6 +8,7 @@
 //! to say.
 const std = @import("std");
 const assert = std.debug.assert;
+const line_of = @import("../../text/line.zig").of;
 const phrases = @import("../../model/phrases.zig");
 const book_model = @import("../../model/book.zig");
 const stats = @import("../../model/stats.zig");
@@ -176,11 +177,11 @@ fn draw_footer(run: *const Run, a: *app.App, s: *sess.Session) !i32 {
     const pace = if (paused)
         "Paused \u{00B7} tap the middle to carry on"
     else
-        std.fmt.bufPrint(&pace_line, "{d} words a minute", .{wpm}) catch "";
+        line_of(&pace_line, "{d} words a minute", .{wpm});
     const pace_x: f32 = @floatFromInt(pause_x + pause_radius_px + pace_gap_px);
     try a.footer.draw(page, pace_x, baseline, pace);
     // The minutes left in the chapter; past the book's last phrase, none
-    var minutes_buffer: [48]u8 = undefined;
+    var minutes_buffer: stats.Minutes = undefined;
     var line: [64]u8 = undefined;
     var text: []const u8 = "End of the book";
     if (run.phrase) |p| {
@@ -188,7 +189,7 @@ fn draw_footer(run: *const Run, a: *app.App, s: *sess.Session) !i32 {
         assert(words_left >= p.words); // The phrase's own, at least
         const chapter_minutes = stats.minutes_at(a.user.running_pace.?, words_left);
         const left = stats.format_minutes(&minutes_buffer, chapter_minutes);
-        text = std.fmt.bufPrint(&line, "{s} left in chapter", .{left}) catch "";
+        text = line_of(&line, "{s} left in chapter", .{left});
     }
     const right: f32 = @floatFromInt(a.display.screen.width - footer_margin_px);
     const text_x = right - try a.footer.measure(text);

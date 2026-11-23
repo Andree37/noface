@@ -140,12 +140,12 @@ pub const Settings = struct {
     /// The reader's own picture when locked, instead of the book's cover.
     lock_picture: bool = false,
 
-    pub fn px(s: Settings) f32 {
+    pub fn px(s: *const Settings) f32 {
         s.check_steps();
         return sizes[s.size];
     }
 
-    pub fn line_height(s: Settings) i32 {
+    pub fn line_height(s: *const Settings) i32 {
         s.check_steps();
         const height: i32 = @intFromFloat(sizes[s.size] * spacings[s.spacing]);
         // Every spacing is more than single: a line is taller than its text.
@@ -154,7 +154,7 @@ pub const Settings = struct {
     }
 
     /// Parsing clamps every value, so an index out of range is a bug of ours.
-    fn check_steps(s: Settings) void {
+    fn check_steps(s: *const Settings) void {
         check.that(s.size < sizes.len, "the text size is one of its steps");
         check.that(s.spacing < spacings.len, "the spacing is one of its steps");
         check.that(s.margin < margins.len, "the margin is one of its steps");
@@ -245,7 +245,7 @@ pub fn parse(content: []const u8) Settings {
     return s;
 }
 
-pub fn format(buf: []u8, s: Settings) []const u8 {
+pub fn format(buf: []u8, s: *const Settings) []const u8 {
     assert(s.font.len > 0);
     var w: std.Io.Writer = .fixed(buf);
     inline for (saved) |f| {
@@ -295,9 +295,9 @@ test "settings survive being saved" {
         .bold_starts = true,
         .offer_dictionary = false,
     };
-    try std.testing.expectEqual(s, parse(format(&buf, s)));
-    try std.testing.expectEqual(Settings{}, parse(format(&buf, .{})));
-    try std.testing.expect(std.mem.indexOf(u8, format(&buf, s), "font Baskerville\n") != null);
+    try std.testing.expectEqual(s, parse(format(&buf, &s)));
+    try std.testing.expectEqual(Settings{}, parse(format(&buf, &Settings{})));
+    try std.testing.expect(std.mem.indexOf(u8, format(&buf, &s), "font Baskerville\n") != null);
 }
 
 test "bad or unknown lines change nothing; a typeface not on offer is kept by name" {
@@ -332,12 +332,12 @@ test "the reader's own typefaces are offered after the Kindle's, by name" {
     const s = parse("font Open Sans\n");
     try std.testing.expectEqual(all.len - 1, s.family_index(offered));
     var buf: [256]u8 = undefined;
-    try std.testing.expectEqual(s.font, parse(format(&buf, s)).font);
+    try std.testing.expectEqual(s.font, parse(format(&buf, &s)).font);
     const own_7 = parse("font Own 7\n").family_index(offered);
     try std.testing.expectEqual(builtin_families.len + 7, own_7);
     // Its file gone since: the first typeface, and its name kept for when it's back
     try std.testing.expectEqual(@as(u32, 0), s.family_index(builtin));
-    try std.testing.expectEqualStrings("Open Sans", parse(format(&buf, s)).font.name());
+    try std.testing.expectEqualStrings("Open Sans", parse(format(&buf, &s)).font.name());
 }
 
 test "every name kept out of the page-break key is a setting" {

@@ -145,7 +145,7 @@ fn before(order: Order, a: Entry, b: Entry) bool {
         .title => by_title(a, b),
         .author => by_author(a, b),
         .progress => by_progress(a, b),
-        .series => unreachable,
+        .series => unreachable, // Sorted by series above, before the books here come first
     };
 }
 
@@ -213,7 +213,7 @@ pub fn next_in_series(books: anytype, e: *const Entry) ?u32 {
 
 /// Where a book stands, for sorting by progress: under way first, then not started,
 /// then finished.
-pub fn stage(e: Entry) u2 {
+fn stage(e: Entry) u2 {
     if (e.in_progress()) {
         assert(!e.is_read()); // Under way and finished are told apart
         return 0;
@@ -233,7 +233,7 @@ fn by_progress(a: Entry, b: Entry) bool {
 
 /// What a book sorts under alphabetically: its series, so a series stays together,
 /// or else its title.
-pub fn title_key(e: Entry) []const u8 {
+fn title_key(e: Entry) []const u8 {
     const s = e.series orelse return e.title;
     return series_key(s);
 }
@@ -509,7 +509,7 @@ fn group_key(e: Entry) []const u8 {
 }
 
 /// The name a series is grouped under: without its "The", ignoring case.
-pub fn series_key(s: Series) []const u8 {
+fn series_key(s: Series) []const u8 {
     assert(s.name.len > 0);
     const key = without_the(s.name);
     assert(key.len > 0);

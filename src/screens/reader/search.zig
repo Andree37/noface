@@ -2,6 +2,7 @@
 //! go to, if any. The last query stays for the next search in this book.
 const std = @import("std");
 const assert = std.debug.assert;
+const line_of = @import("../../text/line.zig").of;
 const goto = @import("../../ui/goto.zig");
 const keyboard = @import("../../ui/keyboard.zig");
 const search_sheet = @import("../../ui/search_sheet.zig");
@@ -99,7 +100,7 @@ pub const Search = struct {
         var count: []const u8 = std.fmt.comptimePrint("{d}+ results", .{results_max});
         if (n < results_max) {
             const plural = if (n == 1) "" else "s";
-            count = std.fmt.bufPrint(&count_buffer, "{d} result{s}", .{ n, plural }) catch "";
+            count = line_of(&count_buffer, "{d} result{s}", .{ n, plural });
         }
         // Centred in its band, over the list
         const baseline = a.ui.caption.centred_baseline(search_sheet.content_top, count_height);

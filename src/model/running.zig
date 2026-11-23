@@ -5,6 +5,7 @@
 //! model/phrases.zig's.
 const std = @import("std");
 const assert = std.debug.assert;
+const line_of = @import("../text/line.zig").of;
 const stats = @import("stats.zig");
 
 /// The first pace: this share of the reader's speed in the hand, when it's known...
@@ -91,10 +92,13 @@ pub fn parse_pace(content: []const u8) ?f64 {
     return null;
 }
 
-pub fn format_pace(buf: []u8, wpm: f64) []const u8 {
+/// Room for the pace's line in the speed file: its tag and a number to a tenth.
+pub const PaceLine = [pace_tag.len + 16]u8;
+
+pub fn format_pace(buf: *PaceLine, wpm: f64) []const u8 {
     assert(wpm >= pace_wpm_min);
     assert(wpm <= pace_wpm_max);
-    return std.fmt.bufPrint(buf, pace_tag ++ " {d:.1}\n", .{wpm}) catch "";
+    return line_of(buf, pace_tag ++ " {d:.1}\n", .{wpm});
 }
 
 test "the first pace is slower than in the hand, and taps move it each way within bounds" {
@@ -126,8 +130,8 @@ test "taps land in the card's band, or in one of three columns below it" {
 }
 
 test "the running pace is saved after the reader's speed, which reads as before" {
-    var buf: [64]u8 = undefined;
-    var speed_buf: [64]u8 = undefined;
+    var buf: PaceLine = undefined;
+    var speed_buf: stats.SpeedLine = undefined;
     const speed: stats.Speed = .{ .pages = 10, .words = 3000, .seconds = 600 };
     const line = stats.format(&speed_buf, speed);
     const pace = format_pace(&buf, 187.5);

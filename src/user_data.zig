@@ -73,6 +73,11 @@ const settings_bytes_max = settings_model.family_bytes_max + 1024;
 /// The speed file: the reader's speed, then the running pace once there is one.
 const speed_bytes_max = 128;
 
+comptime {
+    // The speed's line and the pace's, as saved together, read back whole
+    assert(@sizeOf(stats.SpeedLine) + @sizeOf(running_model.PaceLine) <= speed_bytes_max);
+}
+
 pub fn load_settings(path: [*:0]const u8) settings_model.Settings {
     var buf: [settings_bytes_max]u8 = undefined;
     const settings = settings_model.parse(file.read_small(path, &buf));
@@ -85,7 +90,7 @@ pub fn load_settings(path: [*:0]const u8) settings_model.Settings {
 pub fn save_settings_to(path: [*:0]const u8, s: settings_model.Settings) void {
     assert(path[0] != 0);
     var buf: [settings_bytes_max]u8 = undefined;
-    const content = settings_model.format(&buf, s);
+    const content = settings_model.format(&buf, &s);
     // Every setting but the name is a word or a number: the name is the only long one
     assert(content.len > 0);
     file.write_small(path, content);
@@ -105,8 +110,8 @@ pub fn load_speed(path: [*:0]const u8) Speeds {
 }
 
 pub fn save_speed_to(path: [*:0]const u8, speeds: Speeds) void {
-    var buf: [speed_bytes_max / 2]u8 = undefined;
-    var pace_buf: [speed_bytes_max / 2]u8 = undefined;
+    var buf: stats.SpeedLine = undefined;
+    var pace_buf: running_model.PaceLine = undefined;
     assert(speeds.speed.seconds >= 0);
     assert(speeds.speed.words >= 0);
     const wpm = speeds.running_pace;

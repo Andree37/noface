@@ -3,6 +3,7 @@
 //! downloads over Wi-Fi, showing how far it's got, and can be cancelled.
 const std = @import("std");
 const assert = std.debug.assert;
+const line_of = @import("../../text/line.zig").of;
 const card_screen = @import("../card.zig");
 const input_mod = @import("../../kindle/input.zig");
 const app = @import("../../app.zig");
@@ -65,14 +66,14 @@ pub fn ask(
 ) card_screen.Card {
     assert(background.holds(&a.display));
     const l = language_of(lang);
-    const title = std.fmt.bufPrint(&asking.title_buffer, "Get the {s} dictionary?", .{
+    const title = line_of(&asking.title_buffer, "Get the {s} dictionary?", .{
         l.name,
-    }) catch "";
-    const subtitle = std.fmt.bufPrint(
+    });
+    const subtitle = line_of(
         &asking.subtitle_buffer,
         "A {d} MB download over Wi-Fi, {d} MB on the Kindle. Definitions from Wiktionary.",
         .{ l.download_mb, l.size_mb },
-    ) catch "";
+    );
     assert(title.len > 0);
     return card_screen.over(a, background, title, subtitle, &ask_rows, null);
 }
@@ -167,7 +168,7 @@ pub const Getting = struct {
         g.phase = .waiting;
         var title_buffer: [64]u8 = undefined;
         const title_format = "Getting the {s} dictionary";
-        const title = std.fmt.bufPrint(&title_buffer, title_format, .{g.l.name}) catch "";
+        const title = line_of(&title_buffer, title_format, .{g.l.name});
         g.progress = .{
             .a = a,
             .background = g.background,
@@ -294,11 +295,11 @@ const Progress = struct {
         const d = r.download;
         assert(d.pid > 0);
         assert(r.deadline_us > 0); // Set as it started
-        return std.fmt.bufPrint(
+        return line_of(
             &p.subtitle_buffer,
             "{d} MB of about {d}",
             .{ d.megabytes(), p.l.download_mb },
-        ) catch "";
+        );
     }
 
     pub fn on_tap(p: *Progress, t: screen.Tap) !screen.Step(Waited) {

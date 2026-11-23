@@ -17,7 +17,7 @@ const line_bytes_max = 40;
 comptime {
     // The longest line: a u64 time, a u32 level, a one-letter state, two spaces and a
     // newline. It always fits, so formatting one never comes back empty.
-    assert(20 + 1 + 10 + 1 + 1 + 1 <= line_bytes_max);
+    assert(@sizeOf(battery.Line) <= line_bytes_max); // A line as the model writes it
     // Reading the log back always has room for the half that trimming keeps
     assert(log_bytes_max / 2 + line_bytes_max < log_bytes_max);
 }
@@ -43,7 +43,7 @@ pub fn note(path: [*:0]const u8, last: *?battery.Sample) void {
     }
     last.* = sample;
     assert(last.* != null);
-    var line_buffer: [line_bytes_max]u8 = undefined;
+    var line_buffer: battery.Line = undefined;
     const line = battery.format_line(&line_buffer, sample);
     assert(line.len > 0);
     assert(line[line.len - 1] == '\n');

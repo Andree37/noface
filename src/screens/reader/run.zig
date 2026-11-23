@@ -13,6 +13,7 @@
 //! back, the pace and what a tap means; how it looks is run_view.zig's.
 const std = @import("std");
 const assert = std.debug.assert;
+const line_of = @import("../../text/line.zig").of;
 const style = @import("../../ui/style.zig");
 const running_model = @import("../../model/running.zig");
 const phrases = @import("../../model/phrases.zig");
@@ -373,7 +374,7 @@ pub const Pause = struct {
         if (p.under.len == 0) p.under = try alloc.alloc(u8, pixels);
         assert(p.under.len == pixels);
         @memcpy(p.under, a.display.screen.pixels);
-        const note = std.fmt.bufPrint(&p.note, "Running for {d} min", .{minutes_run}) catch "";
+        const note = line_of(&p.note, "Running for {d} min", .{minutes_run});
         return card_screen.over(a, .{ .pixels = p.under }, "Paused", note, &pause_rows, null);
     }
 

@@ -1,6 +1,7 @@
 //! Quick panel: drag down from the top of any screen to open it.
 const std = @import("std");
 const assert = std.debug.assert;
+const line_of = @import("../text/line.zig").of;
 const device = @import("../model/device.zig");
 const style = @import("style.zig");
 const Page = @import("../gfx/page.zig").Page;
@@ -438,8 +439,8 @@ pub fn draw_slider_at(
     assert(knob <= slider_right);
     page.fill_rect(0, band_top(row), page.width, band_height, 0xff);
     const bar = row_slider(row);
-    var level: [8]u8 = undefined;
-    const shown = std.fmt.bufPrint(&level, "{d}", .{value}) catch "";
+    var level: [std.fmt.count("{d}", .{std.math.maxInt(u32)})]u8 = undefined;
+    const shown = line_of(&level, "{d}", .{value});
     const knob_x: f32 = @floatFromInt(knob);
     try draw.centered(fonts.small, page, knob_x, @intCast(row.y - level_above), shown);
     const y: f32 = @floatFromInt(row.y);

@@ -2,6 +2,7 @@
 //! a screen refresh, and marking the book finished or unread.
 const std = @import("std");
 const assert = std.debug.assert;
+const line_of = @import("../../text/line.zig").of;
 const card_screen = @import("../card.zig");
 const card = @import("../../ui/card.zig");
 const catalog = @import("../../model/catalog.zig");
@@ -187,28 +188,28 @@ pub const More = struct {
         assert(s.current < s.pages.len);
         const percent = (s.current + 1) * 100 / s.pages.len;
         assert(percent <= 100);
-        const progress = std.fmt.bufPrint(
+        const progress = line_of(
             &m.progress_buffer,
             "Page {d} of {d}, {d}%",
             .{ s.current + 1, s.pages.len, percent },
-        ) catch "";
-        var time_read_buffer: [32]u8 = undefined;
+        );
+        var time_read_buffer: stats.Minutes = undefined;
         var read: []const u8 = "Not read here yet";
         if (stats.reading_time(&time_read_buffer, s.seconds_read_total())) |time| {
-            read = std.fmt.bufPrint(&m.read_buffer, "Read here for {s}", .{time}) catch "";
+            read = line_of(&m.read_buffer, "Read here for {s}", .{time});
         }
-        var time_left_buffer: [32]u8 = undefined;
+        var time_left_buffer: stats.Minutes = undefined;
         var left: []const u8 = "Learning your reading speed";
         if (s.time_left(s.current).book) |minutes| {
             const time = stats.format_minutes(&time_left_buffer, minutes);
-            left = std.fmt.bufPrint(&m.left_buffer, "{s} left in the book", .{time}) catch "";
+            left = line_of(&m.left_buffer, "{s} left in the book", .{time});
         }
         const highlights = highlights_model.count(s.notes.highlights.items);
-        const counts = std.fmt.bufPrint(
+        const counts = line_of(
             &m.counts_buffer,
             "{d} chapters, {d} highlights, {d} bookmarks",
             .{ s.chapters.len, highlights, s.notes.bookmarks.items.len },
-        ) catch "";
+        );
         m.details_rows = .{
             .{ .quiet = true, .label = progress },
             .{ .quiet = true, .label = read },

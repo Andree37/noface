@@ -18,7 +18,8 @@ pub fn file_path(buffer: []u8, state_dir: []const u8) ![:0]u8 {
 /// A book's series set by hand: null for "not in one".
 pub const Override = struct { path: []const u8, series: ?catalog.Series };
 
-/// The overrides in `text`; lines that don't parse are skipped.
+/// The overrides in `text`, in `alloc`; lines that don't parse are skipped. Their paths
+/// and names borrow `text`, kept as long as they are.
 // Assertions: it reads the overrides file, which is outside data.
 pub fn parse(alloc: std.mem.Allocator, text: []const u8) ![]Override {
     var out: std.ArrayList(Override) = .empty;
@@ -35,7 +36,7 @@ pub fn parse(alloc: std.mem.Allocator, text: []const u8) ![]Override {
             if (name.len > 0) .{ .name = name, .index = index } else null;
         try out.append(alloc, .{ .path = path, .series = series });
     }
-    return out.items;
+    return out.toOwnedSlice(alloc);
 }
 
 pub fn find(list: []const Override, path: []const u8) ?Override {

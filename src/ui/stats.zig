@@ -2,6 +2,7 @@
 //! last seven days as bars, then the year, reading speed and the library in rows.
 const std = @import("std");
 const assert = std.debug.assert;
+const line_of = @import("../text/line.zig").of;
 const Page = @import("../gfx/page.zig").Page;
 const draw = @import("draw.zig");
 const style = @import("style.zig");
@@ -87,7 +88,7 @@ fn nearest_minute(seconds: u64) u64 {
 
 /// Minutes to the nearest, as the bars count them, so the two agree; `none` under
 /// half a minute.
-fn minutes_text(buffer: []u8, seconds: u64, none: []const u8) []const u8 {
+fn minutes_text(buffer: *stats_model.Minutes, seconds: u64, none: []const u8) []const u8 {
     assert(none.len > 0);
     if (seconds < std.time.s_per_min / 2) return none;
     const minutes = nearest_minute(seconds);
@@ -141,15 +142,15 @@ pub fn render(fonts: Fonts, page: Page, s: Summary) !void {
 fn render_tiles(fonts: Fonts, page: Page, s: *const Summary) !void {
     const third: f32 = @floatFromInt((page.width - 2 * style.margin) / tiles);
     assert(third >= tile_label_width);
-    var today_buffer: [32]u8 = undefined;
-    var week_buffer: [32]u8 = undefined;
+    var today_buffer: stats_model.Minutes = undefined;
+    var week_buffer: stats_model.Minutes = undefined;
     var streak_buffer: [32]u8 = undefined;
     const today = minutes_text(&today_buffer, s.today, "0 min");
     try tile(fonts, page, style.margin, "Today", today);
     const week = minutes_text(&week_buffer, s.week, "0 min");
     try tile(fonts, page, style.margin + third, "Last 7 days", week);
     const days = if (s.streak == 1) "" else "s";
-    const streak = std.fmt.bufPrint(&streak_buffer, "{d} day{s}", .{ s.streak, days }) catch "";
+    const streak = line_of(&streak_buffer, "{d} day{s}", .{ s.streak, days });
     try tile(fonts, page, style.margin + 2 * third, "Streak", streak);
 }
 
@@ -217,8 +218,8 @@ fn render_chart_bar(fonts: Fonts, page: Page, bar: Bar) !void {
         page.fill_rect(left, chart_baseline - bar_corner, bar_width, bar_corner, shade);
     }
     if (bar.labelled) {
-        var buffer: [16]u8 = undefined;
-        const label = std.fmt.bufPrint(&buffer, "{d}", .{nearest_minute(bar.seconds)}) catch "";
+        var buffer: [std.fmt.count("{d}", .{std.math.maxInt(u64)})]u8 = undefined;
+        const label = line_of(&buffer, "{d}", .{nearest_minute(bar.seconds)});
         const center_x: f32 = @floatFromInt(bar.center_x);
         try draw.centered(fonts.caption, page, center_x, @intCast(top - bar_label_rise), label);
     }
@@ -233,27 +234,27 @@ fn render_rows(fonts: Fonts, page: Page, s: *const Summary) !void {
     var finished_buffer: [48]u8 = undefined;
     var speed_buffer: [48]u8 = undefined;
     var library_buffer: [64]u8 = undefined;
-    var minutes_buffer: [32]u8 = undefined;
-    const year_label = std.fmt.bufPrint(&year_buffer, "Finished in {d}", .{s.year}) catch "";
+    var minutes_buffer: stats_model.Minutes = undefined;
+    const year_label = line_of(&year_buffer, "Finished in {d}", .{s.year});
     const plural = if (s.year_finished == 1) "" else "s";
     const finished_format = "{d} book{s}";
-    const finished = std.fmt.bufPrint(&finished_buffer, finished_format, .{
+    const finished = line_of(&finished_buffer, finished_format, .{
         s.year_finished,
         plural,
-    }) catch "";
+    });
     try row(fonts, page, 0, year_label, finished);
     const year_time = minutes_text(&minutes_buffer, s.year_seconds, "None yet");
     try row(fonts, page, 1, "Read in noface this year", year_time);
     var speed: []const u8 = "Still learning";
     if (s.wpm) |wpm| {
-        speed = std.fmt.bufPrint(&speed_buffer, "{d} words a minute", .{wpm}) catch "";
+        speed = line_of(&speed_buffer, "{d} words a minute", .{wpm});
     }
     try row(fonts, page, 2, "Reading speed", speed);
-    const library = std.fmt.bufPrint(&library_buffer, "{d} books, {d} read, {d} going", .{
+    const library = line_of(&library_buffer, "{d} books, {d} read, {d} going", .{
         s.books,
         s.finished,
         s.in_progress,
-    }) catch "";
+    });
     try row(fonts, page, 3, "Library", library);
     const width = page.width - 2 * style.margin;
     page.fill_rect(style.margin, rows_bottom, width, 1, style.rule);

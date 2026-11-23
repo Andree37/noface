@@ -11,6 +11,7 @@
 //! or half of itself, without a word.
 const std = @import("std");
 const assert = std.debug.assert;
+const line_of = @import("../text/line.zig").of;
 const style = @import("style.zig");
 const Page = @import("../gfx/page.zig").Page;
 const Font = @import("../gfx/font.zig").Font;
@@ -216,11 +217,14 @@ pub fn smile(page: Page, cx: f32, cy: f32) void {
 }
 
 /// Width of the charge bar. Kept in u32: @min with a literal narrows the type.
+/// A whole battery, in percent: what the Kindle reports (outside data) is held to it.
+const battery_full = 100;
+
 pub fn battery_fill(inner: u32, percent: u32) u32 {
     assert(inner > 0);
     // The percent is the Kindle's to report, so anything over a full charge is clamped.
-    const level: u32 = @min(percent, 100);
-    const fill = inner * level / 100;
+    const level: u32 = @min(percent, battery_full);
+    const fill = inner * level / battery_full;
     assert(fill <= inner);
     return fill;
 }
@@ -474,8 +478,10 @@ pub fn status_cluster(
     const gap = c.gap * unit;
     const battery_x = right - c.battery.span();
     battery(page, c.battery, battery_x, cy, quick.battery);
-    var label: [8]u8 = undefined;
-    const percent = std.fmt.bufPrint(&label, "{d}%", .{quick.battery}) catch "";
+    // As the bar shows it: the Kindle's level (outside data) held to a whole battery
+    const level: u8 = @intCast(@min(quick.battery, battery_full));
+    var label: [std.fmt.count("{d}%", .{std.math.maxInt(u8)})]u8 = undefined;
+    const percent = line_of(&label, "{d}%", .{level});
     const percent_x = battery_x - gap - try font.measure(percent);
     try font.draw(page, percent_x, baseline, percent);
     var left = percent_x;

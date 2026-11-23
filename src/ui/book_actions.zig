@@ -41,7 +41,7 @@ pub fn subtitle(buf: []u8, e: *const catalog.Entry, confirming: bool) []const u8
     if (confirming) return "It stays in your Amazon library.";
     if (e.availability == .downloading) return downloading_note;
     var series_buf: [160]u8 = undefined;
-    var time_buf: [32]u8 = undefined;
+    var time_buf: stats.Minutes = undefined;
     // Room for the series and the time, so only a long author falls back to itself
     assert(buf.len >= series_buf.len + time_buf.len);
     const series = catalog.series_label(&series_buf, e.*);

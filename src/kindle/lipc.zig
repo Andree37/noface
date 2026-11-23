@@ -2,6 +2,7 @@
 //! events. Every call goes through the lipc command line tools.
 const std = @import("std");
 const assert = std.debug.assert;
+const line_of = @import("../text/line.zig").of;
 const unicode = @import("../text/unicode.zig");
 const linux = @import("../sys/calls.zig");
 const os = @import("../sys/os.zig");
@@ -187,20 +188,23 @@ pub fn read(previous: quick_model.Quick) quick_model.Quick {
 
 /// One value the status bar and quick panel show: the command that reads it, what a
 /// healthy Kindle answers (for the scenario tests' pretend one), and where it goes.
+/// Room for a property's key: its service's name and its own.
+pub const Key = [key_bytes_max]u8;
+const key_bytes_max = 96;
+
 pub const Reading = struct {
     argv: [*:null]const ?[*:0]const u8,
     healthy: []const u8,
     apply: *const fn (quick: *quick_model.Quick, text: []const u8) void,
 
     /// "service prop", as the pretend Kindle names a property. Empty for `date`.
-    pub fn key(r: Reading, buffer: []u8) []const u8 {
-        assert(buffer.len > 0);
+    pub fn key(r: Reading, buffer: *Key) []const u8 {
         const argv = r.argv;
         if (argv[0] != lipc_get) return "";
         const at: u8 = if (std.mem.eql(u8, std.mem.span(argv[1].?), "-s")) 2 else 1;
         const service = argv[at].?;
         assert(std.mem.startsWith(u8, std.mem.span(service), service_prefix));
-        return std.fmt.bufPrint(buffer, "{s} {s}", .{ service, argv[at + 1].? }) catch "";
+        return line_of(buffer, "{s} {s}", .{ service, argv[at + 1].? });
     }
 };
 

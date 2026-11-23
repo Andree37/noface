@@ -1,6 +1,7 @@
 //! The Aa sheet: reading settings, in four tabs.
 const std = @import("std");
 const assert = std.debug.assert;
+const line_of = @import("../text/line.zig").of;
 const settings_model = @import("../model/settings.zig");
 const Families = settings_model.Families;
 const Page = @import("../gfx/page.zig").Page;
@@ -626,14 +627,18 @@ fn draw_toggle(fonts: Fonts, page: Page, y: u32, label: []const u8, on: bool) !v
     }
 }
 
+/// Room for what a slider says: a step's number of all of them, or a spacing.
+pub const ValueLabel = [std.fmt.count("{d} of {d}", .{ step_most, step_most })]u8;
+const step_most = std.math.maxInt(u32);
+
 /// What a slider is set to, in words or numbers a reader knows.
-pub fn value_label(buf: []u8, r: Row, value: u32) []const u8 {
+pub fn value_label(buf: *ValueLabel, r: Row, value: u32) []const u8 {
     assert(r.steps >= 2);
-    assert(buf.len >= "99 of 99".len);
+    assert(value < r.steps); // A step of the slider's, each a name or a value below
     return switch (r.slider) {
-        .text_size => std.fmt.bufPrint(buf, "{d} of {d}", .{ value + 1, r.steps }) catch "",
-        .spacing => std.fmt.bufPrint(buf, "{d:.2}", .{settings_model.spacings[value]}) catch "",
-        .margins => margin_names[@min(value, margin_names.len - 1)],
+        .text_size => line_of(buf, "{d} of {d}", .{ value + 1, r.steps }),
+        .spacing => line_of(buf, "{d:.2}", .{settings_model.spacings[value]}),
+        .margins => margin_names[value],
     };
 }
 
@@ -643,7 +648,7 @@ pub fn draw_row(fonts: Fonts, page: Page, r: Row, value: u32, mono: bool) !void 
     assert(r.top + row_height <= max_height);
     page.fill_rect(0, r.top, page.width, row_height, 0xff);
     try fonts.small.draw(page, margin, @intCast(r.top + row_baseline), r.label);
-    var buf: [24]u8 = undefined;
+    var buf: ValueLabel = undefined;
     const shown = value_label(&buf, r, value);
     const right: f32 = @floatFromInt(page.width - margin);
     const shown_left = right - try fonts.small.measure(shown);
@@ -968,7 +973,7 @@ test "switches and fonts take a fingertip of height" {
 }
 
 test "sliders say what they're set to" {
-    var buf: [24]u8 = undefined;
+    var buf: ValueLabel = undefined;
     try std.testing.expectEqualStrings("1.35", value_label(&buf, spacing_row, 1));
     try std.testing.expectEqualStrings("Narrow", value_label(&buf, margin_row, 0));
     try std.testing.expectEqualStrings("3 of 6", value_label(&buf, size_row, 2));

@@ -1,6 +1,7 @@
 //! Reading toolbar: a single tap at the top of a page opens it.
 const std = @import("std");
 const assert = std.debug.assert;
+const line_of = @import("../text/line.zig").of;
 const settings_model = @import("../model/settings.zig");
 const Page = @import("../gfx/page.zig").Page;
 const draw = @import("draw.zig");
@@ -264,7 +265,7 @@ pub fn draw_scrub(fonts: Fonts, page: Page, at: ?Position, mono: bool) !void {
     };
     assert(p.index < p.total);
     var label: [32]u8 = undefined;
-    const s = std.fmt.bufPrint(&label, "Page {d} of {d}", .{ p.index + 1, p.total }) catch "";
+    const s = line_of(&label, "Page {d} of {d}", .{ p.index + 1, p.total });
     try draw.centered(fonts.small, page, centre, scrub_top + scrub_label_drop, s);
     const knob = slider.knob_at(scrub, p.index, p.total - 1);
     slider.draw(page, scrub, knob);

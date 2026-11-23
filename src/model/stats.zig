@@ -5,7 +5,9 @@
 //! times vary), and older pages fade, so a slower or harder book is followed.
 const std = @import("std");
 const assert = std.debug.assert;
+const line_of = @import("../text/line.zig").of;
 const unicode = @import("../text/unicode.zig");
+const line = @import("../text/line.zig");
 
 /// Longer than this, the reader stepped away: not reading.
 pub const max_page_seconds = 300;
@@ -229,20 +231,25 @@ pub fn counted_seconds(seconds: u64) u64 {
     return counted;
 }
 
+/// Room for a time `format_minutes` writes: the most hours there can be, and minutes.
+pub const Minutes = [std.fmt.count("{d} h {d} min", most_hours_minutes)]u8;
+/// The longest hours and minutes there can be, by their types.
+const most_hours_minutes = .{ std.math.maxInt(u64), std.math.maxInt(u8) };
+
 /// "12 min", "1 h 5 min", "3 h".
-pub fn format_minutes(buf: []u8, minutes: u64) []const u8 {
-    if (minutes < 60) return std.fmt.bufPrint(buf, "{d} min", .{@max(minutes, 1)}) catch "";
+pub fn format_minutes(buf: *Minutes, minutes: u64) []const u8 {
+    if (minutes < 60) return line.of(buf, "{d} min", .{@max(minutes, 1)});
     const h = minutes / 60;
-    const m = minutes % 60;
+    const m: u8 = @intCast(minutes % 60);
     assert(h > 0);
     assert(m < 60);
-    if (m == 0) return std.fmt.bufPrint(buf, "{d} h", .{h}) catch "";
-    return std.fmt.bufPrint(buf, "{d} h {d} min", .{ h, m }) catch "";
+    if (m == 0) return line.of(buf, "{d} h", .{h});
+    return line.of(buf, "{d} h {d} min", .{ h, m });
 }
 
 /// How long a book has been read, for a line about it: "3 h 12 min", or null under a
 /// minute, when there's nothing worth saying. Callers add their own words around it.
-pub fn reading_time(buf: []u8, seconds: u64) ?[]const u8 {
+pub fn reading_time(buf: *Minutes, seconds: u64) ?[]const u8 {
     if (seconds < 60) return null;
     const minutes = seconds / 60;
     assert(minutes >= 1); // So "1 min" is never a rounded-up zero
@@ -252,6 +259,12 @@ pub fn reading_time(buf: []u8, seconds: u64) ?[]const u8 {
 /// Timestamps before this (2001) can't be a real reading: a clock reset to 1970, or
 /// a placeholder like 1.
 const earliest_plausible = 1_000_000_000;
+
+/// After 2001 and not more than a day ahead of `now` (a clock set back): a time the
+/// Kindle's clock could really have had, when a reading or a battery sample was taken.
+pub fn plausible(time: u64, now: u64) bool {
+    return time >= earliest_plausible and time <= now +| std.time.s_per_day;
+}
 
 const Unit = struct { days: i64, name: []const u8, most: i64 };
 // Largest first. A unit is used from two of it up, so no "1 weeks"; months stop at
@@ -268,9 +281,9 @@ const units = [_]Unit{
 /// "yesterday" by morning. Null for a time that can't be right: before 2001, or more
 /// than a day ahead of `now`, as after the clock is set back.
 pub fn ago(buf: []u8, then: u64, now: u64, utc_offset: i64) ?[]const u8 {
-    if (then < earliest_plausible or then > now + 86400) return null;
-    const day_then = @divFloor(@as(i64, @intCast(then)) + utc_offset, 86400);
-    const day_now = @divFloor(@as(i64, @intCast(now)) + utc_offset, 86400);
+    if (!plausible(then, now)) return null;
+    const day_then = @divFloor(@as(i64, @intCast(then)) + utc_offset, std.time.s_per_day);
+    const day_now = @divFloor(@as(i64, @intCast(now)) + utc_offset, std.time.s_per_day);
     // At most a day ahead, so at most a calendar day ahead.
     assert(day_then <= day_now + 1);
     const days = @max(day_now - day_then, 0);
@@ -323,7 +336,7 @@ test "impossible times say nothing" {
 }
 
 test "reading time is only worth saying past a minute" {
-    var buf: [24]u8 = undefined;
+    var buf: Minutes = undefined;
     try std.testing.expect(reading_time(&buf, 59) == null);
     const time = reading_time(&buf, 3 * 3600 + 12 * 60).?;
     try std.testing.expectEqualStrings("3 h 12 min", time);
@@ -352,11 +365,15 @@ pub fn parse(content: []const u8) Speed {
     return speed;
 }
 
-pub fn format(buf: []u8, s: Speed) []const u8 {
+/// Room for the speed's line in the speed file: its tag, the pages, and the two sums,
+/// which `record` keeps far under ten digits before their decimals.
+pub const SpeedLine = [80]u8;
+
+pub fn format(buf: *SpeedLine, s: Speed) []const u8 {
     assert(s.seconds >= 0);
     assert(s.words >= 0);
     const fields = .{ format_tag, s.pages, s.words, s.seconds };
-    return std.fmt.bufPrint(buf, "{s} {d} {d:.2} {d:.2}\n", fields) catch "";
+    return line_of(buf, "{s} {d} {d:.2} {d:.2}\n", fields);
 }
 
 fn page(s: *Speed, words: u64, seconds: f64) void {
@@ -467,7 +484,7 @@ test "time on a page left open isn't counted" {
 }
 
 test "durations read naturally" {
-    var buf: [32]u8 = undefined;
+    var buf: Minutes = undefined;
     try std.testing.expectEqualStrings("12 min", format_minutes(&buf, 12));
     try std.testing.expectEqualStrings("1 min", format_minutes(&buf, 0));
     try std.testing.expectEqualStrings("1 h 5 min", format_minutes(&buf, 65));
@@ -475,7 +492,7 @@ test "durations read naturally" {
 }
 
 test "speed survives a save" {
-    var buf: [80]u8 = undefined;
+    var buf: SpeedLine = undefined;
     const s = learned(260);
     const back = parse(format(&buf, s));
     try std.testing.expectEqual(s.pages, back.pages);
@@ -497,7 +514,7 @@ test "a damaged speed file starts over instead of stopping the reader" {
     };
     for (bad) |content| try std.testing.expectEqual(Speed{}, parse(content));
     // The largest real file still fits the save buffer.
-    var buf: [80]u8 = undefined;
+    var buf: SpeedLine = undefined;
     const most = Speed{
         .pages = std.math.maxInt(u32),
         .words = max_seconds * max_wpm / 60,

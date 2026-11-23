@@ -7,9 +7,13 @@ const unicode = @import("../text/unicode.zig");
 
 pub const Match = struct { para: u32, byte: u32 };
 
+/// The most bytes typed into a search: as many as a word's dictionary key holds, and
+/// each a character at most, so `contains` holds any query typed.
+pub const query_bytes_max = 64;
+
 /// What's typed into a search box.
 pub const Query = struct {
-    buf: [64]u8 = undefined,
+    buf: [query_bytes_max]u8 = undefined,
     len: u32 = 0,
 
     pub fn slice(q: *const Query) []const u8 {
@@ -134,9 +138,9 @@ pub fn find(
 }
 
 /// Whether `query` appears anywhere in `s`, ignoring case and accents. For short
-/// texts like titles; queries past 64 characters never match.
+/// texts like titles; a query past `query_bytes_max` characters never matches.
 pub fn contains(s: []const u8, query: []const u8) bool {
-    var wanted: [64]u21 = undefined;
+    var wanted: [query_bytes_max]u21 = undefined;
     var n: u32 = 0;
     var q: u32 = 0;
     while (q < query.len) {

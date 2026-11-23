@@ -55,7 +55,8 @@ fn report_input(fd: i32, line_buffer: []u8, comptime label: []const u8, number: 
     const format = "/sys/class/input/event{d}/device/name";
     // Room for any u8's three digits, so the path is never empty
     comptime assert(path_buffer.len > format.len + 3);
-    const path = std.fmt.bufPrintSentinel(&path_buffer, format, .{found}, 0) catch "";
+    const made = std.fmt.bufPrintSentinel(&path_buffer, format, .{found}, 0);
+    const path = made catch unreachable; // Ignored: the buffer holds any number, as above
     const name = read_trim(path, &name_buffer);
     report_line(fd, line_buffer, label ++ padding ++ "/dev/input/event{d} ({s})", .{
         found,

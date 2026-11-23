@@ -144,7 +144,7 @@ fn run_after(run_before_day: u32, day: Day, next_day: i32) u32 {
 /// reset to 1970 and set west of UTC reads before it, which is no day the journal
 /// counts: such a time is day 0.
 pub fn day_of(unix: u64, utc_offset: i64) i32 {
-    const day = @max(0, @divFloor(@as(i64, @intCast(unix)) + utc_offset, 86400));
+    const day = @max(0, @divFloor(@as(i64, @intCast(unix)) + utc_offset, std.time.s_per_day));
     return @intCast(day);
 }
 

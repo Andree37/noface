@@ -2,6 +2,7 @@
 //! Kindle's own database: path, title, author, percent, last opened.
 const std = @import("std");
 const assert = std.debug.assert;
+const line_of = @import("../text/line.zig").of;
 const Page = @import("../gfx/page.zig").Page;
 const Font = @import("../gfx/font.zig").Font;
 const draw = @import("draw.zig");
@@ -614,12 +615,12 @@ const progress_label_bytes_max = 47;
 fn progress_label(buf: *[progress_label_bytes_max]u8, percent: u32, minutes_left: ?u64) []const u8 {
     assert(percent <= 100);
     const minutes = minutes_left orelse {
-        return std.fmt.bufPrint(buf, "{d}% read", .{percent}) catch "";
+        return line_of(buf, "{d}% read", .{percent});
     };
-    var time_buf: [32]u8 = undefined;
+    var time_buf: stats.Minutes = undefined;
     const time = stats.format_minutes(&time_buf, minutes);
     const format = "{d}% read  \u{b7}  {s} left";
-    return std.fmt.bufPrint(buf, format, .{ percent, time }) catch "";
+    return line_of(buf, format, .{ percent, time });
 }
 
 test "the hero's progress says how long is left once it's known" {
@@ -675,14 +676,14 @@ fn draw_hero_last_read(
 ) !void {
     assert(when.len > 0);
     assert(line_y > hero_top);
-    var time_buf: [32]u8 = undefined;
+    var time_buf: stats.Minutes = undefined;
     var line_buf: [96]u8 = undefined;
     var line: []const u8 = "";
     if (stats.reading_time(&time_buf, e.seconds_read)) |time| {
         const format = "Last read {s}  \u{b7}  read here for {s}";
-        line = std.fmt.bufPrint(&line_buf, format, .{ when, time }) catch "";
+        line = line_of(&line_buf, format, .{ when, time });
     } else {
-        line = std.fmt.bufPrint(&line_buf, "Last read {s}", .{when}) catch "";
+        line = line_of(&line_buf, "Last read {s}", .{when});
     }
     const left: f32 = @floatFromInt(left_px);
     try draw.clipped(fonts.caption, page, left, line_y, line, avail);
@@ -756,7 +757,7 @@ fn draw_search_header(fonts: Fonts, page: Page, query: []const u8, found: u32) !
     try draw.clipped(fonts.hero, page, left, hero_top + search_head.query_drop, shown, avail);
     var count: [32]u8 = undefined;
     const plural = if (found == 1) "" else "s";
-    const books = std.fmt.bufPrint(&count, "{d} book{s}", .{ found, plural }) catch "";
+    const books = line_of(&count, "{d} book{s}", .{ found, plural });
     try fonts.small.draw(page, left, hero_top + search_head.count_drop, books);
     const label = "Clear search";
     const w = try fonts.small.measure(label);

@@ -1,6 +1,7 @@
 //! Small drawing pieces several screens use.
 const std = @import("std");
 const assert = std.debug.assert;
+const line_of = @import("../text/line.zig").of;
 const unicode = @import("../text/unicode.zig");
 const Page = @import("../gfx/page.zig").Page;
 const Font = @import("../gfx/font.zig").Font;
@@ -256,7 +257,7 @@ pub const Pager = struct {
         // The count and both arrows centred on the band's middle
         const middle: i32 = @intCast((p.top + p.bottom) / 2);
         var label: [32]u8 = undefined;
-        const count = std.fmt.bufPrint(&label, "{d} of {d}", .{ index + 1, pages }) catch "";
+        const count = line_of(&label, "{d} of {d}", .{ index + 1, pages });
         const baseline = fonts.small.centred_on(middle);
         try centered(fonts.small, page, @floatFromInt(page.width / 2), baseline, count);
         const mid: f32 = @floatFromInt(middle);

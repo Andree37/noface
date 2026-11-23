@@ -17,11 +17,13 @@ const unicode = @import("../text/unicode.zig");
 pub const magic = "NFDICT1\n";
 
 /// Where the offsets start: after the magic and the entry count.
-const offsets_start = magic.len + 4;
+const offsets_start = magic.len + offset_bytes;
+/// The entry count and each offset: a u32.
+const offset_bytes = @sizeOf(u32);
 
 comptime {
     assert(magic.len == 8);
-    assert(offsets_start % 4 == 0); // The offsets are u32s, aligned in the file
+    assert(offsets_start % offset_bytes == 0); // The offsets are u32s, aligned in the file
 }
 
 pub const Entry = struct {
@@ -51,7 +53,7 @@ pub const Dictionary = struct {
     pub fn open(data: []const u8) ?Dictionary {
         if (data.len < offsets_start) return null;
         if (!std.mem.eql(u8, data[0..magic.len], magic)) return null;
-        const count = std.mem.readInt(u32, data[magic.len..][0..4], .little);
+        const count = std.mem.readInt(u32, data[magic.len..][0..offset_bytes], .little);
         const body = body_start(count);
         if (body > data.len) return null;
         const d = Dictionary{ .data = data, .count = count };
@@ -64,18 +66,18 @@ pub const Dictionary = struct {
 
     /// Where the entries start: after the header and `count + 1` offsets.
     fn body_start(count: u32) u64 {
-        const body = offsets_start + (@as(u64, count) + 1) * 4;
+        const body = offsets_start + (@as(u64, count) + 1) * offset_bytes;
         assert(body > offsets_start);
-        assert(body % 4 == 0);
+        assert(body % offset_bytes == 0);
         return body;
     }
 
     fn offset(d: Dictionary, i: u32) u32 {
         assert(i <= d.count);
-        const at = offsets_start + @as(u64, i) * 4;
+        const at = offsets_start + @as(u64, i) * offset_bytes;
         // `open` saw all `count + 1` offsets fit.
-        assert(at + 4 <= d.data.len);
-        return std.mem.readInt(u32, d.data[@intCast(at)..][0..4], .little);
+        assert(at + offset_bytes <= d.data.len);
+        return std.mem.readInt(u32, d.data[@intCast(at)..][0..offset_bytes], .little);
     }
 
     fn entry_bytes(d: Dictionary, i: u32) []const u8 {
@@ -137,7 +139,7 @@ pub const Dictionary = struct {
     }
 };
 
-pub const max_key = 64;
+pub const max_key = search.query_bytes_max; // A word looked up is a query's
 
 comptime {
     assert(max_key >= 4); // A key holds a code point at least

@@ -2,12 +2,14 @@
 //! level each time it changes; the time between two notes, both unplugged and the level
 //! not risen, is real use (reading, and asleep in between). Plain data, no drawing.
 const std = @import("std");
+const stats_model = @import("stats.zig");
 const assert = std.debug.assert;
+const line_of = @import("../text/line.zig").of;
 
 pub const Sample = struct { time: u64, level: u32, plugged: bool };
 
 /// Drain from these days back counts: recent enough to follow how it's used now.
-pub const window_s: u64 = 14 * 86400;
+pub const window_s: u64 = 14 * std.time.s_per_day;
 /// Less than this to go on, and the estimate would be noise.
 const min_span_s: u64 = 12 * 3600;
 const min_drop = 3;
@@ -39,10 +41,12 @@ pub fn parse_line(line: []const u8) ?Sample {
     return sample;
 }
 
-pub fn format_line(buf: []u8, s: Sample) []const u8 {
-    assert(buf.len >= line_size_max);
+/// Room for a line of the log.
+pub const Line = [line_size_max]u8;
+
+pub fn format_line(buf: *Line, s: Sample) []const u8 {
     const plug = if (s.plugged) "p" else "u";
-    const line = std.fmt.bufPrint(buf, "{d} {d} {s}\n", .{ s.time, s.level, plug }) catch "";
+    const line = line_of(buf, "{d} {d} {s}\n", .{ s.time, s.level, plug });
     // The buffer holds the longest line, so the line is always written whole.
     assert(line.len > 0);
     assert(line[line.len - 1] == '\n');
@@ -73,26 +77,27 @@ pub fn seconds_left(log: []const Sample, now: u64, level: u32) ?u64 {
     return @as(u64, level) * span / drop;
 }
 
-/// After 2001 and not in the future: a time the Kindle's clock could really have had.
-pub fn plausible(time: u64, now: u64) bool {
-    return time >= 1_000_000_000 and time <= now + 86400;
-}
+pub const plausible = stats_model.plausible;
 
 /// "About 2 weeks", "About 5 days", "About 20 hours".
-pub fn describe(buf: []u8, seconds: u64) []const u8 {
-    assert(buf.len >= describe_size_max);
+/// Room for how long a charge lasts, in words.
+pub const Description = [describe_size_max]u8;
+
+pub fn describe(buf: *Description, seconds: u64) []const u8 {
     const hours = seconds / 3600;
-    const days = (seconds + 43200) / 86400;
-    const weeks = (seconds + 3 * 86400) / (7 * 86400);
+    const day = std.time.s_per_day;
+    // Days to the nearest; a week from three days into it
+    const days = (seconds + day / 2) / day;
+    const weeks = (seconds + 3 * day) / (7 * day);
     assert(days >= hours / 24);
     if (hours < 2) return "Less than 2 hours";
-    if (hours < 36) return std.fmt.bufPrint(buf, "About {d} hours", .{hours}) catch "";
-    if (days < 14) return std.fmt.bufPrint(buf, "About {d} days", .{days}) catch "";
-    return std.fmt.bufPrint(buf, "About {d} weeks", .{weeks}) catch "";
+    if (hours < 36) return line_of(buf, "About {d} hours", .{hours});
+    if (days < 14) return line_of(buf, "About {d} days", .{days});
+    return line_of(buf, "About {d} weeks", .{weeks});
 }
 
 test "lines read back as written" {
-    var buf: [40]u8 = undefined;
+    var buf: Line = undefined;
     const s = Sample{ .time = 1793990000, .level = 87, .plugged = false };
     const line = format_line(&buf, s);
     try std.testing.expectEqualStrings("1793990000 87 u\n", line);

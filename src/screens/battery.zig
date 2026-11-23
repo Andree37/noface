@@ -2,6 +2,7 @@
 //! charge will last at the way the Kindle has been used lately. Any tap closes it.
 const std = @import("std");
 const assert = std.debug.assert;
+const line_of = @import("../text/line.zig").of;
 const battery = @import("../model/battery.zig");
 const battery_log = @import("../kindle/battery_log.zig");
 const stats = @import("../model/stats.zig");
@@ -43,12 +44,12 @@ pub const Lines = struct { title: []const u8, detail: []const u8 };
 
 /// What the bubble says, from the log, the battery now, and recent reading per day.
 pub fn lines(
-    buffer: []u8,
+    buffer: *[lines_size]u8,
     log: []const battery.Sample,
     now: ?battery.Sample,
     read_per_day_s: u64,
 ) Lines {
-    assert(buffer.len > title_size);
+    comptime assert(lines_size > title_size);
     const n = now orelse return .{
         .title = "Battery",
         .detail = "Its level can't be read right now.",
@@ -62,19 +63,19 @@ pub fn lines(
     };
     var time_buffer: [32]u8 = undefined;
     const time_left = battery.describe(&time_buffer, left_s);
-    const title = std.fmt.bufPrint(buffer[0..title_size], "{s} left", .{time_left}) catch "";
+    const title = line_of(buffer[0..title_size], "{s} left", .{time_left});
     // The time takes at most its 32 bytes, so the title always fits
     assert(title.len > 0);
-    var read_buffer: [32]u8 = undefined;
+    var read_buffer: stats.Minutes = undefined;
     const reading = stats.reading_time(&read_buffer, read_per_day_s) orelse return .{
         .title = title,
         .detail = "At the way it's been used lately",
     };
-    const detail = std.fmt.bufPrint(
+    const detail = line_of(
         buffer[title_size..],
         "Reading about {s} a day, as lately",
         .{reading},
-    ) catch "";
+    );
     // The reading time takes at most its 32 bytes too, so the detail always fits
     assert(detail.len > 0);
     return .{ .title = title, .detail = detail };

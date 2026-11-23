@@ -401,8 +401,7 @@ fn shelve(shelf_root: []const u8, shelf: Shelf) !void {
     for (0..shelf.copies()) |i| {
         const book = try book_path(&path_buffer, shelf_root, shelf, @intCast(i));
         if (holds(book, shelf.book())) continue;
-        core.file.write_small(book, shelf.book());
-        if (core.file.size_of(book) != shelf.book().len) return error.CantShelve;
+        if (!core.file.write_small(book, shelf.book())) return error.CantShelve;
     }
     // Copies past those, from a build whose layout held more books a page, go: the
     // library is to hold exactly the books counted on

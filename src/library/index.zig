@@ -296,8 +296,14 @@ pub const Index = struct {
         var path_buffer: [files.path_bytes_max]u8 = undefined;
         const path = try files.path_in(&path_buffer, ix.dir, "records");
         const offset = file_head_bytes + @as(u64, id) * @sizeOf(Record);
+        // One of the index's records, never past them
+        const records_end = file_head_bytes + @as(u64, ix.header.count) * @sizeOf(Record);
+        assert(offset + @sizeOf(Record) <= records_end);
         if (!files.write_at(path, offset, std.mem.asBytes(r))) return error.CantWrite;
-        assert(std.meta.eql(ix.record(id), r.*));
+        // The mapping showing a write made through another handle is the drive's
+        // promise, not noface's: one that doesn't keep it is a write that didn't land
+        const now = ix.record(id);
+        if (!std.mem.eql(u8, std.mem.asBytes(&now), std.mem.asBytes(r))) return error.CantWrite;
     }
 
     /// The text file mapped again, grown to `size` by texts written at its end: for a

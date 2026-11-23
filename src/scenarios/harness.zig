@@ -154,6 +154,9 @@ pub const Kindle = struct {
     unreadable: []const []const u8 = &.{},
     /// The first book's place file there but unreadable, as `unreadable` makes its files.
     place_unreadable: bool = false,
+    /// The first book's place can't be saved: the file it's written beside first, to be
+    /// renamed over it, can't be made, as on a drive that refuses a write.
+    place_unwritable: bool = false,
     /// Where the pages in the app's page buffers at the end are copied, for a scenario
     /// that looks at the words drawn: the run's own memory is gone once it returns.
     pages_into: ?std.mem.Allocator = null,
@@ -587,8 +590,8 @@ pub fn own_offered(alloc: std.mem.Allocator, dir: []const u8, count: u32) !fonts
     if (count == 0) return .{};
     const regular = try std.fmt.allocPrintSentinel(alloc, "{s}/own-regular.ttf", .{dir}, 0);
     const bold = try std.fmt.allocPrintSentinel(alloc, "{s}/own-bold.ttf", .{dir}, 0);
-    file.write_small(regular, go_regular);
-    file.write_small(bold, go_bold);
+    if (!file.write_small(regular, go_regular)) return error.CantWrite;
+    if (!file.write_small(bold, go_bold)) return error.CantWrite;
     const names = try alloc.alloc([]const u8, settings_model.builtin_families.len + count);
     @memcpy(names[0..settings_model.builtin_families.len], &settings_model.builtin_families);
     const own = try alloc.alloc([4][:0]const u8, count);
@@ -743,6 +746,13 @@ pub fn play_on_start(
         var place_buf: [file.own_path_bytes_max]u8 = undefined;
         const place_path = try a.state_path(&place_buf, book_paths[0]);
         if (os.failed(linux.symlink(place_path, place_path))) return error.CantWrite;
+    }
+    if (kindle.place_unwritable) {
+        var place_buf: [file.own_path_bytes_max]u8 = undefined;
+        const place_path = try a.state_path(&place_buf, book_paths[0]);
+        var beside_buf: [file.own_path_bytes_max + ".tmp".len]u8 = undefined;
+        const beside = try std.fmt.bufPrintSentinel(&beside_buf, "{s}.tmp", .{place_path}, 0);
+        if (os.failed(linux.symlink(beside, beside))) return error.CantWrite;
     }
 }
 

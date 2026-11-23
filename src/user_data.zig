@@ -99,8 +99,8 @@ pub fn save_settings_to(kept: *const file.Kept, s: settings_model.Settings) void
     const content = settings_model.format(&buf, &s);
     // Every setting but the name is a word or a number: the name is the only long one
     assert(content.len > 0);
-    // Unwritten only when it was unreadable as noface started: kept as it is, on purpose
-    _ = kept.write(&.{content});
+    // Unwritten, the file keeps what it had: said, as the settings in use aren't saved
+    if (!kept.write(&.{content})) log.info("settings not saved", .{});
 }
 
 /// How fast the reader reads, and the running pace (model/running.zig) once running
@@ -123,8 +123,9 @@ pub fn save_speed_to(kept: *const file.Kept, speeds: Speeds) void {
     assert(speeds.speed.words >= 0);
     const wpm = speeds.running_pace;
     const pace = if (wpm) |w| running_model.format_pace(&pace_buf, w) else "";
-    // Unwritten only when it was unreadable as noface started: kept as it is, on purpose
-    _ = kept.write(&.{ stats.format(&buf, speeds.speed), pace });
+    // Unwritten, the file keeps what it had: said, as what was learned isn't saved
+    const parts = [_][]const u8{ stats.format(&buf, speeds.speed), pace };
+    if (!kept.write(&parts)) log.info("reading speed not saved", .{});
 }
 
 /// The journal saved at `path`: every day is in the file, which is mapped, never read
@@ -163,7 +164,7 @@ pub fn save_journal_to(path: [*:0]const u8, journal: *const journal_model.Journa
         older[1], // A line break, when the file's last line had none
         content[journal_model.tag_line_bytes..],
     };
-    file.write_parts(path, &parts);
+    if (!file.write_parts(path, &parts)) log.info("journal not saved", .{});
 }
 
 /// A path in /tmp for a test's file, "/tmp/noface-<name>-<pid>", none there yet.

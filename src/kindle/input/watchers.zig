@@ -80,7 +80,8 @@ pub fn beat_to(path: [*:0]const u8) void {
     comptime assert(stamp.len >= 20 + 1);
     const text = std.fmt.bufPrint(&stamp, "{d}\n", .{os.unix_time()}) catch "0\n";
     assert(text.len > 1);
-    file.write_small(path, text);
+    // Unwritten, the beat is missed, which is what the watchdog watches for: it decides
+    _ = file.write_small(path, text);
 }
 
 /// Beats at `path` if the last beat, at `last_us` on the monotonic clock, was a beat's

@@ -581,8 +581,10 @@ fn middle_of(h: text.Hit) style.Point {
 /// Saves the reader's place, `s.anchor`, which stays what they're at even while the
 /// pages are being laid out again or failed to be. `percent` is how far in they are,
 /// or null when the pages don't say (see `Session.percent`): then it's the words
-/// before the place, as the time left saved with it is the words after.
-pub fn save_progress(entry: *catalog.Entry, s: *Session, percent_read: ?u32) void {
+/// before the place, as the time left saved with it is the words after. Whether the
+/// place was saved: not when it was unreadable as the book opened, nor when the drive
+/// didn't take it.
+pub fn save_progress(entry: *catalog.Entry, s: *Session, percent_read: ?u32) bool {
     assert(s.current < s.pages.len);
     assert(s.anchor.para < s.paragraphs.len);
     s.pause_clock(); // The reader's loop starts it again
@@ -609,12 +611,14 @@ pub fn save_progress(entry: *catalog.Entry, s: *Session, percent_read: ?u32) voi
     const place_saved = state.save(&s.place, saved);
     s.app.user.save_speed();
     s.app.user.save_journal();
-    // The library shows what's saved: a place unreadable as the book opened isn't
-    if (!place_saved) return;
+    // The library shows what's saved: a place unreadable as the book opened isn't, nor
+    // one the drive didn't take
+    if (!place_saved) return false;
     entry.percent = percent;
     entry.last = now;
     entry.seconds_read = seconds;
     entry.words_left = words_left;
+    return true;
 }
 
 /// The last paragraph with any of it on the page from `start` to `end` (the next

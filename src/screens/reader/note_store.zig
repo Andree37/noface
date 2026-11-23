@@ -427,7 +427,7 @@ test "a 0.2.0 notes file is renumbered once, and a file noface writes says how i
         .{ .text = "two", .position = 5, .skipped_by_0_2 = true },
         .{ .text = "four", .position = 9 },
     };
-    file.write_small(store.own_file, "highlight h1 5 8\n");
+    try std.testing.expect(file.write_small(store.own_file, "highlight h1 5 8\n"));
     store.renumber(&paras);
     const once = try store.read(arena.allocator(), .highlight);
     try std.testing.expectEqual(@as(u32, 9), once[0].start);

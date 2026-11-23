@@ -3,6 +3,8 @@
 //! the old), appending, and copying.
 const std = @import("std");
 const assert = std.debug.assert;
+/// Lines for noface's log, which the tests keep quiet.
+const log = std.log.scoped(.file);
 const linux = @import("calls.zig");
 const os = @import("os.zig");
 const failed = os.failed;
@@ -141,7 +143,7 @@ pub const Kept = struct {
         return read_small(k.path, buf) catch |err| switch (err) {
             error.NotFound => "",
             error.CantRead => {
-                std.debug.print("{s}: there but unreadable, never written over\n", .{k.path});
+                log.info("{s}: there but unreadable, never written over", .{k.path});
                 k.known = false;
                 return "";
             },
@@ -149,12 +151,11 @@ pub const Kept = struct {
     }
 
     /// Writes `parts` as the file's whole text, as `write_parts`, unless what it holds
-    /// is unknown. Whether it was written.
+    /// is unknown. Whether it was written, whole.
     pub fn write(k: *const Kept, parts: []const []const u8) bool {
         assert(parts.len > 0);
         if (!k.known) return false;
-        write_parts(k.path, parts);
-        return true;
+        return write_parts(k.path, parts);
     }
 };
 
@@ -181,23 +182,24 @@ pub fn read_end(path: [*:0]const u8, buf: []u8) []const u8 {
 }
 
 /// Writes beside the real file and renames, so a crash or a power cut can't lose the old
-/// contents.
-pub fn write_small(path: [*:0]const u8, data: []const u8) void {
+/// contents. Whether the new contents are the file's now, whole on the drive.
+pub fn write_small(path: [*:0]const u8, data: []const u8) bool {
     assert(path[0] != 0);
     assert(data.len <= std.math.maxInt(u32));
-    write_parts(path, &.{data});
+    return write_parts(path, &.{data});
 }
 
 /// Writes `parts`, one after another, beside the real file and renames, as
 /// `write_small`. The old file stays as it was unless the new one is whole on the drive.
-pub fn write_parts(path: [*:0]const u8, parts: []const []const u8) void {
+/// Whether it is: false leaves the old one, and says nothing was saved.
+pub fn write_parts(path: [*:0]const u8, parts: []const []const u8) bool {
     assert(path[0] != 0);
     assert(parts.len > 0);
     var tmp: [path_bytes_max + ".tmp".len]u8 = undefined;
     const name = std.mem.sliceTo(path, 0);
     const tmp_path = std.fmt.bufPrintSentinel(&tmp, "{s}.tmp", .{name}, 0) catch {
         std.debug.print("not saved, its path is too long: {s}\n", .{name});
-        return;
+        return false;
     };
     assert(std.mem.endsWith(u8, tmp_path, ".tmp")); // Beside the real file, never it
     const rc = linux.open(
@@ -205,7 +207,7 @@ pub fn write_parts(path: [*:0]const u8, parts: []const []const u8) void {
         .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true, .CLOEXEC = true },
         0o644,
     );
-    if (failed(rc)) return;
+    if (failed(rc)) return false;
     const fd: i32 = @intCast(rc);
     var total: u64 = 0;
     const whole = for (parts) |part| {
@@ -220,10 +222,11 @@ pub fn write_parts(path: [*:0]const u8, parts: []const []const u8) void {
     const closed = !failed(linux.close(fd));
     // Never an empty file in place of the old one
     if (synced and closed and total > 0) {
-        if (!failed(linux.rename(tmp_path, path))) return;
+        if (!failed(linux.rename(tmp_path, path))) return true;
     }
     // Not renamed: the old file stays, whole, and the partial new one goes
     _ = linux.unlink(tmp_path); // Ignored: one left over is only space, written over next time
+    return false;
 }
 
 /// Writes all of `data` to `fd`, however many writes it takes. False when one fails.
@@ -366,8 +369,8 @@ test "only a file that isn't there, or is empty, maps as nothing in it" {
     var buffer: [64]u8 = undefined;
     const path = try test_path(&buffer, "", "map");
     try std.testing.expectError(error.NotFound, map(path));
-    write_small(path, "");
-    try std.testing.expectError(error.NotFound, map(path)); // Never an empty file in place
+    try std.testing.expect(!write_small(path, "")); // Never an empty file in place
+    try std.testing.expectError(error.NotFound, map(path));
     const rc = linux.open(path, .{ .ACCMODE = .WRONLY, .CREAT = true }, 0o644);
     try std.testing.expect(!failed(rc));
     try std.testing.expect(!failed(linux.close(@intCast(rc))));
@@ -383,12 +386,13 @@ test "a save that can't be written leaves the old file as it was" {
     var buffer: [64]u8 = undefined;
     const path = try test_path(&buffer, "", "save");
     defer _ = linux.unlink(path);
-    write_small(path, "old");
+    try std.testing.expect(write_small(path, "old"));
     var tmp_buffer: [64]u8 = undefined;
     const tmp_path = try std.fmt.bufPrintSentinel(&tmp_buffer, "{s}.tmp", .{path}, 0);
     try std.testing.expect(!failed(linux.symlink(tmp_path, tmp_path))); // Can't be opened
     defer _ = linux.unlink(tmp_path);
-    write_parts(path, &.{ "new", " and more" });
+    // Said, as well as kept: the caller learns its save didn't happen
+    try std.testing.expect(!write_parts(path, &.{ "new", " and more" }));
     const data = try map(path);
     defer unmap(data);
     try std.testing.expectEqualStrings("old", data);
@@ -405,7 +409,7 @@ test "a save to a long path is written, and leaves nothing beside it" {
     const path = try test_path(&buffer, &between, "long");
     try std.testing.expect(path.len > 400);
     defer _ = linux.unlink(path);
-    write_parts(path, &.{ "a", "b" });
+    try std.testing.expect(write_parts(path, &.{ "a", "b" }));
     const data = try map(path);
     defer unmap(data);
     try std.testing.expectEqualStrings("ab", data);

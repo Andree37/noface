@@ -181,6 +181,18 @@ pub const all = [_]Scenario{
         }.run,
     },
     .{
+        .name = "a place the drive won't take is never taken for saved",
+        .run = struct {
+            fn run() !void {
+                const read = [_]Step{ wait(60_000), forward };
+                const saved = try play_on(.{}, &read);
+                const refused = try play_on(.{ .place_unwritable = true }, &read);
+                try expect(saved.saved.opened > 0, "the place wasn't saved");
+                try expect(refused.saved.opened == 0, "a place the drive refused was kept");
+            }
+        }.run,
+    },
+    .{
         .name = "a reading journal that's there but can't be read is never written over",
         .run = struct {
             fn run() !void {

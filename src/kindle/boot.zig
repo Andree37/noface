@@ -21,6 +21,8 @@ const failed = os.failed;
 const settings_path = paths.data_dir ++ "/" ++ paths.data.settings;
 const attempts_path = paths.data_dir ++ "/" ++ paths.data.boot_attempts;
 const log_path = paths.data_dir ++ "/" ++ paths.data.log;
+const off_not_saved = "autostart: couldn't save it turned off, turned off next boot\n";
+const uncounted = "autostart: this boot couldn't be counted, so noface wasn't started\n";
 /// Boots in a row without noface running a minute before autostart turns itself off.
 pub const attempts_max = 3;
 /// The settings file at its largest: its longest line is the typeface's name.
@@ -79,14 +81,18 @@ pub fn first_this_boot() bool {
 pub fn should_start() bool {
     var settings_buffer: [settings_bytes_max]u8 = undefined;
     var attempts_buffer: [32]u8 = undefined;
-    var settings = settings_model.parse(file.read_system(settings_path, &settings_buffer));
+    // The reader's settings: one unreadable reads as autostart off, and is never written
+    var settings_file = file.Kept.at(settings_path);
+    var settings = settings_model.parse(settings_file.read(&settings_buffer));
     const attempts = file.read_system(attempts_path, &attempts_buffer);
     switch (decide(&settings, attempts)) {
         .off => return false,
         .give_up => {
             // Written as noface writes it: every other setting stays as it was
             settings.autostart = false;
-            file.write_small(settings_path, settings_model.format(&settings_buffer, &settings));
+            const off = settings_model.format(&settings_buffer, &settings);
+            // Unwritten, autostart stays on, and this guard turns it off at the next boot
+            if (!settings_file.write(&.{off})) file.append_file(log_path, off_not_saved);
             // Ignored: gone already: the count starts over either way
             _ = calls.unlink(attempts_path);
             const message = "autostart: noface failed to start 3 boots in a row, " ++
@@ -100,7 +106,12 @@ pub fn should_start() bool {
             var text: [16]u8 = undefined;
             comptime assert(text.len >= 10 + 1); // Any u32, and its newline
             const count = std.fmt.bufPrint(&text, "{d}\n", .{attempt}) catch return true;
-            file.write_small(attempts_path, count);
+            // Uncounted, a noface that fails to start would start on every boot: the
+            // guard that stops it can't count, so this boot doesn't start it
+            if (!file.write_small(attempts_path, count)) {
+                file.append_file(log_path, uncounted);
+                return false;
+            }
             return true;
         },
     }

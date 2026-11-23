@@ -184,6 +184,8 @@ pub const Reader = struct {
     lang: ?hyphen.Lang = null,
     start: u32 = 0, // The page it opens at
     reading_started: bool = false, // The first page shown, so its place is saved on leaving
+    /// Whether the place's last save landed: the library says so as the book closes.
+    place_saved: bool = true,
     failed: ?anyerror = null, // The first page couldn't be shown
     view: View = .page,
     since_save: u32 = 0,
@@ -235,7 +237,7 @@ pub const Reader = struct {
     fn show_first(r: *Reader) !void {
         assert(r.start < r.s.pages.len);
         try r.s.show(r.start, .jump, null, true);
-        sess.save_progress(r.entry, r.s, r.s.percent());
+        r.place_saved = sess.save_progress(r.entry, r.s, r.s.percent());
         assert(r.s.current == r.start);
         r.reading_started = true;
         r.a.wifi_hands_off = false;
@@ -459,7 +461,7 @@ pub const Reader = struct {
                 // so how far in it is goes by the words before its place
                 .failed, .stopped => null,
             };
-            sess.save_progress(r.entry, r.s, percent);
+            r.place_saved = sess.save_progress(r.entry, r.s, percent);
             wifi_saver.restore(); // Leaving the book, Wi-Fi comes back
         }
         r.release();
@@ -519,7 +521,7 @@ pub const Reader = struct {
 
     fn save(r: *Reader) void {
         assert(r.s.current < r.s.pages.len);
-        sess.save_progress(r.entry, r.s, r.s.percent());
+        r.place_saved = sess.save_progress(r.entry, r.s, r.s.percent());
         r.since_save = 0;
         assert(r.s.clock.stopped()); // Saving stops the reading clock; the loop starts it
     }

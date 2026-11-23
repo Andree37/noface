@@ -75,7 +75,8 @@ fn note_trim(path: [*:0]const u8) void {
     const start = (std.mem.indexOfScalarPos(u8, all, cut, '\n') orelse return) + 1;
     assert(start > cut);
     assert(start <= all.len);
-    file.write_small(path, all[start..]);
+    // Unwritten, the log stays long, and is trimmed at the next sample
+    _ = file.write_small(path, all[start..]);
 }
 
 /// The samples in the log, oldest first, as many as `out` holds (the newest).

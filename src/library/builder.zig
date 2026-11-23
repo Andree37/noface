@@ -376,7 +376,10 @@ fn read_epub(b: *Build, path: [:0]const u8, cover_path: [:0]const u8) ?About {
     defer file.unmap(data);
     const have_cover = file.exists(cover_path);
     const about = read_about(b.scratch, data, !have_cover) orelse return null;
-    if (about.cover) |bytes| file.write_small(cover_path, bytes);
+    if (about.cover) |bytes| {
+        // Unwritten, the book has no cover file, and its cover is read again next build
+        if (!file.write_small(cover_path, bytes)) log("library: a cover not saved\n", .{});
+    }
     if (about.cover != null) assert(!have_cover); // Read only for a book without one
     return .{
         .title = about.title,

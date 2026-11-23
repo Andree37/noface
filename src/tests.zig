@@ -72,6 +72,7 @@ test {
     _ = @import("screens/typing.zig");
     _ = @import("kindle/input/watchers.zig");
     _ = @import("screens/books.zig");
+    _ = @import("screens/library.zig");
     _ = @import("screens/book_actions.zig");
     _ = @import("model/stats.zig");
     _ = @import("model/search.zig");

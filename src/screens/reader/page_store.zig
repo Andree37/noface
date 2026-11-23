@@ -123,7 +123,7 @@ pub fn save(
     // Not saving only costs laying the book out again next time
     const bytes = encode(alloc, k, pages) catch return;
     defer alloc.free(bytes);
-    file.write_small(path, bytes);
+    _ = file.write_small(path, bytes); // Unwritten, it's laid out again, as above
 }
 
 pub fn encode(alloc: std.mem.Allocator, k: u64, pages: []const book_model.Pos) ![]u8 {

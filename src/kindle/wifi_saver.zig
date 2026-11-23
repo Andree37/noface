@@ -88,7 +88,8 @@ pub fn pause(downloading: bool) Outcome {
         .unknown => return .later,
     }
     if (lipc.bluetooth_on() orelse return .later) return .later;
-    file.write_small(marker, "1\n");
+    // Unwritten, it isn't marked, so it's never paused: noface couldn't put it back
+    _ = file.write_small(marker, "1\n");
     if (!marked()) return .never;
     lipc.set_airplane(true);
     // A clear "still on": it didn't happen, try again later. No answer (cmd busy taking

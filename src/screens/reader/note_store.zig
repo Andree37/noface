@@ -56,11 +56,12 @@ pub const NoteStore = union(enum) {
         store: *NoteStore,
         alloc: std.mem.Allocator,
         kind: annotations.Kind,
-        stored: []u8,
+        stored: ?[]u8,
     ) ![]const Note {
-        assert(stored.len > 0);
+        // Room for the database's answer, there only for a store that has one
+        assert((stored != null) == (store.* == .amazon));
         const notes = switch (store.*) {
-            .amazon => |entry| try annotation_db.read_notes(alloc, entry.key, kind, stored),
+            .amazon => |entry| try annotation_db.read_notes(alloc, entry.key, kind, stored.?),
             .own_file => |path| try read_file(alloc, path, kind) orelse unreadable: {
                 log.info("notes can't be read: off till the book opens again", .{});
                 store.* = .unreadable;
@@ -134,7 +135,7 @@ fn put_amazon(
         .guid = entry.guid,
         .start = start,
         .end = end,
-        .now_ms = os.unix_time() * 1000,
+        .now_ms = os.unix_time() * std.time.ms_per_s,
     }) catch return false;
     assert(std.mem.endsWith(u8, sql, ";")); // A whole statement
     return annotation_db.run_annotation_sql(sql);
@@ -144,7 +145,7 @@ fn remove_amazon(entry: *const catalog.Entry, kind: annotations.Kind, id: []cons
     assert(!entry.is_epub());
     if (!safe.safe_id(id) or !safe.safe_id(entry.key)) return false;
     var buffer: [900]u8 = undefined;
-    const now_ms = os.unix_time() * 1000;
+    const now_ms = os.unix_time() * std.time.ms_per_s;
     const sql = annotations.delete_sql(&buffer, kind, id, entry.key, now_ms) catch return false;
     assert(std.mem.endsWith(u8, sql, ";")); // A whole transaction, through its commit
     return annotation_db.run_annotation_sql(sql);
@@ -258,21 +259,20 @@ test "notes come back by kind, put replaces by id, and remove keeps the others" 
     var buffer: [128]u8 = undefined;
     var store = try test_store(&buffer, "kinds");
     defer files.remove(store.own_file);
-    var stored: [16]u8 = undefined;
     // None yet: no file
-    try std.testing.expectEqual(@as(usize, 0), (try store.read(alloc, .highlight, &stored)).len);
+    try std.testing.expectEqual(@as(usize, 0), (try store.read(alloc, .highlight, null)).len);
     try std.testing.expect(store.put(.highlight, "h1", point(10), point(20)));
     try std.testing.expect(store.put(.bookmark, "b1", point(30), point(30)));
     try std.testing.expect(store.put(.highlight, "h2", point(40), point(50)));
     try std.testing.expect(store.put(.highlight, "h1", point(11), point(21))); // Moved
-    const marks = try store.read(alloc, .highlight, &stored);
+    const marks = try store.read(alloc, .highlight, null);
     try std.testing.expectEqual(@as(usize, 2), marks.len);
     try std.testing.expectEqualStrings("h2", marks[0].id);
     try std.testing.expectEqual(@as(u32, 11), marks[1].start);
     try std.testing.expect(store.remove(.highlight, "h2"));
     try std.testing.expect(store.remove(.highlight, "never-there"));
-    try std.testing.expectEqual(@as(usize, 1), (try store.read(alloc, .highlight, &stored)).len);
-    try std.testing.expectEqual(@as(usize, 1), (try store.read(alloc, .bookmark, &stored)).len);
+    try std.testing.expectEqual(@as(usize, 1), (try store.read(alloc, .highlight, null)).len);
+    try std.testing.expectEqual(@as(usize, 1), (try store.read(alloc, .bookmark, null)).len);
 }
 
 test "many notes are kept, however many there are" {
@@ -287,8 +287,7 @@ test "many notes are kept, however many there are" {
         const at: u32 = @intCast(i * 10);
         try std.testing.expect(store.put(.highlight, id, point(at), point(at + 5)));
     }
-    var stored: [16]u8 = undefined;
-    const notes = try store.read(arena.allocator(), .highlight, &stored);
+    const notes = try store.read(arena.allocator(), .highlight, null);
     try std.testing.expectEqual(@as(usize, 2000), notes.len);
 }
 
@@ -309,10 +308,9 @@ test "notes that are there but can't be read open as none, and are never written
     try std.testing.expect(!store.put(.highlight, "h3", point(50), point(60)));
     try std.testing.expect(!store.remove(.highlight, "h1"));
     // The book opens without notes, and the store keeps none from then on
-    var stored: [16]u8 = undefined;
-    try std.testing.expectEqual(0, (try store.read(arena.allocator(), .highlight, &stored)).len);
+    try std.testing.expectEqual(0, (try store.read(arena.allocator(), .highlight, null)).len);
     try std.testing.expect(store == .unreadable);
-    try std.testing.expectEqual(0, (try store.read(arena.allocator(), .bookmark, &stored)).len);
+    try std.testing.expectEqual(0, (try store.read(arena.allocator(), .bookmark, null)).len);
     try std.testing.expect(!store.put(.bookmark, "b1", point(5), point(5)));
     try std.testing.expect(!store.remove(.highlight, "h1"));
     // Still the link: nothing was renamed over it
@@ -331,17 +329,15 @@ test "the last note removed leaves an empty file, which takes the next" {
     try std.testing.expect(store.put(.bookmark, "b1", point(5), point(5)));
     try std.testing.expect(store.remove(.bookmark, "b1"));
     try std.testing.expectError(error.EmptyFile, file.map(store.own_file));
-    var stored: [16]u8 = undefined;
-    try std.testing.expectEqual(0, (try store.read(arena.allocator(), .bookmark, &stored)).len);
+    try std.testing.expectEqual(0, (try store.read(arena.allocator(), .bookmark, null)).len);
     try std.testing.expect(store.put(.bookmark, "b2", point(7), point(7)));
-    const marks = try store.read(arena.allocator(), .bookmark, &stored);
+    const marks = try store.read(arena.allocator(), .bookmark, null);
     try std.testing.expectEqual(1, marks.len);
 }
 
 test "a store that's off keeps nothing and reads nothing" {
     var store: NoteStore = .off;
     try std.testing.expect(store.put(.highlight, "h1", point(1), point(2)));
-    var stored: [16]u8 = undefined;
-    const notes = try store.read(std.testing.allocator, .highlight, &stored);
+    const notes = try store.read(std.testing.allocator, .highlight, null);
     try std.testing.expectEqual(@as(usize, 0), notes.len);
 }

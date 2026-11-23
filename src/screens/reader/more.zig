@@ -186,7 +186,8 @@ pub const More = struct {
         const s = m.s;
         assert(s.pages.len > 0);
         assert(s.current < s.pages.len);
-        const percent = (s.current + 1) * 100 / s.pages.len;
+        // Opened over the whole book laid out (`needs_all_pages`), so the pages say
+        const percent = s.percent().?;
         assert(percent <= 100);
         const progress = line_of(
             &m.progress_buffer,

@@ -123,7 +123,7 @@ fn draw_phrases(run: *const Run, a: *app.App, s: *sess.Session) !void {
     assert(run.history_len <= run.history.len);
     const page = a.display.on_screen();
     const band = a.display.screen.height - footer_height_px - text_top;
-    page.fill_rect(0, text_top, a.display.screen.width, band, 0xff);
+    page.fill_rect(0, text_top, a.display.screen.width, band, style.white);
     const family = a.user.settings.family_index(a.families());
     const big = try a.typefaces.phrase_face(family, true, phrase_px);
     const small = try a.typefaces.phrase_face(family, false, context_px);
@@ -165,7 +165,7 @@ pub fn show_footer(run: *const Run, a: *app.App, s: *sess.Session) !i32 {
 fn draw_footer(run: *const Run, a: *app.App, s: *sess.Session) !i32 {
     const page = a.display.on_screen();
     const top = a.display.screen.height - footer_height_px;
-    page.fill_rect(0, top, a.display.screen.width, footer_height_px, 0xff);
+    page.fill_rect(0, top, a.display.screen.width, footer_height_px, style.white);
     const cy = icons_y(a);
     run_icons.pause_button(page, pause_x, cy, run.stopped_at != null);
     const baseline: i32 = @intCast(a.display.screen.height - footer_baseline_above_bottom_px);

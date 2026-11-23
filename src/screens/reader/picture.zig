@@ -50,7 +50,7 @@ const hint_height = style.space.wider;
 const hint_pad = style.space.roomy;
 const hint_baseline_drop = style.space.snug + style.space.medium;
 /// How long after a tap a second one makes it a double tap, and how near it must land.
-const double_tap_us = 300 * 1000;
+const double_tap_us = 300 * std.time.us_per_ms;
 const double_tap_reach = style.space.tall;
 
 comptime {
@@ -158,7 +158,7 @@ fn draw_view(a: *app.App, v: *const View, settled: bool) !u32 {
     // How it works, at the bottom, until the first zoom
     if (v.step == 0 and settled) try draw_view_hint(a, page);
     a.display.put_composed();
-    std.debug.print("picture drawn in {d} ms\n", .{(os.now_us() - t0) / 1000});
+    std.debug.print("picture drawn in {d} ms\n", .{(os.now_us() - t0) / std.time.us_per_ms});
     return a.display.screen.show(if (settled) .screen else .quick);
 }
 

@@ -62,7 +62,7 @@ pub const PageEntry = struct {
         const top = sheet_top;
         try search_sheet.render_bar(a.ui, page, top, e.typed.slice(), placeholder, .none);
         const note_height = keyboard.top - search_sheet.content_top;
-        page.fill_rect(0, search_sheet.content_top, page.width, note_height, 0xff);
+        page.fill_rect(0, search_sheet.content_top, page.width, note_height, style.white);
         if (e.note.len > 0) {
             const baseline = search_sheet.note_baseline(a.ui.small);
             try a.ui.small.draw(page, style.margin, baseline, e.note);

@@ -441,7 +441,7 @@ pub fn draw_slider_at(
     // Placed by knob_at or knob_under, on the bar
     assert(knob >= slider_left);
     assert(knob <= slider_right);
-    page.fill_rect(0, band_top(row), page.width, band_height, 0xff);
+    page.fill_rect(0, band_top(row), page.width, band_height, style.white);
     const bar = row_slider(row);
     var level: [std.fmt.count("{d}", .{std.math.maxInt(u32)})]u8 = undefined;
     const shown = line_of(&level, "{d}", .{value});
@@ -479,7 +479,7 @@ pub fn shortcut_box(choice: Hit) ?style.Rect {
 /// Redraws one toggle and its label, after a tap changed it.
 pub fn draw_shortcut(fonts: Fonts, page: Page, choice: Hit, quick: *const Quick) !void {
     const box = shortcut_box(choice) orelse return;
-    page.fill_rect(box.x, box.y, box.w, box.h, 0xff);
+    page.fill_rect(box.x, box.y, box.w, box.h, style.white);
     for (0..tiles.len) |i| {
         if (tiles[i].hit == choice) try draw_tile(fonts, page, @intCast(i), quick);
     }
@@ -510,7 +510,7 @@ fn draw_tile(fonts: Fonts, page: Page, i: u32, quick: *const Quick) !void {
         icons.ring(page, x, y, icon_radius);
         draw_glyph(page, quick, t.glyph, x, y);
     } else {
-        page.pill(x, x, y, icon_radius + 1.5, 0x00);
+        page.pill(x, x, y, icon_radius + 1.5, style.black);
         const white = WhiteGlyph{ .glyph = t.glyph, .quick = quick };
         try icons.draw_white(page, tile_px, tile_px, c.x, c.y, white);
     }
@@ -529,7 +529,7 @@ pub fn draw_header(
     notice: ?[]const u8,
 ) !void {
     const box = header_box(fonts);
-    page.fill_rect(box.x, box.y, box.w, box.h, 0xff);
+    page.fill_rect(box.x, box.y, box.w, box.h, style.white);
     try fonts.title.draw(page, header_inset, header_baseline, device.short_name(device.target));
     const header_width: f32 = @floatFromInt(page.width - 2 * header_inset);
     const line = notice orelse quick.clock_text();
@@ -558,8 +558,8 @@ pub fn render(
     notice: ?[]const u8,
 ) !void {
     const w: f32 = @floatFromInt(page.width);
-    page.fill_rect(0, 0, page.width, height, 0xff);
-    page.fill_rect(0, height - edge, page.width, edge, 0x00);
+    page.fill_rect(0, 0, page.width, height, style.white);
+    page.fill_rect(0, height - edge, page.width, edge, style.black);
     try draw_header(fonts, page, quick, notice);
 
     for (0..tiles.len) |i| try draw_tile(fonts, page, @intCast(i), quick);

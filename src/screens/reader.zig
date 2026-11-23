@@ -154,7 +154,6 @@ fn open_book(r: *Reader) !void {
     if (r.progress) |*p| r.session.progress = p;
     r.s = &r.session;
     try book_open.read_notes(a, r.alloc, entry, state_path, r.s);
-    r.chapters = book.chapters;
     r.lang = parsed.lang;
     r.start = opened.start;
     r.last_place = opened.start;
@@ -178,7 +177,6 @@ pub const Reader = struct {
     progress: ?paginate.Progressive = null, // A first open's layout, laid out in idle moments
     session: sess.Session = undefined,
     s: *sess.Session = undefined, // The session above
-    chapters: []const book_model.Chapter = &.{},
     lang: ?hyphen.Lang = null,
     start: u32 = 0, // The page it opens at
     reading_started: bool = false, // The first page shown, so its place is saved on leaving
@@ -940,7 +938,7 @@ pub const Reader = struct {
                 r.open_child(.{ .searching = .{ .screen = searching } });
             },
             .goto => {
-                const going = try goto.make(a, s, r.scratch, r.chapters);
+                const going = try goto.make(a, s, r.scratch, s.chapters);
                 r.open_child(.{ .going = .{ .screen = going } });
             },
             .bookmark => {

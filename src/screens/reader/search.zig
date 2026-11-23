@@ -80,7 +80,7 @@ pub const Search = struct {
         if (part == .all) switch (se.shown) {
             .keyboard => {
                 const keyboard_gap = keyboard.top - search_sheet.content_top;
-                page.fill_rect(0, search_sheet.content_top, page.width, keyboard_gap, 0xff);
+                page.fill_rect(0, search_sheet.content_top, page.width, keyboard_gap, style.white);
             },
             .results => |r| try se.draw_results(page, r.rows, r.pages),
         };
@@ -94,7 +94,7 @@ pub const Search = struct {
         assert(rows.len <= results_max);
         const a = se.a;
         const count_height = goto.list_top - search_sheet.content_top;
-        page.fill_rect(0, search_sheet.content_top, page.width, count_height, 0xff);
+        page.fill_rect(0, search_sheet.content_top, page.width, count_height, style.white);
         var count_buffer: [32]u8 = undefined;
         const n = rows.len;
         var count: []const u8 = std.fmt.comptimePrint("{d}+ results", .{results_max});

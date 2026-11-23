@@ -36,7 +36,10 @@ pub const BookNotes = struct {
         assert(n.highlights.items.len == 0);
         assert(n.bookmarks.items.len == 0);
         n.store = try .choose(alloc, entry, state_path);
-        const stored = try alloc.alloc(u8, stored_bytes_max);
+        // The database's answer read into this: a megabyte, taken only for a book that
+        // has its notes there
+        const in_database = n.store == .amazon;
+        const stored: ?[]u8 = if (in_database) try alloc.alloc(u8, stored_bytes_max) else null;
         const highlight_notes = try n.store.read(alloc, .highlight, stored);
         const highlights_read = try highlights.parse(alloc, paragraphs, highlight_notes);
         try n.highlights.appendSlice(alloc, highlights_read);

@@ -441,7 +441,7 @@ fn progress_bar(page: Page, x: u32, y: u32, w: u32, percent: u32, thick: f32) vo
     if (percent == 0) return;
     const read: f32 = @floatFromInt(@min(percent, whole_percent));
     const filled = @as(f32, @floatFromInt(w)) * read / whole_percent;
-    page.pill(left + r, left + @max(filled - r, r), cy, r, 0x00);
+    page.pill(left + r, left + @max(filled - r, r), cy, r, style.black);
 }
 
 /// "32%" in a small white pill over a cover's bottom left corner.
@@ -470,8 +470,8 @@ fn draw_badge(font: *Font, page: Page, x: u32, cy: f32, s: []const u8) !void {
     const left: f32 = @floatFromInt(x + badge.inset);
     const w = try font.measure(s) + 2 * badge.label_pad;
     const ends = [2]f32{ left + r, left + @max(w - r, r) };
-    page.pill(ends[0], ends[1], cy, r, 0x00);
-    page.pill(ends[0], ends[1], cy, r - 2, 0xff);
+    page.pill(ends[0], ends[1], cy, r, style.black);
+    page.pill(ends[0], ends[1], cy, r - 2, style.white);
     try font.draw(page, left + badge.label_pad, font.centred_on(@intFromFloat(cy)), s);
 }
 
@@ -497,8 +497,8 @@ fn button_outline(page: Page, left: f32, right: f32, top: i32) void {
     assert(left >= margin);
     const r: f32 = button_height / 2;
     const cy: f32 = @floatFromInt(top + button_top + button_height / 2);
-    page.pill(left + r, right - r, cy, r, 0x00);
-    page.pill(left + r, right - r, cy, r - 2, 0xff);
+    page.pill(left + r, right - r, cy, r, style.black);
+    page.pill(left + r, right - r, cy, r - 2, style.white);
 }
 
 /// A book with no thumbnail still gets a real cover: its title set in type.
@@ -515,10 +515,10 @@ fn type_cover(
     assert(w > 2 * type_inset);
     assert(h > type_title_top + type_author_above);
     page.fill_rect(x, y, w, h, type_paper);
-    page.fill_rect(x, y, w, type_edge, 0x00);
-    page.fill_rect(x, y + h - type_edge, w, type_edge, 0x00);
-    page.fill_rect(x, y, type_edge, h, 0x00);
-    page.fill_rect(x + w - type_edge, y, type_edge, h, 0x00);
+    page.fill_rect(x, y, w, type_edge, style.black);
+    page.fill_rect(x, y + h - type_edge, w, type_edge, style.black);
+    page.fill_rect(x, y, type_edge, h, style.black);
+    page.fill_rect(x + w - type_edge, y, type_edge, h, style.black);
     const left: f32 = @floatFromInt(x + type_inset);
     const avail: f32 = @floatFromInt(w - 2 * type_inset);
     const top: i32 = @intCast(y + type_title_top);
@@ -527,7 +527,7 @@ fn type_cover(
     const used = try draw.wrapped(fonts.cover, page, left, top, step, e.title, avail, lines);
     assert(used <= lines);
     const rule_y = y + type_title_top + used * type_title_step;
-    page.fill_rect(x + type_inset, rule_y, type_rule_width, type_rule_height, 0x00);
+    page.fill_rect(x + type_inset, rule_y, type_rule_width, type_rule_height, style.black);
     const author_y: i32 = @intCast(y + h - type_author_above);
     try draw.clipped(fonts.caption, page, left, author_y, e.author, avail);
 }
@@ -783,7 +783,7 @@ fn draw_tabs(
     const r: f32 = button_height / 2;
     if (searching) {
         // Filled while a search is showing, like a toggle that's on
-        page.pill(search_cx, search_cx, cy, r, 0x00);
+        page.pill(search_cx, search_cx, cy, r, style.black);
         const magnifier = icons.Magnifier{ .scale = 0.8 };
         const size = button_height;
         try icons.draw_white(page, size, size, search_cx, @intFromFloat(cy), magnifier);
@@ -834,7 +834,7 @@ pub fn render(
     const with_hero = index == 0;
     assert(books.shown.len <= grid_size(with_hero));
     assert(books.shown.len <= books.count);
-    @memset(page.buf, 0xff);
+    @memset(page.buf, style.white);
     try draw_status(fonts, page, quick);
 
     var hero_drawn = false;

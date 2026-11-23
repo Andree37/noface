@@ -18,16 +18,16 @@ const os = @import("../../sys/os.zig");
 const screen = @import("../screen.zig");
 
 /// How long the Kindle is kept awake for a download.
-const awake_us_max = 15 * 60 * 1_000_000;
+const awake_us_max = 15 * std.time.us_per_min;
 /// How long to wait for Wi-Fi to connect before giving up.
-const connect_us_max = 30 * 1_000_000;
+const connect_us_max = 30 * std.time.us_per_s;
 
 comptime {
     // Connecting is part of the download, so the Kindle stays awake through it
     assert(connect_us_max < awake_us_max);
-    assert(connect_us_max + dict_download.download_s_max * 1_000_000 < awake_us_max);
+    assert(connect_us_max + dict_download.download_s_max * std.time.us_per_s < awake_us_max);
     // The card shows how far it's got every second, many times before the deadline
-    assert(Progress.tick_us == 1_000_000);
+    assert(Progress.tick_us == std.time.us_per_s);
     // The card shows the wait at least once before giving up
     assert(Progress.tick_us < connect_us_max);
 }
@@ -269,7 +269,7 @@ const Waited = enum { finished, failed, cancelled, too_long, no_wifi, cant_start
 const Progress = struct {
     pub const Result = Waited;
     pub const touches = input_mod.Input.Modes.sheet;
-    pub const tick_us = 1_000_000;
+    pub const tick_us = std.time.us_per_s;
     a: *app.App,
     background: display.Backdrop,
     l: dict_download.Language,
@@ -337,7 +337,7 @@ const Progress = struct {
         assert(p.running == null);
         const a = p.a;
         const d = dict_download.start(a.state_dir, a.dictionary_base, p.l) orelse return false;
-        const download_us = @as(u64, dict_download.download_s_max) * 1_000_000;
+        const download_us = @as(u64, dict_download.download_s_max) * std.time.us_per_s;
         p.running = .{ .download = d, .deadline_us = os.now_us() + download_us };
         assert(d.pid > 0);
         return true;

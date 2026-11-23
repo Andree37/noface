@@ -253,7 +253,7 @@ pub const Position = struct { index: u32, total: u32 };
 /// says so, and has no knob until there's a place to put it.
 pub fn draw_scrub(fonts: Fonts, page: Page, at: ?Position, mono: bool) !void {
     assert(page.height > scrub_top);
-    page.fill_rect(0, scrub_top, page.width, screen_height - scrub_top, 0xff);
+    page.fill_rect(0, scrub_top, page.width, screen_height - scrub_top, style.white);
     const centre: f32 = @floatFromInt(page.width / 2);
     const p = at orelse {
         const y = scrub_top + scrub_label_drop;
@@ -285,7 +285,7 @@ pub fn render(
 ) !void {
     assert(page.width > 2 * margin);
     const w: f32 = @floatFromInt(page.width);
-    page.fill_rect(0, 0, page.width, top_height, 0xff);
+    page.fill_rect(0, 0, page.width, top_height, style.white);
 
     const clock = quick.clock_text();
     const time = clock[0 .. std.mem.indexOfScalar(u8, clock, ' ') orelse clock.len];
@@ -306,7 +306,7 @@ pub fn render(
     page.fill_rect(0, top_height - edge, page.width, edge, style.black);
     if (sheet) |tab| try aa.render(fonts, page, tab, chosen, running);
 
-    page.fill_rect(0, bottom_top, page.width, screen_height - bottom_top, 0xff);
+    page.fill_rect(0, bottom_top, page.width, screen_height - bottom_top, style.white);
     page.fill_rect(0, bottom_top, page.width, edge, style.black);
     icons.skip(page, skip_inset, bottom_top + chapter_icon_drop, false);
     icons.skip(page, w - skip_inset, bottom_top + chapter_icon_drop, true);

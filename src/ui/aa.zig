@@ -646,7 +646,7 @@ pub fn value_label(buf: *ValueLabel, r: Row, value: u32) []const u8 {
 pub fn draw_row(fonts: Fonts, page: Page, r: Row, value: u32, mono: bool) !void {
     assert(r.top >= content_top);
     assert(r.top + row_height <= max_height);
-    page.fill_rect(0, r.top, page.width, row_height, 0xff);
+    page.fill_rect(0, r.top, page.width, row_height, style.white);
     try fonts.small.draw(page, margin, @intCast(r.top + row_baseline), r.label);
     var buf: ValueLabel = undefined;
     const shown = value_label(&buf, r, value);
@@ -824,7 +824,7 @@ pub fn render(
 ) !void {
     const height = height_for(tab);
     assert(height > top);
-    page.fill_rect(0, top, page.width, height - top, 0xff);
+    page.fill_rect(0, top, page.width, height - top, style.white);
     page.fill_rect(0, height - sheet_edge, page.width, sheet_edge, style.black);
     try draw_tabs(fonts, page, tab);
     switch (tab) {

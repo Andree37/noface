@@ -168,7 +168,7 @@ pub fn wifi(page: Page, cx: f32, cy: f32, scale: f32, bars: ?u32) void {
     assert(scale > 0);
     // Drawn around its own middle, so it can share a line with text.
     const p = Pen{ .page = page, .cx = cx, .cy = cy + 2 * scale * unit, .scale = scale * unit };
-    p.disc(0, 24, 6, 0x00);
+    p.disc(0, 24, 6, style.black);
     const radii = [_]f32{ 19, 34, 49 };
     if (bars) |b| assert(b <= radii.len);
     for (radii, 0..) |r, i| {
@@ -298,7 +298,7 @@ pub fn battery(page: Page, size: Battery, x: f32, cy: f32, percent: u32) void {
     const fill = battery_fill(inner, percent);
     if (fill > 0) {
         const fill_units = @as(f32, @floatFromInt(fill)) / p.scale;
-        p.rect(pad, y + pad, fill_units, h - 2 * pad, 0x00);
+        p.rect(pad, y + pad, fill_units, h - 2 * pad, style.black);
     }
 }
 
@@ -376,7 +376,7 @@ pub fn dots(page: Page, cx: f32, cy: f32) void {
     assert(inside(cx, page.width));
     assert(inside(cy, page.height));
     const p = Pen{ .page = page, .cx = cx, .cy = cy };
-    for ([_]f32{ -16, 0, 16 }) |dy| p.disc(0, dy, 4, 0x00);
+    for ([_]f32{ -16, 0, 16 }) |dy| p.disc(0, dy, 4, style.black);
 }
 
 /// A pager's arrow: a chevron pointing right when `forward`, its tip at its middle.
@@ -514,12 +514,12 @@ pub fn cloud(page: Page, cx: f32, cy: f32) void {
     assert(inside(cy, page.height));
     const p = Pen{ .page = page, .cx = cx, .cy = cy };
     // Ringed as the tick's badge is, a little larger for the cloud cut out of it
-    p.disc(0, 0, cloud_badge_radius + badge_ring, 0xff);
-    p.disc(0, 0, cloud_badge_radius, 0x00);
-    p.disc(-11, 3, 9, 0xff);
-    p.disc(11, 3, 9, 0xff);
-    p.disc(1, -4, 12, 0xff);
-    p.rect(-11, 3, 22, 9, 0xff);
+    p.disc(0, 0, cloud_badge_radius + badge_ring, style.white);
+    p.disc(0, 0, cloud_badge_radius, style.black);
+    p.disc(-11, 3, 9, style.white);
+    p.disc(11, 3, 9, style.white);
+    p.disc(1, -4, 12, style.white);
+    p.rect(-11, 3, 22, 9, style.white);
 }
 
 /// Highlight: a marker pen at a slant over the gray stroke it leaves.
@@ -572,7 +572,7 @@ test "a white glyph lands centred, and only where it was drawn" {
     const page = Page{ .buf = &under, .width = 40, .height = 40, .stride = 40 };
     const Dot = struct {
         pub fn draw(_: @This(), t: Page, cx: f32, cy: f32) !void {
-            t.fill_rect(@intFromFloat(cx - 1), @intFromFloat(cy - 1), 2, 2, 0x00);
+            t.fill_rect(@intFromFloat(cx - 1), @intFromFloat(cy - 1), 2, 2, style.black);
         }
     };
     try draw_white(page, 10, 10, 20, 20, Dot{});
@@ -590,10 +590,10 @@ pub fn bar_chart(page: Page, cx: f32, cy: f32) void {
     for (heights, 0..) |h, i| {
         const x = -14 + @as(f32, @floatFromInt(i)) * 14;
         const top = 14 - h + 3;
-        p.pill(x, x, top, 3, 0x00);
-        p.rect(x - 3, top, 6, h - 3, 0x00);
+        p.pill(x, x, top, 3, style.black);
+        p.rect(x - 3, top, 6, h - 3, style.black);
     }
-    p.rect(-21, 14, 42, 3, 0x00);
+    p.rect(-21, 14, 42, 3, style.black);
 }
 
 /// Filter: a funnel.
@@ -637,8 +637,8 @@ pub fn check(page: Page, cx: f32, cy: f32) void {
     assert(inside(cx, page.width));
     assert(inside(cy, page.height));
     const p = Pen{ .page = page, .cx = cx, .cy = cy };
-    p.disc(0, 0, badge_radius + badge_ring, 0xff);
-    p.disc(0, 0, badge_radius, 0x00);
+    p.disc(0, 0, badge_radius + badge_ring, style.white);
+    p.disc(0, 0, badge_radius, style.black);
     // The tick, white: two strokes that meet, each traced with small discs
     const strokes = [_][4]f32{ .{ -11, 1, -3, 9 }, .{ -3, 9, 12, -8 } };
     comptime assert(strokes[0][2] == strokes[1][0]);
@@ -647,7 +647,7 @@ pub fn check(page: Page, cx: f32, cy: f32) void {
     for (strokes) |l| {
         for (0..steps + 1) |i| {
             const t = @as(f32, @floatFromInt(i)) / steps;
-            p.disc(l[0] + (l[2] - l[0]) * t, l[1] + (l[3] - l[1]) * t, 2, 0xff);
+            p.disc(l[0] + (l[2] - l[0]) * t, l[1] + (l[3] - l[1]) * t, 2, style.white);
         }
     }
 }

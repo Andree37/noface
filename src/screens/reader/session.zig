@@ -468,7 +468,10 @@ pub const Session = struct {
         s.note_placed(index);
         if (touched_us) |t| {
             std.debug.print("turn to {d}: touch to queued {d} us, touch to done {d} ms{s}\n", .{
-                index + 1, queued -| t, (done -| t) / 1000, if (clean) " (clean)" else "",
+                index + 1,
+                queued -| t,
+                (done -| t) / std.time.us_per_ms,
+                if (clean) " (clean)" else "",
             });
         }
         // Prepare both neighbours now, so the next turn is only a copy.
@@ -681,7 +684,7 @@ pub fn relayout(a: *app.App, s: *Session) !void {
     assert(s.current < s.pages.len);
     std.debug.print("relayout {s} in {d} ms\n", .{
         if (stored != null) "from saved pages" else "first pages",
-        (now_us() - t0) / 1000,
+        (now_us() - t0) / std.time.us_per_ms,
     });
     std.debug.print("relayout: page {d} of {d}, anchor {d}:{d}\n", .{
         s.current + 1,

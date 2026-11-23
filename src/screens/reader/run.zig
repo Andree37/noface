@@ -296,7 +296,7 @@ pub const Run = struct {
         // counts as a touch, so it never holds off the tap that follows. Timed by the
         // panel, as the finger lifted: noface may read it later
         if (touch.held_us) |held| if (held < running_model.contact_us_min) {
-            std.debug.print("running: too short a touch, {d} ms\n", .{held / 1000});
+            std.debug.print("running: too short a touch, {d} ms\n", .{held / std.time.us_per_ms});
             return .nothing;
         };
         // Until the screen is shown, there's nothing on it to tap

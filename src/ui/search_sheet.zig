@@ -134,8 +134,8 @@ pub fn render_bar(
     const cy: f32 = bar_top + r;
     const left: f32 = style.margin;
     const right: f32 = field_right - field_gap;
-    page.pill(left + r, right - r, cy, r, 0x00);
-    page.pill(left + r, right - r, cy, r - 2, 0xff);
+    page.pill(left + r, right - r, cy, r, style.black);
+    page.pill(left + r, right - r, cy, r - 2, style.white);
     const icon_x = left + field.icon_inset;
     if (icon == .search) icons.search_scaled(page, icon_x, cy, field.icon_scale);
     const inset: f32 = if (icon == .search) field.text_inset else field.text_inset_plain;

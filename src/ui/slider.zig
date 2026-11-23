@@ -72,8 +72,8 @@ pub fn draw(page: Page, s: Slider, knob: u32) void {
     const y: f32 = @floatFromInt(s.y);
     const x: f32 = @floatFromInt(knob);
     const r: f32 = half_height;
-    page.pill(left, right, y, r, 0x00);
-    page.pill(left, right, y, r - outline, 0xff);
+    page.pill(left, right, y, r, style.black);
+    page.pill(left, right, y, r - outline, style.white);
     // Left of the knob's ring, the bar shows only once there's room for its whole
     // rounded end: shorter, it would peek out as a sliver beside the ring, so it's
     // cleared, and the bar seems to start at the knob
@@ -88,9 +88,9 @@ pub fn draw(page: Page, s: Slider, knob: u32) void {
         const stub_px: u32 = @as(u32, @intFromFloat(@ceil(stub))) + 1;
         page.fill_rect(stub_left, stub_top, stub_px, 2 * half_height + 1, style.white);
     }
-    page.pill(x, x, y, knob_outer + knob_gap, 0xff);
-    page.pill(x, x, y, knob_outer, 0x00);
-    page.pill(x, x, y, knob_inner, 0xff);
+    page.pill(x, x, y, knob_outer + knob_gap, style.white);
+    page.pill(x, x, y, knob_outer, style.black);
+    page.pill(x, x, y, knob_inner, style.white);
 }
 
 test "value and knob agree" {

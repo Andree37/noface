@@ -85,7 +85,8 @@ pub fn draw(page: Page, selected: []const book_model.Word) void {
         const right = last_on_line.x + last_on_line.w;
         const underline_y = first_on_line.y + first_on_line.h - underline - 2;
         const width = right - left;
-        page.fill_rect(@intCast(left), @intCast(underline_y), @intCast(width), underline, 0x00);
+        const line_y: u32 = @intCast(underline_y);
+        page.fill_rect(@intCast(left), line_y, @intCast(width), underline, style.black);
         i = j + 1;
     }
     assert(i == selected.len); // Every line underlined, none twice
@@ -96,7 +97,7 @@ pub fn draw(page: Page, selected: []const book_model.Word) void {
     const start_stem = first.y + first.h - start.y;
     const stem_left = start.x - stem / 2;
     page.fill_rect(@intCast(stem_left), @intCast(start.y), stem, @intCast(start_stem), style.black);
-    page.disc(start.x, start.y, handle_radius, 0, 0x00);
+    page.disc(start.x, start.y, handle_radius, 0, style.black);
     const final = selected[selected.len - 1];
     const end = end_handle(selected);
     assert(end.y >= final.y);
@@ -104,7 +105,7 @@ pub fn draw(page: Page, selected: []const book_model.Word) void {
     const end_stem = end.y - final.y;
     const end_top: u32 = @intCast(final.y);
     page.fill_rect(@intCast(end_stem_left), end_top, stem, @intCast(end_stem), style.black);
-    page.disc(end.x, end.y, handle_radius, 0, 0x00);
+    page.disc(end.x, end.y, handle_radius, 0, style.black);
 }
 
 pub const Band = struct { top: u32, height: u32 };

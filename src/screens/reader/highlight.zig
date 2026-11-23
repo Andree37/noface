@@ -19,7 +19,6 @@ pub const bubble_height = style.space.band;
 const bubble_gap = style.space.small;
 /// The white edge cleared around the bubble, so it stands off the text under it.
 const bubble_border = style.space.hair;
-/// Where "Delete" sits, down from the bubble's top.
 /// How far a glyph may reach past its word's box, at either side.
 const glyph_overhang = style.space.hair;
 /// Kept clear at the bottom of the screen: a bubble that would reach into it goes
@@ -99,7 +98,7 @@ pub fn draw_delete_bubble(
     const border_width = bubble_width + 2 * bubble_border;
     const border_height = bubble_height + 2 * bubble_border;
     // Saturating: a highlight from the page's first line to near its last puts the
-    // bubble at the very top, where `top - 4` would overflow and stop noface
+    // bubble at the very top, where `top - bubble_border` would overflow and stop noface
     const border_top = top -| bubble_border;
     const clear = Box{
         .left = left - bubble_border,
@@ -115,9 +114,9 @@ pub fn draw_delete_bubble(
         // space between words
         const left_wide = word_box.left -| glyph_overhang;
         const width_wide = word_box.width + (word_box.left - left_wide) + glyph_overhang;
-        screen_page.fill_rect(left_wide, word_box.top, width_wide, word_box.height, 0xff);
+        screen_page.fill_rect(left_wide, word_box.top, width_wide, word_box.height, style.white);
     }
-    screen_page.fill_rect(clear.left, clear.top, clear.width, clear.height, 0xff);
+    screen_page.fill_rect(clear.left, clear.top, clear.width, clear.height, style.white);
     draw.box(screen_page, left, top, bubble_width, bubble_height);
     const center_x: f32 = @floatFromInt(a.display.screen.width / 2);
     const label_y = a.ui.small.centred_baseline(@intCast(top), bubble_height);
@@ -349,7 +348,8 @@ pub fn new_highlight(
         try highlight_not_saved(a, s);
         return null;
     };
-    const saved = save_highlight(s, id, highlights.Span.of(lo, hi));
+    const span = highlights.Span.of(lo, hi); // As saved, so as shown
+    const saved = save_highlight(s, id, span);
     if (saved) s.notes.store.sync();
     const word_count = @max(fixed, head) - @min(fixed, head) + 1;
     std.debug.print("highlight {s}: {d} words, saved {}\n", .{ id, word_count, saved });
@@ -357,7 +357,7 @@ pub fn new_highlight(
         try highlight_not_saved(a, s);
         return null;
     }
-    try highlights.add(&s.notes.highlights, alloc, s.paragraphs, id, highlights.Span.of(lo, hi));
+    try highlights.add(&s.notes.highlights, alloc, s.paragraphs, id, span);
     try refresh_marks(a, s, alloc);
     assert(highlights.extent(s.notes.highlights.items, id) != null);
     return id;

@@ -7,6 +7,7 @@ const search_model = @import("../model/search.zig");
 const catalog = @import("../model/catalog.zig");
 const os = @import("../sys/os.zig");
 const file = @import("../sys/file.zig");
+const state = @import("../sys/state.zig");
 const highlights = @import("../model/highlights.zig");
 const menu = @import("../ui/menu.zig");
 const selection = @import("../ui/selection.zig");
@@ -123,6 +124,8 @@ fn open_book(r: *Reader) !void {
     const t1 = now_us();
     const state_path = try a.state_path(&r.path_buffer, entry.path);
     r.state_path = state_path;
+    // Files 0.2.0 named by the file name, the library not yet having moved them
+    state.adopt_by_name(state_path, entry.path);
     // Kept in the reader, as the session points to it while it lays out
     r.progress = null;
     const opened = try book_open.find_pages(a, r.alloc, entry, book.paragraphs, .{

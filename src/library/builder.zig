@@ -245,6 +245,7 @@ fn never_matching(sources: index.Sources) index.Sources {
 /// one (up to a gigabyte and more) on the drive.
 fn abandon_data(folder: []const u8, name: []const u8, w: *files.Writer) void {
     assert(name.len > 0);
+    assert(folder.len > 0);
     w.abandon();
     var path_buffer: [files.path_bytes_max]u8 = undefined;
     // Ignored: a path that can't be made is one that was never made either
@@ -581,40 +582,127 @@ fn set_series(
     }
 }
 
-/// Moves each book's files from the names noface 0.2 and before gave them, by the
-/// book's file name, to the names its whole path gives (`state.key_for`), before any
-/// are read. Two books of one name shared those files: each gets a copy, as each
-/// showed that place before. A file already under its new name is never written over,
-/// and one of a book not here (deleted, or still downloading) keeps its old name until
-/// the book is. Every load looks, so a move cut short goes on at the next, from any of
-/// the files left: the place moves last, the others before it.
-pub fn rename_by_path(
+/// What noface keeps of each book, from one walk of the data folder a load: each place
+/// is merged into its book's record as it's found, only the books with a state file
+/// read and nothing kept of them, so the memory is the books', however many files there
+/// are; and the files an older noface named by a book's file name (`state.key_by_name`)
+/// are noted, to go to the names its whole path gives (`state.key_for`) once the walk
+/// is over (`rename_key`). Every load looks, so a move cut short goes on at the next.
+/// `complete` is whether the index holds every book on the Kindle.
+pub fn sync_states(
     ix: *const index.Index,
     items: []Item,
     places: Places,
-    listed: *StateFiles,
+    scratch: *memory.Budget,
+    complete: bool,
 ) !void {
     assert(places.state_dir.len > 0);
     assert(items.len >= ix.header.count); // Room to sort every book
-    // Every name, or none acted on: the files of a book missed now are moved next time
-    if (!listed.whole) return error.CantList;
-    if (listed.any_kind.items.len == 0) return;
+    var walk: Walk = .{
+        .merge = .{ .ix = ix, .sorted = by_state_key(ix, items), .state_dir = places.state_dir },
+        .named = try name_keys(scratch.allocator(), ix),
+        .alloc = scratch.allocator(),
+        .heartbeat = places.heartbeat,
+        .beat_us = os.now_us(),
+    };
+    var folder_buffer: [files.path_bytes_max]u8 = undefined;
+    const state_dir = places.state_dir;
+    const folder = try std.fmt.bufPrintSentinel(&folder_buffer, "{s}", .{state_dir}, 0);
+    // What's listed is merged and moved; a book missed is, at the next load
+    const whole = calls.each_entry(folder.ptr, &walk, Walk.entry);
+    if (walk.failed) return error.OutOfMemory;
     // Each key once, whichever of its kinds were listed
-    std.mem.sort(u64, listed.any_kind.items, {}, std.sort.asc(u64));
-    const keys = unique(listed.any_kind.items);
-    const sorted = sorted_by(ix, items, state.key_by_name);
+    std.mem.sort(u64, walk.old.items, {}, std.sort.asc(u64));
+    const keys = unique(walk.old.items);
+    // The merge's order no longer needed: a place copied now is merged by its book
+    const by_name = sorted_by_name(ix, items);
+    walk.merge.sorted = &.{};
+    var first_error: ?anyerror = null;
     for (keys) |key| {
-        const high: u32 = @truncate(key >> 32);
-        const first = first_with(sorted, high);
-        // The books whose file name gave this key: those of `sorted` from `first` on
-        var count: u32 = 0;
-        for (sorted[first..]) |item| {
-            if (item.key != high) break;
-            if (state.key_by_name(ix.entry(item.id).path) == key) count += 1;
-        }
-        if (count == 0) continue;
-        try move_files(ix, places.state_dir, key, sorted[first..], count, listed);
+        if (places.heartbeat) |path| watchers.beat_when_due(path, &walk.beat_us);
+        // One key's files failing to move leaves the others to move
+        rename_key(ix, state_dir, key, by_name, complete, &walk.merge) catch |err| {
+            log("library: files of {x:0>16} not moved ({s})\n", .{ key, @errorName(err) });
+            if (first_error == null) first_error = err;
+        };
     }
+    if (walk.merge_failed) return error.CantMerge;
+    if (first_error) |err| return err;
+    if (!whole) return error.CantList;
+}
+
+/// The data folder walked once: each place merged, each file named by a book's file
+/// name noted.
+const Walk = struct {
+    merge: Merge,
+    named: []const u64, // Every book's file-name key, sorted
+    alloc: std.mem.Allocator,
+    old: std.ArrayList(u64) = .empty,
+    heartbeat: ?[*:0]const u8, // As `Places.heartbeat`: thousands of files are slow
+    beat_us: u64, // When it last beat, or started
+    failed: bool = false, // Out of memory: what was noted isn't all
+    merge_failed: bool = false,
+
+    fn entry(w: *Walk, name: []const u8, is_dir: bool) void {
+        assert(name.len > 0);
+        if (w.heartbeat) |path| watchers.beat_when_due(path, &w.beat_us);
+        if (is_dir or w.failed) return;
+        for (state.kinds) |kind| {
+            const key = state.key_of_name(name, kind) orelse continue;
+            if (std.mem.eql(u8, kind, "state")) {
+                w.merge.merge_key(key) catch {
+                    w.merge_failed = true;
+                };
+            }
+            if (std.sort.binarySearch(u64, w.named, key, order_u64) != null) {
+                const before = w.old.items.len;
+                w.old.append(w.alloc, key) catch {
+                    w.failed = true;
+                    return;
+                };
+                assert(w.old.items.len == before + 1);
+            }
+            return;
+        }
+    }
+};
+
+fn order_u64(a: u64, b: u64) std.math.Order {
+    return std.math.order(a, b);
+}
+
+/// Every book's file-name key (`state.key_by_name`), sorted, each once: of a book on
+/// the Kindle or downloading, which has a path.
+fn name_keys(alloc: std.mem.Allocator, ix: *const index.Index) ![]const u64 {
+    assert(ix.header.count <= index.books_max);
+    var keys: std.ArrayList(u64) = .empty;
+    for (0..ix.header.count) |i| {
+        const e = ix.entry(@intCast(i));
+        if (e.path.len == 0) continue;
+        try keys.append(alloc, state.key_by_name(e.path));
+    }
+    std.mem.sort(u64, keys.items, {}, std.sort.asc(u64));
+    const once = unique(keys.items);
+    assert(once.len <= ix.header.count);
+    return once;
+}
+
+/// The books with a path, on the Kindle or downloading, their ids sorted by their
+/// file-name key's high half, at `items`' start.
+fn sorted_by_name(ix: *const index.Index, items: []Item) []Item {
+    assert(items.len >= ix.header.count);
+    var count: u32 = 0;
+    for (0..ix.header.count) |i| {
+        const id: u32 = @intCast(i);
+        const e = ix.entry(id);
+        if (e.path.len == 0) continue;
+        items[count] = .{ .id = id, .key = @truncate(state.key_by_name(e.path) >> 32) };
+        count += 1;
+    }
+    const sorted = items[0..count];
+    std.mem.sort(Item, sorted, {}, by_key);
+    assert(count <= ix.header.count);
+    return sorted;
 }
 
 /// `sorted`'s values each once, in place: the start of it.
@@ -631,85 +719,41 @@ fn unique(sorted: []u64) []u64 {
     return sorted[0..kept];
 }
 
-/// The files named by a key in the data folder, from one listing each load: the keys
-/// of every kind, for the renaming (`rename_by_path`), and the places' apart, for the
-/// merging (`merge_states`), which the renaming adds the places it moves to.
-pub const StateFiles = struct {
-    alloc: std.mem.Allocator,
-    any_kind: std.ArrayList(u64) = .empty,
-    places: std.ArrayList(u64) = .empty,
-    /// False when the listing was cut short: what it found is still merged
-    whole: bool = true,
-    heartbeat: ?[*:0]const u8, // As `Places.heartbeat`: thousands of files are slow
-    beat_us: u64, // When it last beat, or started
-
-    /// The data folder listed, into `alloc`. Out of memory, nothing's kept.
-    pub fn list(alloc: std.mem.Allocator, places: Places) !StateFiles {
-        assert(places.state_dir.len > 0);
-        var listed: StateFiles = .{
-            .alloc = alloc,
-            .heartbeat = places.heartbeat,
-            .beat_us = os.now_us(),
-        };
-        var folder_buffer: [files.path_bytes_max]u8 = undefined;
-        const state_dir = places.state_dir;
-        const folder = try std.fmt.bufPrintSentinel(&folder_buffer, "{s}", .{state_dir}, 0);
-        var walk: Walk = .{ .listed = &listed };
-        listed.whole = calls.each_entry(folder.ptr, &walk, Walk.entry);
-        if (walk.failed) return error.OutOfMemory;
-        assert(listed.places.items.len <= listed.any_kind.items.len);
-        return listed;
-    }
-
-    /// A place now at `key`'s name, moved there by the renaming.
-    fn add_place(listed: *StateFiles, key: u64) !void {
-        const before = listed.places.items.len;
-        try listed.places.append(listed.alloc, key);
-        assert(listed.places.items.len == before + 1);
-    }
-
-    const Walk = struct {
-        listed: *StateFiles,
-        failed: bool = false,
-
-        fn entry(w: *Walk, name: []const u8, is_dir: bool) void {
-            assert(name.len > 0);
-            const l = w.listed;
-            if (l.heartbeat) |path| watchers.beat_when_due(path, &l.beat_us);
-            if (is_dir or w.failed) return;
-            for (state.kinds) |kind| {
-                const key = state.key_of_name(name, kind) orelse continue;
-                const before = l.any_kind.items.len;
-                l.any_kind.append(l.alloc, key) catch {
-                    w.failed = true;
-                    return;
-                };
-                assert(l.any_kind.items.len == before + 1);
-                const is_place = std.mem.eql(u8, kind, "state");
-                if (is_place) l.places.append(l.alloc, key) catch {
-                    w.failed = true;
-                };
-                return;
-            }
-        }
-    };
-};
-
-/// Each kind of file named by `key` copied to the names of the `count` books of
-/// `sorted` (from the first with its high half) whose file name gave it, and moved to
-/// the last one's: the place last of all, so while it's there, so is the key.
-fn move_files(
+/// The files named by file-name key `key` given to the books of that name: each on the
+/// Kindle gets a copy of each kind, never over one it has, its place merged; a cover or
+/// page breaks, made again anyway, just go. The old files go once every book of that
+/// name is here, from an index that's `complete`: till then, one downloading or not yet
+/// listed finds them. Its place last, so while it's there, so is the key.
+fn rename_key(
     ix: *const index.Index,
     state_dir: []const u8,
     key: u64,
-    sorted: []const Item,
-    count: u32,
-    listed: *StateFiles,
+    by_name: []const Item,
+    complete: bool,
+    merge: *Merge,
 ) !void {
-    assert(count > 0);
-    // Every kind but the place, then the place
-    comptime assert(std.mem.eql(u8, state.kinds[0], "state"));
-    const order = state.kinds[1..] ++ state.kinds[0..1];
+    const high: u32 = @truncate(key >> 32);
+    var twins: u32 = 0;
+    var here: u32 = 0;
+    for (by_name[first_with(by_name, high)..]) |item| {
+        if (item.key != high) break;
+        const e = ix.entry(item.id);
+        if (state.key_by_name(e.path) != key) continue; // Same high half, another name
+        twins += 1;
+        if (e.is_local()) here += 1;
+    }
+    assert(here <= twins);
+    if (here == 0) return; // None of its books here: kept till one is
+    const done = complete and here == twins;
+    // Remade ones, then the notes, then the place
+    const order = [_][]const u8{ "pages", "cover", "notes", "state" };
+    // Every kind a book has, each once
+    comptime assert(order.len == state.kinds.len);
+    comptime for (state.kinds) |kind| {
+        var found = false;
+        for (order) |o| found = found or std.mem.eql(u8, o, kind);
+        assert(found);
+    };
     inline for (order) |kind| {
         var from_buffer: [files.path_bytes_max]u8 = undefined;
         const named = .{ state_dir, kind, key };
@@ -717,31 +761,38 @@ fn move_files(
         switch (file.presence(from)) {
             .absent => {},
             .unknown => return error.CantRead, // Tried again at the next load
-            .here => try move_file(ix, state_dir, kind, from, key, sorted, count, listed),
+            .here => {
+                const remade = comptime std.mem.eql(u8, kind, "pages") or
+                    std.mem.eql(u8, kind, "cover");
+                if (!remade) try copy_to_twins(ix, state_dir, kind, from, key, by_name, merge);
+                if (remade or done) {
+                    if (os.failed(calls.unlink(from))) return error.CantRemove;
+                }
+            },
         }
     }
 }
 
-/// The file `from` (of `kind`, named by `key`) copied to each of the `count` books but
-/// the last, and renamed to the last's: never over a file already there.
-fn move_file(
+/// `from` (of `kind`, named by file-name key `key`) copied to each book of that name on
+/// the Kindle that hasn't one, a place merged into the book's record as it lands.
+fn copy_to_twins(
     ix: *const index.Index,
     state_dir: []const u8,
     comptime kind: []const u8,
     from: [:0]const u8,
     key: u64,
-    sorted: []const Item,
-    count: u32,
-    listed: *StateFiles,
+    by_name: []const Item,
+    merge: *Merge,
 ) !void {
-    var done: u32 = 0;
-    for (sorted) |item| {
-        if (done == count) break;
-        const path = ix.entry(item.id).path;
-        if (state.key_by_name(path) != key) continue; // Same high half, another name
-        done += 1;
+    assert(state_dir.len > 0);
+    assert(by_name.len <= ix.header.count);
+    const high: u32 = @truncate(key >> 32);
+    for (by_name[first_with(by_name, high)..]) |item| {
+        if (item.key != high) break;
+        const e = ix.entry(item.id);
+        if (state.key_by_name(e.path) != key or !e.is_local()) continue;
         var state_buffer: [files.path_bytes_max]u8 = undefined;
-        const own_state = try state.path_for(&state_buffer, state_dir, path);
+        const own_state = try state.path_for(&state_buffer, state_dir, e.path);
         var to_buffer: [files.path_bytes_max]u8 = undefined;
         const to = try state.sibling(&to_buffer, own_state, kind);
         assert(!std.mem.eql(u8, from, to)); // A whole path's name is never a file name's
@@ -750,39 +801,10 @@ fn move_file(
             .unknown => return error.CantRead, // Maybe there: never written over
             .absent => {},
         }
-        if (done < count) {
-            if (!file.copy_file(from, to)) return error.CantCopy;
-        } else {
-            if (os.failed(calls.rename(from, to))) return error.CantRename;
-        }
-        // Merged under its new name, which the listing, made before, hadn't
-        if (comptime std.mem.eql(u8, kind, "state")) try listed.add_place(state.key_for(path));
+        if (!file.copy_file(from, to)) return error.CantCopy;
+        // Merged now: the walk listed the folder before it was there
+        if (comptime std.mem.eql(u8, kind, "state")) try merge.merge_into(item.id, to);
     }
-    assert(done == count);
-}
-
-/// Merges what noface keeps of each book it opened (place, time read, marked read) into
-/// the index's records, from the places `listed` found, and those the renaming moved:
-/// only the books with a state file are read.
-pub fn merge_states(
-    ix: *const index.Index,
-    items: []Item,
-    places: Places,
-    listed: *StateFiles,
-) !void {
-    assert(places.state_dir.len > 0);
-    var merge: Merge = .{
-        .ix = ix,
-        .sorted = by_state_key(ix, items),
-        .state_dir = places.state_dir,
-    };
-    for (listed.places.items) |key| {
-        if (listed.heartbeat) |path| watchers.beat_when_due(path, &listed.beat_us);
-        try merge.merge_key(key);
-    }
-    // What was listed is merged; a book whose state wasn't is merged at the next load
-    if (!listed.whole) return error.CantList;
-    assert(merge.sorted.len <= ix.header.local);
 }
 
 const Merge = struct {
@@ -804,11 +826,23 @@ const Merge = struct {
             if (item.key != high) return;
             if (state.key_for(m.ix.entry(item.id).path) != key) continue; // Same high half
             if (saved == null) saved = state.load(path);
-            var r = m.ix.record(item.id);
-            const before = r;
-            merged(&r, saved.?);
-            if (!std.meta.eql(before, r)) try m.ix.write_record(item.id, &r);
+            try m.write_merged(item.id, saved.?);
         }
+    }
+
+    /// The place at `path` merged into book `id`'s record: one just copied to its name.
+    fn merge_into(m: *Merge, id: u32, path: [:0]const u8) !void {
+        assert(id < m.ix.header.count);
+        assert(path.len > 0);
+        try m.write_merged(id, state.load(path));
+    }
+
+    fn write_merged(m: *Merge, id: u32, saved: state.State) !void {
+        assert(id < m.ix.header.count);
+        var r = m.ix.record(id);
+        const before = r;
+        merged(&r, saved);
+        if (!std.meta.eql(before, r)) try m.ix.write_record(id, &r);
     }
 };
 

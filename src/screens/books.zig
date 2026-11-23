@@ -504,18 +504,14 @@ fn open_index(sources: Sources, s: *State) void {
         log("library: index built, {d} books in {d} ms\n", .{ built.header.count, ms });
     }
     const ix = s.opened().?; // Opened as it was, or just built
-    // The data folder listed once, for both: the renaming, before any book's files are
-    // read, as those named by an older noface take new names; then the merging
-    var listed = builder.StateFiles.list(scratch.allocator(), places) catch |err| {
-        log("library: places not read ({s}), again at the next load\n", .{@errorName(err)});
-        s.sorted = false; // The items were sorted by state key
-        return;
-    };
-    builder.rename_by_path(ix, items, places, &listed) catch |err| {
-        log("library: files not renamed ({s}), again at the next load\n", .{@errorName(err)});
-    };
-    builder.merge_states(ix, items, places, &listed) catch |err| {
-        log("library: places not merged ({s})\n", .{@errorName(err)});
+    // Every place merged, and the files an older noface named by a book's file name
+    // moved to its whole path's, before any book's files are read. The old ones go only
+    // from an index of every book: one built with some missed says so by its sources
+    const complete = std.meta.eql(ix.header.sources, wanted);
+    builder.sync_states(ix, items, places, &scratch, complete) catch |err| {
+        log("library: places not all merged or moved ({s}), again at the next load\n", .{
+            @errorName(err),
+        });
     };
     s.sorted = false; // The items were sorted by state key
     assert(ix.header.count <= books_max);
@@ -876,6 +872,49 @@ test "files an older noface named by a book's file name move to its whole path's
     // Moved: Dune's old files are gone
     try std.testing.expect(!file.exists(try test_old_path(&path, dir, "state", dune)));
     try std.testing.expect(!file.exists(try test_old_path(&path, dir, "notes", dune)));
+}
+
+test "0.2.0's shared files stay for a book of the same name still downloading, and its cover goes" {
+    var buffer: [64]u8 = undefined;
+    const root = try test_folder(&buffer, 0, 0, 1 << 10);
+    defer test_folder_remove(root);
+    var path: [file.own_path_bytes_max]u8 = undefined;
+    const here = "/mnt/us/documents/A/Vol 1.azw3";
+    const coming = "/mnt/us/documents/B/Vol 1.azw3";
+    var catalog_buffer: [file.own_path_bytes_max]u8 = undefined;
+    const catalog_file = try std.fmt.bufPrintSentinel(&catalog_buffer, "{s}/catalog", .{root}, 0);
+    const row = "{s}\tVol 1\tA\t0\t0\t0\t\t0\t{d}\n";
+    var rows_buffer: [256]u8 = undefined;
+    const rows = "\n" ++ row ++ row;
+    const downloading = try std.fmt.bufPrint(&rows_buffer, rows, .{ here, 0, coming, 2 });
+    try test_write(catalog_file, downloading);
+    var t: TestLibrary = undefined;
+    try t.init(root);
+    defer t.deinit();
+    const dir = t.sources.state_dir;
+    try test_old_file(dir, "state", here, "para 3\npercent 42\nopened 1000\n");
+    try test_old_file(dir, "cover", here, "a cover");
+    {
+        var library = try load(t.sources);
+        defer library.deinit();
+    }
+    // The one here has its copy; the one coming will want the old one, which stays
+    const here_now = state.load(try state.path_for(&path, dir, here));
+    try std.testing.expectEqual(@as(?u32, 42), here_now.percent);
+    try std.testing.expect(file.exists(try test_old_path(&path, dir, "state", here)));
+    // A cover's made again from the book: the old one goes now
+    try std.testing.expect(!file.exists(try test_old_path(&path, dir, "cover", here)));
+    // Downloaded: it takes its copy, and the old one is no one's. The catalog exported
+    // again, a line longer, so the library sees it's changed within the same second
+    const both_here = try std.fmt.bufPrint(&rows_buffer, "\n" ++ rows, .{ here, 0, coming, 0 });
+    try test_write(catalog_file, both_here);
+    {
+        var library = try load(t.sources);
+        defer library.deinit();
+    }
+    const coming_now = state.load(try state.path_for(&path, dir, coming));
+    try std.testing.expectEqual(@as(?u32, 42), coming_now.percent);
+    try std.testing.expect(!file.exists(try test_old_path(&path, dir, "state", here)));
 }
 
 test "a catalog that couldn't be read is read again at the next load, unchanged" {

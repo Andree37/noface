@@ -51,10 +51,35 @@ pub fn key_for(book_path: []const u8) u64 {
 
 /// What noface 0.2 and before named a book's files by: the md5 of "basename\n", as
 /// `basename | md5sum` did, which two books of one file name shared. Read only to move
-/// those files to `key_for`'s names (library/builder.zig `rename_by_path`).
+/// those files to `key_for`'s names (library/builder.zig `sync_states`, `adopt_by_name`).
 pub fn key_by_name(book_path: []const u8) u64 {
     assert(book_path.len > 0);
     return md5_key(std.fs.path.basename(book_path), "\n");
+}
+
+/// A book opened before the library moved its files from the names 0.2.0 gave them
+/// (a move that failed, or hasn't come yet): its place and notes copied to its own
+/// names first, so it opens where it was. The old files stay for the library to move
+/// or remove, as a book of the same name may be using them too; one already under the
+/// new name is never written over.
+pub fn adopt_by_name(state_path: [:0]const u8, book_path: []const u8) void {
+    assert(book_path.len > 0);
+    const dir = std.fs.path.dirname(state_path) orelse return;
+    const old_key = key_by_name(book_path);
+    inline for (.{ "notes", "state" }) |kind| {
+        var to_buffer: [file.own_path_bytes_max]u8 = undefined;
+        var from_buffer: [file.own_path_bytes_max]u8 = undefined;
+        const to = sibling(&to_buffer, state_path, kind) catch return;
+        const named = .{ dir, kind, old_key };
+        const from = std.fmt.bufPrintSentinel(&from_buffer, "{s}/{s}-{x:0>16}", named, 0) catch
+            return;
+        assert(!std.mem.eql(u8, from, to)); // A whole path's name is never a file name's
+        // Only into nothing, from something: an unknown either way is left alone
+        if (file.presence(to) == .absent and file.presence(from) == .here) {
+            // Not copied, the book opens fresh as before: and the place after the notes
+            if (!file.copy_file(from, to)) return;
+        }
+    }
 }
 
 fn md5_key(text: []const u8, ending: []const u8) u64 {
@@ -267,4 +292,28 @@ test "the longest state there can be is saved whole" {
     }
     save(path, longest);
     try std.testing.expectEqual(longest, load(path));
+}
+
+test "a book opened before its files were moved takes a copy of its old place, never over one" {
+    // In /tmp, by a book named for this run, so runs side by side don't meet
+    const dir = "/tmp";
+    var book_buffer: [64]u8 = undefined;
+    const book_format = "/mnt/us/documents/Dune-{d}.epub";
+    const book = try std.fmt.bufPrint(&book_buffer, book_format, .{calls.getpid()});
+    var old_buffer: [file.own_path_bytes_max]u8 = undefined;
+    const old_format = "{s}/state-{x:0>16}";
+    const old_named = .{ dir, key_by_name(book) };
+    const old = try std.fmt.bufPrintSentinel(&old_buffer, old_format, old_named, 0);
+    defer _ = calls.unlink(old); // Ignored: only /tmp is left fuller
+    var own_buffer: [file.own_path_bytes_max]u8 = undefined;
+    const own = try path_for(&own_buffer, dir, book);
+    defer _ = calls.unlink(own); // Ignored: only /tmp is left fuller
+    save(old, .{ .para = 7, .percent = 60 });
+    adopt_by_name(own, book);
+    try std.testing.expectEqual(@as(?u32, 60), load(own).percent);
+    try std.testing.expectEqual(@as(?u32, 60), load(old).percent); // Kept for its twins
+    // Its own, once there, is never written over
+    save(own, .{ .para = 9, .percent = 70 });
+    adopt_by_name(own, book);
+    try std.testing.expectEqual(@as(?u32, 70), load(own).percent);
 }

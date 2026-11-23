@@ -26,21 +26,27 @@ const record_fields = "annotation_id, " ++
 
 /// A book's records: those Amazon sent that aren't being changed here, and those
 /// queued here that aren't deletes; a page of them at a time, in the ids' order, so
-/// any number are read through one page's room (`read_page`).
-const read_format = find_database ++ "sqlite3 -separator '|' \"file:$db?mode=ro\" " ++
+/// any number are read through one page's room (`read_page`). Waits a moment for a
+/// database busy with a write, as the write does, and says `end_mark` once sqlite3 has
+/// answered whole: an answer without it, locked, missing, cut short or slow, is no answer.
+const read_format = find_database ++ "sqlite3 -separator '|' -cmd '.timeout 3000' " ++
+    "\"file:$db?mode=ro\" " ++
     "\"select * from (select {s} from server_view where dataset={d} and {s} and " ++
     "annotation_id not in (select annotation_id from local_edit where {s}) " ++
     "union select {s} from local_edit where dataset={d} and action != 3 and {s}) " ++
-    "order by 1 limit {d} offset {d}\"";
+    "order by 1 limit {d} offset {d}\" && echo " ++ end_mark;
+/// The line after a whole answer, never a record's: one has two '|' in it.
+pub const end_mark = "end";
 /// Room for `read_format` filled in: two record fields, four book matches (each fits
 /// `read_lines`'s buffer for it), two dataset numbers, and a page's limit and offset.
 const read_command_bytes_max = 1600;
 
 /// The longest line the database answers: an id, two positions, two '|' and its end.
 const line_bytes_max = safe.id_size_max + 2 * std.fmt.count("{d}", .{std.math.maxInt(u32)}) + 3;
-/// A page of the answer: as many records as it holds at their longest.
+/// A page of the answer: as many records as it holds at their longest, and the end mark.
 pub const Page = [64 * 1024]u8;
-pub const page_rows = @sizeOf(Page) / line_bytes_max;
+pub const page_rows = (@sizeOf(Page) - end_line.len) / line_bytes_max;
+const end_line = end_mark ++ "\n";
 /// Pages read at most for one book, one kind: more than any book's notes, a bound on
 /// the loop, never met by a real Kindle's.
 const pages_max = std.math.maxInt(u32) / page_rows;
@@ -58,6 +64,7 @@ comptime {
     assert(std.mem.indexOfAny(u8, paths.annotation_sql, " '\"$;|&") == null);
     assert(paths.annotation_sql[0] == '/');
     assert(paths.dry_run[0] == '/'); // Found wherever noface was started from
+    assert(std.mem.indexOfScalar(u8, end_mark, '|') == null); // Never read as a record
 }
 
 /// While this file exists, annotation writes are skipped. Used by device tests.
@@ -69,19 +76,24 @@ pub fn dry_run() bool {
     return true;
 }
 
-/// A book's highlights or bookmarks, their ids in `alloc`; `out` holds the database's
-/// answer while it's read.
-pub fn read_notes(alloc: std.mem.Allocator, key: []const u8, kind: annotations.Kind) ![]const Note {
+/// A book's highlights or bookmarks, their ids in `alloc`, or null when the database
+/// gave no whole answer: never taken for none, which would show the book without them.
+pub fn read_notes(
+    alloc: std.mem.Allocator,
+    key: []const u8,
+    kind: annotations.Kind,
+) !?[]const Note {
     var page: Page = undefined;
     var notes: std.ArrayList(Note) = .empty;
     // A page at a time, until one isn't full: however many a book has, all are read
     for (0..pages_max) |index| {
-        const read = read_page(key, kind, &page, index * page_rows);
+        const read = read_page(key, kind, &page, index * page_rows) orelse return null;
         try parse_notes(alloc, read.lines, &notes);
         if (read.rows < page_rows) break;
     }
     for (notes.items) |note| assert(note.id.len > 0); // parse_notes keeps none without one
-    return notes.toOwnedSlice(alloc);
+    const all: []const Note = try notes.toOwnedSlice(alloc);
+    return all;
 }
 
 /// The database's "id|start|end" lines as notes, onto `notes`; a line that isn't one
@@ -107,24 +119,28 @@ pub const Read = struct { lines: []const u8, rows: u64 };
 
 /// Fetches page rows `first_row` on of a book's highlights or bookmarks as the database
 /// answers them: the self-test hands them to its pretend Kindle, to open a book with its
-/// own. None when the database can't be asked.
-pub fn read_page(key: []const u8, kind: annotations.Kind, page: *Page, first_row: u64) Read {
-    const none: Read = .{ .lines = "", .rows = 0 };
-    if (!safe.safe_id(key)) return none;
+/// own. Null when there's no whole answer: the database couldn't be asked, or didn't
+/// say its end mark (locked, missing, cut short, too slow).
+pub fn read_page(key: []const u8, kind: annotations.Kind, page: *Page, first_row: u64) ?Read {
+    if (!safe.safe_id(key)) return null; // Not a book this database could name
     var match_buf: [book_match_bytes_max]u8 = undefined;
-    const book = annotations.book_match(&match_buf, key) catch return none;
+    const book = annotations.book_match(&match_buf, key) catch return null;
     var buf: [read_command_bytes_max]u8 = undefined;
     const dataset = kind.dataset();
     const command = std.fmt.bufPrintSentinel(&buf, read_format, .{
         record_fields, dataset, book, book, record_fields, dataset, book, page_rows, first_row,
-    }, 0) catch return none;
+    }, 0) catch return null;
     const argv = [_:null]?[*:0]const u8{ "/bin/sh", "-c", command };
-    const output_size = process.run(&argv, page) orelse return none;
+    const output_size = process.run(&argv, page) orelse return null;
     assert(output_size <= page.len);
-    // `page_rows` lines at their longest fit, so a page's answer is always whole
-    const lines = page[0..output_size];
+    // Whole only when it ends with the mark sqlite3's success adds: then the rows are
+    // all there, `page_rows` of them at their longest fitting a page
+    const answer = page[0..output_size];
+    if (!std.mem.endsWith(u8, answer, end_line)) return null;
+    const lines = answer[0 .. answer.len - end_line.len];
     const rows = std.mem.count(u8, lines, "\n");
-    assert(rows <= page_rows);
+    // More than it asked for is no answer of the database's: taken for none at all
+    if (rows > page_rows) return null;
     return .{ .lines = lines, .rows = rows };
 }
 

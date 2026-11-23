@@ -59,14 +59,16 @@ pub const NoteStore = union(enum) {
         kind: annotations.Kind,
     ) ![]const Note {
         assert(kind == .highlight or kind == .bookmark);
-        const notes = switch (store.*) {
+        const found: ?[]const Note = switch (store.*) {
             .amazon => |entry| try annotation_db.read_notes(alloc, entry.key, kind),
-            .own_file => |path| try read_file(alloc, path, kind) orelse unreadable: {
-                log.info("notes can't be read: off till the book opens again", .{});
-                store.* = .unreadable;
-                break :unreadable &.{};
-            },
+            .own_file => |path| try read_file(alloc, path, kind),
             .off, .unreadable => &.{},
+        };
+        // Either store unreadable: off till the book opens again, never taken for none
+        const notes = found orelse unreadable: {
+            log.info("notes can't be read: off till the book opens again", .{});
+            store.* = .unreadable;
+            break :unreadable &.{};
         };
         for (notes) |note| assert(note.id.len > 0); // Both readers keep none without one
         return notes;

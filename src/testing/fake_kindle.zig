@@ -30,6 +30,8 @@ pub const FakeKindle = struct {
     /// (annotation_db.read_lines): none unless a test gives some.
     highlights: []const u8 = "",
     bookmarks: []const u8 = "",
+    /// The notes database locked: every read of it fails, as sqlite3 does then.
+    notes_unreadable: bool = false,
 
     /// A Kindle awake, on Wi-Fi, Bluetooth off, not in airplane mode.
     pub fn init(alloc: std.mem.Allocator) !FakeKindle {
@@ -178,12 +180,16 @@ pub const FakeKindle = struct {
                     .highlight => k.highlights,
                     .bookmark => k.bookmarks,
                 };
-                if (lines.len == 0) return 0; // None: the database printed nothing
+                // Locked: sqlite3 fails, and the mark after its success never comes
+                if (k.notes_unreadable) return 0;
                 // Whole lines, as the database prints them
-                assert(lines[lines.len - 1] == '\n');
-                const page = rows_asked(lines, command);
-                if (page.len == 0) return 0; // Past the last: the database printed nothing
-                return answer_copy(page, out);
+                if (lines.len > 0) assert(lines[lines.len - 1] == '\n');
+                const page = if (lines.len == 0) "" else rows_asked(lines, command);
+                // Then the end mark, when the command asks for one, as the shell says it
+                const mark = annotation_db.end_mark ++ "\n";
+                const said = "echo " ++ annotation_db.end_mark;
+                const asks = std.mem.indexOf(u8, command, said) != null;
+                return answer_parts(&.{ page, if (asks) mark else "" }, out);
             }
         }
         return null;
@@ -221,6 +227,19 @@ pub const FakeKindle = struct {
     }
 
     /// Copies an answer into `out`, cut short when it doesn't fit, as a pipe would be.
+    /// Copies `parts` one after another into `out`, cut short when they don't fit, as a
+    /// pipe would be.
+    fn answer_parts(parts: []const []const u8, out: []u8) u32 {
+        var n: u32 = 0;
+        for (parts) |part| {
+            const room = @min(part.len, out.len - n);
+            @memcpy(out[n..][0..room], part[0..room]);
+            n += @intCast(room);
+        }
+        assert(n <= out.len);
+        return n;
+    }
+
     fn answer_copy(value: []const u8, out: []u8) u32 {
         assert(value.len > 0); // An empty answer is a failure, said with null
         const n = @min(value.len, out.len);
@@ -279,9 +298,13 @@ test "a book's notes are read a page at a time, however many there are" {
     k.highlights = lines.items;
     k.install();
     defer k.release();
-    const notes = try annotation_db.read_notes(alloc, "B000TEST01", .highlight);
+    const notes = (try annotation_db.read_notes(alloc, "B000TEST01", .highlight)).?;
     try std.testing.expectEqual(@as(usize, count), notes.len);
     try std.testing.expectEqual(@as(u32, count - 1), notes[count - 1].start); // The last
-    const bookmarks = try annotation_db.read_notes(alloc, "B000TEST01", .bookmark);
+    // None is none, read whole: never taken for unreadable
+    const bookmarks = (try annotation_db.read_notes(alloc, "B000TEST01", .bookmark)).?;
     try std.testing.expectEqual(@as(usize, 0), bookmarks.len);
+    // Locked, the database gives no whole answer: unreadable, never none
+    k.notes_unreadable = true;
+    try std.testing.expect(try annotation_db.read_notes(alloc, "B000TEST01", .highlight) == null);
 }

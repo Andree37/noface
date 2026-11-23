@@ -232,7 +232,10 @@ fn all_lines(
     var lines: std.ArrayList(u8) = .empty;
     // A page at a time, until one isn't full
     for (0..std.math.maxInt(u32)) |index| {
-        const read = annotation_db.read_page(key, kind, page, index * annotation_db.page_rows);
+        const first_row = index * annotation_db.page_rows;
+        // No whole answer: the book's real notes unknown, so it's no test of them
+        const read = annotation_db.read_page(key, kind, page, first_row) orelse
+            return error.NotesUnreadable;
         try lines.appendSlice(alloc, read.lines);
         if (read.rows < annotation_db.page_rows) break;
     }

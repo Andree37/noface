@@ -119,12 +119,15 @@ pub fn parse_line(alloc: std.mem.Allocator, line: []const u8) !?library.Entry {
     // The export lists only KFX files and cloud books, so never an EPUB; one that came
     // anyway is left to the library's own walk of the folder, which lists every EPUB
     if (std.ascii.endsWithIgnoreCase(path, ".epub")) return null;
-    const series = library.series_from_file_name(path);
+    const owned_path = try alloc.dupeSentinel(u8, path, 0);
+    // From the copy: its name borrows the path it's read from
+    const series = library.series_from_file_name(owned_path);
     const percent_whole: u32 = @intFromFloat(std.math.clamp(percent, 0, percent_max));
     return .{
-        .path = try alloc.dupeSentinel(u8, path, 0),
+        .path = owned_path,
         .title = try fix_title(alloc, title),
-        .author = clean_author(author),
+        // Every text copied into `alloc`: none borrows `line`, which the next is read into
+        .author = try alloc.dupe(u8, clean_author(author)),
         .percent = percent_whole,
         .last = last,
         // The Kindle's own mark, which marking as unread clears.
@@ -134,9 +137,9 @@ pub fn parse_line(alloc: std.mem.Allocator, line: []const u8) !?library.Entry {
         .thumbnail = if (thumbnail.len > 0) try alloc.dupeSentinel(u8, thumbnail, 0) else null,
         .added = added,
         .availability = availability,
-        .key = key,
-        .kind = kind,
-        .guid = guid,
+        .key = try alloc.dupe(u8, key),
+        .kind = try alloc.dupe(u8, kind),
+        .guid = try alloc.dupe(u8, guid),
         .series = series,
     };
 }

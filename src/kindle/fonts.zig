@@ -275,12 +275,18 @@ fn find_own_usable(
 ) bool {
     assert(family.name.len > 0);
     const files = complete(family.files);
-    for (full, files) |*full_path, name| {
+    for (full, files, 0..) |*full_path, name, i| {
         assert(name.len > 0);
         const format = "{s}/{s}";
         full_path.* = std.fmt.allocPrintSentinel(alloc, format, .{ own_dir, name }, 0) catch {
             return false;
         };
+        // A style filled in with another's file (`complete`) was tried as that one: a
+        // trial takes seconds, so a family of one file is tried once, not four times
+        const tried = for (files[0..i]) |earlier| {
+            if (std.mem.eql(u8, earlier, name)) break true;
+        } else false;
+        if (tried) continue;
         const data = file.map(full_path.*) catch return false;
         // Mapped again when chosen: a folder of many fonts keeps none of them mapped
         defer file.unmap(data);

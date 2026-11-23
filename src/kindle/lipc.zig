@@ -358,9 +358,12 @@ fn watch_events(comptime publisher: [*:0]const u8, comptime events: [*:0]const u
     const child = process.spawn(&argv) orelse return null;
     assert(child.pid > 0);
     assert(child.out >= 0);
-    const flags = linux.fcntl(child.out, linux.F.GETFL, 0);
-    // A pipe of our own is always ours to set: the flag can't be refused
-    _ = linux.fcntl(child.out, linux.F.SETFL, flags | 0o4000); // Ignored: O_NONBLOCK
+    // Read without waiting by the loop that polls it: one that would block is stopped
+    if (!linux.set_nonblocking(child.out)) {
+        process.stop(child.pid);
+        _ = linux.close(child.out); // Ignored: our end of a pipe now unused
+        return null;
+    }
     return child;
 }
 

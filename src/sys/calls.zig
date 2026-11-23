@@ -59,6 +59,20 @@ pub const POLL = chosen.POLL;
 pub const poll = chosen.poll;
 pub const F = chosen.F;
 pub const fcntl = chosen.fcntl;
+
+/// Makes reads of `fd` return at once when nothing's there, instead of waiting: false
+/// when it couldn't be (its flags unread, or not set).
+pub fn set_nonblocking(fd: i32) bool {
+    assert(fd >= 0);
+    const flags = fcntl(fd, F.GETFL, 0);
+    if (failed(flags)) return false; // Unknown flags aren't set over
+    const nonblocking: u32 = if (is_linux)
+        @bitCast(linux.O{ .NONBLOCK = true })
+    else
+        @bitCast(std.c.O{ .NONBLOCK = true });
+    assert(nonblocking != 0);
+    return !failed(fcntl(fd, F.SETFL, flags | nonblocking));
+}
 pub const unlink = chosen.unlink;
 pub const rename = chosen.rename;
 pub const fsync = chosen.fsync;

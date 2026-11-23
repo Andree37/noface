@@ -105,21 +105,24 @@ pub fn find_inputs() Found {
     return found;
 }
 
+/// Room for an input's device file: any u8's three digits, and the closing zero.
+pub const InputPath = ["/dev/input/event".len + 3 + 1]u8;
+
 /// The touch panel's device file, as found (`find_inputs`), or the Paperwhite's when
 /// none is: what the app reads, and the test tools on the Kindle press.
-pub fn touch_path(buffer: []u8) [:0]const u8 {
+pub fn touch_path(buffer: *InputPath) [:0]const u8 {
     return input_path(buffer, find_inputs().touch, evdev.touch_device);
 }
 
 /// The device file of input `number`, or `fallback` when none was found.
-pub fn input_path(buffer: []u8, number: ?u8, fallback: [:0]const u8) [:0]const u8 {
-    // Room for any u8's three digits and the closing zero, so the fallback below is
-    // only ever taken when nothing was found
-    assert(buffer.len >= "/dev/input/event".len + 3 + 1);
+pub fn input_path(buffer: *InputPath, number: ?u8, fallback: [:0]const u8) [:0]const u8 {
     assert(fallback.len > 0);
     const found = number orelse return fallback;
     const format = "/dev/input/event{d}";
-    return std.fmt.bufPrintSentinel(buffer, format, .{found}, 0) catch fallback;
+    // Ignored: `InputPath` holds the longest, so this never fails
+    const path = std.fmt.bufPrintSentinel(buffer, format, .{found}, 0) catch unreachable;
+    assert(std.mem.startsWith(u8, path, "/dev/input/event"));
+    return path;
 }
 
 /// A power supply's role, from its type. USB_WET is a moisture sensor in the port, not

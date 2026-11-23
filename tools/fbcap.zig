@@ -15,6 +15,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     const height = try std.fmt.parseInt(u32, std.mem.sliceTo(argv[2], 0), 10);
     const screen = try e2e.Screen.open();
     // A band past the screen's foot would read the framebuffer's other screen, or nothing
+    if (height == 0) return error.Usage; // A picture of no rows is no picture
     if (height > screen.height) return error.OutsideScreen;
     if (top > screen.height - height) return error.OutsideScreen;
     if (!screen.write_pgm(stdout_fd, top, height)) return error.CantWrite;

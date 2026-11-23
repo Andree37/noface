@@ -204,12 +204,11 @@ pub const Screen = struct {
     /// image, and says whether it all went.
     pub fn write_pgm(screen: *const Screen, fd: i32, band_top: u32, band_height: u32) bool {
         assert(screen.width <= row_size_max);
+        assert(band_height > 0); // A picture has rows: fbcap refuses none
         assert(band_height <= screen.height);
         assert(band_top <= screen.height - band_height);
-        var head: [32]u8 = undefined;
-        const format = "P5\n{d} {d}\n255\n";
-        const header = std.fmt.bufPrint(&head, format, .{ screen.width, band_height }) catch
-            return false;
+        var head: core.pgm.Header = undefined;
+        const header = core.pgm.header(&head, screen.width, band_height);
         if (!core.file.write_all(fd, header)) return false;
         var row: [row_size_max]u8 = undefined;
         const first = screen.top();
@@ -860,7 +859,7 @@ fn shot(run: *const Run, name: []const u8) Failure!void {
     assert(name.len > 0);
     assert(run.out_dir.len > 0);
     try settled(run);
-    var path: [512]u8 = undefined;
+    var path: [std.fs.max_path_bytes]u8 = undefined;
     const full = std.fmt.bufPrintSentinel(&path, "{s}/{s}.pgm", .{ run.out_dir, name }, 0) catch
         return error.Usage;
     if (!run.screen.save(full)) return error.CantSave;

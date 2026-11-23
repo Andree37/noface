@@ -122,7 +122,7 @@ pub fn main(init: std.process.Init) !void {
     const added = try add_forms(&builder);
     var out: [64]u8 = undefined;
     const forms_format = "{d} forms added from inside other entries\n";
-    try print_stdout(init.io, try std.fmt.bufPrint(&out, forms_format, .{added}));
+    try print_stdout(init.io, core.line.of(&out, forms_format, .{added}));
     const body_bytes = try write_dictionary(init.io, &builder, args[2]);
     const words_count = builder.words.count();
     assert(words_count >= added);

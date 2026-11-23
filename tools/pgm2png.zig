@@ -37,7 +37,7 @@ pub fn main(init: std.process.Init) !void {
     assert(std.mem.startsWith(u8, png, png_signature));
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = args[2], .data = png });
     var line: [32]u8 = undefined;
-    const size = try std.fmt.bufPrint(&line, "{d} {d}\n", .{ image.width, image.height });
+    const size = core.line.of(&line, "{d} {d}\n", .{ image.width, image.height });
     try std.Io.File.stdout().writeStreamingAll(io, size);
 }
 

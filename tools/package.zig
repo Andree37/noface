@@ -78,7 +78,7 @@ pub fn main(init: std.process.Init) !void {
     const now = std.Io.Timestamp.now(io, .real).toSeconds();
     const zip = try build_zip(gpa, items.items, dos_time(@intCast(@max(now, 0))));
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = args[1], .data = zip });
-    var line: [1024]u8 = undefined;
+    var line: [std.fs.max_path_bytes + 1]u8 = undefined; // A path, and its newline
     const said = std.fmt.bufPrint(&line, "{s}\n", .{args[1]}) catch return error.PathTooLong;
     try std.Io.File.stdout().writeStreamingAll(io, said);
     assert(zip.len > 0);

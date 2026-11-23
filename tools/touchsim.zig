@@ -42,7 +42,7 @@ pub const Panel = struct {
 
     /// The Kindle's touch panel, for pressing: the device the app finds and reads.
     pub fn open() !Panel {
-        var path_buffer: [32]u8 = undefined;
+        var path_buffer: core.devices.InputPath = undefined;
         const path = core.devices.touch_path(&path_buffer);
         const rc = linux.open(path, .{ .ACCMODE = .WRONLY }, 0);
         if (core.os.failed(rc)) return error.NoTouchPanel;

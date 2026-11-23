@@ -64,15 +64,15 @@ pub fn main(init: std.process.Init.Minimal) !void {
     // Ignored: whether the frames were written is told as each is
     defer _ = linux.close(out);
     var head: [64]u8 = undefined;
-    const header = try std.fmt.bufPrint(&head, "FBREC {d} {d}\n", .{ width_out, height_out });
+    const header = core.line.of(&head, "FBREC {d} {d}\n", .{ width_out, height_out });
     if (!core.file.write_all(out, header)) return error.CantWrite;
 
     // The touch panel, read beside whoever has it: events carry their own time
     const touch_flags: linux.O = .{ .ACCMODE = .RDONLY, .NONBLOCK = true };
-    var touch_path: [32]u8 = undefined;
+    var touch_path: core.devices.InputPath = undefined;
     const touch_rc = linux.open(core.devices.touch_path(&touch_path), touch_flags, 0);
     const touch: i32 = if (core.os.failed(touch_rc)) -1 else @intCast(touch_rc);
-    var touches_path: [512]u8 = undefined;
+    var touches_path: [std.fs.max_path_bytes]u8 = undefined;
     const out_path = std.mem.sliceTo(argv[4], 0);
     const touches_path_z =
         try std.fmt.bufPrintSentinel(&touches_path, "{s}.touches", .{out_path}, 0);

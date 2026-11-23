@@ -30,6 +30,7 @@ pub const cover = @import("gfx/image.zig");
 pub const font = @import("gfx/font.zig");
 pub const page = @import("gfx/page.zig");
 pub const pgm = @import("base/pgm.zig");
+pub const line = @import("text/line.zig");
 pub const decoder_memory = @import("gfx/decoder_memory.zig");
 pub const memory = @import("base/memory.zig");
 pub const card = @import("ui/card.zig");

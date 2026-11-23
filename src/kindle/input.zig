@@ -561,8 +561,8 @@ pub fn open(width: u32, height: u32) !Input {
     // Found by what they report, as Kindles number them differently; this model's
     // numbers if nothing answers
     const found = devices.find_inputs();
-    var touch_buffer: [24]u8 = undefined;
-    var power_buffer: [24]u8 = undefined;
+    var touch_buffer: devices.InputPath = undefined;
+    var power_buffer: devices.InputPath = undefined;
     const touch_path = devices.input_path(&touch_buffer, found.touch, evdev.touch_device);
     const power_path = devices.input_path(&power_buffer, found.power, evdev.power_device);
     std.debug.print("input: touch {s}, power {s}\n", .{ touch_path, power_path });

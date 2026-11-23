@@ -73,7 +73,7 @@ pub fn find_pages(
     const pages_path = try alloc.dupeSentinel(u8, pages_name, 0);
     const pages_key = page_store.key(a, options.book_bytes);
     const stored_pages = page_store.load(alloc, pages_path, pages_key, paragraphs);
-    const saved = state.load(options.state_path);
+    const saved = renumbered(state.load(options.state_path), paragraphs);
     const from_kindle = state.prefer_kindle(saved, entry.kindle_last);
     // Without saved breaks, lay out a little from the reader's place and show it at
     // once; the rest follows in idle moments. Stock's place is a percent of the
@@ -115,6 +115,19 @@ pub fn find_pages(
         .back = back,
         .back_turns = saved.back_turns,
     };
+}
+
+/// `saved`'s places numbered as the book is now: those 0.2.0 saved, which numbered
+/// without the chapters and pictures it couldn't find, mapped past them.
+fn renumbered(saved: state.State, paragraphs: []const book_model.Paragraph) state.State {
+    if (saved.numbering != state.numbering_0_2) return saved;
+    if (!book_model.numbered_otherwise_by_0_2(paragraphs)) return saved; // Read the same
+    var now = saved;
+    now.para = book_model.text_index_from_0_2(paragraphs, saved.para);
+    if (saved.back_para) |p| now.back_para = book_model.text_index_from_0_2(paragraphs, p);
+    now.numbering = state.numbering_now;
+    assert(now.para >= saved.para); // Paragraphs only come in before it, never go
+    return now;
 }
 
 /// A first open's layout, from the reader's saved place, or null when nothing is

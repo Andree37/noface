@@ -36,6 +36,7 @@ pub const BookNotes = struct {
         assert(n.highlights.items.len == 0);
         assert(n.bookmarks.items.len == 0);
         n.store = try .choose(alloc, entry, state_path);
+        n.store.renumber(paragraphs); // A 0.2.0 file, numbered as now before it's read
         // The database's answer read into this: a megabyte, taken only for a book that
         // has its notes there
         const in_database = n.store == .amazon;

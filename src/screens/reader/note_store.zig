@@ -13,6 +13,7 @@ const annotation_db = @import("../../kindle/annotation_db.zig");
 const lipc = @import("../../kindle/lipc.zig");
 const safe = @import("../../kindle/safe.zig");
 const catalog = @import("../../model/catalog.zig");
+const book_model = @import("../../model/book.zig");
 const state = @import("../../sys/state.zig");
 const file = @import("../../sys/file.zig");
 const os = @import("../../sys/os.zig");
@@ -71,6 +72,36 @@ pub const NoteStore = union(enum) {
         };
         for (notes) |note| assert(note.id.len > 0); // Both readers keep none without one
         return notes;
+    }
+
+    /// Renumbers a notes file 0.2.0 wrote, once, as its book opens: its places counted
+    /// without the chapters and pictures 0.2.0 couldn't find (book.zig
+    /// `position_from_0_2`). Written whole and marked, or left as it was if it can't be.
+    pub fn renumber(store: *const NoteStore, paragraphs: []const book_model.Paragraph) void {
+        assert(paragraphs.len > 0); // Parsing refuses a book without any
+        const path = switch (store.*) {
+            .own_file => |p| p,
+            .amazon, .off, .unreadable => return, // Amazon's numbers aren't ours
+        };
+        if (!book_model.numbered_otherwise_by_0_2(paragraphs)) return; // Read the same
+        assert(path[0] == '/');
+        const old = file.map(path) catch return; // None, or none to read: nothing to do
+        defer file.unmap(old);
+        if (numbered_now(old)) return;
+        var fresh_buffer: [files.path_bytes_max + 4]u8 = undefined;
+        const fresh = std.fmt.bufPrintSentinel(&fresh_buffer, "{s}.new", .{path}, 0) catch
+            return;
+        var write_buffer: [4096]u8 = undefined;
+        var out = files.Writer.create(fresh, &write_buffer) catch return;
+        out.write(numbering_line);
+        var lines = std.mem.tokenizeScalar(u8, old, '\n');
+        while (lines.next()) |text| renumber_line(&out, text, paragraphs);
+        _ = out.finish() catch {
+            files.remove(fresh);
+            return;
+        };
+        files.replace(fresh, path) catch files.remove(fresh);
+        log.info("notes renumbered as now, from 0.2.0's", .{});
     }
 
     /// Saves a note, replacing any with the same id. True when it was kept.
@@ -154,6 +185,15 @@ fn remove_amazon(entry: *const catalog.Entry, kind: annotations.Kind, id: []cons
 /// A note as the file keeps it.
 const Line = struct { kind: annotations.Kind, start: u32, end: u32 };
 
+/// The file's first line since 0.2.0: how its notes' places are numbered. One word, so
+/// no reader of notes takes it for one; a file without it is 0.2.0's (`renumber`).
+const numbering_line = std.fmt.comptimePrint("numbering-{d}\n", .{state.numbering_now});
+
+/// Whether a notes file says it numbers as now.
+fn numbered_now(data: []const u8) bool {
+    return std.mem.startsWith(u8, data, numbering_line);
+}
+
 /// The file's notes of `kind`. Null when the file is there but can't be read: taken for
 /// none, the next note saved would write the file over and lose them.
 fn read_file(
@@ -201,6 +241,10 @@ fn rewrite(path: [:0]const u8, id: []const u8, line: ?Line) bool {
     defer if (old) |o| file.unmap(o);
     var write_buffer: [4096]u8 = undefined;
     var out = files.Writer.create(fresh, &write_buffer) catch return false;
+    // Numbered as now (a 0.2.0 file was renumbered as its book opened, `renumber`),
+    // said over notes only: with none left, the file is empty
+    const others = if (old) |o| others_remain(o, id) else false;
+    if (others or line != null) out.write(numbering_line);
     if (old) |o| copy_others(&out, o, id);
     if (line) |l| {
         var text: [64 + safe.id_size_max]u8 = undefined;
@@ -221,6 +265,44 @@ fn rewrite(path: [:0]const u8, id: []const u8, line: ?Line) bool {
         return false;
     };
     return true;
+}
+
+/// One line of a 0.2.0 notes file into `out`, its places as now; one that isn't a note
+/// is dropped, as `copy_others` drops it.
+fn renumber_line(
+    out: *files.Writer,
+    text: []const u8,
+    paragraphs: []const book_model.Paragraph,
+) void {
+    assert(text.len > 0); // A line, by `tokenizeScalar`
+    assert(paragraphs.len > 0);
+    var words = std.mem.tokenizeScalar(u8, text, ' ');
+    const kind = words.next() orelse return;
+    const id = words.next() orelse return;
+    const start = std.fmt.parseInt(u32, words.next() orelse return, 10) catch return;
+    const end = std.fmt.parseInt(u32, words.next() orelse return, 10) catch return;
+    var line: [64 + safe.id_size_max]u8 = undefined;
+    const now = .{
+        kind,
+        id,
+        book_model.position_from_0_2(paragraphs, start),
+        book_model.position_from_0_2(paragraphs, end),
+    };
+    out.write(std.fmt.bufPrint(&line, "{s} {s} {d} {d}\n", now) catch return);
+}
+
+/// Whether `old` holds a note other than `id`'s.
+fn others_remain(old: []const u8, id: []const u8) bool {
+    assert(id.len > 0);
+    assert(old.len > 0); // file.map maps no empty file
+    var lines = std.mem.tokenizeScalar(u8, old, '\n');
+    while (lines.next()) |text| {
+        var words = std.mem.tokenizeScalar(u8, text, ' ');
+        _ = words.next(); // Its kind
+        const its_id = words.next() orelse continue; // Not a note
+        if (!std.mem.eql(u8, its_id, id)) return true;
+    }
+    return false;
 }
 
 /// Copies `old`'s lines but `id`'s note into `out`.
@@ -333,6 +415,29 @@ test "the last note removed leaves an empty file, which takes the next" {
     try std.testing.expect(store.put(.bookmark, "b2", point(7), point(7)));
     const marks = try store.read(arena.allocator(), .bookmark, null);
     try std.testing.expectEqual(1, marks.len);
+}
+
+test "a 0.2.0 notes file is renumbered once, and a file noface writes says how it numbers" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var buffer: [128]u8 = undefined;
+    var store = try test_store(&buffer, "renumbered");
+    defer files.remove(store.own_file);
+    // "two" is a chapter 0.2.0 missed: its highlight on "four" said 5 to 8
+    var paras = [_]book_model.Paragraph{
+        .{ .text = "one", .position = 1 },
+        .{ .text = "two", .position = 5, .skipped_by_0_2 = true },
+        .{ .text = "four", .position = 9 },
+    };
+    file.write_small(store.own_file, "highlight h1 5 8\n");
+    store.renumber(&paras);
+    const once = try store.read(arena.allocator(), .highlight, null);
+    try std.testing.expectEqual(@as(u32, 9), once[0].start);
+    try std.testing.expectEqual(@as(u32, 12), once[0].end);
+    // Marked: a second open leaves it as it is
+    store.renumber(&paras);
+    const twice = try store.read(arena.allocator(), .highlight, null);
+    try std.testing.expectEqual(@as(u32, 9), twice[0].start);
 }
 
 test "a store that's off keeps nothing and reads nothing" {

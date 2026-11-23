@@ -607,6 +607,7 @@ pub fn save_progress(
     saved.back_para = if (back) |b| book_model.text_index(s.paragraphs, b.para) else null;
     saved.back_byte = if (back) |b| b.byte else 0;
     saved.back_turns = s.back.turns_since_jump;
+    saved.numbering = state.numbering_now; // The places above are numbered as now
     state.save(path, saved);
     s.app.user.save_speed();
     s.app.user.save_journal();

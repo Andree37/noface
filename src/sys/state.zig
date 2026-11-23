@@ -20,7 +20,15 @@ pub const State = struct {
     back_para: ?u32 = null,
     back_byte: u32 = 0,
     back_turns: u32 = 0,
+    /// How the book's paragraphs were numbered when this was saved: a file without it is
+    /// 0.2.0's (`numbering_0_2`), whose numbers some EPUBs map (book.zig
+    /// `text_index_from_0_2`).
+    numbering: u32 = numbering_now,
 };
+
+/// The paragraphs as 0.2.0 numbered them, and as noface does since.
+pub const numbering_0_2 = 1;
+pub const numbering_now = 2;
 
 /// `<dir>/state-<16 hex>`, named by the book's whole path (`key_for`).
 pub fn path_for(buf: []u8, dir: []const u8, book_path: []const u8) ![:0]u8 {
@@ -109,7 +117,10 @@ pub fn sibling(buf: []u8, state_path: []const u8, kind: []const u8) ![:0]u8 {
 /// value added later is simply missing from older files and reads as its default.
 // Assertions: it reads a state file, which is outside data.
 pub fn parse(content: []const u8) State {
-    var s = State{};
+    // None saved (a book never opened): nothing to number
+    if (content.len == 0) return .{};
+    // A file that doesn't say how it numbers is 0.2.0's
+    var s = State{ .numbering = numbering_0_2 };
     var lines = std.mem.tokenizeScalar(u8, content, '\n');
     while (lines.next()) |line| {
         var words = std.mem.tokenizeScalar(u8, line, ' ');
@@ -202,6 +213,10 @@ test "kindle position wins until we have our own" {
 
 test "a value a file doesn't have reads as its default" {
     try std.testing.expectEqual(@as(u64, 4200), parse("para 1\nseconds 4200\n").seconds);
+    // 0.2.0 didn't say how it numbered; noface does, and none saved is now's
+    try std.testing.expectEqual(@as(u32, numbering_0_2), parse("para 1\n").numbering);
+    try std.testing.expectEqual(@as(u32, numbering_now), parse("para 1\nnumbering 2\n").numbering);
+    try std.testing.expectEqual(@as(u32, numbering_now), parse("").numbering);
     try std.testing.expectEqual(@as(u64, 0), parse("para 1\n").seconds);
     try std.testing.expect(parse("para 10\nfinished 1\n").finished);
     try std.testing.expect(!parse("para 10\n").finished);
@@ -225,7 +240,7 @@ test "files are written by name and read back" {
         .finished = true,
     };
     const text = "para 12\nbyte 5\npercent 37\nopened 1793990000\nseconds 4200\n" ++
-        "words_left 51000\nfinished 1\n";
+        "words_left 51000\nfinished 1\nnumbering 2\n";
     try std.testing.expectEqual(want, parse(text));
     // A value an older version didn't write reads as its default
     try std.testing.expectEqual(@as(u64, 0), parse("para 1\nbyte 2\n").seconds);

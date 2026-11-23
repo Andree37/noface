@@ -2,7 +2,6 @@
 //! links, pictures and contents. Parsers fill it; layout and screens read it.
 const std = @import("std");
 const assert = std.debug.assert;
-const unicode = @import("../text/unicode.zig");
 
 /// A byte range of a paragraph that links to another paragraph.
 /// `inside`: the target is an anchor partway into its paragraph (a page marker, say),
@@ -76,7 +75,56 @@ pub const Paragraph = struct {
     position: ?u32 = null, // Amazon's number for its first character; null if it has none
     note: bool = false, // Part of a note, so hidden from the flow
     note_start: bool = false, // First paragraph of a note: what references point at
+    /// From a chapter or picture noface 0.2.0 couldn't find, its link written with an
+    /// entity or from the archive's root: places and notes it saved number without it
+    /// (`text_index_from_0_2`, `position_from_0_2`).
+    skipped_by_0_2: bool = false,
 };
+
+/// Whether any paragraph is one 0.2.0 didn't read, so what it saved numbers otherwise.
+pub fn numbered_otherwise_by_0_2(paragraphs: []const Paragraph) bool {
+    for (paragraphs) |p| {
+        if (p.skipped_by_0_2) return true;
+    }
+    return false;
+}
+
+/// The text index (`text_index`) of the paragraph 0.2.0 numbered `old`, counting only
+/// the paragraphs it read. One past them is past the book, as `old` was.
+pub fn text_index_from_0_2(paragraphs: []const Paragraph, old: u32) u32 {
+    var old_count: u32 = 0;
+    var new_count: u32 = 0;
+    for (paragraphs) |p| {
+        if (p.image != null) continue;
+        if (!p.skipped_by_0_2) {
+            if (old_count == old) return new_count;
+            old_count += 1;
+        }
+        new_count += 1;
+    }
+    assert(old_count <= new_count);
+    return new_count + (old - old_count); // Past the end, as far as it was
+}
+
+/// Amazon's number (`Paragraph.position`) for the character 0.2.0 numbered `old`, which
+/// counted only the paragraphs it read, each its characters and one more after.
+pub fn position_from_0_2(paragraphs: []const Paragraph, old: u32) u32 {
+    var old_position: u32 = 1; // As epub.zig's `parse_positions` starts
+    for (paragraphs) |p| {
+        if (p.skipped_by_0_2) continue;
+        const span = char_offset(p.text, @intCast(p.text.len)) + 1;
+        if (old < old_position + span) {
+            const into = old -| old_position;
+            return (p.position orelse return old) + into;
+        }
+        old_position += span;
+    }
+    // Past the book: past it still, as far, which the reader finds nothing at
+    assert(paragraphs.len > 0);
+    const last = paragraphs[paragraphs.len - 1];
+    const new_end = (last.position orelse 0) + char_offset(last.text, @intCast(last.text.len)) + 1;
+    return new_end + (old - old_position);
+}
 
 /// A paragraph's number counting text only. Saved reading positions use this, so
 /// they stay put whether or not pictures are shown.
@@ -107,13 +155,20 @@ pub fn from_text_index(paragraphs: []const Paragraph, index: u32) u32 {
     return @intCast(paragraphs.len);
 }
 
+/// How many bytes a character at `lead` takes in a saved position: as many as its first
+/// byte says, one for a byte that starts none. A saved format, the same since 0.2.0:
+/// for UTF-8 it's the character's length, and in text that isn't, places and notes
+/// saved before stay on the words they were made on.
+fn position_step(lead: u8) u32 {
+    return std.unicode.utf8ByteSequenceLength(lead) catch 1;
+}
+
 /// Characters before a byte offset, which is how Amazon counts positions.
 pub fn char_offset(text: []const u8, byte: u32) u32 {
     var bytes: u32 = 0;
     var chars: u32 = 0;
-    // Each byte that isn't text a character of its own, as unicode.zig reads it
     while (bytes < byte and bytes < text.len) : (chars += 1) {
-        bytes += unicode.character_or_replacement(text, bytes).len;
+        bytes += position_step(text[bytes]);
     }
     // Every character takes at least one byte.
     assert(chars <= bytes);
@@ -127,7 +182,7 @@ pub fn byte_offset(text: []const u8, count: u64) u32 {
     var bytes: u32 = 0;
     var seen: u64 = 0;
     while (bytes < text.len and seen < count) : (seen += 1) {
-        bytes += unicode.character_or_replacement(text, bytes).len;
+        bytes += position_step(text[bytes]);
     }
     assert(seen <= count);
     assert(seen <= bytes);
@@ -188,9 +243,35 @@ test "offsets count characters, not bytes" {
     try std.testing.expectEqual(@as(u32, 4), byte_offset("\u{e1}bc", 99));
 }
 
+test "places 0.2.0 saved are found past what it couldn't read" {
+    // A chapter 0.2.0 missed (its two paragraphs) between two it read
+    var paras = [_]Paragraph{
+        .{ .text = "one" },
+        .{ .text = "two", .skipped_by_0_2 = true },
+        .{ .text = "three", .skipped_by_0_2 = true },
+        .{ .text = "four" },
+    };
+    var position: u32 = 1;
+    for (&paras) |*p| {
+        p.position = position;
+        position += char_offset(p.text, @intCast(p.text.len)) + 1;
+    }
+    try std.testing.expect(numbered_otherwise_by_0_2(&paras));
+    try std.testing.expectEqual(@as(u32, 0), text_index_from_0_2(&paras, 0));
+    try std.testing.expectEqual(@as(u32, 3), text_index_from_0_2(&paras, 1)); // "four"
+    // 0.2.0 numbered "four"'s 'o' 6: "one" took 1 to 4, "four" started at 5
+    try std.testing.expectEqual(paras[3].position.? + 1, position_from_0_2(&paras, 6));
+    try std.testing.expectEqual(@as(u32, 2), position_from_0_2(&paras, 2)); // In "one"
+    try std.testing.expect(position_from_0_2(&paras, 99) >= position); // Past it, still
+}
+
 test "byte and character offsets agree" {
     try std.testing.expectEqual(@as(u32, 2), char_offset("\u{e1}bc", 3));
     try std.testing.expectEqual(@as(u32, 0), char_offset("abc", 0));
+    // Not UTF-8: counted as 0.2.0 saved them, so a highlight made then stays put. A
+    // Latin-1 'é' (0xe9) declares three bytes, and steps over them
+    try std.testing.expectEqual(@as(u32, 5), char_offset("caf\xe9 au lait", 7));
+    try std.testing.expectEqual(@as(u32, 6), byte_offset("caf\xe9 au lait", 4));
 }
 
 test "book sizes snap to the reader's steps" {

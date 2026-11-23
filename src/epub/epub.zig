@@ -141,6 +141,34 @@ fn resolve(alloc: std.mem.Allocator, dir: []const u8, href: []const u8) ![]const
     return std.mem.join(alloc, "/", parts.items);
 }
 
+/// Whether noface 0.2.0 found what `href` names: it joined an href without decoding
+/// its entities, and from the folder even when it starts with "/", so it missed what
+/// such a link names, and numbered the book without it (`Paragraph.skipped_by_0_2`).
+fn found_by_0_2(
+    alloc: std.mem.Allocator,
+    files: []const zip.Entry,
+    dir: []const u8,
+    href: []const u8,
+) !bool {
+    const plain = href[0 .. std.mem.indexOfScalar(u8, href, '#') orelse href.len];
+    const changed = std.mem.indexOfScalar(u8, plain, '&') != null or
+        (plain.len > 0 and plain[0] == '/');
+    if (!changed) return true; // Joined as it is now
+    var parts: std.ArrayList([]const u8) = .empty;
+    var dirs = std.mem.tokenizeScalar(u8, dir, '/');
+    while (dirs.next()) |d| try parts.append(alloc, d);
+    var it = std.mem.tokenizeScalar(u8, plain, '/');
+    while (it.next()) |part| {
+        if (std.mem.eql(u8, part, "..")) {
+            _ = parts.pop();
+        } else if (!std.mem.eql(u8, part, ".")) {
+            try parts.append(alloc, try unescape(alloc, part));
+        }
+    }
+    const as_0_2 = try std.mem.join(alloc, "/", parts.items);
+    return zip.find(files, as_0_2) != null;
+}
+
 /// An attribute's value with its entities decoded, as XML has it.
 fn decode_attribute(alloc: std.mem.Allocator, value: []const u8) ![]const u8 {
     if (std.mem.indexOfScalar(u8, value, '&') == null) return value; // Nothing to decode
@@ -483,10 +511,12 @@ const Builder = struct {
         assert(image.data.ptr == entry.data.ptr); // Never a copy
         try b.flush();
         const index: u32 = @intCast(b.paragraphs.items.len);
+        const seen_by_0_2 = try found_by_0_2(b.alloc, b.files, dir, src);
         try b.paragraphs.append(b.alloc, .{
             .text = "",
             .image = image,
             .section = b.section,
+            .skipped_by_0_2 = !seen_by_0_2,
         });
         try b.place_anchors(index);
     }
@@ -815,8 +845,13 @@ pub fn parse(alloc: std.mem.Allocator, scratch: *memory.Region, data: []const u8
             continue;
         };
         b.section = @intCast(index + 1);
+        const first = b.paragraphs.items.len;
         try b.chapter(path, xhtml);
         try b.keep_pending();
+        // A chapter 0.2.0 couldn't find: none of its paragraphs were in its numbering
+        if (!try found_by_0_2(alloc, files, p.dir, item.href)) {
+            for (b.paragraphs.items[first..]) |*para| para.skipped_by_0_2 = true;
+        }
     }
     if (b.paragraphs.items.len == 0) return error.EmptyBook;
     parse_positions(b.paragraphs.items);
@@ -1101,6 +1136,22 @@ test "a tag that closes itself styles and links nothing; a link a block cuts cov
         const text = paragraphs[l.paragraph].text[l.start..l.end];
         try std.testing.expect(std.mem.eql(u8, text, "other words") or std.mem.eql(u8, text, "1"));
     }
+}
+
+test "what 0.2.0 couldn't find is told: links with entities or from the root it missed" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    const entry = struct {
+        fn named(name: []const u8) zip.Entry {
+            return .{ .name = name, .method = 0, .data = "", .size = 0 };
+        }
+    }.named;
+    const files = [_]zip.Entry{ entry("OEBPS/ch1.xhtml"), entry("OEBPS/Q&A.xhtml") };
+    try std.testing.expect(try found_by_0_2(alloc, &files, "OEBPS", "ch1.xhtml"));
+    // It looked for "OEBPS/OEBPS/ch1.xhtml" and "OEBPS/Q&amp;A.xhtml": neither there
+    try std.testing.expect(!try found_by_0_2(alloc, &files, "OEBPS", "/OEBPS/ch1.xhtml"));
+    try std.testing.expect(!try found_by_0_2(alloc, &files, "OEBPS", "Q&amp;A.xhtml"));
 }
 
 test "broken EPUBs are refused, never crash" {

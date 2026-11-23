@@ -344,6 +344,9 @@ pub fn ended(
     background: display.Backdrop,
     ending: screen.Ending(void),
 ) !bool {
+    // "Syncing" answers the tap for as long as the panel's open: the Kindle says
+    // nothing of when the sync is over, so the next panel offers it again
+    a.quick.syncing = false;
     switch (ending) {
         .done => return true,
         // Closed, or the Kindle locking: what was under it comes back

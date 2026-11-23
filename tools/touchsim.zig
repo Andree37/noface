@@ -72,12 +72,14 @@ pub const Panel = struct {
     pub fn down(panel: *Panel, x: i32, y: i32) error{TouchNotSent}!void {
         assert(!panel.finger_down);
         assert(panel.tracking_id_next >= tracking_id_first);
-        // Down from its first event, so a failure part way still lifts it
+        // Down, with its id taken, from its first event: a failure part way still lifts
+        // it, as `up` finds it down with an id given
+        const id = panel.tracking_id_next;
+        panel.tracking_id_next += 1;
         panel.finger_down = true;
         errdefer panel.up() catch {}; // Ignored: the first failure is the one reported
         try panel.send(ev_abs, abs_mt_slot, 0);
-        try panel.send(ev_abs, abs_mt_tracking_id, panel.tracking_id_next);
-        panel.tracking_id_next += 1;
+        try panel.send(ev_abs, abs_mt_tracking_id, id);
         try panel.send(ev_abs, abs_mt_position_x, x);
         try panel.send(ev_abs, abs_mt_position_y, y);
         try panel.send(ev_abs, abs_mt_touch_major, touch_major_fingertip);
@@ -177,6 +179,8 @@ fn number(comptime T: type, word: [*:0]const u8) error{Usage}!T {
 fn drag(panel: *Panel, asked: Drag) error{TouchNotSent}!void {
     assert(!panel.finger_down);
     try panel.down(asked.x0, asked.y0);
+    // A move that fails lifts the finger, never leaves it down for the next command
+    errdefer panel.up() catch {}; // Ignored: the first failure is the one reported
     // Press before moving, to start a hold
     sleep_ms(asked.hold_ms);
     var x: i32 = asked.x0;

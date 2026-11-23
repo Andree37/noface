@@ -154,6 +154,13 @@ pub const Screen = struct {
         return hash.final();
     }
 
+    /// Whether the screen now differs from `before` (a `sample`): one that can't be read
+    /// now is never taken for one that changed.
+    fn changed_from(screen: *const Screen, before: u64) bool {
+        const now = screen.sample() orelse return false;
+        return now != before;
+    }
+
     /// Reads row `y` of the screen shown from framebuffer row `first` (`top()`, read once
     /// by the caller: the shown screen may flip, and a whole read should be of one).
     /// False when it isn't read whole: the row then says nothing of the screen.
@@ -229,7 +236,7 @@ const Run = struct {
     /// The log's length as the last touch began: a `log` step reads what came after.
     log_mark: u64 = 0,
     /// The screen just before the last touch, and when that touch lifted.
-    before: ?u64 = null, // Null: not read, so any screen read after counts as drawn
+    before: ?u64 = null, // Null: not read, so whether it changed can't be told
     lifted_us: u64 = 0,
     /// Just before the last touch's finger was lifted, by the clock the panel stamps
     /// its events with: null for the power button, which lifts none.
@@ -268,6 +275,7 @@ const Failure = error{
     UnknownPlace,
     NotPlaced,
     TouchNotSent, // The panel didn't take a touch: not the app's failing
+    ScreenUnread, // The screen before a touch couldn't be read: nothing to compare with
 };
 const Words = std.mem.TokenIterator(u8, .any);
 const Point = core.places.Point;
@@ -807,6 +815,8 @@ fn touch(run: *Run, t: Touch) Failure!void {
 fn drag(run: *Run, from: Point, to: Point, total_ms: u32, hold_ms: u32) Failure!void {
     assert(!run.panel.finger_down);
     try run.panel.down(from.x, from.y);
+    // A move that fails lifts the finger, never leaves it down for the next step
+    errdefer run.panel.up() catch {}; // Ignored: the first failure is the one reported
     sleep_ms(hold_ms);
     var x = from.x;
     var y = from.y;
@@ -828,13 +838,16 @@ fn drag(run: *Run, from: Point, to: Point, total_ms: u32, hold_ms: u32) Failure!
 fn drawn(run: *const Run, budget_ms: u32) Failure!u32 {
     assert(run.lifted_us > 0);
     assert(budget_ms > 0);
+    const before = run.before orelse return error.ScreenUnread;
     const deadline = run.lifted_us + @as(u64, budget_ms) * 1000;
-    // Bounded by the deadline. A screen that can't be read now is never taken for one
+    // Looked at once at least, a step that ran late finding it drawn already; then
+    // bounded by the deadline. A screen that can't be read now is never taken for one
     // that changed: it's read again
-    while (now_us() < deadline) : (sleep_ms(poll_ms)) {
-        const now = run.screen.sample();
-        if (now != null and now != run.before) break;
-    } else return error.TooSlow;
+    var changed = run.screen.changed_from(before);
+    while (!changed and now_us() < deadline) : (sleep_ms(poll_ms)) {
+        changed = run.screen.changed_from(before);
+    }
+    if (!changed) return error.TooSlow;
     // Drawn while the finger was still down (a hold's menu, say) counts as at once
     const took_us = now_us() -| run.lifted_us;
     return @intCast(took_us / 1000);

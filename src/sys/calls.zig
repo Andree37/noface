@@ -223,13 +223,18 @@ fn each_entry_libc(
     comptime assert(!is_linux);
     assert(dir[0] != 0);
     const stream = c.opendir(dir) orelse return false;
+    // Ignored: only read from: a close that fails loses nothing
     defer _ = c.closedir(stream);
     for (0..entries_max) |_| {
-        const entry = c.readdir(stream) orelse break;
+        // Its end and an error both read as none: told apart by errno, cleared first
+        std.c._errno().* = 0;
+        const entry = c.readdir(stream) orelse {
+            if (std.c._errno().* != 0) return false; // Cut short: not the whole listing
+            break;
+        };
         const name = std.mem.sliceTo(@as([*:0]const u8, @ptrCast(&entry.name)), 0);
         if (is_listed(name)) each(context, name, entry.type == dirent_type_folder);
     } else return false; // More names than are read
-    // The C library's readdir ends the same on an error as at the end: taken as the end
     return true;
 }
 

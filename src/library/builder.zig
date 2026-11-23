@@ -224,9 +224,11 @@ pub fn build(
         .text_size = b.text.size,
     });
     errdefer ix.close();
-    // A series that can't be set leaves the book as it is: the rest of the index stands
+    // A series that can't be set leaves the book as it is: the rest of the index stands,
+    // marked built from less than is there, so the next load builds and tries again
     apply_overrides(&ix, buffers, items, places) catch |err| {
         log("library: series set by hand not applied ({s})\n", .{@errorName(err)});
+        ix.header.sources = never_matching(sources);
     };
     try ix.write_header();
     return ix;

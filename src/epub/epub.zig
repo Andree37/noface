@@ -255,7 +255,7 @@ fn read_package(alloc: std.mem.Allocator, files: []const zip.Entry) !Package {
             if (xml.attribute(o.attributes, "idref")) |id| try spine.append(alloc, id);
         }
         if (std.mem.eql(u8, o.name, "spine")) p.toc_ncx = xml.attribute(o.attributes, "toc");
-        if (std.mem.eql(u8, o.name, "meta")) read_package_meta(&p, &o);
+        if (std.mem.eql(u8, o.name, "meta")) try read_package_meta(alloc, &p, &o);
     }
     p.items = items.items;
     p.spine = spine.items;
@@ -265,12 +265,15 @@ fn read_package(alloc: std.mem.Allocator, files: []const zip.Entry) !Package {
 }
 
 /// A <meta> naming the cover, or Calibre's series and place in it.
-fn read_package_meta(p: *Package, meta: *const xml.Tag) void {
+fn read_package_meta(alloc: std.mem.Allocator, p: *Package, meta: *const xml.Tag) !void {
     assert(std.mem.eql(u8, meta.name, "meta"));
     const name = xml.attribute(meta.attributes, "name") orelse "";
     const content = xml.attribute(meta.attributes, "content");
     if (std.mem.eql(u8, name, "cover")) p.cover_id = content;
-    if (std.mem.eql(u8, name, "calibre:series")) p.series_name = content orelse "";
+    // An attribute's entities decoded: "Q&amp;A" is "Q&A"
+    if (std.mem.eql(u8, name, "calibre:series")) {
+        p.series_name = try decode_attribute(alloc, content orelse "");
+    }
     if (std.mem.eql(u8, name, "calibre:series_index")) {
         p.series_index = series_place(content orelse "");
     }
@@ -1005,9 +1008,17 @@ test "a series place that isn't a number in range counts as none" {
         );
         defer std.testing.allocator.free(attributes);
         const meta = xml.Tag{ .name = "meta", .attributes = attributes, .self_closing = true };
-        read_package_meta(&p, &meta);
+        try read_package_meta(std.testing.allocator, &p, &meta);
         try std.testing.expectEqual(place[1], p.series_index);
     }
+    // A series' name, its entities decoded
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var p = Package{ .dir = "", .items = &.{}, .spine = &.{} };
+    const named = "name=\"calibre:series\" content=\"Tales &amp; Lies\"";
+    const meta = xml.Tag{ .name = "meta", .attributes = named, .self_closing = true };
+    try read_package_meta(arena.allocator(), &p, &meta);
+    try std.testing.expectEqualStrings("Tales & Lies", p.series_name);
 }
 
 test "bold left open at a chapter's end styles its last words and nothing after" {

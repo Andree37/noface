@@ -191,17 +191,14 @@ const Sentence = struct {
 fn ending(word: []const u8) End {
     assert(word.len > 0);
     var trimmed = word;
-    // Closing quotes and brackets, in ASCII or UTF-8, come after the mark that counts
-    const closers = [_][]const u8{ "\"", "'", ")", "]", "\u{201D}", "\u{2019}", "\u{00BB}" };
-    for (0..4) |_| {
-        var cut = false;
-        for (closers) |c| {
-            if (trimmed.len > c.len and std.mem.endsWith(u8, trimmed, c)) {
-                trimmed = trimmed[0 .. trimmed.len - c.len];
-                cut = true;
-            }
-        }
-        if (!cut) break;
+    // Closing quotes and brackets, of any script ("”", "」"), come after the mark that
+    // counts: as many as the word has, keeping its first character
+    for (0..word.len) |_| {
+        const last_at = unicode.start_at_or_before(trimmed, @intCast(trimmed.len - 1));
+        if (last_at == 0) break;
+        const last = unicode.character_or_replacement(trimmed, last_at);
+        if (!unicode.is_closing(last.cp)) break;
+        trimmed = trimmed[0..last_at];
     }
     // Chinese and Japanese end theirs with full-width marks
     const sentence = [_][]const u8{ ".", "!", "?", "\u{2026}", "\u{3002}", "\u{FF01}", "\u{FF1F}" };
@@ -406,6 +403,16 @@ test "a phrase never holds more words than are counted from its start" {
             from = p.after();
         }
     }
+    // A sentence's stop, then a quote opening: the sentence ends at its stop, the quote
+    // and what it says start the next, never cut inside a word
+    const quoted = "彼女は静かに言った。「あなたの名前は何ですか？」";
+    const said = [_]book_model.Paragraph{.{ .text = quoted }};
+    const first = at(&said, .{ .para = 0, .byte = 0 }, test_fits(&wide)).?;
+    try std.testing.expect(std.mem.endsWith(u8, quoted[first.start..first.end], "。"));
+    try std.testing.expectEqual(End.sentence, first.ends);
+    const next = at(&said, first.after(), test_fits(&wide)).?;
+    try std.testing.expect(std.mem.endsWith(u8, quoted[next.start..next.end], "」"));
+    try std.testing.expectEqual(End.sentence, ending("ですか？」")); // Under its "」"
     // Started inside a word, the phrase starts at the word's start
     const broken = [_]book_model.Paragraph{.{ .text = "wonderful day." }};
     const p = at(&broken, .{ .para = 0, .byte = 4 }, test_fits(&wide)).?;

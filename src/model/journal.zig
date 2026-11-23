@@ -142,10 +142,14 @@ fn run_after(run_before_day: u32, day: Day, next_day: i32) u32 {
 
 /// The local calendar day of a Unix time, `utc_offset` seconds east of UTC. A clock
 /// reset to 1970 and set west of UTC reads before it, which is no day the journal
-/// counts: such a time is day 0.
+/// counts: such a time is day 0. A time from a damaged file, past any day a day's
+/// number holds, is the last of them.
 pub fn day_of(unix: u64, utc_offset: i64) i32 {
-    const day = @max(0, @divFloor(@as(i64, @intCast(unix)) + utc_offset, std.time.s_per_day));
-    return @intCast(day);
+    // `date`'s offset, read: a zone's is within a day either way
+    const offset = std.math.clamp(utc_offset, -std.time.s_per_day, std.time.s_per_day);
+    const seconds: i64 = @intCast(@min(unix, std.math.maxInt(i64) - std.time.s_per_day));
+    const day = @divFloor(seconds + offset, std.time.s_per_day);
+    return @intCast(std.math.clamp(day, 0, std.math.maxInt(i32)));
 }
 
 /// The first day of the year `day` falls in.
@@ -454,6 +458,8 @@ test "journal survives saving, and a line that isn't a day in order is passed ov
 
 test "calendar helpers" {
     try std.testing.expectEqual(@as(i32, 0), day_of(3600, 0));
+    // A damaged file's time is the last day, never a stop
+    try std.testing.expectEqual(@as(i32, std.math.maxInt(i32)), day_of(std.math.maxInt(u64), 0));
     // A clock reset to 1970, west of UTC: day 0, not before it
     try std.testing.expectEqual(@as(i32, 0), day_of(0, -3600));
     try std.testing.expectEqual(@as(i32, 0), year_start(day_of(0, -3600)));

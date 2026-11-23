@@ -189,6 +189,7 @@ pub fn pipe2(fds: *[2]i32, flags: O) usize { // usize: Linux's syscall ABI
     assert(fds[0] != fds[1]);
     if (flags.CLOEXEC) {
         for (fds) |fd| {
+            // Ignored: on a pipe just made, setting close-on-exec doesn't fail
             _ = c.fcntl(fd, c.F.SETFD, @as(c_int, c.FD_CLOEXEC));
         }
     }

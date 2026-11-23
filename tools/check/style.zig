@@ -392,8 +392,8 @@ fn small_arguments(code: []const u8) u32 {
         if (is_word(code[i + 1]) or code[i + 1] == '.') continue;
         const before = std.mem.trimEnd(u8, code[0..i], " ");
         const after = std.mem.trimStart(u8, code[i + 1 ..], " ");
-        assert(before.len > 0);
-        if (after.len == 0) continue;
+        // First on its line, past the indent (a switch's prong, `1 => ...`): no argument
+        if (before.len == 0 or after.len == 0) continue;
         const ends_argument = after[0] == ',' or after[0] == ')';
         const last = before[before.len - 1];
         const stands = last == ',' or last == '(' or last == '+' or last == '-';
@@ -992,6 +992,8 @@ const system_calls = [_][]const u8{
     "linux.",      "calls.",        "std.posix.", "std.os.linux.", "process.",
     // As the tools reach the same calls, through src/core.zig
     "core.calls.", "core.process.",
+    // The C library's, which the portable calls make on a Mac
+    "c.",         "std.c.",
 };
 
 /// How many of a line's catches give up without a word (`catch return;`, `catch break`,
@@ -1297,8 +1299,9 @@ pub fn main(init: std.process.Init) !void {
     std.debug.print("style ok\n", .{});
 }
 
-/// Folders of the repository that hold nothing of its own: what builds and git keep.
-const not_ours = [_][]const u8{ ".git", "zig-out", ".zig-cache", "zig-pkg" };
+/// Folders of the repository that hold nothing of its own: what builds and git keep, and
+/// the tools' local copies (git-excluded), worktrees among them.
+const not_ours = [_][]const u8{ ".git", "zig-out", ".zig-cache", "zig-pkg", ".claude" };
 /// What scripts are written as, by their file's ending.
 const script_endings = [_][]const u8{ ".sh", ".bash", ".py", ".js", ".rb", ".pl", ".lua" };
 
@@ -1312,12 +1315,18 @@ fn find_scripts(
 ) !void {
     const before = found.items.len;
     assert(before > 0); // The Zig files, found first
-    var walker = try root.walk(gpa);
+    // Never into a folder that isn't ours, so nothing a build renames as it runs, nor
+    // another checkout (a worktree, with a `.git` of its own), is ever listed
+    var walker = try root.walkSelectively(gpa);
     defer walker.deinit();
     while (try walker.next(io)) |entry| {
+        if (entry.kind == .directory) {
+            if (listed(&not_ours, entry.basename)) continue;
+            if (own_checkout(io, entry)) continue;
+            try walker.enter(io, entry);
+            continue;
+        }
         if (entry.kind != .file) continue;
-        const slash = std.mem.indexOfScalar(u8, entry.path, '/') orelse entry.path.len;
-        if (listed(&not_ours, entry.path[0..slash])) continue;
         if (!is_script(io, root, entry.path)) continue;
         const source = try root.readFileAlloc(io, entry.path, gpa, .limited(1 << 20));
         if (is_kpm_shim(entry.path, source)) continue;
@@ -1326,6 +1335,16 @@ fn find_scripts(
         try found.append(gpa, .{ .path = path, .breaks = breaks });
     }
     assert(found.items.len >= before);
+}
+
+/// Whether a folder is another checkout of a repository: it has a `.git` of its own.
+fn own_checkout(io: std.Io, entry: std.Io.Dir.Walker.Entry) bool {
+    assert(entry.kind == .directory);
+    assert(entry.basename.len > 0);
+    var sub = entry.dir.openDir(io, entry.basename, .{}) catch return false;
+    defer sub.close(io);
+    _ = sub.statFile(io, ".git", .{}) catch return false; // Ignored: none is ours
+    return true;
 }
 
 /// Whether the file at `path` is a script: named as one, or starting `#!`.
@@ -1853,6 +1872,10 @@ test "a size in the screens' code comes from the scale, and a marked number may 
         \\    page.fill_rect(0, 0, 2 * 150, 100 * n, style.black);
         \\    page.pill(x, x, y, r - 2, style.white);
         \\    page.fill_rect(0, 0, (count - 1) * gap, style.stroke, style.rule);
+        \\    switch (n) {
+        \\        1 => page.fill_rect(0, 0, w, h, style.black),
+        \\        else => {},
+        \\    }
         \\}
         \\const edge_px = 2;
         \\const parts_max = 2;

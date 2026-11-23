@@ -305,6 +305,22 @@ pub fn is_word_by_itself(cp: u21) bool {
 /// stays with it (its punctuation and marks).
 pub const WordState = enum { space, word, by_itself };
 
+/// Whether `cp` opens a quote or bracket ("(", "“", "「"), by Unicode's category.
+pub fn is_opening(cp: u21) bool {
+    assert(cp <= code_point_max);
+    const category = uucode.get(.general_category, cp);
+    return category == .punctuation_open or category == .punctuation_initial_quote;
+}
+
+/// Whether `cp` closes a quote or bracket (")", "”", "」"), by Unicode's category, or is
+/// one of ASCII's quotes, which close as often as they open.
+pub fn is_closing(cp: u21) bool {
+    assert(cp <= code_point_max);
+    if (cp == '"' or cp == '\'') return true;
+    const category = uucode.get(.general_category, cp);
+    return category == .punctuation_close or category == .punctuation_final_quote;
+}
+
 /// Whether `cp` starts a word after `before`, and what it leaves for the next: a word
 /// starts at a word by itself, and at anything but a space after a space; after a word
 /// by itself, a letter or a number starts the next, as '。' stays with its sentence.
@@ -312,14 +328,17 @@ pub fn word_step(before: WordState, cp: u21) struct { starts: bool, after: WordS
     assert(cp <= code_point_max);
     if (is_space(cp)) return .{ .starts = false, .after = .space };
     if (is_word_by_itself(cp)) return .{ .starts = true, .after = .by_itself };
-    return switch (before) {
-        .space => .{ .starts = true, .after = .word },
-        .word => .{ .starts = false, .after = .word },
-        .by_itself => if (is_letter_or_number(cp))
-            .{ .starts = true, .after = .word }
-        else
-            .{ .starts = false, .after = .by_itself },
-    };
+    switch (before) {
+        .space => return .{ .starts = true, .after = .word },
+        .word => return .{ .starts = false, .after = .word },
+        .by_itself => {
+            if (is_letter_or_number(cp)) return .{ .starts = true, .after = .word };
+            // A quote or bracket opening goes with what follows ("。「あ": a word ends
+            // at 「)
+            if (is_opening(cp)) return .{ .starts = false, .after = .space };
+            return .{ .starts = false, .after = .by_itself };
+        },
+    }
 }
 
 /// Whether `cp` is a space of any width, a line or paragraph break, or a tab, as

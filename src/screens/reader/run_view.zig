@@ -48,7 +48,7 @@ const map_width_px = style.space.wide + style.space.tall;
 const map_margin_px = style.space.small + style.space.wider;
 const map_top = style.space.tiny + style.space.roomy;
 const map_word_px = style.stroke;
-const map_edge_px = 2; // Its outline
+const map_edge_px = style.stroke; // Its outline
 /// As tall as the page it shows, for its width.
 const map_height_px = map_width_px * style.screen_height / style.screen_width;
 const map_gap_px = style.space.roomy; // Between the map and the text under it

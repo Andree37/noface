@@ -86,6 +86,7 @@ pub fn draw(page: Page, s: Slider, knob: u32) void {
         const stub_top: u32 = @intFromFloat(@floor(y - r));
         // And the pixel rounding leaves beside the ring
         const stub_px: u32 = @as(u32, @intFromFloat(@ceil(stub))) + 1;
+        // Not a size: the row pixel rounding leaves under the bar's floor, as beside it
         page.fill_rect(stub_left, stub_top, stub_px, 2 * half_height + 1, style.white);
     }
     page.pill(x, x, y, knob_outer + knob_gap, style.white);

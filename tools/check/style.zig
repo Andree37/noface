@@ -343,8 +343,65 @@ fn bare_sizes(code: []const u8, in_points: bool) u32 {
     if (std.mem.indexOf(u8, code, "parseInt(") != null) return 0; // A number's base
     var draws = false;
     for (draw_calls) |call| draws = draws or std.mem.indexOf(u8, code, call) != null;
-    if (!draws and !declares_size(code)) return 0;
-    return big_numbers(code, in_points);
+    const declares = declares_size(code);
+    if (!draws and !declares) return 0;
+    const small: u32 = if (declares) @intFromBool(sets_small(code)) else small_arguments(code);
+    return big_numbers(code, in_points) + small;
+}
+
+/// Whether a size's declaration sets it to a bare 1 or 2: `const edge = 2;`, a length
+/// in the screen's pixels that's too small for `big_numbers` to see.
+fn sets_small(code: []const u8) bool {
+    const equals = std.mem.indexOf(u8, code, " = ") orelse return false;
+    const value = std.mem.trim(u8, code[equals + " = ".len ..], " ");
+    const end = std.mem.indexOfScalar(u8, value, ';') orelse return false;
+    const literal = value[0..end];
+    return std.mem.eql(u8, literal, "1") or std.mem.eql(u8, literal, "2");
+}
+
+/// Whether the innermost bracket left open in `before` opens a call's arguments
+/// (`pill(`), not a group of a sum (`(count - 1)`).
+fn in_call_arguments(before: []const u8) bool {
+    var depth: u32 = 0;
+    var at: u32 = @intCast(before.len);
+    // Back a character a pass, to the line's start at most
+    while (at > 0) {
+        at -= 1;
+        if (before[at] == ')') depth += 1;
+        if (before[at] != '(') continue;
+        if (depth > 0) {
+            depth -= 1;
+            continue;
+        }
+        return at > 0 and is_word(before[at - 1]);
+    }
+    return false;
+}
+
+/// How many 1s and 2s a drawing call is given as lengths: an argument of its own, or
+/// the last term of one, added or taken off (`r - 2, style.white`). A count of gaps or
+/// a last index (`n - 1` inside a sum) ends no argument, so isn't one.
+fn small_arguments(code: []const u8) u32 {
+    var count: u32 = 0;
+    var i: u32 = 1;
+    // Each pass moves on by a character
+    while (i + 1 < code.len) : (i += 1) {
+        const c = code[i];
+        if (c != '1' and c != '2') continue;
+        if (is_word(code[i - 1]) or code[i - 1] == '.') continue;
+        if (is_word(code[i + 1]) or code[i + 1] == '.') continue;
+        const before = std.mem.trimEnd(u8, code[0..i], " ");
+        const after = std.mem.trimStart(u8, code[i + 1 ..], " ");
+        assert(before.len > 0);
+        if (after.len == 0) continue;
+        const ends_argument = after[0] == ',' or after[0] == ')';
+        const last = before[before.len - 1];
+        const stands = last == ',' or last == '(' or last == '+' or last == '-';
+        // `@divTrunc(w, 2)` shares out, as `/ 2` does; `(count - 1) * gap` counts gaps
+        const in_call = in_call_arguments(before);
+        if (ends_argument and stands and in_call and !divides_in_call(before)) count += 1;
+    }
+    return count;
 }
 
 /// Whether a line declares a constant or variable named like a size: `const row_gap =`.
@@ -1794,7 +1851,11 @@ test "a size in the screens' code comes from the scale, and a marked number may 
         \\    page.fill_rect(@divTrunc(page.width, 2), 0, 12, 1, style.black);
         \\    page.fill_rect(0, 0, @divTrunc(f(page.width, 5), 2), 1, style.black);
         \\    page.fill_rect(0, 0, 2 * 150, 100 * n, style.black);
+        \\    page.pill(x, x, y, r - 2, style.white);
+        \\    page.fill_rect(0, 0, (count - 1) * gap, style.stroke, style.rule);
         \\}
+        \\const edge_px = 2;
+        \\const parts_max = 2;
     ;
     const in_ui = try check_zig("src/ui/menu.zig", source, std.testing.allocator);
     defer std.testing.allocator.free(in_ui);
@@ -1804,8 +1865,10 @@ test "a size in the screens' code comes from the scale, and a marked number may 
         if (b.rule == .layout_number) bare += 1;
         if (b.rule == .marker_unused) unused += 1;
     }
-    // 24, the two 4s, the 12 after a `@div` call, the 5 inside one, 150 and 100
-    try std.testing.expectEqual(@as(u32, 7), bare);
+    // 24, the two 4s, the 12 after a `@div` call, the 5 inside one, 150 and 100; and
+    // the small lengths: the border's 2 high, the two 1s high, `r - 2` and `edge_px`.
+    // The gaps' count `count - 1` and `parts_max`, no size, are let be
+    try std.testing.expectEqual(@as(u32, 12), bare);
     try std.testing.expectEqual(@as(u32, 1), unused); // `row(page, 3)` writes no size
     const in_style = try check_zig("src/ui/style.zig", source, std.testing.allocator);
     defer std.testing.allocator.free(in_style);

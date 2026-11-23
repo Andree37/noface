@@ -51,18 +51,16 @@ pub const NoteStore = union(enum) {
         return .{ .own_file = try alloc.dupeSentinel(u8, path, 0) };
     }
 
-    /// The notes of one kind, their ids in `alloc`. `stored` holds the database's answer.
-    /// An own file that can't be read makes the store `.unreadable`, with no notes.
+    /// The notes of one kind, their ids in `alloc`, however many there are. An own file
+    /// that can't be read makes the store `.unreadable`, with no notes.
     pub fn read(
         store: *NoteStore,
         alloc: std.mem.Allocator,
         kind: annotations.Kind,
-        stored: ?[]u8,
     ) ![]const Note {
-        // Room for the database's answer, there only for a store that has one
-        assert((stored != null) == (store.* == .amazon));
+        assert(kind == .highlight or kind == .bookmark);
         const notes = switch (store.*) {
-            .amazon => |entry| try annotation_db.read_notes(alloc, entry.key, kind, stored.?),
+            .amazon => |entry| try annotation_db.read_notes(alloc, entry.key, kind),
             .own_file => |path| try read_file(alloc, path, kind) orelse unreadable: {
                 log.info("notes can't be read: off till the book opens again", .{});
                 store.* = .unreadable;
@@ -342,19 +340,19 @@ test "notes come back by kind, put replaces by id, and remove keeps the others" 
     var store = try test_store(&buffer, "kinds");
     defer files.remove(store.own_file);
     // None yet: no file
-    try std.testing.expectEqual(@as(usize, 0), (try store.read(alloc, .highlight, null)).len);
+    try std.testing.expectEqual(@as(usize, 0), (try store.read(alloc, .highlight)).len);
     try std.testing.expect(store.put(.highlight, "h1", point(10), point(20)));
     try std.testing.expect(store.put(.bookmark, "b1", point(30), point(30)));
     try std.testing.expect(store.put(.highlight, "h2", point(40), point(50)));
     try std.testing.expect(store.put(.highlight, "h1", point(11), point(21))); // Moved
-    const marks = try store.read(alloc, .highlight, null);
+    const marks = try store.read(alloc, .highlight);
     try std.testing.expectEqual(@as(usize, 2), marks.len);
     try std.testing.expectEqualStrings("h2", marks[0].id);
     try std.testing.expectEqual(@as(u32, 11), marks[1].start);
     try std.testing.expect(store.remove(.highlight, "h2"));
     try std.testing.expect(store.remove(.highlight, "never-there"));
-    try std.testing.expectEqual(@as(usize, 1), (try store.read(alloc, .highlight, null)).len);
-    try std.testing.expectEqual(@as(usize, 1), (try store.read(alloc, .bookmark, null)).len);
+    try std.testing.expectEqual(@as(usize, 1), (try store.read(alloc, .highlight)).len);
+    try std.testing.expectEqual(@as(usize, 1), (try store.read(alloc, .bookmark)).len);
 }
 
 test "many notes are kept, however many there are" {
@@ -369,7 +367,7 @@ test "many notes are kept, however many there are" {
         const at: u32 = @intCast(i * 10);
         try std.testing.expect(store.put(.highlight, id, point(at), point(at + 5)));
     }
-    const notes = try store.read(arena.allocator(), .highlight, null);
+    const notes = try store.read(arena.allocator(), .highlight);
     try std.testing.expectEqual(@as(usize, 2000), notes.len);
 }
 
@@ -390,9 +388,9 @@ test "notes that are there but can't be read open as none, and are never written
     try std.testing.expect(!store.put(.highlight, "h3", point(50), point(60)));
     try std.testing.expect(!store.remove(.highlight, "h1"));
     // The book opens without notes, and the store keeps none from then on
-    try std.testing.expectEqual(0, (try store.read(arena.allocator(), .highlight, null)).len);
+    try std.testing.expectEqual(0, (try store.read(arena.allocator(), .highlight)).len);
     try std.testing.expect(store == .unreadable);
-    try std.testing.expectEqual(0, (try store.read(arena.allocator(), .bookmark, null)).len);
+    try std.testing.expectEqual(0, (try store.read(arena.allocator(), .bookmark)).len);
     try std.testing.expect(!store.put(.bookmark, "b1", point(5), point(5)));
     try std.testing.expect(!store.remove(.highlight, "h1"));
     // Still the link: nothing was renamed over it
@@ -411,9 +409,9 @@ test "the last note removed leaves an empty file, which takes the next" {
     try std.testing.expect(store.put(.bookmark, "b1", point(5), point(5)));
     try std.testing.expect(store.remove(.bookmark, "b1"));
     try std.testing.expectError(error.EmptyFile, file.map(store.own_file));
-    try std.testing.expectEqual(0, (try store.read(arena.allocator(), .bookmark, null)).len);
+    try std.testing.expectEqual(0, (try store.read(arena.allocator(), .bookmark)).len);
     try std.testing.expect(store.put(.bookmark, "b2", point(7), point(7)));
-    const marks = try store.read(arena.allocator(), .bookmark, null);
+    const marks = try store.read(arena.allocator(), .bookmark);
     try std.testing.expectEqual(1, marks.len);
 }
 
@@ -431,18 +429,18 @@ test "a 0.2.0 notes file is renumbered once, and a file noface writes says how i
     };
     file.write_small(store.own_file, "highlight h1 5 8\n");
     store.renumber(&paras);
-    const once = try store.read(arena.allocator(), .highlight, null);
+    const once = try store.read(arena.allocator(), .highlight);
     try std.testing.expectEqual(@as(u32, 9), once[0].start);
     try std.testing.expectEqual(@as(u32, 12), once[0].end);
     // Marked: a second open leaves it as it is
     store.renumber(&paras);
-    const twice = try store.read(arena.allocator(), .highlight, null);
+    const twice = try store.read(arena.allocator(), .highlight);
     try std.testing.expectEqual(@as(u32, 9), twice[0].start);
 }
 
 test "a store that's off keeps nothing and reads nothing" {
     var store: NoteStore = .off;
     try std.testing.expect(store.put(.highlight, "h1", point(1), point(2)));
-    const notes = try store.read(std.testing.allocator, .highlight, null);
+    const notes = try store.read(std.testing.allocator, .highlight);
     try std.testing.expectEqual(@as(usize, 0), notes.len);
 }

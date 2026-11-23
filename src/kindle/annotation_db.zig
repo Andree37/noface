@@ -1,7 +1,6 @@
 //! The Kindle's annotation database: reading a book's records and queuing changes for sync.
 const std = @import("std");
 const assert = std.debug.assert;
-const builtin = @import("builtin");
 const paths = @import("paths.zig");
 const linux = @import("../sys/calls.zig");
 const os = @import("../sys/os.zig");
@@ -26,14 +25,25 @@ const record_fields = "annotation_id, " ++
     "json_extract(serialized_payload, '$.end_position.shortPosition')";
 
 /// A book's records: those Amazon sent that aren't being changed here, and those
-/// queued here that aren't deletes.
+/// queued here that aren't deletes; a page of them at a time, in the ids' order, so
+/// any number are read through one page's room (`read_page`).
 const read_format = find_database ++ "sqlite3 -separator '|' \"file:$db?mode=ro\" " ++
-    "\"select {s} from server_view where dataset={d} and {s} and annotation_id not in " ++
-    "(select annotation_id from local_edit where {s}) " ++
-    "union select {s} from local_edit where dataset={d} and action != 3 and {s}\"";
+    "\"select * from (select {s} from server_view where dataset={d} and {s} and " ++
+    "annotation_id not in (select annotation_id from local_edit where {s}) " ++
+    "union select {s} from local_edit where dataset={d} and action != 3 and {s}) " ++
+    "order by 1 limit {d} offset {d}\"";
 /// Room for `read_format` filled in: two record fields, four book matches (each fits
-/// `read_lines`'s buffer for it), and two dataset numbers.
-const read_command_bytes_max = 1536;
+/// `read_lines`'s buffer for it), two dataset numbers, and a page's limit and offset.
+const read_command_bytes_max = 1600;
+
+/// The longest line the database answers: an id, two positions, two '|' and its end.
+const line_bytes_max = safe.id_size_max + 2 * std.fmt.count("{d}", .{std.math.maxInt(u32)}) + 3;
+/// A page of the answer: as many records as it holds at their longest.
+pub const Page = [64 * 1024]u8;
+pub const page_rows = @sizeOf(Page) / line_bytes_max;
+/// Pages read at most for one book, one kind: more than any book's notes, a bound on
+/// the loop, never met by a real Kindle's.
+const pages_max = std.math.maxInt(u32) / page_rows;
 const book_match_bytes_max = annotations.book_match_bytes_max;
 
 /// Runs the SQL in `paths.annotation_sql` on the database, saying "ok" if it all took.
@@ -41,8 +51,9 @@ const write_command = find_database ++ "sqlite3 -bail -cmd '.timeout 3000' \"$db
     paths.annotation_sql ++ " && echo ok";
 
 comptime {
-    assert(read_format.len + 2 * record_fields.len + 4 * book_match_bytes_max + 2 * 10 <
+    assert(read_format.len + 2 * record_fields.len + 4 * book_match_bytes_max + 4 * 10 <
         read_command_bytes_max);
+    assert(page_rows > 0);
     // The SQL file's path goes into a shell command unquoted.
     assert(std.mem.indexOfAny(u8, paths.annotation_sql, " '\"$;|&") == null);
     assert(paths.annotation_sql[0] == '/');
@@ -60,21 +71,23 @@ pub fn dry_run() bool {
 
 /// A book's highlights or bookmarks, their ids in `alloc`; `out` holds the database's
 /// answer while it's read.
-pub fn read_notes(
-    alloc: std.mem.Allocator,
-    key: []const u8,
-    kind: annotations.Kind,
-    out: []u8,
-) ![]const Note {
-    assert(out.len > 0);
-    const notes = try parse_notes(alloc, read_lines(key, kind, out));
-    for (notes) |note| assert(note.id.len > 0); // parse_notes keeps none without one
-    return notes;
+pub fn read_notes(alloc: std.mem.Allocator, key: []const u8, kind: annotations.Kind) ![]const Note {
+    var page: Page = undefined;
+    var notes: std.ArrayList(Note) = .empty;
+    // A page at a time, until one isn't full: however many a book has, all are read
+    for (0..pages_max) |index| {
+        const read = read_page(key, kind, &page, index * page_rows);
+        try parse_notes(alloc, read.lines, &notes);
+        if (read.rows < page_rows) break;
+    }
+    for (notes.items) |note| assert(note.id.len > 0); // parse_notes keeps none without one
+    return notes.toOwnedSlice(alloc);
 }
 
-/// The database's "id|start|end" lines as notes; a line that isn't one is skipped.
-pub fn parse_notes(alloc: std.mem.Allocator, lines: []const u8) ![]const Note {
-    var notes: std.ArrayList(Note) = .empty;
+/// The database's "id|start|end" lines as notes, onto `notes`; a line that isn't one
+/// is skipped.
+pub fn parse_notes(alloc: std.mem.Allocator, lines: []const u8, notes: *std.ArrayList(Note)) !void {
+    const before = notes.items.len;
     var it = std.mem.tokenizeScalar(u8, lines, '\n');
     while (it.next()) |line| {
         var fields = std.mem.splitScalar(u8, line, '|');
@@ -84,41 +97,35 @@ pub fn parse_notes(alloc: std.mem.Allocator, lines: []const u8) ![]const Note {
         if (id.len == 0) continue;
         try notes.append(alloc, .{ .id = try alloc.dupe(u8, id), .start = start, .end = end });
     }
-    assert(notes.items.len <= lines.len); // A note takes a line, and a line some bytes
-    for (notes.items) |note| assert(note.id.len > 0);
-    return notes.toOwnedSlice(alloc);
+    // A note takes a line, and a line some bytes
+    assert(notes.items.len - before <= lines.len);
 }
 
-/// Fetches a book's highlights or bookmarks as "id|start|end" lines, as the database
-/// answers: the self-test hands them to its pretend Kindle, to open a book with its own.
-pub fn read_lines(key: []const u8, kind: annotations.Kind, out: []u8) []const u8 {
-    assert(out.len > 0);
-    if (!safe.safe_id(key)) return "";
+/// One page of the database's answer: its "id|start|end" lines, and how many rows the
+/// database gave, so a page holding fewer than `page_rows` is the last.
+pub const Read = struct { lines: []const u8, rows: u64 };
+
+/// Fetches page rows `first_row` on of a book's highlights or bookmarks as the database
+/// answers them: the self-test hands them to its pretend Kindle, to open a book with its
+/// own. None when the database can't be asked.
+pub fn read_page(key: []const u8, kind: annotations.Kind, page: *Page, first_row: u64) Read {
+    const none: Read = .{ .lines = "", .rows = 0 };
+    if (!safe.safe_id(key)) return none;
     var match_buf: [book_match_bytes_max]u8 = undefined;
-    const book = annotations.book_match(&match_buf, key) catch return "";
+    const book = annotations.book_match(&match_buf, key) catch return none;
     var buf: [read_command_bytes_max]u8 = undefined;
     const dataset = kind.dataset();
     const command = std.fmt.bufPrintSentinel(&buf, read_format, .{
-        record_fields, dataset, book, book, record_fields, dataset, book,
-    }, 0) catch return "";
+        record_fields, dataset, book, book, record_fields, dataset, book, page_rows, first_row,
+    }, 0) catch return none;
     const argv = [_:null]?[*:0]const u8{ "/bin/sh", "-c", command };
-    const output_size = process.run(&argv, out) orelse return "";
-    assert(output_size <= out.len);
-    return complete_lines(out[0..output_size], output_size == out.len);
-}
-
-/// Output that filled its buffer may end mid-line; that last line is dropped
-/// rather than read as a highlight with a wrong end.
-pub fn complete_lines(output: []const u8, filled: bool) []const u8 {
-    if (!filled) return output;
-    if (!builtin.is_test) {
-        std.debug.print("highlight list cut off at {d} bytes\n", .{output.len});
-    }
-    const end = std.mem.lastIndexOfScalar(u8, output, '\n') orelse return "";
-    const result = output[0 .. end + 1];
-    assert(result.len <= output.len);
-    assert(result[result.len - 1] == '\n');
-    return result;
+    const output_size = process.run(&argv, page) orelse return none;
+    assert(output_size <= page.len);
+    // `page_rows` lines at their longest fit, so a page's answer is always whole
+    const lines = page[0..output_size];
+    const rows = std.mem.count(u8, lines, "\n");
+    assert(rows <= page_rows);
+    return .{ .lines = lines, .rows = rows };
 }
 
 /// Runs a SQL statement against the annotation database.
@@ -152,20 +159,18 @@ test "reads and writes each work on one database, the newest, and none when ther
     try std.testing.expect(std.mem.indexOf(u8, write_command, "'.timeout 3000' \"$db\" <") != null);
 }
 
-test "a cut-off highlight list loses only its partial line" {
-    try std.testing.expectEqualStrings(
-        "a|1|2\nb|3|4\n",
-        complete_lines("a|1|2\nb|3|4\nc|5|", true),
-    );
-    try std.testing.expectEqualStrings("a|1|2\nc|5|6", complete_lines("a|1|2\nc|5|6", false));
-    try std.testing.expectEqualStrings("", complete_lines("c|5|", true));
+comptime {
+    // A page's rows at their longest fit it, so no answer is ever cut mid-line
+    assert(page_rows * line_bytes_max <= @sizeOf(Page));
 }
 
 test "database lines become notes, and lines that aren't are skipped" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const lines = "kindle.h-101|101|104\nbad line\n|1|2\nx|7|9\n";
-    const notes = try parse_notes(arena.allocator(), lines);
+    var list: std.ArrayList(Note) = .empty;
+    try parse_notes(arena.allocator(), lines, &list);
+    const notes = list.items;
     try std.testing.expectEqual(@as(usize, 2), notes.len);
     try std.testing.expectEqualStrings("kindle.h-101", notes[0].id);
     try std.testing.expectEqual(@as(u32, 104), notes[0].end);

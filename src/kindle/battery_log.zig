@@ -68,7 +68,8 @@ pub fn note(path: [*:0]const u8, last: *?battery.Sample) void {
 /// Keeps the newest half of the log, from a line start.
 fn note_trim(path: [*:0]const u8) void {
     var buffer: [log_bytes_max + 4096]u8 = undefined;
-    const all = file.read_small(path, &buffer);
+    // The newest, however long trims that failed let it grow
+    const all = file.read_end(path, &buffer);
     assert(all.len <= buffer.len);
     const cut = all.len / 2;
     const start = (std.mem.indexOfScalarPos(u8, all, cut, '\n') orelse return) + 1;
@@ -82,7 +83,8 @@ pub fn load(path: [*:0]const u8, out: []battery.Sample) []battery.Sample {
     assert(out.len > 0);
     assert(out.len <= std.math.maxInt(u32));
     var buffer: [log_bytes_max + 4096]u8 = undefined;
-    const all = file.read_small(path, &buffer);
+    // The newest samples, however long trims that failed let it grow
+    const all = file.read_end(path, &buffer);
     assert(all.len <= buffer.len);
     // Kept in a ring, so a long log costs one pass, then put in order. No more lines
     // than bytes, so the count fits a u32.

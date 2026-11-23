@@ -84,7 +84,10 @@ pub fn size_of(path: [*:0]const u8) u64 {
     return @intCast(end);
 }
 
-/// A small file's contents, or nothing if it can't be read.
+/// A small file's contents, or nothing if it can't be read. Its start, as much as `buf`
+/// holds: a file noface writes is sized to fit the buffer it's read back into, so one
+/// longer was damaged or written by hand, and that's said in the log. A file that only
+/// grows, read for its newest part, is read with `read_end`.
 pub fn read_small(path: [*:0]const u8, buf: []u8) []const u8 {
     assert(path[0] != 0);
     assert(buf.len > 0);
@@ -95,7 +98,36 @@ pub fn read_small(path: [*:0]const u8, buf: []u8) []const u8 {
     const n = linux.read(fd, buf.ptr, buf.len);
     if (failed(n)) return "";
     assert(n <= buf.len);
+    if (n == buf.len) {
+        var more: [1]u8 = undefined;
+        const past = linux.pread(fd, &more, more.len, @intCast(buf.len));
+        if (!failed(past) and past > 0) {
+            std.debug.print("{s}: longer than the {d} bytes read of it\n", .{ path, buf.len });
+        }
+    }
     return buf[0..n];
+}
+
+/// The end of a file that grows (a log), as much as `buf` holds, from a line's start:
+/// its newest lines. Nothing if it can't be read.
+pub fn read_end(path: [*:0]const u8, buf: []u8) []const u8 {
+    assert(path[0] != 0);
+    assert(buf.len > 0);
+    const rc = linux.open(path, .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0);
+    if (failed(rc)) return "";
+    const fd: i32 = @intCast(rc);
+    defer _ = linux.close(fd); // Ignored: only read: nothing is lost if closing fails
+    var size: linux.off_t = 0;
+    if (failed(linux.llseek(fd, 0, &size, linux.SEEK.END))) return "";
+    const from: u64 = @as(u64, @intCast(size)) -| buf.len;
+    const n = linux.pread(fd, buf.ptr, buf.len, @intCast(from));
+    if (failed(n)) return "";
+    assert(n <= buf.len);
+    const read = buf[0..n];
+    if (from == 0) return read; // The whole file
+    // Cut into a line: from the next whole one
+    const first = std.mem.indexOfScalar(u8, read, '\n') orelse return "";
+    return read[first + 1 ..];
 }
 
 /// Writes beside the real file and renames, so a crash or a power cut can't lose the old

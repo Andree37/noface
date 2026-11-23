@@ -6,6 +6,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const paths = @import("../kindle/paths.zig");
 const process = @import("../sys/process.zig");
+const annotation_db = @import("../kindle/annotation_db.zig");
 const lipc = @import("../kindle/lipc.zig");
 const annotations = @import("../kindle/annotations.zig");
 
@@ -178,12 +179,45 @@ pub const FakeKindle = struct {
                     .bookmark => k.bookmarks,
                 };
                 if (lines.len == 0) return 0; // None: the database printed nothing
-                // Whole lines, as the database prints them and read_lines keeps them
+                // Whole lines, as the database prints them
                 assert(lines[lines.len - 1] == '\n');
-                return answer_copy(lines, out);
+                const page = rows_asked(lines, command);
+                if (page.len == 0) return 0; // Past the last: the database printed nothing
+                return answer_copy(page, out);
             }
         }
         return null;
+    }
+
+    /// The rows of `lines` a command's "limit N offset M" asks for, as sqlite gives
+    /// them: all of them when it asks for none in particular.
+    fn rows_asked(lines: []const u8, command: []const u8) []const u8 {
+        assert(lines.len > 0);
+        const limit = number_after(command, " limit ") orelse return lines;
+        const offset = number_after(command, " offset ") orelse 0;
+        assert(limit > 0); // A page holds a row at least
+        // usize: an index into `lines`, as `for` counts them
+        var start: usize = 0;
+        var row: u64 = 0;
+        // A row a line, each passed once
+        for (lines, 0..) |c, i| {
+            if (c != '\n') continue;
+            row += 1;
+            if (row == offset) start = i + 1;
+            if (row == offset + limit) return lines[start .. i + 1];
+        }
+        if (row <= offset) return "";
+        return lines[start..];
+    }
+
+    fn number_after(text: []const u8, word: []const u8) ?u64 {
+        assert(word.len > 0);
+        assert(std.mem.endsWith(u8, word, " ")); // The number right after its word
+        const at = std.mem.indexOf(u8, text, word) orelse return null;
+        const rest = text[at + word.len ..];
+        var end: u32 = 0;
+        while (end < rest.len and std.ascii.isDigit(rest[end])) end += 1;
+        return std.fmt.parseInt(u64, rest[0..end], 10) catch null;
     }
 
     /// Copies an answer into `out`, cut short when it doesn't fit, as a pipe would be.
@@ -231,4 +265,23 @@ test "the fake Kindle answers the annotation database's reads with the notes giv
     const write = "sqlite3 -bail db < /tmp/noface-annotation.sql";
     _ = FakeKindle.answer(&k, &.{ "/bin/sh", "-c", write }, &out);
     try std.testing.expect(k.did_run("sh")); // A write is only noted
+}
+
+test "a book's notes are read a page at a time, however many there are" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    var k = try FakeKindle.init(alloc);
+    // Two full pages and a few over: more than one page's room ever held
+    const count = 2 * annotation_db.page_rows + 3;
+    var lines: std.ArrayList(u8) = .empty;
+    for (0..count) |i| try lines.print(alloc, "kindle.h-{d:0>8}|{d}|{d}\n", .{ i, i, i + 1 });
+    k.highlights = lines.items;
+    k.install();
+    defer k.release();
+    const notes = try annotation_db.read_notes(alloc, "B000TEST01", .highlight);
+    try std.testing.expectEqual(@as(usize, count), notes.len);
+    try std.testing.expectEqual(@as(u32, count - 1), notes[count - 1].start); // The last
+    const bookmarks = try annotation_db.read_notes(alloc, "B000TEST01", .bookmark);
+    try std.testing.expectEqual(@as(usize, 0), bookmarks.len);
 }

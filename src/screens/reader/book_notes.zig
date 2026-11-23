@@ -9,9 +9,6 @@ const catalog = @import("../../model/catalog.zig");
 const highlights = @import("../../model/highlights.zig");
 const note_store = @import("note_store.zig");
 
-/// The database's answer for one kind of note, read into a buffer this big.
-const stored_bytes_max = 1024 * 1024;
-
 pub const BookNotes = struct {
     /// Where highlights and bookmarks are kept, chosen as the book opens.
     store: note_store.NoteStore = .off,
@@ -37,18 +34,14 @@ pub const BookNotes = struct {
         assert(n.bookmarks.items.len == 0);
         n.store = try .choose(alloc, entry, state_path);
         n.store.renumber(paragraphs); // A 0.2.0 file, numbered as now before it's read
-        // The database's answer read into this: a megabyte, taken only for a book that
-        // has its notes there
-        const in_database = n.store == .amazon;
-        const stored: ?[]u8 = if (in_database) try alloc.alloc(u8, stored_bytes_max) else null;
-        const highlight_notes = try n.store.read(alloc, .highlight, stored);
+        const highlight_notes = try n.store.read(alloc, .highlight);
         const highlights_read = try highlights.parse(alloc, paragraphs, highlight_notes);
         try n.highlights.appendSlice(alloc, highlights_read);
-        // Copied, as `stored` is read into again for the bookmarks
+        // Copied: the notes' ids are the store's
         const ids = try alloc.alloc([]const u8, highlight_notes.len);
         for (ids, highlight_notes) |*id, note| id.* = try alloc.dupe(u8, note.id);
         n.stored_highlight_ids = ids;
-        const bookmark_notes = try n.store.read(alloc, .bookmark, stored);
+        const bookmark_notes = try n.store.read(alloc, .bookmark);
         const bookmarks_read = try bookmarks.parse(alloc, paragraphs, bookmark_notes);
         try n.bookmarks.appendSlice(alloc, bookmarks_read);
         std.debug.print("{d} bookmarks loaded\n", .{n.bookmarks.items.len});

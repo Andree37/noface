@@ -1094,9 +1094,6 @@ pub fn real_ms() u64 {
 /// The most of the reader's books the self-test opens of each kind, and looks at.
 pub const selftest_books_opened_max = 3;
 pub const selftest_books_tried_max = 12;
-/// The most a book's highlights or bookmarks take, as the database answers: the
-/// reader's own buffer for them is this size.
-pub const selftest_notes_bytes_max = 1024 * 1024;
 
 comptime {
     assert(selftest_books_opened_max <= selftest_books_tried_max);

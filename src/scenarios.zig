@@ -17,6 +17,7 @@ const Font = @import("gfx/font.zig").Font;
 const catalog = @import("model/catalog.zig");
 const kindle_catalog = @import("kindle/catalog.zig");
 const annotation_db = @import("kindle/annotation_db.zig");
+const annotations = @import("kindle/annotations.zig");
 const settings_model = @import("model/settings.zig");
 const dictionary = @import("model/dictionary.zig");
 const paths = @import("kindle/paths.zig");
@@ -26,7 +27,6 @@ const play_on = harness.play_on;
 const real_ms = harness.real_ms;
 const selftest_books_opened_max = harness.selftest_books_opened_max;
 const selftest_books_tried_max = harness.selftest_books_tried_max;
-const selftest_notes_bytes_max = harness.selftest_notes_bytes_max;
 const write_snapshots = harness.write_snapshots;
 const reading = @import("scenarios/reading.zig");
 const words = @import("scenarios/words.zig");
@@ -202,24 +202,41 @@ fn selftest_kindle_books(alloc: std.mem.Allocator) ![]const RealBook {
     const entries = try kindle_catalog.parse(alloc, list);
     std.sort.block(catalog.Entry, entries, {}, read_later);
     var books: std.ArrayList(RealBook) = .empty;
-    const stored = try alloc.alloc(u8, selftest_notes_bytes_max);
+    const page = try alloc.create(annotation_db.Page);
     for (entries) |entry| {
         if (books.items.len == selftest_books_tried_max) break;
         if (!entry.is_local() or entry.is_epub()) continue;
         if (!file.exists(entry.path)) continue; // Gone since the list was written
-        const highlights = annotation_db.read_lines(entry.key, .highlight, stored);
-        const highlights_kept = try alloc.dupe(u8, highlights);
-        const bookmarks = annotation_db.read_lines(entry.key, .bookmark, stored);
         try books.append(alloc, .{
             .entry = entry,
-            .highlights = highlights_kept,
-            .bookmarks = try alloc.dupe(u8, bookmarks),
+            .highlights = try all_lines(alloc, entry.key, .highlight, page),
+            .bookmarks = try all_lines(alloc, entry.key, .bookmark, page),
         });
     }
     std.sort.block(RealBook, books.items, {}, more_highlighted);
     assert(books.items.len <= selftest_books_tried_max);
     assert(books.items.len <= entries.len); // Each one of the list's
     return books.items;
+}
+
+/// Every "id|start|end" line the database has of a book's `kind` of notes, a page at a
+/// time through `page`, as the pretend Kindle is to answer them.
+fn all_lines(
+    alloc: std.mem.Allocator,
+    key: []const u8,
+    kind: annotations.Kind,
+    page: *annotation_db.Page,
+) ![]const u8 {
+    assert(key.len > 0);
+    assert(annotation_db.page_rows > 0);
+    var lines: std.ArrayList(u8) = .empty;
+    // A page at a time, until one isn't full
+    for (0..std.math.maxInt(u32)) |index| {
+        const read = annotation_db.read_page(key, kind, page, index * annotation_db.page_rows);
+        try lines.appendSlice(alloc, read.lines);
+        if (read.rows < annotation_db.page_rows) break;
+    }
+    return lines.items;
 }
 
 fn read_later(_: void, a: catalog.Entry, b: catalog.Entry) bool {

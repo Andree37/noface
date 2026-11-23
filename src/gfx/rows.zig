@@ -22,7 +22,7 @@ pub const Order = enum { rows, passes };
 
 /// The source pixels target pixel `index` averages, of `source` along a side shrunk or
 /// grown to `target`: as `scale` works them out.
-const Span = struct { from: u32, to: u32 };
+pub const Span = struct { from: u32, to: u32 };
 
 fn span(index: u32, source: u32, target: u32) Span {
     assert(index < target);

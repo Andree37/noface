@@ -187,8 +187,10 @@ fn check_transparency(header: *const Header, ihdr: *const Ihdr, body: []const u8
 /// Decodes a PNG row by row into `sink`, which `begin`s once the size is known. The
 /// picture data is inflated as the rows need it, straight from its chunks, so the
 /// memory taken from `work` is a few rows' and the inflater's window, whatever the
-/// picture's size.
+/// picture's size. On an error, the sink is as it was given, as JPEG's decoder leaves it.
 pub fn decode_rows(work: std.mem.Allocator, data: []const u8, sink: *scaler.Sink) Error!void {
+    assert(sink.mode == .waiting);
+    errdefer sink.abandon();
     if (!is_png(data)) return error.BadPng;
     // Chunks are found by 32-bit offsets, so a larger file isn't one this reads
     if (data.len > std.math.maxInt(u32)) return error.BadPng;
@@ -367,10 +369,11 @@ fn unfilter_pass(
         const prior = work.rows[size_in_row - half ..][0..size_in_row];
         const line = work.line[0 .. size_in_row + 1];
         inflated.readSliceAll(line) catch return error.BadPng;
-        var filter = line[0];
-        if (filter > 4) return error.BadPng;
+        // The file's byte (outside data) as a filter once: past the five, it isn't a PNG
+        if (line[0] > @backingInt(Filter.paeth)) return error.BadPng;
+        var filter: Filter = @fromBackingInt(line[0]);
         // The first row has no row above: stb_image's equivalents that don't look at it
-        if (row == 0) filter = first_row_filter[filter];
+        if (row == 0) filter = first_row_filter[line[0]];
         unfilter_row(filter, line[1..], current, prior, filter_bytes);
         const gray = work.gray_row[0..size.width];
         row_to_gray(ihdr, palette_gray, current, work.samples, gray);
@@ -383,55 +386,55 @@ fn unfilter_pass(
     }
 }
 
-const filter_none = 0;
-const filter_sub = 1;
-const filter_up = 2;
-const filter_average = 3;
-const filter_paeth = 4;
-/// Average on the first row, where the row above counts as zeros.
-const filter_average_first = 5;
-const first_row_filter = [5]u8{
-    filter_none,
-    filter_sub,
-    filter_none,
-    filter_average_first,
-    filter_sub, // Paeth with nothing above is sub
+/// A row's filter, the PNG format's five by their numbers, and one of noface's own:
+/// average on the first row, where the row above counts as zeros.
+const Filter = enum(u8) { none, sub, up, average, paeth, average_first };
+const first_row_filter = [_]Filter{
+    .none,
+    .sub,
+    .none, // Up from zeros is none
+    .average_first,
+    .sub, // Paeth with nothing above is sub
 };
 
+comptime {
+    // One for each of the format's own, which come first, by their numbers
+    assert(first_row_filter.len == @backingInt(Filter.paeth) + 1);
+}
+
 /// Undoes one row's filter. A hot loop: plain arguments, one switch per row.
-fn unfilter_row(filter: u8, raw: []const u8, current: []u8, prior: []const u8, step: u32) void {
+fn unfilter_row(filter: Filter, raw: []const u8, current: []u8, prior: []const u8, step: u32) void {
     assert(raw.len == current.len);
     assert(prior.len == current.len);
     assert(step >= 1);
     const n = current.len;
     const first = @min(step, n);
     switch (filter) {
-        filter_none => @memcpy(current, raw),
-        filter_sub => {
+        .none => @memcpy(current, raw),
+        .sub => {
             @memcpy(current[0..first], raw[0..first]);
             for (first..n) |k| current[k] = raw[k] +% current[k - step];
         },
-        filter_up => for (0..n) |k| {
+        .up => for (0..n) |k| {
             current[k] = raw[k] +% prior[k];
         },
-        filter_average => {
+        .average => {
             for (0..first) |k| current[k] = raw[k] +% (prior[k] >> 1);
             for (first..n) |k| {
                 const sum = @as(u32, prior[k]) + current[k - step];
                 current[k] = raw[k] +% @as(u8, @intCast(sum >> 1));
             }
         },
-        filter_paeth => {
+        .paeth => {
             for (0..first) |k| current[k] = raw[k] +% prior[k];
             for (first..n) |k| {
                 current[k] = raw[k] +% paeth(current[k - step], prior[k], prior[k - step]);
             }
         },
-        filter_average_first => {
+        .average_first => {
             @memcpy(current[0..first], raw[0..first]);
             for (first..n) |k| current[k] = raw[k] +% (current[k - step] >> 1);
         },
-        else => unreachable, // Mapped above from the five filters, checked
     }
 }
 

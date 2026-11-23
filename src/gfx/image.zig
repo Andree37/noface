@@ -21,8 +21,9 @@ const panel_gray_step = std.math.maxInt(u8) / (panel_grays - 1);
 const weight_bits = 8;
 const weight_whole: u32 = 1 << weight_bits;
 const weight_squared: u32 = weight_whole * weight_whole;
-/// The widest view `zoomed` draws: its column tables are this long.
-const view_width_max = 2048;
+/// The widest view `zoomed` draws: its column tables are this long, wider than any
+/// Kindle's screen (screens/reader/picture.zig checks it against each).
+pub const view_width_max = 2048;
 
 comptime {
     assert(panel_gray_step * (panel_grays - 1) == std.math.maxInt(u8)); // White a step
@@ -207,7 +208,8 @@ fn decoded_into(sink: *scaler.Sink, source: Encoded, parent: std.mem.Allocator) 
         else
             jpeg_decoder.decode_rows(&work, encoded, sink, shrink);
         decoding catch |err| {
-            sink.abandon();
+            // Each decoder gives the sink back as it was, on an error
+            assert(sink.mode == .waiting);
             // A picture that can't be decoded is shown as none: nothing worse
             if (err != error.OutOfMemory) return null;
             continue;
@@ -273,11 +275,7 @@ pub fn blit(page: Page, ready: []const u8, x: u32, y: u32, w: u32, h: u32) void 
         .{ ready.len, w, h },
     );
     assert(page.holds_rows());
-    if (x + w > page.width or y + h > page.height) return;
-    for (0..h) |row| {
-        const line = ready[row * w ..][0..w];
-        @memcpy(page.buf[(y + row) * page.stride + x ..][0..w], line);
-    }
+    page.copy_image(x, y, ready, w, h);
 }
 
 /// Returns a grayscale cover at the given size, or null if it can't be read.
@@ -323,9 +321,12 @@ pub fn zoomed(
     smooth: bool,
 ) void {
     assert(zoom > 0);
-    // Checked once, not per pixel: the view's rows lie in the page
+    // Checked once, not per pixel, before any way of drawing it: the view's rows lie
+    // in the page, and its columns fit the tables
     assert(page.holds_rows());
     assert(dh <= page.height);
+    assert(dw <= page.width);
+    assert(dw <= view_width_max);
     assert(src.pixels.len >= src.width * src.height);
     if (smooth and zoom > 1) return blended(src, cx, cy, zoom, page, dw, dh);
     if (smooth and zoom < 1) return averaged(src, cx, cy, zoom, page, dw, dh);
@@ -335,8 +336,7 @@ pub fn zoomed(
     const sh: f32 = @floatFromInt(src.height);
     // The picture column for each screen column, worked out once
     var columns: [view_width_max]i32 = undefined;
-    const cols = @min(dw, columns.len);
-    assert(cols <= page.width);
+    const cols = dw;
     for (0..cols) |x| {
         const sx = cx + (@as(f32, @floatFromInt(x)) + 0.5 - half_w) / zoom;
         columns[x] = if (sx < 0 or sx >= sw) -1 else @intFromFloat(sx);
@@ -358,7 +358,7 @@ pub fn zoomed(
 fn averaged(src: Gray, cx: f32, cy: f32, zoom: f32, page: Page, dw: u32, dh: u32) void {
     assert(zoom > 0);
     assert(zoom < 1);
-    const Span = struct { from: u32, to: u32 }; // Equal ends: past the edge
+    const Span = scaler.Span; // As the scaler's; equal ends here: past the edge
     var cols: [view_width_max]Span = undefined;
     const n = @min(dw, cols.len);
     const half_w: f32 = @as(f32, @floatFromInt(dw)) / 2;

@@ -33,7 +33,7 @@ pub const segment_bytes: u32 = 64 << 10;
 const record_header_bytes: u32 = 8;
 /// The largest bitmap kept: one more is drawn each time it shows.
 pub const bitmap_bytes_max = segment_bytes - record_header_bytes;
-const code_point_max = 0x10ffff;
+const code_point_max = @import("../text/unicode.zig").code_point_max;
 
 comptime {
     assert(std.math.isPowerOfTwo(ways));

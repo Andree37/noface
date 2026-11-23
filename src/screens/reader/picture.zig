@@ -7,6 +7,7 @@ const assert = std.debug.assert;
 const book_model = @import("../../model/book.zig");
 const memory = @import("../../base/memory.zig");
 const image = @import("../../gfx/image.zig");
+const device = @import("../../model/device.zig");
 const Page = @import("../../gfx/page.zig").Page;
 const jpegxr = @import("../../kindle/jpegxr.zig");
 const touch_zones = @import("../../kindle/touch.zig");
@@ -16,6 +17,13 @@ const app = @import("../../app.zig");
 const screen = @import("../screen.zig");
 const input_mod = @import("../../kindle/input.zig");
 const os = @import("../../sys/os.zig");
+
+comptime {
+    // A picture fills the screen at most: on every Kindle, as wide as the view can be
+    for (std.enums.values(device.Model)) |model| {
+        assert(device.screen(model).width_px <= image.view_width_max);
+    }
+}
 
 /// Bigger than this and it isn't worth the memory: a page-sized scan is ~5M.
 const pixels_max = 24 * 1000 * 1000;

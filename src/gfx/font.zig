@@ -7,26 +7,6 @@ const truetype = @import("truetype.zig");
 const glyph_cache = @import("glyph_cache.zig");
 const unicode = @import("../text/unicode.zig");
 
-/// The font file's first bytes: its version, which says what kind of font it is.
-const sfnt_version_truetype = 0x00010000;
-const sfnt_version_apple = 0x74727565; // "true"
-const sfnt_version_opentype = 0x4f54544f; // "OTTO"
-/// A font's table directory: version, table count and search hints, then the records.
-const table_directory_size = 12;
-const table_record_size = 16;
-/// A collection's header: "ttcf", version, font count, then the first font's offset.
-const collection_header_size = 16;
-
-comptime {
-    assert(sfnt_version_apple == std.mem.readInt(u32, "true", .big));
-    assert(sfnt_version_opentype == std.mem.readInt(u32, "OTTO", .big));
-    // The directory holds the version and the table count read from it
-    assert(table_directory_size >= 4 + 2);
-    // A record holds its tag, checksum, offset and length
-    assert(table_record_size == 4 * 4);
-    assert(collection_header_size == 12 + 4);
-}
-
 /// Marks that sit over the letter before and take no room of their own.
 const is_combining = unicode.is_combining;
 const code_point_max = unicode.code_point_max;
@@ -53,41 +33,14 @@ pub const Font = struct {
     /// the file.
     pub fn usable(ttf: []const u8) bool {
         if (!tables_inside(ttf)) return false;
-        assert(ttf.len >= table_directory_size);
+        assert(ttf.len >= truetype.table_directory_size);
         const info = truetype.init(ttf) orelse return false;
         return truetype.glyph_index(&info, 'a') != 0 and truetype.glyph_index(&info, 'A') != 0;
     }
 
     /// A TrueType or OpenType font (or the first of a collection) whose tables all lie
-    /// within `data`.
-    pub fn tables_inside(data: []const u8) bool {
-        if (data.len < table_directory_size) return false;
-        // Offsets in a font are 32 bits: a larger file isn't a font
-        if (data.len > std.math.maxInt(u32)) return false;
-        var at: u32 = 0;
-        if (std.mem.eql(u8, data[0..4], "ttcf")) {
-            if (data.len < collection_header_size) return false;
-            at = std.mem.readInt(u32, data[12..16], .big);
-            if (at > data.len - table_directory_size) return false;
-        }
-        assert(at + table_directory_size <= data.len);
-        const version = std.mem.readInt(u32, data[at..][0..4], .big);
-        if (version != sfnt_version_truetype and version != sfnt_version_apple and
-            version != sfnt_version_opentype) return false;
-        const tables = std.mem.readInt(u16, data[at + 4 ..][0..2], .big);
-        if (tables == 0) return false;
-        const records_size = @as(u32, tables) * table_record_size;
-        if (@as(u64, at) + table_directory_size + records_size > data.len) return false;
-        const records = data[at + table_directory_size ..][0..records_size];
-        assert(records.len == @as(u32, tables) * table_record_size);
-        for (0..tables) |i| {
-            const record = records[i * table_record_size ..][0..table_record_size];
-            const offset = std.mem.readInt(u32, record[8..12], .big);
-            const length = std.mem.readInt(u32, record[12..16], .big);
-            if (@as(u64, offset) + length > data.len) return false;
-        }
-        return true;
-    }
+    /// within `data`: the font reader's own rule (gfx/truetype.zig).
+    pub const tables_inside = truetype.tables_inside;
 
     pub fn init(ttf: []const u8, px: f32, line_spacing: f32) !Font {
         // Sizes and spacings are noface's own, from its tables, never a book's
@@ -202,7 +155,7 @@ pub const Font = struct {
         return @as(f32, @floatFromInt(units)) * f.scale;
     }
 
-    pub fn measure(f: *Font, word: []const u8) !f32 {
+    pub fn measure(f: *const Font, word: []const u8) !f32 {
         const cache = try glyph_cache.get();
         var width: f32 = 0;
         var previous: ?Metrics = null;
@@ -221,7 +174,7 @@ pub const Font = struct {
     }
 
     /// Bytes of `word` that fit in `avail`, always at least one character.
-    pub fn fit(f: *Font, word: []const u8, avail: f32) !u32 {
+    pub fn fit(f: *const Font, word: []const u8, avail: f32) !u32 {
         // Words are pieces of a paragraph or of noface's own text, far under 4 GB
         assert(word.len <= std.math.maxInt(u32));
         const cache = try glyph_cache.get();
@@ -250,7 +203,7 @@ pub const Font = struct {
     /// Draws `word` with its first letter's pen at `x_start`. Each glyph is drawn as
     /// soon as the cache hands it over, before the cache is used again: what it hands
     /// over is good until then.
-    pub fn draw(f: *Font, page: Page, x_start: f32, baseline: i32, word: []const u8) !void {
+    pub fn draw(f: *const Font, page: Page, x_start: f32, baseline: i32, word: []const u8) !void {
         // Positions come from layout, which never makes one that isn't a number
         assert(std.math.isFinite(x_start));
         assert(page.holds_rows());

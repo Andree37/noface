@@ -21,6 +21,20 @@ comptime {
     assert(arc_steps > 0);
 }
 
+/// What dimming leaves of a pixel: a light floor, and a fifth of what was there, so
+/// what's under a sheet still shows, faintly.
+const dim_floor = 0xc8;
+const dim_share = 5;
+/// The gray at and above which a pixel is white in black and white.
+const threshold_gray = 0x80;
+/// The shortest a stroke is taken to be: a zero-length one is a dot, never a division
+/// by zero.
+const stroke_length_min = 0.01;
+
+comptime {
+    assert(dim_floor + 0xff / dim_share <= 0xff); // White dimmed is still a gray
+}
+
 pub const Page = struct {
     buf: []u8,
     width: u32,
@@ -61,7 +75,7 @@ pub const Page = struct {
         var row = y;
         while (row < row_end) : (row += 1) {
             const start = row * p.stride + x;
-            for (p.buf[start .. start + width]) |*px| px.* = 0xc8 + px.* / 5;
+            for (p.buf[start .. start + width]) |*px| px.* = dim_floor + px.* / dim_share;
         }
     }
 
@@ -185,7 +199,7 @@ pub const Page = struct {
         const bottom: i32 = @intFromFloat(@ceil(@max(y0, y1) + r + 1));
         const dx = x1 - x0;
         const dy = y1 - y0;
-        const len2 = @max(dx * dx + dy * dy, 0.0001);
+        const len2 = @max(dx * dx + dy * dy, stroke_length_min * stroke_length_min);
         var y = top;
         while (y <= bottom) : (y += 1) {
             var x = left;
@@ -279,7 +293,7 @@ pub const Page = struct {
         assert((@as(u64, top) + height) * p.stride <= p.buf.len);
         const start = top * p.stride;
         for (p.buf[start .. start + height * p.stride]) |*px| {
-            px.* = if (px.* < 128) 0x00 else 0xff;
+            px.* = if (px.* < threshold_gray) 0x00 else 0xff;
         }
     }
 
@@ -334,11 +348,13 @@ pub const Page = struct {
     }
 
     /// Copies a `w` x `h` picture, one byte per pixel, onto the page at (`x`, `y`).
+    /// Copies a `w` by `h` gray picture, exactly that many pixels, to (`x`, `y`): none
+    /// of it when the box leaves the page, never into another row or past the end.
     pub fn copy_image(p: Page, x: u32, y: u32, src: []const u8, w: u32, h: u32) void {
         assert(p.holds_rows());
-        assert(src.len >= @as(u64, w) * h);
-        var row: u32 = 0;
-        while (row < h) : (row += 1) {
+        assert(src.len == @as(u64, w) * h);
+        if (@as(u64, x) + w > p.width or @as(u64, y) + h > p.height) return;
+        for (0..h) |row| {
             @memcpy(p.buf[(y + row) * p.stride + x ..][0..w], src[row * w ..][0..w]);
         }
     }

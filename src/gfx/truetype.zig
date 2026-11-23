@@ -7,6 +7,7 @@
 //! gives zeros, missing glyphs and blank bitmaps, never a crash.
 const std = @import("std");
 const assert = std.debug.assert;
+const unicode = @import("../text/unicode.zig");
 const cff = @import("cff.zig");
 const raster = @import("raster.zig");
 const Vertex = @import("outline.zig").Vertex;
@@ -84,6 +85,41 @@ const Glyf = struct {
     loc_format: u16,
 };
 
+/// A font's table directory: version, table count and search hints, then a record a
+/// table: its tag, checksum, offset and length.
+pub const table_directory_size = 12;
+const table_record_size = 16;
+
+comptime {
+    assert(table_directory_size >= 4 + 2); // The version and the table count read from it
+    assert(table_record_size == 4 * 4);
+}
+
+/// Whether `data` holds a font (the first, in a collection) whose every table lies
+/// within it, by the same rules `init` reads it by: what's checked before a font file
+/// is offered at all.
+pub fn tables_inside(data: []const u8) bool {
+    if (data.len < table_directory_size) return false;
+    // Offsets in a font are 32 bits: a larger file isn't a font
+    if (data.len > std.math.maxInt(u32)) return false;
+    const at = first_font_offset(data) orelse return false;
+    if (at > data.len - table_directory_size) return false;
+    if (!is_font(data[at..])) return false; // A collection's first is a font too
+    const tables = std.mem.readInt(u16, data[at + 4 ..][0..2], .big);
+    if (tables == 0) return false;
+    const records_size = @as(u32, tables) * table_record_size;
+    if (@as(u64, at) + table_directory_size + records_size > data.len) return false;
+    const records = data[at + table_directory_size ..][0..records_size];
+    for (0..tables) |i| {
+        const record = records[i * table_record_size ..][0..table_record_size];
+        const offset = std.mem.readInt(u32, record[8..12], .big);
+        const length = std.mem.readInt(u32, record[12..16], .big);
+        if (@as(u64, offset) + length > data.len) return false;
+    }
+    assert(records.len == records_size);
+    return true;
+}
+
 /// Whether a font's version says it's one: TrueType, OpenType, or Apple's.
 fn is_font(data: []const u8) bool {
     assert(data.len <= std.math.maxInt(u32));
@@ -111,9 +147,9 @@ fn first_font_offset(data: []const u8) ?u32 {
 // Assertions: it reads a font's directory, outside data: a table it lacks is null.
 fn find_table(data: []const u8, start: u32, tag: *const [4]u8) ?u32 {
     const tables = ushort(data, @as(i64, start) + 4);
-    const directory = @as(i64, start) + 12;
+    const directory = @as(i64, start) + table_directory_size;
     for (0..tables) |i| {
-        const record = directory + 16 * @as(i64, @intCast(i));
+        const record = directory + table_record_size * @as(i64, @intCast(i));
         if (tag_at(data, record, tag)) {
             const offset = ulong(data, record + 8);
             return if (offset == 0) null else offset;
@@ -183,7 +219,7 @@ fn find_index_map(data: []const u8, cmap: u32) u32 {
 
 /// The glyph for a character, 0 for none.
 pub fn glyph_index(info: *const Info, code_point: u32) u32 {
-    assert(code_point <= 0x10ffff);
+    assert(code_point <= unicode.code_point_max);
     assert(info.index_map != 0);
     const data = info.data;
     const map: i64 = info.index_map;

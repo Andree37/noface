@@ -248,7 +248,7 @@ test "snippets of text without spaces start on a whole character" {
     const at = std.mem.indexOf(u8, s, "探す").?;
     try std.testing.expect(unicode.inside_character(s[at - 48]));
     const line = snippet(s, @intCast(at), 120);
-    try std.testing.expect(std.unicode.utf8ValidateSlice(line));
+    try std.testing.expect(unicode.is_utf8(line));
     try std.testing.expect(std.mem.indexOf(u8, line, "探す") != null);
 }
 

@@ -25,15 +25,15 @@ const search = core.search;
 const unicode = core.unicode;
 const Value = std.json.Value;
 
-const magic = "NFDICT1\n";
 const pos_max = 3;
 const senses_max = 3;
 /// The longest sense kept, in characters, before "…" ends it.
 const gloss_characters_max = 200;
 /// The longest word kept, in characters.
 const word_characters_max = 40;
-/// The longest key kept, in bytes: noface's lookup folds a word into this much.
-const key_bytes_max = 64;
+const dictionary = core.dictionary;
+/// The longest key kept, in bytes: as long as noface's lookup folds a word into.
+const key_bytes_max = dictionary.max_key;
 /// The longest line of the extract read: the longest entry is a few megabytes.
 const line_bytes_max = 1 << 28;
 /// The most lines read: an extract has a few million.
@@ -48,7 +48,6 @@ const gzip_padding_max: u64 = 1 << 32;
 const ellipsis = "\u{2026}";
 
 comptime {
-    assert(magic.len == 8);
     assert(gloss_characters_max > ellipsis.len);
     assert(word_characters_max * 4 >= key_bytes_max); // A word kept may still be too long a key
 }
@@ -277,8 +276,7 @@ fn add_entry(b: *Builder, entry: Value) !void {
     const senses = try senses_of(b.scratch, entry);
     if (senses.len == 0) return;
     try add_listed_forms(b, entry, word);
-    const key = try fold(b.scratch, word);
-    if (key.len > key_bytes_max) return;
+    const key = try fold(b.scratch, word) orelse return; // Too long a key to look up
     const slot = try b.words.getOrPut(std.heap.smp_allocator, key);
     if (!slot.found_existing) {
         slot.key_ptr.* = try b.keep.dupe(u8, key);
@@ -298,10 +296,7 @@ fn add_entry(b: *Builder, entry: Value) !void {
 fn usable_word(word: []const u8) bool {
     if (word.len == 0) return false;
     if (std.mem.indexOfScalar(u8, word, ' ') != null) return false;
-    const view = std.unicode.Utf8View.init(word) catch return false;
-    var characters = view.iterator();
-    var count: u32 = 0;
-    while (characters.nextCodepoint()) |_| count += 1;
+    const count = unicode.count_characters(word) orelse return false;
     assert(count > 0);
     assert(count <= word.len);
     return count <= word_characters_max and unicode.has_letter(word);
@@ -337,7 +332,9 @@ fn add_senses(
         }
         const base = sense.base orelse continue;
         if (base.len == 0 or w.base != null) continue;
-        if (!std.mem.eql(u8, try fold(b.scratch, base), key)) w.base = try b.keep.dupe(u8, base);
+        const base_key = try fold(b.scratch, base);
+        const same = if (base_key) |k| std.mem.eql(u8, k, key) else false;
+        if (!same) w.base = try b.keep.dupe(u8, base);
     }
     assert(p.glosses_count <= senses_max);
 }
@@ -417,8 +414,7 @@ fn add_listed_forms(b: *Builder, entry: Value, word: []const u8) !void {
         if (tags_count == 0) continue;
         std.mem.replaceScalar(u8, description.items, '-', ' ');
         try description.print(b.scratch, " of {s}", .{word});
-        const key = try fold(b.scratch, form);
-        if (key.len > key_bytes_max) continue;
+        const key = try fold(b.scratch, form) orelse continue; // Too long a key to look up
         const slot = try b.forms.getOrPut(std.heap.smp_allocator, key);
         if (slot.found_existing) continue;
         slot.key_ptr.* = try b.keep.dupe(u8, key);
@@ -463,45 +459,29 @@ fn write_dictionary(io: std.Io, b: *const Builder, path: []const u8) !u64 {
             return std.mem.lessThan(u8, left, right);
         }
     }.before);
-    var body: std.ArrayList(u8) = .empty;
-    var offsets: std.ArrayList(u8) = .empty;
-    for (keys) |key| {
-        try append_u32(gpa, &offsets, body.items.len);
-        try append_entry(gpa, &body, key, b.words.getPtr(key).?);
+    // Each entry's lines, then the file as model/dictionary.zig writes and reads it
+    const entries = try gpa.alloc(dictionary.Written, keys.len);
+    var size: u64 = 0;
+    for (keys, entries) |key, *entry| {
+        const w = b.words.getPtr(key).?;
+        var text: std.ArrayList(u8) = .empty;
+        try append_entry(gpa, &text, w);
+        entry.* = .{ .key = key, .word = w.word, .text = text.items };
+        size += key.len + w.word.len + text.items.len + 2;
     }
-    try append_u32(gpa, &offsets, body.items.len);
-    assert(offsets.items.len == (keys.len + 1) * 4);
     var file = try std.Io.Dir.cwd().createFile(io, path, .{});
     defer file.close(io);
     var buffer: [1 << 16]u8 = undefined;
     var writer = file.writer(io, &buffer);
-    try writer.interface.writeAll(magic);
-    try writer.interface.writeInt(u32, @intCast(keys.len), .little);
-    try writer.interface.writeAll(offsets.items);
-    try writer.interface.writeAll(body.items);
+    try dictionary.write(&writer.interface, entries);
     try writer.interface.flush();
-    return body.items.len;
+    return size;
 }
 
-/// Appends `value` as a little-endian u32: the file's offsets and count are u32s.
-fn append_u32(gpa: std.mem.Allocator, out: *std.ArrayList(u8), value: u64) !void {
-    if (value > std.math.maxInt(u32)) return error.DictionaryTooLarge;
-    var bytes: [4]u8 = undefined;
-    std.mem.writeInt(u32, &bytes, @intCast(value), .little);
-    try out.appendSlice(gpa, &bytes);
-    assert(out.items.len % 4 == 0);
-}
-
-/// One entry: its key, the word, and its definition lines.
-fn append_entry(
-    gpa: std.mem.Allocator,
-    body: *std.ArrayList(u8),
-    key: []const u8,
-    w: *const Word,
-) !void {
-    assert(key.len > 0);
+/// One entry's definition lines.
+fn append_entry(gpa: std.mem.Allocator, body: *std.ArrayList(u8), w: *const Word) !void {
     assert(w.pos_count <= pos_max);
-    try body.print(gpa, "{s}\x00{s}\x00", .{ key, w.word });
+    assert(w.word.len > 0);
     var first = true;
     for (w.pos[0..w.pos_count]) |p| {
         if (!first) try body.append(gpa, '\n');
@@ -518,35 +498,26 @@ fn append_entry(
     }
 }
 
-/// A word as noface looks it up: lowercase, accents off (as src/model/search.zig folds
-/// them), and the typographic apostrophe a plain one.
-fn fold(scratch: std.mem.Allocator, word: []const u8) ![]const u8 {
-    const view = try std.unicode.Utf8View.init(word);
-    var characters = view.iterator();
-    var out: std.ArrayList(u8) = .empty;
-    try out.ensureTotalCapacity(scratch, word.len);
-    while (characters.nextCodepoint()) |code_point| {
-        const plain = search.fold(code_point); // A curly apostrophe plain, as noface looks up
-        var bytes: [4]u8 = undefined;
-        const length = try std.unicode.utf8Encode(plain, &bytes);
-        try out.appendSlice(scratch, bytes[0..length]);
-    }
-    // A character folds to one character, of up to as many bytes again
-    assert(out.items.len <= word.len * 2);
-    assert(word.len == 0 or out.items.len > 0);
-    return out.items;
+/// A word's key, in `scratch`, as noface folds it to look it up (model/dictionary.zig
+/// `fold`, the one fold both use): null when it's too long a key, or not text.
+fn fold(scratch: std.mem.Allocator, word: []const u8) !?[]const u8 {
+    var buffer: [key_bytes_max]u8 = undefined;
+    const key = dictionary.fold(&buffer, word) orelse return null;
+    assert(key.len <= key_bytes_max);
+    return try scratch.dupe(u8, key);
 }
 
 /// A gloss on one line, its spaces single, cut at a space near 200 characters with
 /// "…" when longer, as the Python tool had it.
 fn clip(scratch: std.mem.Allocator, text: []const u8) ![]const u8 {
-    const view = try std.unicode.Utf8View.init(text);
-    var characters = view.iterator();
+    if (!unicode.is_utf8(text)) return error.InvalidUtf8;
+    var characters = unicode.Characters{ .text = text };
     var out: std.ArrayList(u8) = .empty;
     var space_pending = false;
     var count: u32 = 0;
     var cut_end: u32 = 0; // Where the 200th character ends
-    while (characters.nextCodepoint()) |code_point| {
+    while (characters.next()) |c| {
+        const code_point = c.cp;
         if (unicode.is_space(code_point)) {
             space_pending = out.items.len > 0;
             continue;
@@ -557,9 +528,7 @@ fn clip(scratch: std.mem.Allocator, text: []const u8) ![]const u8 {
             if (count == gloss_characters_max) cut_end = @intCast(out.items.len);
         }
         space_pending = false;
-        var bytes: [4]u8 = undefined;
-        const length = try std.unicode.utf8Encode(code_point, &bytes);
-        try out.appendSlice(scratch, bytes[0..length]);
+        try out.appendSlice(scratch, text[characters.at - c.len .. characters.at]); // As written
         count += 1;
         if (count == gloss_characters_max) cut_end = @intCast(out.items.len);
     }
@@ -629,9 +598,12 @@ test "a word is folded as noface looks it up" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    try std.testing.expectEqualStrings("cafe", try fold(a, "Caf\u{E9}"));
-    try std.testing.expectEqualStrings("don't", try fold(a, "Don\u{2019}t"));
-    try std.testing.expectEqualStrings("stra\u{DF}e", try fold(a, "Stra\u{DF}e"));
+    try std.testing.expectEqualStrings("cafe", (try fold(a, "Caf\u{E9}")).?);
+    try std.testing.expectEqualStrings("don't", (try fold(a, "Don\u{2019}t")).?);
+    try std.testing.expectEqualStrings("stra\u{DF}e", (try fold(a, "Stra\u{DF}e")).?);
+    // Too long a key for noface's lookup: none, so the word is left out
+    const long: [key_bytes_max + 1]u8 = @splat('a');
+    try std.testing.expect(try fold(a, &long) == null);
 }
 
 test "words without a letter, with a space or too long are left out" {
@@ -661,12 +633,39 @@ test "an entry's senses, forms and base word come out as noface reads them" {
     try std.testing.expectEqual(@as(u32, 1), try add_forms(&b));
     var body: std.ArrayList(u8) = .empty;
     defer body.deinit(std.testing.allocator);
-    try append_entry(std.testing.allocator, &body, "ran", b.words.getPtr("ran").?);
-    const expected = "ran\x00Ran\x00verb\n1 simple past of run\n2 sprinted\n3 an old use\n=run";
+    try append_entry(std.testing.allocator, &body, b.words.getPtr("ran").?);
+    const expected = "verb\n1 simple past of run\n2 sprinted\n3 an old use\n=run";
     try std.testing.expectEqualStrings(expected, body.items);
     body.clearRetainingCapacity();
-    try append_entry(std.testing.allocator, &body, "rans", b.words.getPtr("rans").?);
-    try std.testing.expectEqualStrings("rans\x00rans\x00form\n1 plural of Ran\n=Ran", body.items);
+    try append_entry(std.testing.allocator, &body, b.words.getPtr("rans").?);
+    try std.testing.expectEqualStrings("form\n1 plural of Ran\n=Ran", body.items);
+}
+
+test "a dictionary written here is read by noface, a word found by its folded key" {
+    var keep_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer keep_arena.deinit();
+    var scratch_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer scratch_arena.deinit();
+    var b: Builder = .{ .keep = keep_arena.allocator(), .scratch = scratch_arena.allocator() };
+    defer b.words.deinit(std.heap.smp_allocator);
+    defer b.forms.deinit(std.heap.smp_allocator);
+    try read_line(&b,
+        \\{"word": "Caf\u00e9", "pos": "noun", "senses": [{"glosses": ["a small restaurant"]}]}
+    );
+    var path_buffer: [64]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buffer, "/tmp/noface-dictionary-test-{d}", .{
+        std.c.getpid(),
+    });
+    _ = try write_dictionary(std.testing.io, &b, path);
+    defer std.Io.Dir.cwd().deleteFile(std.testing.io, path) catch {}; // Ignored: only /tmp
+    const cwd = std.Io.Dir.cwd();
+    const gpa = std.testing.allocator;
+    const data = try cwd.readFileAlloc(std.testing.io, path, gpa, .limited(1 << 20));
+    defer gpa.free(data);
+    const d = dictionary.Dictionary.open(data) orelse return error.NotRead;
+    // Looked up however the book writes it: accented, capital, or neither
+    try std.testing.expectEqualStrings("Caf\u{e9}", d.lookup("CAFE").?.word);
+    try std.testing.expect(std.mem.indexOf(u8, d.lookup("caf\u{e9}").?.text, "restaurant") != null);
 }
 
 /// `text` as one gzip member, for the tests.

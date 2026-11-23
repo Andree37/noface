@@ -111,7 +111,7 @@ pub fn essid_of(answer: []const u8, out: []u8) []const u8 {
     }
     if (!connected) return out[0..0];
     // A name not in UTF-8 (an old router's Latin-1) can't be drawn: none, so "On" shows
-    if (!std.unicode.utf8ValidateSlice(name)) return out[0..0];
+    if (!unicode.is_utf8(name)) return out[0..0];
     // Never inside a character
     const length = unicode.start_at_or_before(name, @intCast(@min(name.len, out.len)));
     @memcpy(out[0..length], name[0..length]);

@@ -72,6 +72,18 @@ pub const Characters = struct {
     }
 };
 
+/// Whether all of `text` is UTF-8.
+pub fn is_utf8(text: []const u8) bool {
+    return std.unicode.utf8ValidateSlice(text);
+}
+
+/// How many characters `text` has, or null when it isn't all UTF-8.
+pub fn count_characters(text: []const u8) ?u32 {
+    const count = std.unicode.utf8CountCodepoints(text) catch return null;
+    assert(count <= text.len);
+    return @intCast(count);
+}
+
 /// Whether `byte` is inside a character written in more than one byte: none starts at it.
 pub fn inside_character(byte: u8) bool {
     return byte & 0xc0 == 0x80;

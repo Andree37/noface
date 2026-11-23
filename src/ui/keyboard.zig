@@ -113,17 +113,16 @@ comptime {
 
 /// How many characters `row` has: written here, so it's UTF-8 or doesn't build.
 fn count_of(comptime row: []const u8) comptime_int {
-    return std.unicode.utf8CountCodepoints(row) catch @compileError("not UTF-8: " ++ row);
+    return unicode.count_characters(row) orelse @compileError("not UTF-8: " ++ row);
 }
 
 /// The characters of `row`, decoded, as keys.
 fn decoded(comptime row: []const u8) [count_of(row)]u21 {
     @setEvalBranchQuota(10_000);
     var out: [count_of(row)]u21 = undefined;
-    const view = std.unicode.Utf8View.init(row) catch @compileError("not UTF-8: " ++ row);
-    var it = view.iterator();
+    var it = unicode.Characters{ .text = row }; // UTF-8, as `count_of` saw
     var i = 0;
-    while (it.nextCodepoint()) |cp| : (i += 1) out[i] = cp;
+    while (it.next()) |c| : (i += 1) out[i] = c.cp;
     assert(i == out.len);
     return out;
 }

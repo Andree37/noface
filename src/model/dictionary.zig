@@ -189,34 +189,46 @@ pub fn fold(buf: []u8, word: []const u8) ?[]const u8 {
     return buf[0..n];
 }
 
+/// An entry as it's written: its key (`fold`ed), the word as written, its lines.
+pub const Written = struct { key: []const u8, word: []const u8, text: []const u8 };
+
+/// Writes a dictionary file of `entries`, sorted by key, to `w`: the one writer of the
+/// format this file reads, for tools/build_dictionary.zig and the tests alike.
+pub fn write(w: *std.Io.Writer, entries: []const Written) !void {
+    // Sorted, each key once: a lookup halves its way to it
+    for (0..entries.len -| 1) |i| assert(std.mem.lessThan(u8, entries[i].key, entries[i + 1].key));
+    if (entries.len > std.math.maxInt(u32)) return error.DictionaryTooLarge;
+    try w.writeAll(magic);
+    try w.writeInt(u32, @intCast(entries.len), .little);
+    var at: u64 = 0; // Where each entry starts, after the offsets
+    for (entries) |e| {
+        assert(e.key.len > 0);
+        assert(e.key.len <= max_key);
+        if (at > std.math.maxInt(u32)) return error.DictionaryTooLarge;
+        try w.writeInt(u32, @intCast(at), .little);
+        at += e.key.len + 1 + e.word.len + 1 + e.text.len;
+    }
+    if (at > std.math.maxInt(u32)) return error.DictionaryTooLarge;
+    try w.writeInt(u32, @intCast(at), .little);
+    for (entries) |e| {
+        try w.writeAll(e.key);
+        try w.writeByte(0);
+        try w.writeAll(e.word);
+        try w.writeByte(0);
+        try w.writeAll(e.text);
+    }
+}
+
 /// Builds a dictionary file in memory, for tests. `entries` must be sorted by key.
 fn build(alloc: std.mem.Allocator, entries: []const [3][]const u8) ![]u8 {
-    var body: std.ArrayList(u8) = .empty;
-    defer body.deinit(alloc);
-    var offsets: std.ArrayList(u32) = .empty;
-    defer offsets.deinit(alloc);
-    for (entries) |e| {
-        try offsets.append(alloc, @intCast(body.items.len));
-        try body.appendSlice(alloc, e[0]);
-        try body.append(alloc, 0);
-        try body.appendSlice(alloc, e[1]);
-        try body.append(alloc, 0);
-        try body.appendSlice(alloc, e[2]);
-    }
-    try offsets.append(alloc, @intCast(body.items.len));
-    var out: std.ArrayList(u8) = .empty;
-    try out.appendSlice(alloc, magic);
-    var b4: [4]u8 = undefined;
-    std.mem.writeInt(u32, &b4, @intCast(entries.len), .little);
-    try out.appendSlice(alloc, &b4);
-    for (offsets.items) |o| {
-        std.mem.writeInt(u32, &b4, o, .little);
-        try out.appendSlice(alloc, &b4);
-    }
-    try out.appendSlice(alloc, body.items);
-    assert(offsets.items.len == entries.len + 1);
-    assert(out.items.len == offsets_start + offsets.items.len * 4 + body.items.len);
-    return out.toOwnedSlice(alloc);
+    var written: std.ArrayList(Written) = .empty;
+    defer written.deinit(alloc);
+    for (entries) |e| try written.append(alloc, .{ .key = e[0], .word = e[1], .text = e[2] });
+    var out: std.Io.Writer.Allocating = .init(alloc);
+    try write(&out.writer, written.items);
+    const file = try out.toOwnedSlice();
+    assert(Dictionary.open(file).?.count == entries.len); // Reads back
+    return file;
 }
 
 test "words are found however the book writes them" {

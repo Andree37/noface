@@ -50,6 +50,7 @@ pub const placed = @import("screens/placed.zig");
 /// When noface has done all its touches asked, for the device tests to wait on.
 pub const idle = @import("kindle/input/idle.zig");
 pub const devices = @import("kindle/devices.zig");
+pub const dictionary = @import("model/dictionary.zig");
 pub const evdev = @import("kindle/input/evdev.zig");
 /// The test books, which the device tests' runner puts in its test folders.
 pub const test_books = @import("testdata/books.zig");

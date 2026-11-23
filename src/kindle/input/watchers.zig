@@ -9,7 +9,6 @@ const input = @import("../input.zig");
 const evdev = @import("evdev.zig");
 const paths = @import("../paths.zig");
 const lipc = @import("../lipc.zig");
-const touch_zones = @import("../touch.zig");
 const linux = @import("../../sys/calls.zig");
 const os = @import("../../sys/os.zig");
 const process = @import("../../sys/process.zig");
@@ -181,6 +180,30 @@ pub fn from_usb_watcher(in: *Input) ?Action {
     return if (lipc.usb_for_network()) null else .computer;
 }
 
+/// What powerd's watcher reads, as lipc.zig asks for it (`lipc.power_watched`).
+pub const PowerEvent = enum { lock, unlock };
+
+/// The newest power event in what was read, so a quick lock and unlock settles
+/// on where the Kindle ended up.
+pub fn last_power_event(line: []const u8) ?PowerEvent {
+    const lock = std.mem.lastIndexOf(u8, line, "goingToScreenSaver");
+    const unlock = std.mem.lastIndexOf(u8, line, "outOfScreenSaver");
+    if (unlock) |unlock_at| {
+        assert(unlock_at < line.len);
+        // The two names can't overlap, so they never start at the same place
+        if (lock) |lock_at| assert(lock_at != unlock_at);
+        if (lock == null or unlock_at > lock.?) return .unlock;
+    }
+    return if (lock != null) .lock else null;
+}
+
+/// Whether powerd said a charger came or went: "charging" or "notCharging".
+pub fn charger_changed(line: []const u8) bool {
+    const charging = std.mem.indexOf(u8, line, "charging") != null;
+    const not_charging = std.mem.indexOf(u8, line, "Charging") != null;
+    return charging or not_charging;
+}
+
 /// Locking, waking, and a charger coming or going, from powerd.
 pub fn from_power_watcher(in: *Input) ?Action {
     const w = in.power_watcher orelse return null;
@@ -190,10 +213,10 @@ pub fn from_power_watcher(in: *Input) ?Action {
         return null;
     };
     assert(line.len <= buffer.len);
-    if (touch_zones.last_power_event(line)) |event| {
+    if (last_power_event(line)) |event| {
         return if (event == .lock) .lock else unlocked(in);
     }
-    if (touch_zones.charger_changed(line)) return .charger;
+    if (charger_changed(line)) return .charger;
     return null;
 }
 
@@ -289,4 +312,14 @@ test "powerd hears about touches only while they're fresh" {
     // Told just now
     try std.testing.expect(!should_tell_powerd(false, 10 * min, 10 * min, 10 * min - 1000));
     try std.testing.expect(!should_tell_powerd(true, 10 * min, 10 * min, 0)); // Locked
+}
+
+test "the newest power event wins" {
+    const lock = "goingToScreenSaver\n";
+    const both = "goingToScreenSaver\noutOfScreenSaver\n";
+    const both_reversed = "outOfScreenSaver\ngoingToScreenSaver\n";
+    try std.testing.expectEqual(PowerEvent.lock, last_power_event(lock).?);
+    try std.testing.expectEqual(PowerEvent.unlock, last_power_event(both).?);
+    try std.testing.expectEqual(PowerEvent.lock, last_power_event(both_reversed).?);
+    try std.testing.expect(last_power_event("something else\n") == null);
 }

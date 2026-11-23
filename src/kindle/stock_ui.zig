@@ -11,6 +11,7 @@ const linux = std.os.linux;
 const process = @import("../sys/process.zig");
 const service = @import("../sys/service.zig");
 const wifi_saver = @import("wifi_saver.zig");
+const lipc = @import("lipc.zig");
 const hwtcon = @import("hwtcon.zig");
 const os = @import("../sys/os.zig");
 
@@ -22,12 +23,20 @@ const repaint_ms = 1500;
 
 /// The watchers noface starts, of powerd and the volume manager, by their command lines
 /// with the zero bytes between arguments read as spaces. lipc-wait-event splits its
-/// event list in place, so the comma between events reads as a space too. Stock has
-/// listeners of its own that must keep running.
+/// event list in place, so the comma between events reads as a space too. Made from
+/// what lipc.zig starts them with, so the two never drift. Stock has listeners of its
+/// own that must keep running.
 const watcher_signatures = [_][]const u8{
-    "-m com.lab126.powerd goingToScreenSaver outOfScreenSaver",
-    "-m com.lab126.volumd usbConfigured",
+    signature_of(lipc.power_watched),
+    signature_of(lipc.usb_watched),
 };
+
+fn signature_of(comptime w: lipc.Watched) []const u8 {
+    comptime var events: [w.events.len]u8 = w.events[0..w.events.len].*;
+    comptime std.mem.replaceScalar(u8, &events, ',', ' ');
+    const spaced = events;
+    return "-m " ++ w.publisher ++ " " ++ &spaced;
+}
 
 /// Whether the stock screens are paused, so a crash knows to put them back.
 pub var paused = false;

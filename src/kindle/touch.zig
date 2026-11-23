@@ -19,29 +19,6 @@ const bottom_strip = pt(28.8); // Full width, along the bottom edge
 const corner_width = pt(72); // Bottom corners, where thumbs sit higher
 const corner_height = pt(60);
 
-pub const PowerEvent = enum { lock, unlock };
-
-/// The newest power event in what was read, so a quick lock and unlock settles
-/// on where the Kindle ended up.
-pub fn last_power_event(line: []const u8) ?PowerEvent {
-    const lock = std.mem.lastIndexOf(u8, line, "goingToScreenSaver");
-    const unlock = std.mem.lastIndexOf(u8, line, "outOfScreenSaver");
-    if (unlock) |unlock_at| {
-        assert(unlock_at < line.len);
-        // The two names can't overlap, so they never start at the same place
-        if (lock) |lock_at| assert(lock_at != unlock_at);
-        if (lock == null or unlock_at > lock.?) return .unlock;
-    }
-    return if (lock != null) .lock else null;
-}
-
-/// Whether powerd said a charger came or went: "charging" or "notCharging".
-pub fn charger_changed(line: []const u8) bool {
-    const charging = std.mem.indexOf(u8, line, "charging") != null;
-    const not_charging = std.mem.indexOf(u8, line, "Charging") != null;
-    return charging or not_charging;
-}
-
 pub const top_zone = pt(48); // Top edge: opens the toolbar, or the panel when dragged
 pub const hold_ms = 450; // Press this long to start selecting text
 const hold_slop = pt(8.64); // Movement that still counts as holding still
@@ -147,16 +124,6 @@ test "small wobble still counts as holding" {
     try std.testing.expect(!moved_off(100, 100, 100 + hold_slop, 100 - hold_slop));
     try std.testing.expect(moved_off(100, 100, 100 + hold_slop + 1, 100));
     try std.testing.expect(moved_off(100, 100, 100, 100 - hold_slop - 1));
-}
-
-test "the newest power event wins" {
-    const lock = "goingToScreenSaver\n";
-    const both = "goingToScreenSaver\noutOfScreenSaver\n";
-    const both_reversed = "outOfScreenSaver\ngoingToScreenSaver\n";
-    try std.testing.expectEqual(PowerEvent.lock, last_power_event(lock).?);
-    try std.testing.expectEqual(PowerEvent.unlock, last_power_event(both).?);
-    try std.testing.expectEqual(PowerEvent.lock, last_power_event(both_reversed).?);
-    try std.testing.expect(last_power_event("something else\n") == null);
 }
 
 test "a rolled tap isn't a stroke, a real movement is" {

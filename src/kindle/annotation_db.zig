@@ -34,7 +34,7 @@ const read_format = find_database ++ "sqlite3 -separator '|' \"file:$db?mode=ro\
 /// Room for `read_format` filled in: two record fields, four book matches (each fits
 /// `read_lines`'s buffer for it), and two dataset numbers.
 const read_command_bytes_max = 1536;
-const book_match_bytes_max = 128;
+const book_match_bytes_max = annotations.book_match_bytes_max;
 
 /// Runs the SQL in `paths.annotation_sql` on the database, saying "ok" if it all took.
 const write_command = find_database ++ "sqlite3 -bail -cmd '.timeout 3000' \"$db\" < " ++

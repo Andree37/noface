@@ -19,8 +19,11 @@ comptime {
     assert(!std.mem.eql(u8, Kind.highlight.label(), Kind.bookmark.label()));
 }
 
+/// The most a book's match in SQL takes (`book_match`): shared with annotation_db.zig.
+pub const book_match_bytes_max = 128;
+
 /// Amazon's long position: a version byte, element ID and character offset, in base64.
-pub fn long_position(buf: *[12]u8, element: u32, offset: u32) []const u8 {
+pub fn long_position(buf: *[long_position_size]u8, element: u32, offset: u32) []const u8 {
     var raw: [long_position_raw_size]u8 = undefined;
     raw[0] = 1;
     std.mem.writeInt(u32, raw[1..5], element, .little);
@@ -147,7 +150,7 @@ pub fn delete_sql(
     now_ms: u64,
 ) ![]const u8 {
     check.that(safe.safe_id(id), "record ids were checked before they reach SQL");
-    var match_buf: [128]u8 = undefined;
+    var match_buf: [book_match_bytes_max]u8 = undefined;
     const book = try book_match(&match_buf, key);
     const result = try std.fmt.bufPrint(buf, delete_format, .{
         id, book, action_delete, now_ms, now_ms, id, book, kind.dataset(),

@@ -98,6 +98,28 @@ pub fn supported_size(width: u32, height: u32) bool {
 /// A screen's visible size, as its driver reports it.
 pub const Size = struct { width: u32, height: u32 };
 
+/// The kernel's fb_var_screeninfo and fb_fix_screeninfo, as the framebuffer's ioctls
+/// write them, and where the fields read are in each.
+const var_info_bytes = 160;
+const var_xres_at = 0;
+const var_yres_at = 4;
+const var_yoffset_at = 20;
+const var_bits_per_pixel_at = 24;
+const fix_info_bytes = 68;
+const fix_smem_len_at = 20;
+const fix_line_length_at = 44;
+const VarInfo = [var_info_bytes]u8;
+
+/// The screen's variable information (its size and where the page shown starts).
+fn read_var_info(fd: i32, out: *align(4) VarInfo) bool {
+    assert(fd >= 0);
+    return !failed(linux.ioctl(fd, fbioget_vscreeninfo, @intFromPtr(out)));
+}
+
+fn field(bytes: []const u8, comptime at: u32) u32 {
+    return std.mem.readInt(u32, bytes[at..][0..4], .little);
+}
+
 /// The visible size of the screen behind /dev/fb0, or null when it can't be read.
 // Assertions: it only reads the framebuffer's size, outside data, for the doctor.
 pub fn read_size() ?Size {
@@ -105,12 +127,9 @@ pub fn read_size() ?Size {
     if (failed(rc)) return null;
     const fd: i32 = @intCast(rc);
     defer _ = linux.close(fd); // Ignored: only read from: a close that fails loses nothing
-    var variable: [160]u8 align(4) = undefined;
-    if (failed(linux.ioctl(fd, fbioget_vscreeninfo, @intFromPtr(&variable)))) return null;
-    return .{
-        .width = std.mem.readInt(u32, variable[0..4], .little),
-        .height = std.mem.readInt(u32, variable[4..8], .little),
-    };
+    var variable: VarInfo align(4) = undefined;
+    if (!read_var_info(fd, &variable)) return null;
+    return .{ .width = field(&variable, var_xres_at), .height = field(&variable, var_yres_at) };
 }
 
 /// The size an ioctl request number carries, in bits 16 to 29.
@@ -178,19 +197,18 @@ pub const Screen = struct {
         // A screen it can't drive is let go of: the launcher opens one at every restore
         errdefer _ = linux.close(fd); // Ignored: nothing was drawn through it, so nothing is lost
 
-        var variable: [160]u8 align(4) = undefined;
-        var fixed: [68]u8 align(4) = undefined;
-        const variable_rc = linux.ioctl(fd, fbioget_vscreeninfo, @intFromPtr(&variable));
-        if (failed(variable_rc)) return error.VScreenInfo;
+        var variable: VarInfo align(4) = undefined;
+        var fixed: [fix_info_bytes]u8 align(4) = undefined;
+        if (!read_var_info(fd, &variable)) return error.VScreenInfo;
         const fixed_rc = linux.ioctl(fd, fbioget_fscreeninfo, @intFromPtr(&fixed));
         if (failed(fixed_rc)) return error.FScreenInfo;
 
-        const width = std.mem.readInt(u32, variable[0..4], .little);
-        const height = std.mem.readInt(u32, variable[4..8], .little);
-        const yoffset = std.mem.readInt(u32, variable[20..24], .little);
-        const bpp = std.mem.readInt(u32, variable[24..28], .little);
-        const smem_len = std.mem.readInt(u32, fixed[20..24], .little);
-        const stride = std.mem.readInt(u32, fixed[44..48], .little);
+        const width = field(&variable, var_xres_at);
+        const height = field(&variable, var_yres_at);
+        const yoffset = field(&variable, var_yoffset_at);
+        const bpp = field(&variable, var_bits_per_pixel_at);
+        const smem_len = field(&fixed, fix_smem_len_at);
+        const stride = field(&fixed, fix_line_length_at);
         if (bpp != 8) return error.UnexpectedDepth;
         if (!supported_size(width, height)) return error.UnsupportedScreenSize;
         // The visible page, as the driver says where it is, lies in the memory it maps

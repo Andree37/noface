@@ -375,20 +375,29 @@ fn watch_events(comptime publisher: [*:0]const u8, comptime events: [*:0]const u
     return child;
 }
 
+/// What noface watches: a publisher, and its events, comma-separated as
+/// lipc-wait-event takes them. The launcher finds these watchers by them too
+/// (src/kindle/stock_ui.zig `is_noface_watcher`).
+pub const Watched = struct { publisher: [:0]const u8, events: [:0]const u8 };
+/// Locking and waking, and the charger's coming and going too, so the status bar's
+/// bolt follows at once.
+pub const power_watched: Watched = .{
+    .publisher = "com.lab126.powerd",
+    .events = "goingToScreenSaver,outOfScreenSaver,charging,notCharging",
+};
+/// A computer setting up the USB connection.
+pub const usb_watched: Watched = .{ .publisher = "com.lab126.volumd", .events = "usbConfigured" };
+
 /// Locking and waking, from powerd.
 pub fn watch_power_events() ?process.Child {
-    // The charger's coming and going too, so the status bar's bolt follows at once.
-    // The launcher finds this watcher by the start of its arguments, which stays the
-    // same (src/kindle/stock_ui.zig)
-    const events = "goingToScreenSaver,outOfScreenSaver,charging,notCharging";
-    const child = watch_events("com.lab126.powerd", events);
+    const child = watch_events(power_watched.publisher, power_watched.events);
     if (child) |c| assert(c.pid > 0); // Its whole group is killed on the way out
     return child;
 }
 
 /// A computer setting up the USB connection, from the volume manager.
 pub fn watch_usb_events() ?process.Child {
-    const child = watch_events("com.lab126.volumd", "usbConfigured");
+    const child = watch_events(usb_watched.publisher, usb_watched.events);
     if (child) |c| assert(c.pid > 0); // Its whole group is killed on the way out
     return child;
 }

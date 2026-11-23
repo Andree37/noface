@@ -349,7 +349,9 @@ fn bare_sizes(code: []const u8, in_points: bool) u32 {
 
 /// Whether a line declares a constant or variable named like a size: `const row_gap =`.
 fn declares_size(code: []const u8) bool {
+    assert(std.mem.indexOfScalar(u8, code, '\n') == null); // One line
     const trimmed = std.mem.trimStart(u8, code, " ");
+    assert(trimmed.len <= code.len);
     const after_pub = if (std.mem.startsWith(u8, trimmed, "pub ")) trimmed[4..] else trimmed;
     var rest: []const u8 = after_pub;
     if (std.mem.startsWith(u8, rest, "const ")) {
@@ -676,6 +678,7 @@ fn restates(before: []const u8, code: []const u8) bool {
 
 /// An `if`'s condition, from just after its `(`, to before the `)` that closes it.
 fn condition_of(after_open: []const u8) ?[]const u8 {
+    assert(std.mem.indexOfScalar(u8, after_open, '\n') == null); // One line
     var depth: u32 = 0;
     for (after_open, 0..) |c, index| {
         if (c == '(') depth += 1;
@@ -716,6 +719,7 @@ fn is_opposite(condition: []const u8, claim: []const u8) bool {
 
 /// Whether the first argument of a call, from just after its `(`, has a top-level `and`.
 fn top_level_and(arguments: []const u8) bool {
+    assert(std.mem.indexOfScalar(u8, arguments, '\n') == null); // One line
     var depth: i32 = 0;
     for (arguments, 0..) |c, index| {
         if (c == '(' or c == '[' or c == '{') depth += 1;
@@ -940,6 +944,7 @@ fn gives_up_quietly(code: []const u8) u32 {
 
 /// How many system calls' results a line throws away: `_ = linux.close(fd)`.
 fn system_results_dropped(code: []const u8) u32 {
+    assert(std.mem.indexOfScalar(u8, code, '\n') == null); // One line
     var dropped: u32 = 0;
     for (system_calls) |prefix| {
         var at: u32 = 0;
@@ -1231,6 +1236,50 @@ pub fn main(init: std.process.Init) !void {
     std.debug.print("style ok\n", .{});
 }
 
+/// Folders of the repository that hold nothing of its own: what builds and git keep.
+const not_ours = [_][]const u8{ ".git", "zig-out", ".zig-cache", "zig-pkg" };
+/// What scripts are written as, by their file's ending.
+const script_endings = [_][]const u8{ ".sh", ".bash", ".py", ".js", ".rb", ".pl", ".lua" };
+
+/// Every script anywhere in the repository but the KPM shim: a file ending as one, or
+/// starting `#!`, which runs it whatever its name.
+fn find_scripts(
+    io: std.Io,
+    root: std.Io.Dir,
+    gpa: std.mem.Allocator,
+    found: *std.ArrayList(Found),
+) !void {
+    const before = found.items.len;
+    assert(before > 0); // The Zig files, found first
+    var walker = try root.walk(gpa);
+    defer walker.deinit();
+    while (try walker.next(io)) |entry| {
+        if (entry.kind != .file) continue;
+        const slash = std.mem.indexOfScalar(u8, entry.path, '/') orelse entry.path.len;
+        if (listed(&not_ours, entry.path[0..slash])) continue;
+        if (!is_script(io, root, entry.path)) continue;
+        const source = try root.readFileAlloc(io, entry.path, gpa, .limited(1 << 20));
+        if (is_kpm_shim(entry.path, source)) continue;
+        const path = try gpa.dupe(u8, entry.path);
+        const breaks = try gpa.dupe(Break, &.{.{ .rule = .script_not_zig, .line = 1 }});
+        try found.append(gpa, .{ .path = path, .breaks = breaks });
+    }
+    assert(found.items.len >= before);
+}
+
+/// Whether the file at `path` is a script: named as one, or starting `#!`.
+fn is_script(io: std.Io, root: std.Io.Dir, path: []const u8) bool {
+    assert(path.len > 0);
+    for (script_endings) |ending| {
+        if (std.mem.endsWith(u8, path, ending)) return true;
+    }
+    var head: [2]u8 = undefined;
+    // Ignored: a file that can't be read can't be run either
+    const start = root.readFile(io, path, &head) catch return false;
+    assert(start.len <= head.len);
+    return std.mem.eql(u8, start, "#!");
+}
+
 /// Every Zig file's breaks, and every script's, sorted by path.
 fn find_breaks(io: std.Io, root: std.Io.Dir, gpa: std.mem.Allocator) ![]const Found {
     var found: std.ArrayList(Found) = .empty;
@@ -1245,15 +1294,11 @@ fn find_breaks(io: std.Io, root: std.Io.Dir, gpa: std.mem.Allocator) ![]const Fo
             if (std.mem.endsWith(u8, path, ".zig")) {
                 const source = try dir.readFileAlloc(io, entry.path, gpa, .limited(8 << 20));
                 breaks = try check_zig(path, source, gpa);
-            } else if (std.mem.endsWith(u8, path, ".sh") or std.mem.endsWith(u8, path, ".py")) {
-                const source = try dir.readFileAlloc(io, entry.path, gpa, .limited(1 << 20));
-                if (!is_kpm_shim(path, source)) {
-                    breaks = try gpa.dupe(Break, &.{.{ .rule = .script_not_zig, .line = 1 }});
-                }
             } else continue;
             try found.append(gpa, .{ .path = path, .breaks = breaks });
         }
     }
+    try find_scripts(io, root, gpa, &found);
     const build_source = try root.readFileAlloc(io, "build.zig", gpa, .limited(1 << 20));
     const build_breaks = try check_zig("build.zig", build_source, gpa);
     try found.append(gpa, .{ .path = "build.zig", .breaks = build_breaks });

@@ -98,8 +98,9 @@ pub fn excerpt(s: []const u8, max: u32) []const u8 {
         if (space > max / 2) end = @intCast(space); // Before `end`, so below `max`
     }
     assert(end <= max);
-    // The excerpt stops before a character, never inside one.
-    assert(end == 0 or !unicode.inside_character(trimmed[end]));
+    // Before a character, never inside one: in text that isn't UTF-8, a stray byte is
+    // a character of its own, so no byte is asserted on here (`start_at_or_before`)
+    assert(end <= trimmed.len);
     return trimmed[0..end];
 }
 
@@ -495,6 +496,13 @@ test "excerpts end at a word and never split a character" {
     try std.testing.expectEqualStrings("one two", excerpt("one two three", 10));
     try std.testing.expectEqualStrings("caf", excerpt("caf\u{e9}", 4)); // The accent is two bytes
     try std.testing.expectEqualStrings("lead", excerpt("  lead", 20));
+    // Text that isn't UTF-8 is cut where it's asked, without stopping noface: a run of
+    // cp1252 dashes (0x97), and Shift-JIS kana, whose second bytes look like UTF-8's
+    const dashes = "a" ++ @as([12]u8, @splat(0x97));
+    try std.testing.expect(excerpt(dashes, 8).len <= 8);
+    const kana_pair = [_]u8{ 0x83, 0x41, 0x83, 0x43, 0x83, 0x45 };
+    const kana = kana_pair ++ kana_pair ++ kana_pair ++ kana_pair;
+    try std.testing.expect(excerpt(&kana, 10).len <= 10);
 }
 
 test "a highlight over several paragraphs counts once" {

@@ -254,7 +254,7 @@ fn panel_control_shortcut(a: *app.App, choice: menu.Hit) !void {
 
 /// The header without the warning, drawn and shown alone.
 fn put_warning_away(a: *app.App) !void {
-    const box = menu.header_box(a.ui);
+    const box = menu.header_box;
     try menu.draw_header(a.ui, a.display.on_screen(), &a.quick, null);
     try a.display.show_rect(box.x, box.y, box.w, box.h);
 }

@@ -214,13 +214,15 @@ pub const Reading = struct {
 
 const Apply = *const fn (*quick_model.Quick, []const u8) void;
 
-/// Sets a number in the Quick from the value read.
-fn number(comptime field: []const u8) Apply {
+/// Sets a number in the Quick from the value read, at most `max`: what the Kindle says
+/// is outside data, which the screens draw and step from as a level they know.
+fn number(comptime field: []const u8, comptime max: u32) Apply {
     comptime assert(@FieldType(quick_model.Quick, field) == u32);
     return struct {
         fn apply(quick: *quick_model.Quick, text: []const u8) void {
             assert(text.len > 0);
-            if (parse_int(text)) |value| @field(quick, field) = value;
+            if (parse_int(text)) |value| @field(quick, field) = @min(value, max);
+            assert(@field(quick, field) <= max);
         }
     }.apply;
 }
@@ -279,12 +281,12 @@ pub const readings = [_]Reading{
     .{
         .argv = &.{ lipc_get, "com.lab126.powerd", "flIntensity" },
         .healthy = "12",
-        .apply = number("brightness"),
+        .apply = number("brightness", quick_model.max_brightness),
     },
     .{
         .argv = &.{ lipc_get, "com.lab126.powerd", "currentAmberLevel" },
         .healthy = "0",
-        .apply = number("warmth"),
+        .apply = number("warmth", quick_model.max_warmth),
     },
     .{
         .argv = &.{ lipc_get, "com.lab126.powerd", "amberSchedEnable" },
@@ -305,7 +307,7 @@ pub const readings = [_]Reading{
     .{
         .argv = &.{ lipc_get, "com.lab126.powerd", "battLevel" },
         .healthy = "80",
-        .apply = number("battery"),
+        .apply = number("battery", quick_model.battery_full),
     },
     .{
         .argv = &.{ lipc_get, "com.lab126.powerd", "usbState" },
@@ -477,6 +479,16 @@ pub fn set_bluetooth(on: bool) void {
 test "tool output parses" {
     try std.testing.expectEqual(@as(u32, 21), parse_int("21\n").?);
     try std.testing.expect(parse_int("failed\n") == null);
+}
+
+test "a light or battery level past its end is read as its end" {
+    var quick: quick_model.Quick = .{};
+    number("brightness", quick_model.max_brightness)(&quick, "25\n");
+    try std.testing.expectEqual(@as(u32, quick_model.max_brightness), quick.brightness);
+    number("warmth", quick_model.max_warmth)(&quick, "7\n");
+    try std.testing.expectEqual(@as(u32, 7), quick.warmth);
+    number("battery", quick_model.battery_full)(&quick, "101\n");
+    try std.testing.expectEqual(@as(u32, quick_model.battery_full), quick.battery);
 }
 
 test "powerd's states read as awake, locked, or unknown, which is never locked" {

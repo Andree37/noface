@@ -1,4 +1,6 @@
 //! Screens compared with their reference images (src/testdata/recorded/<model>/).
+const std = @import("std");
+const assert = std.debug.assert;
 const library_ui = @import("../ui/library.zig");
 const aa = @import("../ui/aa.zig");
 const keyboard = @import("../ui/keyboard.zig");
@@ -82,3 +84,7 @@ pub const all = [_]Scenario{
 
 /// A shelf for the library's look: more books than one row of its grid takes.
 const shelf_books = [_][]const u8{ "a.epub", "b.epub", "c.epub", "d.epub", "e.epub", "f.epub" };
+
+comptime {
+    assert(shelf_books.len == harness.shelf_books); // The harness has room for them
+}

@@ -328,7 +328,8 @@ pub fn scale_for_pixel_height(info: *const Info, height: f32) f32 {
     return height / @as(f32, @floatFromInt(font_height));
 }
 
-pub const HorizontalMetrics = struct { advance: i32, left_side_bearing: i32 };
+/// A glyph's advance (unsigned, as `hmtx` keeps it: never back) and left side bearing.
+pub const HorizontalMetrics = struct { advance: u16, left_side_bearing: i32 };
 
 pub fn horizontal_metrics(info: *const Info, glyph: u32) HorizontalMetrics {
     assert(info.hmtx != 0);
@@ -337,14 +338,14 @@ pub fn horizontal_metrics(info: *const Info, glyph: u32) HorizontalMetrics {
     const g: i64 = glyph;
     if (g < long_metrics) {
         return .{
-            .advance = short(info.data, hmtx + 4 * g),
+            .advance = ushort(info.data, hmtx + 4 * g),
             .left_side_bearing = short(info.data, hmtx + 4 * g + 2),
         };
     }
     // Past the long metrics, glyphs share the last advance
     assert(g >= long_metrics);
     return .{
-        .advance = short(info.data, hmtx + 4 * (long_metrics - 1)),
+        .advance = ushort(info.data, hmtx + 4 * (long_metrics - 1)),
         .left_side_bearing = short(info.data, hmtx + 4 * long_metrics + 2 * (g - long_metrics)),
     };
 }

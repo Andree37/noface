@@ -119,7 +119,9 @@ pub fn count_words(text: []const u8) u64 {
     // Each step takes a byte at least
     while (i < text.len) {
         const before = i;
-        if (i + lanes <= text.len) {
+        // ASCII a chunk at a time, unless after a word by itself, where a letter starts
+        // a word and punctuation doesn't (`unicode.word_step`), so a character at a time
+        if (i + lanes <= text.len and count.state != .by_itself) {
             const chunk: Bytes = text[i..][0..lanes].*;
             const high: u32 = @bitCast(chunk >= @as(Bytes, @splat(ascii_end)));
             // The ASCII up to the first other character, all of it when none is
@@ -145,17 +147,13 @@ const ascii_end = unicode.ascii_end;
 /// Words counted so far, and whether the last character ended one.
 const Count = struct {
     words: u64 = 0,
-    after_space: bool = true,
+    state: unicode.WordState = .space,
 
+    /// By the one rule of where words start, which running's phrases read by too.
     fn character(c: *Count, cp: u21) void {
-        if (cp >= ascii_end and unicode.is_word_by_itself(cp)) {
-            c.words += 1;
-            c.after_space = true; // What follows starts a word of its own
-            return;
-        }
-        const space = if (cp < ascii_end) ascii_space(@intCast(cp)) else unicode.is_space(cp);
-        if (!space and c.after_space) c.words += 1;
-        c.after_space = space;
+        const step = unicode.word_step(c.state, cp);
+        if (step.starts) c.words += 1;
+        c.state = step.after;
     }
 
     /// The first `len` bytes of `chunk`, ASCII, at once: a word starts on a non-space
@@ -168,12 +166,13 @@ const Count = struct {
             (chunk <= @as(Bytes, @splat('\r')));
         const separators = (chunk >= @as(Bytes, @splat(separators_first))) &
             (chunk <= @as(Bytes, @splat(' ')));
+        assert(c.state != .by_itself); // Its followers go a character at a time
         const sp: u32 = @as(u32, @bitCast(controls)) | @as(u32, @bitCast(separators));
-        const prev: u32 = (sp << 1) | @intFromBool(c.after_space);
+        const prev: u32 = (sp << 1) | @intFromBool(c.state == .space);
         const all: u32 = std.math.maxInt(u32);
         const taken: u32 = if (len == lanes) all else (@as(u32, 1) << @intCast(len)) - 1;
         c.words += @popCount(~sp & prev & taken);
-        c.after_space = (sp >> @intCast(len - 1)) & 1 == 1;
+        c.state = if ((sp >> @intCast(len - 1)) & 1 == 1) .space else .word;
     }
 };
 

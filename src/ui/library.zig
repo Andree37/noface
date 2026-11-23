@@ -260,7 +260,7 @@ fn type_title_lines(h: u32) u32 {
     return lines;
 }
 
-fn grid_size(hero: bool) u32 {
+pub fn grid_size(hero: bool) u32 {
     const result: u32 = (if (hero) @as(u32, hero_rows) else plain_rows) * columns;
     assert(result > 0);
     assert(result % columns == 0);

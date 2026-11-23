@@ -224,7 +224,7 @@ pub fn smile(page: Page, cx: f32, cy: f32) void {
 
 /// Width of the charge bar. Kept in u32: @min with a literal narrows the type.
 /// A whole battery, in percent: what the Kindle reports (outside data) is held to it.
-const battery_full = 100;
+const battery_full = quick_model.battery_full;
 
 pub fn battery_fill(inner: u32, percent: u32) u32 {
     assert(inner > 0);

@@ -1,4 +1,5 @@
 //! The library: opening a book, searching, series, stats, and finishing one.
+const std = @import("std");
 const library_ui = @import("../ui/library.zig");
 const more = @import("../screens/reader/more.zig");
 const search_sheet = @import("../ui/search_sheet.zig");
@@ -160,6 +161,40 @@ pub const all = [_]Scenario{
                 });
                 try expect(after.opened[0], "the book didn't open from the library");
             }
+        }.run,
+    },
+    .{
+        .name = "the one book on the Unread tab's last page marked read leaves a page there " ++
+            "is, never one past the last",
+        .run = struct {
+            // Assertions: the run ending without noface stopping is what's checked
+            fn run() !void {
+                // The hero, a first page full of unread books under it, and one over on
+                // the second, the grid's first book after the first page's
+                const last = library_ui.grid_size(true);
+                const r = try play_on(.{ .library = true, .books = &unread_books }, &.{
+                    // Each once the screen before it is drawn, as taps are dropped till then
+                    tap_on(library_ui.place(.{ .tab = .unread })),
+                    wait(2_000),
+                    tap_on(library_ui.place(.next)),
+                    wait(2_000),
+                    hold_in(library_ui.book_rect(last, 1)),
+                    lift,
+                    wait(2_000),
+                    card_row(3, 1), // Mark as read
+                    wait(2_000),
+                });
+                try expect(r.updates > 0, "the library wasn't drawn again");
+            }
+
+            const unread_books = names: {
+                var list: [harness.books_max][]const u8 = undefined;
+                for (&list, 0..) |*name, i| {
+                    name.* = std.fmt.comptimePrint("Unread {d:0>2}.epub", .{i});
+                }
+                const named = list;
+                break :names named;
+            };
         }.run,
     },
     .{

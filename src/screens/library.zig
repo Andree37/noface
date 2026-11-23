@@ -496,6 +496,8 @@ const Browser = struct {
         assert(b.buf.len == b.a.display.screen.pixels.len);
         if (how == .export_first) catalog_db.export_library();
         b.lib.reload();
+        // Fewer books may be let through now: the page kept one there is
+        b.arrange();
     }
 
     // Actions
@@ -744,10 +746,9 @@ const Browser = struct {
         assert(b.index < library.page_count(b.lib.count())); // A page of the books shown
         // Only what's downloading is looked at, until it says the catalog moved on
         if (b.lib.watch_download() == .waiting) return .nothing;
-        catalog_db.export_library();
         const before = b.lib.shelf();
         const shown_before = b.lib.count();
-        b.lib.reload();
+        b.reload(.export_first);
         // The books shown change with the shelf, or with a place merged in again (one a
         // filter now lets through, or doesn't)
         const same = std.meta.eql(before, b.lib.shelf()) and shown_before == b.lib.count();

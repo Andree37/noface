@@ -90,7 +90,10 @@ pub fn inside_character(byte: u8) bool {
 }
 
 /// The nearest place at or before `at` that's no character's inside: `at` itself, or
-/// the start of the character it's inside. `text.len` is such a place.
+/// the start of the character it's inside. `text.len` is such a place. In text that
+/// isn't UTF-8, a run of continuation bytes longer than a character is stepped back
+/// over three bytes at most: each stray byte is a character of its own there, read
+/// as `replacement`, so any place in the run is one between characters.
 pub fn start_at_or_before(text: []const u8, at: u32) u32 {
     assert(at <= text.len);
     var start = at;
@@ -294,6 +297,29 @@ pub fn is_word_by_itself(cp: u21) bool {
     assert(cp <= code_point_max);
     if (cp < ascii_end) return false;
     return one_of(Script, uucode.get(.script, cp), &word_per_character);
+}
+
+/// Where words start, the one rule every counter of words reads text by: running's
+/// phrases and the words left alike, so the two always agree. What came before a
+/// character: a space (or the text's start), a word, or a word by itself and what
+/// stays with it (its punctuation and marks).
+pub const WordState = enum { space, word, by_itself };
+
+/// Whether `cp` starts a word after `before`, and what it leaves for the next: a word
+/// starts at a word by itself, and at anything but a space after a space; after a word
+/// by itself, a letter or a number starts the next, as '。' stays with its sentence.
+pub fn word_step(before: WordState, cp: u21) struct { starts: bool, after: WordState } {
+    assert(cp <= code_point_max);
+    if (is_space(cp)) return .{ .starts = false, .after = .space };
+    if (is_word_by_itself(cp)) return .{ .starts = true, .after = .by_itself };
+    return switch (before) {
+        .space => .{ .starts = true, .after = .word },
+        .word => .{ .starts = false, .after = .word },
+        .by_itself => if (is_letter_or_number(cp))
+            .{ .starts = true, .after = .word }
+        else
+            .{ .starts = false, .after = .by_itself },
+    };
 }
 
 /// Whether `cp` is a space of any width, a line or paragraph break, or a tab, as

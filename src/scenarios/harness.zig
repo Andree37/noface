@@ -9,6 +9,7 @@ const fonts_db = @import("../kindle/fonts.zig");
 const process = @import("../sys/process.zig");
 const image = @import("../gfx/image.zig");
 const pgm = @import("../base/pgm.zig");
+const library_ui = @import("../ui/library.zig");
 const app = @import("../app.zig");
 const hwtcon = @import("../kindle/hwtcon.zig");
 const touch_zones = @import("../kindle/touch.zig");
@@ -111,8 +112,11 @@ pub const placed_kinds = std.enums.values(placed.What).len;
 /// A page drawn, and its words where they were drawn.
 pub const Shown = struct { page: u32, words: []const book_model.Word };
 
-/// The most books a scenario puts in the documents folder.
-pub const books_max = 6;
+/// The most books a scenario puts in the documents folder: the library's picture's
+/// shelf of them (looks.zig), or the hero, a first page of the library full under it,
+/// and one over, so a second page can be tried, whichever is more on this screen.
+pub const books_max = @max(shelf_books, 1 + library_ui.grid_size(true) + 1);
+pub const shelf_books = 6;
 
 /// How the pretend Kindle starts, and where a scenario begins.
 pub const Kindle = struct {

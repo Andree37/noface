@@ -152,7 +152,11 @@ pub const Font = struct {
             .fallback => return 0,
         }
         const units = truetype.kern_advance(&f.info, a.index, b.index);
-        return @as(f32, @floatFromInt(units)) * f.scale;
+        const kerned = @as(f32, @floatFromInt(units)) * f.scale;
+        // A font file is outside data: a pair kerned closer than the first glyph is wide
+        // would put the second before it, and a word's width below nothing
+        assert(a.advance >= 0);
+        return @max(kerned, -a.advance);
     }
 
     pub fn measure(f: *const Font, word: []const u8) !f32 {
@@ -441,7 +445,9 @@ fn test_font_digest(info: *const truetype.Info, sizes: []const f32) !u64 {
     var hasher = std.hash.Wyhash.init(0);
     for (0..info.glyph_count) |glyph| {
         const metrics = truetype.horizontal_metrics(info, @intCast(glyph));
-        hasher.update(std.mem.asBytes(&metrics.advance));
+        // At the width stb_truetype's digests were made with
+        const advance: i32 = metrics.advance;
+        hasher.update(std.mem.asBytes(&advance));
         hasher.update(std.mem.asBytes(&metrics.left_side_bearing));
     }
     for (sizes) |px| {

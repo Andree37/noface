@@ -529,7 +529,7 @@ pub fn draw_header(
     quick: *const quick_model.Quick,
     notice: ?[]const u8,
 ) !void {
-    const box = header_box(fonts);
+    const box = header_box;
     page.fill_rect(box.x, box.y, box.w, box.h, style.white);
     try fonts.title.draw(page, header_inset, header_baseline, device.short_name(device.target));
     const header_width: f32 = @floatFromInt(page.width - 2 * header_inset);
@@ -549,13 +549,18 @@ pub fn draw_header(
     );
 }
 
-/// The header's box: the panel's top, down to the clock line's lowest descent, clear of
-/// the first row of tiles.
-pub fn header_box(fonts: Fonts) style.Rect {
-    assert(fonts.small.descent >= 0);
-    const bottom: u32 = @intCast(clock_baseline + fonts.small.descent);
-    assert(bottom <= first_row_y - tile_reach_y); // Over the tiles, never into them
-    return .{ .x = 0, .y = 0, .w = style.screen_width, .h = bottom };
+/// The header's box: the panel's top, down to where the first row of tiles takes taps.
+/// The room the header has, whatever the font's descent: a layout fact, not one read
+/// from a font file at drawing time.
+pub const header_box: style.Rect = .{
+    .x = 0,
+    .y = 0,
+    .w = style.screen_width,
+    .h = first_row_y - tile_reach_y,
+};
+
+comptime {
+    assert(clock_baseline < header_box.h); // The clock's line is inside it
 }
 
 /// The panel, its header's second line `notice` in place of the clock when there's one

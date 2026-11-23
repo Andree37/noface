@@ -6,6 +6,9 @@ pub const max_brightness = 24;
 
 pub const max_warmth = 24;
 
+/// The battery's level when full, in percent.
+pub const battery_full = 100;
+
 /// How far a light's - and + buttons move its level.
 pub const level_step = 2;
 

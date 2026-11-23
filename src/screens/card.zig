@@ -20,7 +20,9 @@ pub fn over(
     book_cover: ?card.Cover,
 ) Card {
     assert(background.holds(&a.display)); // Put back over the whole screen
-    assert(rows.len > 0); // A card is something to choose
+    // A card may have no rows: one that only says something, as a book downloading,
+    // closed by a tap above it (`card.hit_with` gives `rows`, no row, on it)
+    assert(rows.len <= card.rows_longest); // On the screen, under the status strip
     return .{
         .a = a,
         .background = background,
@@ -61,7 +63,7 @@ pub const Card = struct {
     pub fn draw(c: *Card, _: screen.Part) !void {
         const a = c.a;
         assert(c.background.holds(&a.display));
-        assert(c.rows.len > 0);
+        assert(c.rows.len <= card.rows_longest);
         const page = a.display.compose(c.background);
         try card.render_with(a.ui, page, c.title, c.subtitle, c.rows, c.cover);
         a.display.put_composed();

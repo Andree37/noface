@@ -62,10 +62,21 @@ fn opens_with(text: []const u8, mark: []const u8) bool {
     const start = text[letters_start(text)..];
     if (!std.mem.startsWith(u8, start, core)) return false;
     assert(start.len >= core.len);
-    // "1" opens "1 The note", not "12 Another"
+    // "1" opens "1 The note", not "12 Another": the mark goes on only by a character of
+    // its last one's kind. A smaller note set without a space ("1The note", "①这是")
+    // still opens with its mark
     if (start.len == core.len) return true;
     const after = unicode.character_or_replacement(start, @intCast(core.len));
-    return !unicode.is_letter_or_number(after.cp);
+    const last_at = unicode.start_at_or_before(core, @intCast(core.len - 1));
+    const last = unicode.character_or_replacement(core, last_at);
+    return !same_kind(last.cp, after.cp);
+}
+
+/// Whether two characters are both letters, or both numbers: one goes on from the
+/// other within a word or a number.
+fn same_kind(a: u21, b: u21) bool {
+    if (!unicode.is_letter_or_number(a) or !unicode.is_letter_or_number(b)) return false;
+    return unicode.is_letter(a) == unicode.is_letter(b);
 }
 
 /// Where `s`'s first letter or digit starts, or its end when it has none.
@@ -315,6 +326,10 @@ test "a note's mark matches its note by whole characters, and a symbol matches a
     try std.testing.expect(opens_with("[12] See the map.", "12"));
     try std.testing.expect(opens_with("12. See the map.", "[12]"));
     try std.testing.expect(!opens_with("12 Another note", "1"));
+    // Set smaller without a space: the mark still opens it, a letter after a number
+    try std.testing.expect(opens_with("1The note itself.", "1"));
+    try std.testing.expect(opens_with("\u{2460}\u{8fd9}\u{662f}\u{6ce8}\u{91ca}", "\u{2460}"));
+    try std.testing.expect(!opens_with("ab note", "a"));
     // A dagger or asterisk has nothing to compare: any note
     try std.testing.expect(opens_with("\u{2021} Another note", "\u{2020}"));
     try std.testing.expect(opens_with("A note", "*"));

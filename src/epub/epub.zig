@@ -619,10 +619,11 @@ const Builder = struct {
     fn end_link(b: *Builder) !void {
         const link = b.link orelse return;
         b.link = null;
-        // A block ended inside it ("<p><a>x</p><p>y</a>"): its start is in a paragraph
-        // already kept, so it covers nothing whole
-        if (link.paragraph != b.paragraphs.items.len) return;
-        const start = link.start;
+        // A paragraph ended inside it (a picture in it, a line break, "<p><a>x</p><p>y
+        // </a>"): it covers the paragraph now being read from its start, all of whose
+        // text came after the link opened ("<a><img/>1</a>" links its "1")
+        assert(link.paragraph <= b.paragraphs.items.len);
+        const start = if (link.paragraph == b.paragraphs.items.len) link.start else 0;
         const end = b.text_length();
         if (end <= start) return;
         const href = link.target;
@@ -1083,17 +1084,23 @@ test "a package with an empty author or title still lists its chapters" {
     try std.testing.expectEqualStrings("OEBPS/Q&A.xhtml", chapter);
 }
 
-test "a tag that closes itself styles and links nothing, and a link cut by a block is dropped" {
+test "a tag that closes itself styles and links nothing; a link a block cuts covers what's after" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     var b = Builder{ .alloc = arena.allocator(), .files = &.{} };
     const markup = "<html><body><p>An <i class=\"icon\"/>icon and <a href=\"#n\"/>more.</p>" ++
-        "<p>Long <a href=\"#n1\">x</p><p>other words</a> here.</p></body></html>";
+        "<p>Long <a href=\"#n1\">x</p><p>other words</a> here.</p>" ++
+        "<p><a href=\"#n2\">*<br/>1</a> A paragraph.</p></body></html>";
     try b.chapter("c.xhtml", markup);
     const paragraphs = b.paragraphs.items;
     try std.testing.expectEqualStrings("An icon and more.", paragraphs[0].text);
     for (paragraphs[0].runs) |r| try std.testing.expect(!r.italic);
-    try std.testing.expectEqual(@as(usize, 0), b.links.items.len);
+    // Of the links cut by a new paragraph, what's in the paragraph after the cut
+    try std.testing.expectEqual(@as(usize, 2), b.links.items.len);
+    for (b.links.items) |l| {
+        const text = paragraphs[l.paragraph].text[l.start..l.end];
+        try std.testing.expect(std.mem.eql(u8, text, "other words") or std.mem.eql(u8, text, "1"));
+    }
 }
 
 test "broken EPUBs are refused, never crash" {

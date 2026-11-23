@@ -22,7 +22,11 @@ const magic = "NFPG";
 /// (src/testdata/recorded/<model>/breaks.txt).
 /// 4: a note's mark is told by its letters in any script (model/notes.zig `is_mark`),
 /// so a book with marks in Cyrillic or Japanese flows otherwise.
-const layout_version: u64 = 4;
+/// 5: a word holding a byte that isn't UTF-8 has its width (it had none); a tag that
+/// closes itself (`<i/>`) styles nothing after it; a note set smaller opens with its
+/// mark run into its text; and a link a picture or line break cuts still marks its
+/// note. Pages saved by 0.2.0 would skip lines.
+const layout_version: u64 = 5;
 
 /// Everything the breaks depend on.
 pub fn key(a: *const app.App, book_bytes: u64) u64 {

@@ -7,6 +7,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const book_model = @import("book.zig");
 const unicode = @import("../text/unicode.zig");
+const stats = @import("stats.zig");
 
 /// A phrase's time is its words at the pace, a little longer after a sentence or a
 /// paragraph, and between these bounds: e-ink takes a moment to change.
@@ -66,8 +67,13 @@ pub fn at(paras: []const book_model.Paragraph, from: book_model.Pos, fits: Fits)
         const p = paras[para];
         if (p.image != null or p.note) continue;
         assert(byte <= p.text.len);
-        const start = skip_spaces(p.text, byte);
-        if (start == p.text.len) continue;
+        const after_spaces = skip_spaces(p.text, byte);
+        if (after_spaces == p.text.len) continue;
+        // From its word's start: a page may begin inside one, broken with a hyphen, and
+        // the words left are counted from there too
+        const first = skip_spaces(p.text, 0);
+        const start = last_word_start(p.text, first, after_spaces + 1);
+        assert(start <= after_spaces);
         return in_text(p.text, para, start, fits);
     }
     return null;
@@ -249,12 +255,13 @@ fn word_end_at(text: []const u8, from: u32) u32 {
     assert(from < text.len);
     var it = unicode.Characters{ .text = text, .at = from };
     const first = it.next().?; // `from` is inside the text
-    const by_itself = unicode.is_word_by_itself(first.cp);
+    // By the one rule of where words start, which the words left are counted by too
+    var state = unicode.word_step(.space, first.cp).after;
     var at_byte = it.at;
     while (it.next()) |c| {
-        if (unicode.is_space(c.cp) or unicode.is_word_by_itself(c.cp)) break;
-        // After a character that's a word by itself, only its marks stay with it
-        if (by_itself and unicode.is_letter_or_number(c.cp)) break;
+        const step = unicode.word_step(state, c.cp);
+        if (step.starts or step.after == .space) break;
+        state = step.after;
         at_byte = it.at;
     }
     assert(at_byte > from);
@@ -376,4 +383,32 @@ test "Chinese and Japanese, without spaces, are read a sentence at a time, a wor
     const first = at(&paras, .{}, test_fits(&@as(u32, 30))).?;
     try std.testing.expectEqual(@as(u32, 7), first.words);
     try std.testing.expectEqual(End.sentence, first.ends);
+}
+
+test "a phrase never holds more words than are counted from its start" {
+    // Running shows the words left in the chapter from each phrase, which hold the
+    // phrase's own: both count by one rule (`unicode.word_step`)
+    const texts = [_][]const u8{
+        "吾輩は猫であるね。The End", // A sentence's stop stays with it; letters after start anew
+        "won-derful day.", // A page may start inside a word broken with a hyphen
+        "「猫」と言った。“Yes,” he said.",
+    };
+    const wide: u32 = 1000;
+    for (texts) |text| {
+        const paras = [_]book_model.Paragraph{.{ .text = text }};
+        var from: book_model.Pos = .{ .para = 0, .byte = 0 };
+        // Each phrase passes some of the text
+        for (0..text.len) |_| {
+            const p = at(&paras, from, test_fits(&wide)) orelse break;
+            // As running counts them: the paragraph's words less those before it
+            const left = stats.count_words(text) - stats.count_words(text[0..p.start]);
+            try std.testing.expect(left >= p.words);
+            from = p.after();
+        }
+    }
+    // Started inside a word, the phrase starts at the word's start
+    const broken = [_]book_model.Paragraph{.{ .text = "wonderful day." }};
+    const p = at(&broken, .{ .para = 0, .byte = 4 }, test_fits(&wide)).?;
+    try std.testing.expectEqual(@as(u32, 0), p.start);
+    try std.testing.expectEqual(@as(u64, p.words), stats.count_words(broken[0].text));
 }

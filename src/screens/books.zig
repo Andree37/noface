@@ -504,11 +504,17 @@ fn open_index(sources: Sources, s: *State) void {
         log("library: index built, {d} books in {d} ms\n", .{ built.header.count, ms });
     }
     const ix = s.opened().?; // Opened as it was, or just built
-    // Before any book's files are read: those named by an older noface take new names
-    builder.rename_by_path(ix, items, places, &scratch) catch |err| {
+    // The data folder listed once, for both: the renaming, before any book's files are
+    // read, as those named by an older noface take new names; then the merging
+    var listed = builder.StateFiles.list(scratch.allocator(), places) catch |err| {
+        log("library: places not read ({s}), again at the next load\n", .{@errorName(err)});
+        s.sorted = false; // The items were sorted by state key
+        return;
+    };
+    builder.rename_by_path(ix, items, places, &listed) catch |err| {
         log("library: files not renamed ({s}), again at the next load\n", .{@errorName(err)});
     };
-    builder.merge_states(ix, items, places) catch |err| {
+    builder.merge_states(ix, items, places, &listed) catch |err| {
         log("library: places not merged ({s})\n", .{@errorName(err)});
     };
     s.sorted = false; // The items were sorted by state key
@@ -853,6 +859,17 @@ test "files an older noface named by a book's file name move to its whole path's
         const notes = try state.sibling(&notes_buffer, own_state, "notes");
         try std.testing.expect(file.exists(notes));
     }
+    // Merged in the load that moved them, under the names the listing hadn't seen
+    _ = library.page(0);
+    var placed: u32 = 0;
+    for (0..library.count()) |i| {
+        const e = library.book(@intCast(i));
+        if (std.mem.eql(u8, e.title, "Dune") and e.percent == 42) placed += 1;
+    }
+    if (library.hero()) |h| {
+        if (std.mem.eql(u8, h.title, "Dune") and h.percent == 42) placed += 1;
+    }
+    try std.testing.expectEqual(@as(u32, 2), placed);
     // Other's newer place is kept, its old one left where it was
     const other_now = state.load(try state.path_for(&path, dir, other));
     try std.testing.expectEqual(@as(?u32, 10), other_now.percent);

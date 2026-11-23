@@ -592,21 +592,16 @@ pub fn rename_by_path(
     ix: *const index.Index,
     items: []Item,
     places: Places,
-    scratch: *memory.Budget,
+    listed: *StateFiles,
 ) !void {
     assert(places.state_dir.len > 0);
     assert(items.len >= ix.header.count); // Room to sort every book
-    // Listed first, then moved: a folder renamed in while it's listed can list a name twice
-    var old = Listed{ .alloc = scratch.allocator() };
-    var folder_buffer: [files.path_bytes_max]u8 = undefined;
-    const folder = try std.fmt.bufPrintSentinel(&folder_buffer, "{s}", .{places.state_dir}, 0);
     // Every name, or none acted on: the files of a book missed now are moved next time
-    if (!calls.each_entry(folder.ptr, &old, Listed.entry)) return error.CantList;
-    if (old.failed) return error.CantList;
-    if (old.keys.items.len == 0) return;
+    if (!listed.whole) return error.CantList;
+    if (listed.any_kind.items.len == 0) return;
     // Each key once, whichever of its kinds were listed
-    std.mem.sort(u64, old.keys.items, {}, std.sort.asc(u64));
-    const keys = unique(old.keys.items);
+    std.mem.sort(u64, listed.any_kind.items, {}, std.sort.asc(u64));
+    const keys = unique(listed.any_kind.items);
     const sorted = sorted_by(ix, items, state.key_by_name);
     for (keys) |key| {
         const high: u32 = @truncate(key >> 32);
@@ -617,7 +612,8 @@ pub fn rename_by_path(
             if (item.key != high) break;
             if (state.key_by_name(ix.entry(item.id).path) == key) count += 1;
         }
-        if (count > 0) try move_files(ix, places.state_dir, key, sorted[first..], count);
+        if (count == 0) continue;
+        try move_files(ix, places.state_dir, key, sorted[first..], count, listed);
     }
 }
 
@@ -635,26 +631,68 @@ fn unique(sorted: []u64) []u64 {
     return sorted[0..kept];
 }
 
-/// The keys of the files named by a key in the data folder, as listed: of every kind.
-const Listed = struct {
+/// The files named by a key in the data folder, from one listing each load: the keys
+/// of every kind, for the renaming (`rename_by_path`), and the places' apart, for the
+/// merging (`merge_states`), which the renaming adds the places it moves to.
+pub const StateFiles = struct {
     alloc: std.mem.Allocator,
-    keys: std.ArrayList(u64) = .empty,
-    failed: bool = false,
+    any_kind: std.ArrayList(u64) = .empty,
+    places: std.ArrayList(u64) = .empty,
+    /// False when the listing was cut short: what it found is still merged
+    whole: bool = true,
+    heartbeat: ?[*:0]const u8, // As `Places.heartbeat`: thousands of files are slow
+    beat_us: u64, // When it last beat, or started
 
-    fn entry(l: *Listed, name: []const u8, is_dir: bool) void {
-        assert(name.len > 0);
-        if (is_dir or l.failed) return;
-        for (state.kinds) |kind| {
-            const key = state.key_of_name(name, kind) orelse continue;
-            const before = l.keys.items.len;
-            l.keys.append(l.alloc, key) catch {
-                l.failed = true;
-                return;
-            };
-            assert(l.keys.items.len == before + 1);
-            return;
-        }
+    /// The data folder listed, into `alloc`. Out of memory, nothing's kept.
+    pub fn list(alloc: std.mem.Allocator, places: Places) !StateFiles {
+        assert(places.state_dir.len > 0);
+        var listed: StateFiles = .{
+            .alloc = alloc,
+            .heartbeat = places.heartbeat,
+            .beat_us = os.now_us(),
+        };
+        var folder_buffer: [files.path_bytes_max]u8 = undefined;
+        const state_dir = places.state_dir;
+        const folder = try std.fmt.bufPrintSentinel(&folder_buffer, "{s}", .{state_dir}, 0);
+        var walk: Walk = .{ .listed = &listed };
+        listed.whole = calls.each_entry(folder.ptr, &walk, Walk.entry);
+        if (walk.failed) return error.OutOfMemory;
+        assert(listed.places.items.len <= listed.any_kind.items.len);
+        return listed;
     }
+
+    /// A place now at `key`'s name, moved there by the renaming.
+    fn add_place(listed: *StateFiles, key: u64) !void {
+        const before = listed.places.items.len;
+        try listed.places.append(listed.alloc, key);
+        assert(listed.places.items.len == before + 1);
+    }
+
+    const Walk = struct {
+        listed: *StateFiles,
+        failed: bool = false,
+
+        fn entry(w: *Walk, name: []const u8, is_dir: bool) void {
+            assert(name.len > 0);
+            const l = w.listed;
+            if (l.heartbeat) |path| watchers.beat_when_due(path, &l.beat_us);
+            if (is_dir or w.failed) return;
+            for (state.kinds) |kind| {
+                const key = state.key_of_name(name, kind) orelse continue;
+                const before = l.any_kind.items.len;
+                l.any_kind.append(l.alloc, key) catch {
+                    w.failed = true;
+                    return;
+                };
+                assert(l.any_kind.items.len == before + 1);
+                const is_place = std.mem.eql(u8, kind, "state");
+                if (is_place) l.places.append(l.alloc, key) catch {
+                    w.failed = true;
+                };
+                return;
+            }
+        }
+    };
 };
 
 /// Each kind of file named by `key` copied to the names of the `count` books of
@@ -666,6 +704,7 @@ fn move_files(
     key: u64,
     sorted: []const Item,
     count: u32,
+    listed: *StateFiles,
 ) !void {
     assert(count > 0);
     // Every kind but the place, then the place
@@ -678,7 +717,7 @@ fn move_files(
         switch (file.presence(from)) {
             .absent => {},
             .unknown => return error.CantRead, // Tried again at the next load
-            .here => try move_file(ix, state_dir, kind, from, key, sorted, count),
+            .here => try move_file(ix, state_dir, kind, from, key, sorted, count, listed),
         }
     }
 }
@@ -693,6 +732,7 @@ fn move_file(
     key: u64,
     sorted: []const Item,
     count: u32,
+    listed: *StateFiles,
 ) !void {
     var done: u32 = 0;
     for (sorted) |item| {
@@ -715,28 +755,33 @@ fn move_file(
         } else {
             if (os.failed(calls.rename(from, to))) return error.CantRename;
         }
+        // Merged under its new name, which the listing, made before, hadn't
+        if (comptime std.mem.eql(u8, kind, "state")) try listed.add_place(state.key_for(path));
     }
     assert(done == count);
 }
 
 /// Merges what noface keeps of each book it opened (place, time read, marked read) into
-/// the index's records, from one listing of the data folder: only the books with a
-/// state file are read.
-pub fn merge_states(ix: *const index.Index, items: []Item, places: Places) !void {
+/// the index's records, from the places `listed` found, and those the renaming moved:
+/// only the books with a state file are read.
+pub fn merge_states(
+    ix: *const index.Index,
+    items: []Item,
+    places: Places,
+    listed: *StateFiles,
+) !void {
     assert(places.state_dir.len > 0);
     var merge: Merge = .{
         .ix = ix,
         .sorted = by_state_key(ix, items),
         .state_dir = places.state_dir,
-        .heartbeat = places.heartbeat,
-        .beat_us = os.now_us(),
     };
-    var folder_buffer: [files.path_bytes_max]u8 = undefined;
-    const folder = try std.fmt.bufPrintSentinel(&folder_buffer, "{s}", .{places.state_dir}, 0);
-    const whole = calls.each_entry(folder.ptr, &merge, Merge.entry);
-    if (merge.failed) return error.CantMerge;
+    for (listed.places.items) |key| {
+        if (listed.heartbeat) |path| watchers.beat_when_due(path, &listed.beat_us);
+        try merge.merge_key(key);
+    }
     // What was listed is merged; a book whose state wasn't is merged at the next load
-    if (!whole) return error.CantList;
+    if (!listed.whole) return error.CantList;
     assert(merge.sorted.len <= ix.header.local);
 }
 
@@ -744,27 +789,13 @@ const Merge = struct {
     ix: *const index.Index,
     sorted: []const Item,
     state_dir: []const u8,
-    heartbeat: ?[*:0]const u8, // As `Places.heartbeat`: thousands of state files are slow
-    beat_us: u64, // When it last beat, or started
-    failed: bool = false,
 
-    fn entry(m: *Merge, name: []const u8, is_dir: bool) void {
-        assert(name.len > 0);
-        assert(m.sorted.len <= m.ix.header.local);
-        if (m.heartbeat) |path| watchers.beat_when_due(path, &m.beat_us);
-        if (is_dir or m.failed) return;
-        const key = state.key_of_name(name, "state") orelse return;
-        m.merge_key(key, name) catch {
-            m.failed = true;
-        };
-    }
-
-    fn merge_key(m: *Merge, key: u64, name: []const u8) !void {
-        assert(name.len > 0);
+    fn merge_key(m: *Merge, key: u64) !void {
         assert(m.state_dir.len > 0);
         var path_buffer: [files.path_bytes_max]u8 = undefined;
-        const format = "{s}/{s}";
-        const path = try std.fmt.bufPrintSentinel(&path_buffer, format, .{ m.state_dir, name }, 0);
+        const format = "{s}/state-{x:0>16}";
+        const path = try std.fmt.bufPrintSentinel(&path_buffer, format, .{ m.state_dir, key }, 0);
+        assert(state.key_of_name(std.fs.path.basename(path), "state").? == key); // Its own
         // Read only for a book here: the drive is slow, and a file may be a deleted book's
         var saved: ?state.State = null;
         const high: u32 = @truncate(key >> 32);

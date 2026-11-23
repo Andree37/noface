@@ -248,6 +248,22 @@ fn count_token(code: []const u8, token: []const u8) u32 {
     return count;
 }
 
+/// How many times `name` is named in `code` by itself: not after a dot, where it's
+/// another thing's field of the same name (`style.cover` names no `cover`).
+fn count_name(code: []const u8, name: []const u8) u32 {
+    assert(name.len > 0);
+    var count: u32 = 0;
+    var at: u32 = 0;
+    while (std.mem.indexOfPos(u8, code, at, name)) |index| {
+        at = @intCast(index + name.len);
+        const before_ok = index == 0 or (!is_word(code[index - 1]) and code[index - 1] != '.');
+        const after_ok = at >= code.len or !is_word(code[at]);
+        if (before_ok and after_ok) count += 1;
+    }
+    assert(count * name.len <= code.len);
+    return count;
+}
+
 fn is_word(c: u8) bool {
     return std.ascii.isAlphanumeric(c) or c == '_';
 }
@@ -518,9 +534,9 @@ fn note_unused_imports(scan: *Scan, source: []const u8, code: []const u8) !void 
         assert(name.len > 0);
         // Named only on its own line, where `@import(…).name` names it a second time
         const offset = @intFromPtr(text.ptr) - @intFromPtr(source.ptr);
-        const own = count_token(code[offset..][0..text.len], name);
+        const own = count_name(code[offset..][0..text.len], name);
         assert(own >= 1);
-        if (count_token(code, name) == own) try scan.note(.import_unused, line_number, 1);
+        if (count_name(code, name) == own) try scan.note(.import_unused, line_number, 1);
     }
     assert(line_number > 1);
 }
@@ -538,9 +554,15 @@ fn is_scenarios(path: []const u8) bool {
         std.mem.startsWith(u8, path, "src/scenarios/");
 }
 
-/// How many times a line calls the function `name` itself: not a method or field of
-/// the same name.
-fn count_calls(code: []const u8, name: []const u8, gpa: std.mem.Allocator) !u32 {
+/// How many times a line calls the function `name` itself: by its name, or as a method
+/// through its first parameter `receiver`, `Self` or `@This()`; not another's method
+/// or field of the same name.
+fn count_calls(
+    code: []const u8,
+    name: []const u8,
+    receiver: []const u8,
+    gpa: std.mem.Allocator,
+) !u32 {
     assert(name.len > 0);
     const call = try std.fmt.allocPrint(gpa, "{s}(", .{name});
     defer gpa.free(call);
@@ -549,10 +571,61 @@ fn count_calls(code: []const u8, name: []const u8, gpa: std.mem.Allocator) !u32 
     while (std.mem.indexOfPos(u8, code, at, call)) |index| {
         at = @intCast(index + call.len);
         const before = if (index == 0) ' ' else code[index - 1];
-        if (!is_word(before) and before != '.') count += 1;
+        if (!is_word(before) and before != '.') {
+            count += 1;
+        } else if (before == '.' and calls_itself_through(code[0 .. index - 1], receiver)) {
+            count += 1;
+        }
     }
     assert(count * call.len <= code.len);
     return count;
+}
+
+/// Whether `before`, the code up to a `.name(` call's dot, ends with the function's
+/// own receiver: its first parameter, `Self` or `@This()`.
+fn calls_itself_through(before: []const u8, receiver: []const u8) bool {
+    assert(std.mem.indexOfScalar(u8, receiver, '.') == null); // A name, not a path
+    if (before.len == 0) return false; // A dot first on the line: no receiver
+    const owners = [_][]const u8{ "Self", "@This()" };
+    for (owners) |owner| {
+        if (ends_with_word(before, owner)) return true;
+    }
+    return receiver.len > 0 and ends_with_word(before, receiver);
+}
+
+/// Whether `text` ends with `word` as a whole word.
+fn ends_with_word(text: []const u8, word: []const u8) bool {
+    assert(word.len > 0);
+    assert(std.mem.indexOfScalar(u8, word, ' ') == null); // One word
+    if (!std.mem.endsWith(u8, text, word)) return false;
+    const start = text.len - word.len;
+    return start == 0 or !is_word(text[start - 1]);
+}
+
+/// The name of the first parameter in `params`, a signature's text after its `(`, or
+/// "" when there's none there (none at all, or on the next line).
+fn first_parameter(params: []const u8) []const u8 {
+    const trimmed = std.mem.trimStart(u8, params, " ");
+    assert(trimmed.len <= params.len);
+    const colon = std.mem.indexOfScalar(u8, trimmed, ':') orelse return "";
+    const name = std.mem.trim(u8, trimmed[0..colon], " ");
+    for (name) |c| {
+        if (!is_word(c)) return ""; // Not a name: `comptime T`, or not a parameter
+    }
+    assert(name.len < params.len); // Its colon at least comes after it
+    return name;
+}
+
+/// Notes a function named not in snake_case, unless it returns a type (TitleCase, as
+/// Zig has it) or the standard library looks it up by its name: `code` is the line
+/// its signature ends on, which says what it returns.
+fn check_function_name(scan: *Scan, name: []const u8, code: []const u8, line_number: u32) !void {
+    assert(name.len > 0);
+    assert(line_number > 0);
+    const returns_type = std.mem.indexOf(u8, code, ") type") != null;
+    if (!returns_type and !is_snake_case(name) and !listed(&std_hooks, name)) {
+        try scan.note(.function_name, line_number, 1);
+    }
 }
 
 /// Whether an assertion on this line joins conditions with `and` at its top level.
@@ -745,6 +818,8 @@ const Scan = struct {
     /// made in it so far, and the line of the `// Assertions:` marker above it, if any.
     const Function = struct {
         name: []const u8,
+        /// Its first parameter's name: a method calling itself does so through it.
+        receiver: []const u8 = "",
         start_line: u32,
         depth: i32,
         assertions: u32 = 0,
@@ -940,12 +1015,12 @@ fn check_zig_code(scan: *Scan, line: *const Line, line_number: u32, said: Said) 
     const code = line.code;
     var excuse_used = false;
     if (function_name(code)) |name| {
-        const returns_type = std.mem.indexOf(u8, code, ") type") != null;
-        if (!returns_type and !is_snake_case(name) and !listed(&std_hooks, name)) {
-            try scan.note(.function_name, line_number, 1);
-        }
+        const opens = std.mem.indexOfScalar(u8, code, '{') != null;
+        // A signature wrapped over lines says what it returns on its last: judged there
+        if (opens) try check_function_name(scan, name, code, line_number);
         const function: Scan.Function = .{
             .name = name,
+            .receiver = first_parameter(code[std.mem.indexOfScalar(u8, code, '(').? + 1 ..]),
             .start_line = line_number,
             .depth = scan.depth,
             .excused_at = said.assertions_at,
@@ -959,9 +1034,11 @@ fn check_zig_code(scan: *Scan, line: *const Line, line_number: u32, said: Said) 
         }
     } else if (scan.pending) |pending| {
         // The rest of a signature: the function opens on the line with its `{`
+        if (pending.receiver.len == 0) scan.pending.?.receiver = first_parameter(code);
         if (std.mem.indexOfScalar(u8, code, '{') != null) {
-            var function = pending;
+            var function = scan.pending.?;
             function.depth = scan.depth;
+            try check_function_name(scan, function.name, code, function.start_line);
             open_function(scan, function);
             scan.pending = null;
         } else if (std.mem.endsWith(u8, std.mem.trimEnd(u8, code, " "), ";")) {
@@ -971,7 +1048,8 @@ fn check_zig_code(scan: *Scan, line: *const Line, line_number: u32, said: Said) 
         // A call to the function being read, from inside it: the innermost one
         const open = scan.open[scan.open_count - 1];
         assert(open.start_line < line_number);
-        try scan.note(.recursion, line_number, try count_calls(code, open.name, scan.gpa));
+        const calls = try count_calls(code, open.name, open.receiver, scan.gpa);
+        try scan.note(.recursion, line_number, calls);
     }
     if (!excuse_used) {
         if (said.assertions_at) |at| try scan.note(.marker_unused, at, 1);
@@ -1041,7 +1119,8 @@ fn check_zig_statement(scan: *Scan, line: *const Line, line_number: u32, said: S
         try scan.note(.marker_unused, if (on_line) line_number else said.ignored_at.?, 1);
     }
     // A loop that never ends by design says so just above it: `// Unbounded: …`
-    const loops = count_token(code, "while (true)");
+    // `for (0..)` counts with no end, as `while (true)` does
+    const loops = count_token(code, "while (true)") + count_token(code, "for (0..)");
     if (said.unbounded_at) |at| {
         if (loops == 0) try scan.note(.marker_unused, at, 1);
     } else {
@@ -1721,4 +1800,73 @@ test "a file of points of its own gives its numbers to its pt(, and no number ba
         if (b.rule == .layout_number) bare += 1;
     }
     try std.testing.expectEqual(@as(u32, 6), bare);
+}
+
+test "a method calling itself through its receiver, Self or @This() is recursion" {
+    const source =
+        \\const Tree = struct {
+        \\    fn walk(t: *Tree) void {
+        \\        assert(t.depth > 0);
+        \\        assert(t.depth < 9);
+        \\        t.walk();
+        \\        Self.walk(t);
+        \\        t.child.walk(); // Another's walk: not counted
+        \\    }
+        \\};
+    ;
+    try std.testing.expectEqual(@as(u32, 2), try count_in(source, .recursion));
+}
+
+test "an open range is a loop without a bound, as while (true) is" {
+    const source =
+        \\fn f() void {
+        \\    assert(true);
+        \\    assert(true);
+        \\    for (0..) |_| {}
+        \\}
+    ;
+    try std.testing.expectEqual(@as(u32, 1), try count_in(source, .loop_unbounded));
+}
+
+test "an import named only after a dot elsewhere is still unused" {
+    const source =
+        \\const cover = @import("cover.zig");
+        \\const style = @import("style.zig");
+        \\fn f() u32 {
+        \\    assert(true);
+        \\    assert(true);
+        \\    return style.cover.width;
+        \\}
+    ;
+    try std.testing.expectEqual(@as(u32, 1), try count_in(source, .import_unused));
+}
+
+test "a wrapped signature returning a type keeps its TitleCase" {
+    const source =
+        \\fn Wrapped(
+        \\    comptime T: type,
+        \\) type {
+        \\    assert(@sizeOf(T) > 0);
+        \\    assert(@sizeOf(T) < 9);
+        \\    return T;
+        \\}
+    ;
+    try std.testing.expectEqual(@as(u32, 0), try count_in(source, .function_name));
+}
+
+test "a system call's result thrown away needs its reason, above or on the line" {
+    const source =
+        \\fn f(fd: i32) void {
+        \\    assert(fd >= 0);
+        \\    assert(fd < 9);
+        \\    _ = linux.close(fd);
+        \\    // Ignored: only read
+        \\    _ = linux.close(fd);
+        \\    _ = linux.close(fd); // Ignored: only read
+        \\    _ = process.run(&argv, &out) orelse return;
+        \\    const x = 1; // Ignored: nothing here to ignore
+        \\}
+    ;
+    try std.testing.expectEqual(@as(u32, 1), try count_in(source, .error_ignored));
+    try std.testing.expectEqual(@as(u32, 1), try count_in(source, .marker_unused));
 }

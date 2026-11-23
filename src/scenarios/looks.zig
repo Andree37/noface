@@ -1,8 +1,6 @@
 //! Screens compared with their reference images (src/testdata/recorded/<model>/).
 const library_ui = @import("../ui/library.zig");
-const toolbar = @import("../ui/toolbar.zig");
 const aa = @import("../ui/aa.zig");
-const dictionary = @import("../model/dictionary.zig");
 const keyboard = @import("../ui/keyboard.zig");
 const harness = @import("harness.zig");
 const Kindle = harness.Kindle;

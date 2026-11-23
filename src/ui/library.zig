@@ -6,7 +6,6 @@ const Page = @import("../gfx/page.zig").Page;
 const Font = @import("../gfx/font.zig").Font;
 const draw = @import("draw.zig");
 const style = @import("style.zig");
-const cover = @import("../gfx/image.zig");
 const icons = @import("icons.zig");
 const quick_model = @import("../model/quick.zig");
 const catalog = @import("../model/catalog.zig");

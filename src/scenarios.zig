@@ -12,7 +12,6 @@ const folders = @import("sys/dir.zig");
 const hyphen = @import("layout/hyphen.zig");
 const file = @import("sys/file.zig");
 const fonts_db = @import("kindle/fonts.zig");
-const process = @import("sys/process.zig");
 const Font = @import("gfx/font.zig").Font;
 const catalog = @import("model/catalog.zig");
 const kindle_catalog = @import("kindle/catalog.zig");

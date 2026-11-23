@@ -1,7 +1,6 @@
 //! Words on the page: looking one up, highlighting, a footnote, a picture, and a highlight's
 //! handles.
 const std = @import("std");
-const dictionary = @import("../model/dictionary.zig");
 const goto_ui = @import("../ui/goto.zig");
 const selection = @import("../ui/selection.zig");
 const places = @import("../screens/places.zig");

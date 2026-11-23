@@ -1,7 +1,6 @@
 //! Running mode: moving on by itself, its taps, its pause, and holding the Kindle awake.
 const std = @import("std");
 const settings_model = @import("../model/settings.zig");
-const dictionary = @import("../model/dictionary.zig");
 const running_model = @import("../model/running.zig");
 const harness = @import("harness.zig");
 const Kindle = harness.Kindle;

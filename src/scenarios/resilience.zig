@@ -1,7 +1,6 @@
 //! What goes wrong: memory running out, a layout cut short, files that can't be read or saved, a
 //! screen that fails, and the app's memory limit.
 const std = @import("std");
-const app = @import("../app.zig");
 const input_mod = @import("../kindle/input.zig");
 const settings_model = @import("../model/settings.zig");
 const library_ui = @import("../ui/library.zig");

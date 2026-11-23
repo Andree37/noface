@@ -145,7 +145,10 @@ pub const Items = struct {
         assert(it.position <= it.data.len);
         // Bounded: every value read moves the position on by at least a byte.
         while (it.position < it.data.len) {
-            const value = decode(it.data, &it.position) catch return null;
+            const value = decode(it.data, &it.position) catch {
+                it.position = @intCast(it.data.len); // Ended: never read on from inside it
+                return null;
+            };
             if (value.kind != .pad) return value;
         }
         assert(it.position == it.data.len);
@@ -165,14 +168,23 @@ pub const Fields = struct {
         assert(it.position <= it.data.len);
         // Bounded: every field read moves the position on by at least a byte.
         while (it.position < it.data.len) {
-            const key = read_var_uint(it.data, &it.position) catch return null;
-            const value = decode(it.data, &it.position) catch return null;
-            if (value.kind != .pad) return .{ .key = key, .value = value };
+            const field = read_field(it.data, &it.position) catch {
+                it.position = @intCast(it.data.len); // Ended: never read on from inside it
+                return null;
+            };
+            if (field.value.kind != .pad) return field;
         }
         assert(it.position == it.data.len);
         return null;
     }
 };
+
+fn read_field(data: []const u8, position: *u32) Error!Field {
+    const key = try read_var_uint(data, position);
+    const value = try decode(data, position);
+    assert(position.* <= data.len);
+    return .{ .key = key, .value = value };
+}
 
 /// A variable-length unsigned number: seven bits a byte, the last byte flagged by its
 /// high bit. Bits past 64 are dropped.
@@ -213,10 +225,11 @@ fn read_one(data: []const u8, position: *u32) Error!Read {
     const type_code = descriptor >> 4;
     var length: u64 = descriptor & 0x0f;
 
+    // A typed null (null.bool among them) is none, not false: looked at first
+    if (length == length_null) return .{ .value = .{ .kind = .null_ } };
     if (type_code == type_code_bool) {
         return .{ .value = .{ .kind = .bool_, .int = @intFromBool(length == 1) } };
     }
-    if (length == length_null) return .{ .value = .{ .kind = .null_ } };
     const sorted_struct = type_code == type_code_struct and length == length_sorted_struct;
     if (length == length_variable or sorted_struct) length = try read_var_uint(data, position);
     if (length > data.len - position.*) return error.Truncated;
@@ -384,4 +397,14 @@ test "random and broken input never crashes the reader" {
         const v = parse(buf[0..len]) catch continue;
         walk_all(v);
     }
+}
+
+test "a value that won't decode ends its list for good, and null.bool is null" {
+    // A uint of one byte, then a string said to run past the end, then a uint
+    var items = Items{ .data = &.{ 0x21, 0x05, 0x85, 0x41, 0x21, 0x07 } };
+    try std.testing.expectEqual(@as(u64, 5), items.next().?.int);
+    try std.testing.expect(items.next() == null);
+    try std.testing.expect(items.next() == null); // Still ended, not read from inside
+    var typed_null = Items{ .data = &.{0x1f} };
+    try std.testing.expectEqual(Kind.null_, typed_null.next().?.kind);
 }

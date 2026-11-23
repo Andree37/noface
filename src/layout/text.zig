@@ -201,7 +201,8 @@ const Link = book_model.Link;
 fn is_reference(link: Link, paras: []const Paragraph, start: u32, len: u32) bool {
     if (link.start >= link.end) return false; // A book's empty link: nothing to tap
     if (link.end <= start or link.start >= start + len) return false;
-    return link.target < paras.len and paras[link.target].note_start;
+    assert(link.target < paras.len); // A book's links point at its paragraphs
+    return paras[link.target].note_start;
 }
 
 /// Whether any link in `links` refers to a note and overlaps `len` bytes from `start`.

@@ -20,6 +20,15 @@ pub const Language = struct {
 };
 
 const part_size_max = 320;
+/// The longest address the dictionaries are fetched from: the release's, or a
+/// computer's on the USB link.
+const base_bytes_max = 256;
+/// The longest dictionary file name: "dict-en" and its like.
+const file_name_bytes_max = 64;
+
+comptime {
+    assert(default_base.len < base_bytes_max);
+}
 
 /// The longest one try of curl's may take, connecting included: 27 MB in this time is
 /// about 40 KB a second, slower than any Wi-Fi worth downloading on. A retry starts
@@ -67,19 +76,21 @@ pub const Download = struct {
 };
 
 /// The steps, each stopping the script if it fails. The zip holds the dictionary and
-/// its license, both kept beside each other.
+/// its license, both kept beside each other. The folder, the address and the file come
+/// as the shell's own arguments ($1 to $3), so nothing in them, a quote say, is ever
+/// read as part of the script.
 const script_format =
     \\set -e
-    \\cd '{[data_dir]s}'
-    \\rm -rf .dict-new '{[file]s}.zip.part'
+    \\cd "$1"
+    \\rm -rf .dict-new "$3.zip.part"
     \\curl -fsSL --retry 2 --connect-timeout 20 --max-time {[curl_s_max]d} \
-    \\  -o '{[file]s}.zip.part' '{[base]s}/{[file]s}.zip'
+    \\  -o "$3.zip.part" "$2/$3.zip"
     \\mkdir .dict-new
-    \\unzip -o -q '{[file]s}.zip.part' -d .dict-new
-    \\test -s '.dict-new/{[file]s}'
-    \\mv -f '.dict-new/{[file]s}' '{[file]s}'
-    \\mv -f '.dict-new/{[file]s}-LICENSE.txt' '{[file]s}-LICENSE.txt' 2>/dev/null || true
-    \\rm -rf .dict-new '{[file]s}.zip.part'
+    \\unzip -o -q "$3.zip.part" -d .dict-new
+    \\test -s ".dict-new/$3"
+    \\mv -f ".dict-new/$3" "$3"
+    \\mv -f ".dict-new/$3-LICENSE.txt" "$3-LICENSE.txt" 2>/dev/null || true
+    \\rm -rf .dict-new "$3.zip.part"
 ;
 
 /// Starts fetching `lang` into `data_dir`. Null when it couldn't start.
@@ -92,12 +103,17 @@ pub fn start(data_dir: []const u8, base: []const u8, lang: Language) ?Download {
     d.part_size = @intCast(part.len);
     var script_buf: [1024]u8 = undefined;
     const script = std.fmt.bufPrintSentinel(&script_buf, script_format, .{
-        .data_dir = data_dir,
-        .file = lang.file,
-        .base = base,
         .curl_s_max = curl_s_max,
     }, 0) catch return null;
-    const argv = [_:null]?[*:0]const u8{ "/bin/sh", "-c", script };
+    // Each its own argument, ended with a zero as a program's arguments are
+    var dir_buf: [file.own_path_bytes_max]u8 = undefined;
+    const dir_z = std.fmt.bufPrintSentinel(&dir_buf, "{s}", .{data_dir}, 0) catch return null;
+    var base_buf: [base_bytes_max]u8 = undefined;
+    const base_z = std.fmt.bufPrintSentinel(&base_buf, "{s}", .{base}, 0) catch return null;
+    var file_buf: [file_name_bytes_max]u8 = undefined;
+    const file_z = std.fmt.bufPrintSentinel(&file_buf, "{s}", .{lang.file}, 0) catch return null;
+    // `sh -c script name $1 $2 $3`: the name is the script's $0
+    const argv = [_:null]?[*:0]const u8{ "/bin/sh", "-c", script, "dict", dir_z, base_z, file_z };
     const child = process.spawn(&argv) orelse return null;
     // Ignored: it prints nothing, so its output is closed unread.
     _ = linux.close(child.out);

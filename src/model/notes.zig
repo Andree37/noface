@@ -34,7 +34,8 @@ pub fn note_length(paragraphs: []const book.Paragraph, target: u32) u32 {
 fn has_note_reference(p: *const book.Paragraph, paragraphs: []const book.Paragraph) bool {
     assert(paragraphs.len > 0); // `p` is one of them
     for (p.links) |l| {
-        if (l.target < paragraphs.len and paragraphs[l.target].note_start) return true;
+        assert(l.target < paragraphs.len); // A book's links point at its paragraphs
+        if (paragraphs[l.target].note_start) return true;
     }
     return false;
 }

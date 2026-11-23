@@ -380,6 +380,9 @@ const Parser = struct {
         const position = anchor.get(f_anchor_position) orelse return null;
         const id = (position.get(f_id) orelse return null).unsigned() orelse return null;
         const target = p.positions.get(id) orelse return null;
+        // An id on nothing after it (a trailing empty container) points past the last
+        // paragraph: no link, so every link of a book points at one of its paragraphs
+        if (target >= p.paragraphs.items.len) return null;
         return .{ .start = raw.start, .end = raw.end, .target = target };
     }
 
@@ -456,7 +459,7 @@ const Parser = struct {
         const title = (label.get(f_nav_text) orelse return).text() orelse return;
         const target = entry.get(f_nav_target) orelse return;
         const element = target.get(f_id) orelse return;
-        const para = p.positions.get(element.int) orelse return;
+        const para = p.positions.get(element.unsigned() orelse return) orelse return;
         if (para >= p.paragraphs.items.len) return;
         try out.append(p.alloc, .{ .title = title, .para = para, .depth = depth });
     }
@@ -531,8 +534,10 @@ const Parser = struct {
             return;
         }
         const style = if (item.get(f_style)) |s| s.symbol() orelse 0 else 0;
-        if (item.get(f_id)) |id| {
-            const slot = try p.positions.getOrPut(p.alloc, id.int);
+        // An id is a number: one of another kind would key as 0, another element's
+        const element_id = if (item.get(f_id)) |field| field.unsigned() else null;
+        if (element_id) |id| {
+            const slot = try p.positions.getOrPut(p.alloc, id);
             if (!slot.found_existing) slot.value_ptr.* = @intCast(p.paragraphs.items.len);
         }
         const item_type = if (item.get(f_type)) |t| t.symbol() else null;
@@ -579,9 +584,8 @@ const Parser = struct {
         assert(p.paragraphs.items.len > 0);
         const para: u32 = @intCast(p.paragraphs.items.len - 1);
         p.paragraphs.items[para].section = p.section;
-        if (item.get(f_id)) |id| {
-            p.paragraphs.items[para].element = std.math.cast(u32, id.int) orelse 0;
-        }
+        const element_id = if (item.get(f_id)) |field| field.unsigned() else null;
+        if (element_id) |id| p.paragraphs.items[para].element = std.math.cast(u32, id) orelse 0;
         try p.collect_links(item, para);
     }
 };
@@ -640,8 +644,11 @@ fn open_container(data: []const u8) !Container {
     if (info_size > data.len - info_offset) return error.Truncated;
     if (header_size > data.len) return error.Truncated;
     const info = try ion.parse(data[info_offset..][0..info_size]);
-    const index_offset = (info.get(f_index_offset) orelse return error.BadHeader).int;
-    const index_size = (info.get(f_index_length) orelse return error.BadHeader).int;
+    // Numbers only as numbers: a field of another kind reads 0 as `.int`, a place it isn't
+    const index_offset = (info.get(f_index_offset) orelse return error.BadHeader).unsigned() orelse
+        return error.BadHeader;
+    const index_size = (info.get(f_index_length) orelse return error.BadHeader).unsigned() orelse
+        return error.BadHeader;
     if (index_offset > data.len) return error.Truncated;
     if (index_size > data.len - index_offset) return error.Truncated;
     const container = Container{
@@ -762,10 +769,12 @@ pub fn cover_image(data: []const u8) ?[]const u8 {
 
 pub fn parse(alloc: std.mem.Allocator, data: []const u8) !book.Book {
     const container = try open_container(data);
+    // Unsigned numbers, or the book isn't read: one of another kind would read as 0,
+    // uncompressed and unencrypted, whatever it said
     const compression = container.info.get(f_compression) orelse return error.BadHeader;
-    if (compression.int != 0) return error.Compressed;
+    if ((compression.unsigned() orelse return error.BadHeader) != 0) return error.Compressed;
     const drm = container.info.get(f_drm) orelse return error.BadHeader;
-    if (drm.int != 0) return error.Encrypted;
+    if ((drm.unsigned() orelse return error.BadHeader) != 0) return error.Encrypted;
 
     var p = Parser{ .alloc = alloc };
     try p.read_index(&container);

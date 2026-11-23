@@ -32,7 +32,9 @@ pub fn is_jpeg_xr(data: []const u8) bool {
 pub const Gray = struct { pixels: []u8, width: u32, height: u32 };
 
 /// Decodes a JPEG XR picture with the Kindle's own decoder, through the helper,
-/// which scales it to exactly `width` x `height`: the size it will be drawn.
+/// which scales it to exactly `width` x `height`: the size it will be drawn. The pixels
+/// are inside a block made in `alloc`, a little past their start, so `alloc` is one
+/// that frees all at once (the book's own), never asked to free them alone.
 pub fn decode_jpeg_xr(
     alloc: std.mem.Allocator,
     data: []const u8,
@@ -65,6 +67,9 @@ fn decode_through(alloc: std.mem.Allocator, data: []const u8, through: Through) 
     const pixel_count = std.math.mul(u32, width, height) catch return null;
     const out_size = std.math.add(u32, pixel_count, pgm_header_size_max) catch return null;
     const out = alloc.alloc(u8, out_size) catch return null;
+    // Given back unless the picture is returned, whose pixels are inside it
+    var returned = false;
+    defer if (!returned) alloc.free(out);
     var command_buffer: [160]u8 = undefined;
     const command_format = jxr_helper ++ " {d} {d} < {s}";
     const command = std.fmt.bufPrintSentinel(
@@ -80,6 +85,7 @@ fn decode_through(alloc: std.mem.Allocator, data: []const u8, through: Through) 
     const gray = parse_pgm(out[0..output_size]) orelse return null;
     // Paired with parse_pgm: the pixels are exactly the picture.
     assert(gray.pixels.len == @as(u64, gray.width) * gray.height);
+    returned = true;
     return gray;
 }
 

@@ -8,6 +8,7 @@ const file = @import("../sys/file.zig");
 const fonts_db = @import("../kindle/fonts.zig");
 const process = @import("../sys/process.zig");
 const image = @import("../gfx/image.zig");
+const pgm = @import("../base/pgm.zig");
 const app = @import("../app.zig");
 const hwtcon = @import("../kindle/hwtcon.zig");
 const touch_zones = @import("../kindle/touch.zig");
@@ -270,8 +271,8 @@ pub fn matches_reference_write(
     _ = linux.mkdir(try std.fmt.bufPrintSentinel(&dir_buf, "{s}", .{dir}, 0), 0o755);
     var path_buf: [256]u8 = undefined;
     const path = try std.fmt.bufPrintSentinel(&path_buf, "{s}/{s}.pgm", .{ dir, name }, 0);
-    var head_buf: [32]u8 = undefined;
-    const head = try std.fmt.bufPrint(&head_buf, "P5\n{d} {d}\n255\n", .{ width, height });
+    var head_buf: pgm.Header = undefined;
+    const head = pgm.header(&head_buf, width, height);
     const out = try alloc.alloc(u8, head.len + pixels.len);
     @memcpy(out[0..head.len], head);
     @memcpy(out[head.len..], pixels);

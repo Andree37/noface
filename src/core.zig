@@ -29,6 +29,7 @@ pub const text = @import("layout/text.zig");
 pub const cover = @import("gfx/image.zig");
 pub const font = @import("gfx/font.zig");
 pub const page = @import("gfx/page.zig");
+pub const pgm = @import("base/pgm.zig");
 pub const decoder_memory = @import("gfx/decoder_memory.zig");
 pub const memory = @import("base/memory.zig");
 pub const card = @import("ui/card.zig");
@@ -51,6 +52,7 @@ pub const placed = @import("screens/placed.zig");
 pub const idle = @import("kindle/input/idle.zig");
 pub const devices = @import("kindle/devices.zig");
 pub const dictionary = @import("model/dictionary.zig");
+pub const setup = @import("setup.zig");
 pub const evdev = @import("kindle/input/evdev.zig");
 /// The test books, which the device tests' runner puts in its test folders.
 pub const test_books = @import("testdata/books.zig");

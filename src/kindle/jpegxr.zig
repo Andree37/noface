@@ -6,6 +6,7 @@ const linux = @import("../sys/calls.zig");
 const os = @import("../sys/os.zig");
 const failed = os.failed;
 const process = @import("../sys/process.zig");
+const pgm = @import("../base/pgm.zig");
 
 const jxr_helper = paths.jxr_helper;
 
@@ -15,12 +16,10 @@ const jxr_input = paths.jxr_input;
 const jpeg_xr_magic = "II\xbc\x01";
 
 /// Room past the pixels for the PGM header the helper writes first.
-const pgm_header_size_max = 64;
+const pgm_header_size_max = @sizeOf(pgm.Header);
 
 comptime {
     assert(jpeg_xr_magic.len == 4);
-    // "P5\n", two numbers of at most ten digits with their separators, and "255\n".
-    assert(pgm_header_size_max >= 3 + 2 * 11 + 4);
 }
 
 /// True for JPEG XR data, which most pictures in Kindle books are.
@@ -89,28 +88,12 @@ fn decode_through(alloc: std.mem.Allocator, data: []const u8, through: Through) 
     return gray;
 }
 
-/// Reads "P5\n<w> <h>\n255\n<pixels>".
-pub fn parse_pgm(data: []u8) ?Gray {
-    var at: u32 = 0;
-    var fields: [4][]const u8 = undefined;
-    // Helper output never comes near 4 GB; past that, the header can't be read.
-    if (data.len > std.math.maxInt(u32)) return null;
-    for (&fields) |*f| {
-        while (at < data.len and (data[at] == ' ' or data[at] == '\n')) at += 1;
-        const start = at;
-        while (at < data.len and data[at] != ' ' and data[at] != '\n') at += 1;
-        f.* = data[start..at];
-    }
-    assert(at <= data.len);
-    at += 1; // The one whitespace byte before the pixels
-    if (!std.mem.eql(u8, fields[0], "P5")) return null;
-    const width = std.fmt.parseInt(u32, fields[1], 10) catch return null;
-    const height = std.fmt.parseInt(u32, fields[2], 10) catch return null;
-    const size = std.math.mul(u32, width, height) catch return null;
-    if (at > data.len or data.len - at < size) return null;
-    const gray = Gray{ .pixels = data[at..][0..size], .width = width, .height = height };
-    assert(gray.pixels.len == size);
-    return gray;
+/// The helper's picture: its header read, its pixels where it says.
+fn parse_pgm(data: []u8) ?Gray {
+    const head = pgm.read(data) orelse return null;
+    const size = head.width * head.height; // `read` checked it fits, and is all there
+    const pixels = data[head.pixels_at..][0..size];
+    return .{ .pixels = pixels, .width = head.width, .height = head.height };
 }
 
 test "the picture handed to the helper isn't left in /tmp, decoded or not" {

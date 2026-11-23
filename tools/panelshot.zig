@@ -1,5 +1,7 @@
-//! Renders the quick panel to a PGM image on stdout, so it can be checked by eye.
-//! Usage: panelshot [panel | notes | toolbar [sheet] | library [page [read]] |
+//! Renders one of noface's screens to a PGM image on stdout, so it can be checked by
+//! eye, in the app's own fonts at the app's own sizes.
+//! Usage: panelshot [panel | notes | sheet | lock | format | goto | library [page [read]] |
+//!                   library-search | toolbar [text | goto | ...: an Aa tab's name] |
 //!                   search [symbols | more | shift | locked | accents]]
 const std = @import("std");
 const assert = std.debug.assert;
@@ -25,9 +27,24 @@ const toolbar = core.toolbar;
 /// The panel noface is laid out for (`-Dlayout`), which the pictures are drawn on.
 const screen_width = core.style.screen.width_px;
 const screen_height = core.style.screen.height_px;
-const font_folder = "/usr/java/lib/fonts/";
-const library_path = "/mnt/us/noface-data/library.tsv";
+const font_folder = core.paths.kindle_fonts ++ "/";
+const library_path = core.paths.data_dir ++ "/" ++ core.paths.data.library;
 const stdout_fd = 1;
+/// What it draws, by the name it's asked for.
+const Mode = enum {
+    panel,
+    notes,
+    sheet,
+    lock,
+    format,
+    search,
+    goto,
+    toolbar,
+    library,
+    @"library-search",
+};
+/// The brightness the panel's picture shows its slider at.
+const sample_brightness = 11;
 /// The page dimmed behind the toolbar and its sheets.
 const dimmed_gray = 0xe8;
 /// The toolbar's invented book: its title, the page showing, and how many there are.
@@ -96,8 +113,8 @@ const Shot = struct {
 fn write_image(pixels: []const u8, width: u32, height: u32) void {
     assert(width > 0);
     assert(pixels.len == @as(u64, width) * height);
-    var head: [32]u8 = undefined;
-    const header = std.fmt.bufPrint(&head, "P5\n{d} {d}\n255\n", .{ width, height }) catch return;
+    var head: core.pgm.Header = undefined;
+    const header = core.pgm.header(&head, width, height);
     // Each part as far as stdout takes it: a part cut short doesn't stop the next.
     for ([_][]const u8{ header, pixels }) |data| {
         assert(data.len > 0);
@@ -123,8 +140,9 @@ const PreviewFaces = struct {
         const which: u2 = @as(u2, @intFromBool(bold)) | @as(u2, @intFromBool(italic)) << 1;
         const slot = &faces.fonts[which][size];
         if (slot.* == null) {
-            const size_px = 46 * core.book.size_scales[size];
-            slot.* = try Font.init(faces.files[which], size_px, 1.35);
+            // The page's size and leading, as the app sets its body text
+            const size_px = core.style.text.body * core.book.size_scales[size];
+            slot.* = try Font.init(faces.files[which], size_px, core.setup.Kit.body_leading);
         }
         assert(slot.* != null);
         return &slot.*.?;
@@ -141,11 +159,14 @@ pub fn main(init: std.process.Init.Minimal) !void {
     const book_bold = try file.map(font_folder ++ "Bookerly-Bold.ttf");
     const ui_regular = try file.map(font_folder ++ "Amazon-Ember-Regular.ttf");
     const ui_bold = try file.map(font_folder ++ "Amazon-Ember-Bold.ttf");
-    var title = try Font.init(ui_bold, 34, 1.2);
-    var small = try Font.init(ui_regular, 34, 1.2);
-    var caption = try Font.init(ui_regular, 26, 1.2);
-    var hero = try Font.init(book_bold, 56, 1.2);
-    var cover_type = try Font.init(book_bold, 36, 1.2);
+    assert(argv.len > 0); // The program's own name, at least
+    // The app's own fonts, at the sizes it sets them (src/setup.zig `Kit`)
+    var kit = try core.setup.Kit.init(.{
+        .book = book_regular,
+        .book_bold = book_bold,
+        .ui = ui_regular,
+        .ui_bold = ui_bold,
+    });
     const pixels = try allocator.alloc(u8, screen_width * screen_height);
     @memset(pixels, 0xff);
     const mode = if (argv.len > 1) std.mem.sliceTo(argv[1], 0) else "panel";
@@ -163,11 +184,11 @@ pub fn main(init: std.process.Init.Minimal) !void {
         .covers = &covers,
         .argv = argv,
         .fonts = .{
-            .title = &title,
-            .small = &small,
-            .caption = &caption,
-            .hero = &hero,
-            .cover = &cover_type,
+            .title = &kit.title,
+            .small = &kit.small,
+            .caption = &kit.caption,
+            .hero = &kit.hero,
+            .cover = &kit.cover_type,
         },
         .page = .{
             .buf = pixels,
@@ -180,19 +201,23 @@ pub fn main(init: std.process.Init.Minimal) !void {
         .book_regular = book_regular,
     };
 
-    if (std.mem.eql(u8, mode, "library")) return render_library(&shot);
-    if (std.mem.eql(u8, mode, "library-search")) return render_library_search(&shot);
-    if (std.mem.eql(u8, mode, "notes")) return render_notes(&shot);
-    if (std.mem.eql(u8, mode, "sheet")) return render_sheet(&shot);
-    if (std.mem.eql(u8, mode, "lock")) return render_lock(&shot);
-    if (std.mem.eql(u8, mode, "format")) return render_format(&shot);
-    if (std.mem.eql(u8, mode, "search")) return render_search(&shot);
-    if (std.mem.eql(u8, mode, "goto")) return render_goto(&shot);
-    if (std.mem.eql(u8, mode, "toolbar")) return render_toolbar(&shot);
-
-    quick.brightness = 11;
-    try menu.render(shot.fonts, shot.page, &quick, null);
-    write_image(pixels[0 .. screen_width * menu.height], screen_width, menu.height);
+    // A name it doesn't know is a mistake, said, never quietly the panel
+    switch (std.meta.stringToEnum(Mode, mode) orelse return error.Usage) {
+        .library => return render_library(&shot),
+        .@"library-search" => return render_library_search(&shot),
+        .notes => return render_notes(&shot),
+        .sheet => return render_sheet(&shot),
+        .lock => return render_lock(&shot),
+        .format => return render_format(&shot),
+        .search => return render_search(&shot),
+        .goto => return render_goto(&shot),
+        .toolbar => return render_toolbar(&shot),
+        .panel => {
+            quick.brightness = sample_brightness;
+            try menu.render(shot.fonts, shot.page, &quick, null);
+            write_image(pixels[0 .. screen_width * menu.height], screen_width, menu.height);
+        },
+    }
 }
 
 /// Page `index` of the books `visible` lets through, as the library draws it.
@@ -475,8 +500,12 @@ fn render_goto(shot: *const Shot) !void {
 
 /// The toolbar, with one of its sheets open when a second argument names it by number.
 fn render_toolbar(shot: *const Shot) !void {
+    assert(shot.page.buf.len == screen_width * screen_height); // The whole screen
     var tab: ?core.aa.Tab = null;
-    if (shot.argv.len > 2) tab = @fromBackingInt(@intCast(shot.argv[2][0] - '0'));
+    if (shot.argv.len > 2) {
+        const name = std.mem.sliceTo(shot.argv[2], 0);
+        tab = std.meta.stringToEnum(core.aa.Tab, name) orelse return error.Usage;
+    }
     @memset(shot.page.buf, dimmed_gray);
     try render_sample_toolbar(shot, tab);
     write_image(shot.page.buf, screen_width, screen_height);

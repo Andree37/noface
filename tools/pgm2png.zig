@@ -4,6 +4,7 @@
 //! Built for this computer by `zig build host-tools`, into zig-out/bin. Prints the
 //! picture's width and height.
 const std = @import("std");
+const core = @import("core");
 const assert = std.debug.assert;
 const flate = std.compress.flate;
 
@@ -40,25 +41,15 @@ pub fn main(init: std.process.Init) !void {
     try std.Io.File.stdout().writeStreamingAll(io, size);
 }
 
-/// A binary PGM as noface writes it: "P5", the width and height, the largest value,
-/// each on its own line, then a byte per pixel.
+/// A binary PGM, read by noface's own reader (src/gfx/pgm.zig): a byte a pixel, its
+/// sides no longer than a PNG here takes.
 pub fn parse_pgm(data: []const u8) !Gray {
-    var lines = std.mem.splitScalar(u8, data, '\n');
-    const kind = lines.next() orelse return error.NotPgm;
-    if (!std.mem.eql(u8, kind, "P5")) return error.NotPgm;
-    const size = lines.next() orelse return error.NotPgm;
-    var numbers = std.mem.tokenizeScalar(u8, size, ' ');
-    const width = try std.fmt.parseInt(u32, numbers.next() orelse return error.NotPgm, 10);
-    const height = try std.fmt.parseInt(u32, numbers.next() orelse return error.NotPgm, 10);
-    _ = lines.next() orelse return error.NotPgm; // The largest value: 255, a byte a pixel
-    const pixels = lines.rest();
-    if (width == 0 or height == 0) return error.NotPgm;
-    if (width > side_max or height > side_max) return error.NotPgm;
-    if (pixels.len < @as(u64, width) * height) return error.PixelsMissing;
+    const head = core.pgm.read(data) orelse return error.NotPgm;
+    if (head.width > side_max or head.height > side_max) return error.NotPgm;
     const image: Gray = .{
-        .width = width,
-        .height = height,
-        .pixels = pixels[0 .. width * height],
+        .width = head.width,
+        .height = head.height,
+        .pixels = data[head.pixels_at..][0 .. head.width * head.height],
     };
     assert(image.pixels.len == @as(u64, image.width) * image.height);
     return image;
@@ -143,6 +134,7 @@ test "a PGM becomes a PNG holding the same pixels" {
 
 test "what isn't a whole PGM is refused" {
     try std.testing.expectError(error.NotPgm, parse_pgm("P6\n1 1\n255\nx"));
-    try std.testing.expectError(error.PixelsMissing, parse_pgm("P5\n2 2\n255\nabc"));
+    try std.testing.expectError(error.NotPgm, parse_pgm("P5\n2 2\n255\nabc")); // Short
+    try std.testing.expectError(error.NotPgm, parse_pgm("P5\n1 1\n65535\nab")); // Two bytes
     try std.testing.expectError(error.NotPgm, parse_pgm("P5\n0 2\n255\n"));
 }

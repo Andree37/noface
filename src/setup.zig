@@ -225,7 +225,7 @@ pub const Kit = struct {
 
     /// Line heights, as a share of the text's size: the page's open for reading, a
     /// note's a little closer, the interface's closer still.
-    const body_leading = 1.35;
+    pub const body_leading = 1.35;
     const note_leading = 1.3;
     const ui_leading = style.leading;
 

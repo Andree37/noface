@@ -18,7 +18,7 @@ const settings_model = @import("../model/settings.zig");
 
 const failed = os.failed;
 
-const settings_path = paths.data_dir ++ "/settings";
+const settings_path = paths.data_dir ++ "/" ++ paths.data.settings;
 const attempts_path = paths.data_dir ++ "/" ++ paths.data.boot_attempts;
 const log_path = paths.data_dir ++ "/" ++ paths.data.log;
 /// Boots in a row without noface running a minute before autostart turns itself off.

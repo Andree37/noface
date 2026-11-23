@@ -239,8 +239,6 @@ pub const Input = struct {
     busy: bool = true,
     /// When the last finger read lifted, by the panel's clock: 0 before any has.
     lifted_us: u64 = 0,
-    /// Set when powerd said a charger came or went: whoever shows the status bar reads it
-    /// again and clears this.
     /// A control inside the grip zones (the reader's Back button): touches there count.
     grip_exempt: ?Zone = null,
 
@@ -395,8 +393,11 @@ pub const Input = struct {
     /// Skips to the newest finger position already waiting, if any.
     /// Anything else that turns up is kept for the next call to `poll`.
     pub fn latest_drag(in: *Input) ?Point {
+        assert(in.stashed == null); // `poll` took what was kept before asking
         var latest: ?Point = null;
-        while (in.stashed == null) {
+        // As many as the panel holds at once: each turn takes one, or stops
+        for (0..panel_reads_max) |_| {
+            if (in.stashed != null) break;
             const action = in.waiting() orelse return latest;
             switch (action) {
                 .drag => |point| latest = point,
@@ -404,16 +405,19 @@ pub const Input = struct {
                 .lock, .unlock, .power, .computer, .stop => in.stashed = action,
             }
         }
-        // Stopped by something other than a drag, kept for the next call to `poll`
-        assert(in.stashed != null);
+        // Stopped by something other than a drag, kept for the next call to `poll`, or
+        // after as many as the panel holds: the rest wait for the next look
         return latest;
     }
 
     /// Sums page-turn taps already waiting, so fast tapping jumps instead of lagging.
     /// Anything else that turns up is kept for the next call to `poll`.
     pub fn take_turns(in: *Input) i32 {
+        assert(in.stashed == null); // `poll` took what was kept before asking
         var delta: i32 = 0;
-        while (in.stashed == null) {
+        // As many as the panel holds at once: each turn takes one, or stops
+        for (0..panel_reads_max) |_| {
+            if (in.stashed != null) break;
             const action = in.waiting() orelse return delta;
             switch (action) {
                 .tap => |tap| {
@@ -427,8 +431,8 @@ pub const Input = struct {
                 .lock, .unlock, .power, .computer, .stop => in.stashed = action,
             }
         }
-        // Stopped by something other than a page turn, kept for the next call to `poll`
-        assert(in.stashed != null);
+        // Stopped by something other than a page turn, kept for the next call to `poll`,
+        // or after as many as the panel holds: the rest wait for the next look
         return delta;
     }
 

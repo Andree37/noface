@@ -144,6 +144,7 @@ pub fn write_parts(path: [*:0]const u8, parts: []const []const u8) void {
     _ = linux.unlink(tmp_path); // Ignored: one left over is only space, written over next time
 }
 
+/// Writes all of `data` to `fd`, however many writes it takes. False when one fails.
 pub fn write_all(fd: i32, data: []const u8) bool {
     assert(fd >= 0);
     var done: u32 = 0;

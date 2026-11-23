@@ -33,15 +33,8 @@ comptime {
 }
 
 fn write_all(fd: i32, bytes: []const u8) !void {
-    assert(fd >= 0);
     assert(bytes.len > 0);
-    var done: u32 = 0;
-    while (done < bytes.len) {
-        const n = linux.write(fd, bytes[done..].ptr, bytes.len - done);
-        if (core.os.failed(n) or n == 0) return error.WriteFailed;
-        done += @intCast(n);
-    }
-    assert(done == bytes.len);
+    if (!core.file.write_all(fd, bytes)) return error.WriteFailed;
 }
 
 fn read_exact(fd: i32, buffer: []u8) !void {

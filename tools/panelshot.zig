@@ -110,22 +110,15 @@ const Shot = struct {
 };
 
 /// Writes a grayscale screen to stdout as a PGM image.
-fn write_image(pixels: []const u8, width: u32, height: u32) void {
+fn write_image(pixels: []const u8, width: u32, height: u32) !void {
     assert(width > 0);
     assert(pixels.len == @as(u64, width) * height);
     var head: core.pgm.Header = undefined;
     const header = core.pgm.header(&head, width, height);
-    // Each part as far as stdout takes it: a part cut short doesn't stop the next.
-    for ([_][]const u8{ header, pixels }) |data| {
-        assert(data.len > 0);
-        var at: u32 = 0;
-        while (at < data.len) {
-            const n = linux.write(stdout_fd, data[at..].ptr, data.len - at);
-            if (core.os.failed(n) or n == 0) break;
-            at += @intCast(n);
-        }
-        assert(at <= data.len);
-    }
+    assert(std.mem.startsWith(u8, header, "P5")); // A binary gray picture's mark
+    // A picture cut short is said, never left looking whole
+    if (!file.write_all(stdout_fd, header)) return error.WriteFailed;
+    if (!file.write_all(stdout_fd, pixels)) return error.WriteFailed;
 }
 
 /// Faces for the format preview: the four Bookerly files at any size, made on first use.
@@ -168,6 +161,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         .ui_bold = ui_bold,
     });
     const pixels = try allocator.alloc(u8, screen_width * screen_height);
+    assert(pixels.len == screen_width * screen_height); // The whole screen, as Shot draws
     @memset(pixels, 0xff);
     const mode = if (argv.len > 1) std.mem.sliceTo(argv[1], 0) else "panel";
     var quick = lipc.read(.{});
@@ -202,20 +196,30 @@ pub fn main(init: std.process.Init.Minimal) !void {
     };
 
     // A name it doesn't know is a mistake, said, never quietly the panel
-    switch (std.meta.stringToEnum(Mode, mode) orelse return error.Usage) {
-        .library => return render_library(&shot),
-        .@"library-search" => return render_library_search(&shot),
-        .notes => return render_notes(&shot),
-        .sheet => return render_sheet(&shot),
-        .lock => return render_lock(&shot),
-        .format => return render_format(&shot),
-        .search => return render_search(&shot),
-        .goto => return render_goto(&shot),
-        .toolbar => return render_toolbar(&shot),
+    const chosen = std.meta.stringToEnum(Mode, mode) orelse return error.Usage;
+    if (chosen == .panel) quick.brightness = sample_brightness;
+    return render(&shot, chosen);
+}
+
+/// Draws what `mode` names, and writes it to stdout.
+fn render(shot: *const Shot, mode: Mode) !void {
+    // The panel's picture, and only its, shows the sample brightness
+    if (mode == .panel) assert(shot.quick.brightness == sample_brightness);
+    assert(shot.page.buf.len == screen_width * screen_height); // Each mode's whole canvas
+    switch (mode) {
+        .library => return render_library(shot),
+        .@"library-search" => return render_library_search(shot),
+        .notes => return render_notes(shot),
+        .sheet => return render_sheet(shot),
+        .lock => return render_lock(shot),
+        .format => return render_format(shot),
+        .search => return render_search(shot),
+        .goto => return render_goto(shot),
+        .toolbar => return render_toolbar(shot),
         .panel => {
-            quick.brightness = sample_brightness;
-            try menu.render(shot.fonts, shot.page, &quick, null);
-            write_image(pixels[0 .. screen_width * menu.height], screen_width, menu.height);
+            try menu.render(shot.fonts, shot.page, shot.quick, null);
+            const panel = shot.page.buf[0 .. screen_width * menu.height];
+            try write_image(panel, screen_width, menu.height);
         },
     }
 }
@@ -271,7 +275,7 @@ fn render_library(shot: *const Shot) !void {
         shot.quick,
         shot.now,
     );
-    write_image(shot.page.buf, screen_width, screen_height);
+    try write_image(shot.page.buf, screen_width, screen_height);
 }
 
 /// The library with a search showing: the filled search button and the results
@@ -297,7 +301,7 @@ fn render_library_search(shot: *const Shot) !void {
         shot.quick,
         shot.now,
     );
-    write_image(shot.page.buf, screen_width, screen_height);
+    try write_image(shot.page.buf, screen_width, screen_height);
 }
 
 /// A page with both shapes of note reference, and a note's panel open over it.
@@ -329,7 +333,7 @@ fn render_notes(shot: *const Shot) !void {
         .stride = screen_width,
     };
     try notes.render(&note_font, shot.fonts, panel, &parts, .{}, false);
-    write_image(shot.page.buf, screen_width, screen_height);
+    try write_image(shot.page.buf, screen_width, screen_height);
 }
 
 /// The library with the first book's sheet open, asking to confirm when a second
@@ -364,7 +368,7 @@ fn render_sheet(shot: *const Shot) !void {
     const subtitle = sheet.subtitle(&subtitle_buffer, entry, confirming);
     const rows = sheet.rows(options, &row_buffer);
     try core.card.render(shot.fonts, shot.page, entry.title, subtitle, rows);
-    write_image(shot.page.buf, screen_width, screen_height);
+    try write_image(shot.page.buf, screen_width, screen_height);
 }
 
 /// The lock screen: the cover of the book named on the command line, filling the screen.
@@ -384,7 +388,7 @@ fn render_lock(shot: *const Shot) !void {
         screen_width,
     );
     if (!filled) return error.DecodeFailed;
-    write_image(pixels, screen_width, screen_height);
+    try write_image(pixels, screen_width, screen_height);
 }
 
 /// Invented text, set the way a chapter opening is.
@@ -396,6 +400,7 @@ fn render_format(shot: *const Shot) !void {
         font_folder ++ "Bookerly-Italic.ttf",
         font_folder ++ "Bookerly-BoldItalic.ttf",
     };
+    assert(paths.len == faces.files.len); // A file for each of the four faces
     for (paths, &faces.files) |path, *face_file| face_file.* = try file.map(path);
     const chapter_look: core.book.Look = .{
         .bold = true,
@@ -427,7 +432,7 @@ fn render_format(shot: *const Shot) !void {
     var layout = body_layout;
     layout.faces = .{ .ctx = &faces, .pick = PreviewFaces.pick };
     _ = try text.render_page(base, shot.page, &paragraphs, .{}, &layout, null);
-    write_image(shot.page.buf, screen_width, screen_height);
+    try write_image(shot.page.buf, screen_width, screen_height);
 }
 
 /// The keyboard as `name` says: "symbols", "more", "shift", "locked", "accents" (e
@@ -461,7 +466,7 @@ fn render_search(shot: *const Shot) !void {
     const name = if (shot.argv.len > 2) std.mem.sliceTo(shot.argv[2], 0) else "letters";
     const keys = keys_named(name);
     try core.keyboard.render(shot.fonts, shot.page, keys);
-    write_image(shot.page.buf, screen_width, screen_height);
+    try write_image(shot.page.buf, screen_width, screen_height);
 }
 
 /// The contents, or the notes when a second argument is given: invented rows, nested
@@ -495,7 +500,7 @@ fn render_goto(shot: *const Shot) !void {
     try render_sample_toolbar(shot, null);
     const tab: core.goto.Tab = if (notes_tab) .notes else .contents;
     try core.goto.render(shot.fonts, shot.page, tab, &list, if (notes_tab) null else 3, 0);
-    write_image(shot.page.buf, screen_width, screen_height);
+    try write_image(shot.page.buf, screen_width, screen_height);
 }
 
 /// The toolbar, with one of its sheets open when a second argument names it by number.
@@ -508,7 +513,7 @@ fn render_toolbar(shot: *const Shot) !void {
     }
     @memset(shot.page.buf, dimmed_gray);
     try render_sample_toolbar(shot, tab);
-    write_image(shot.page.buf, screen_width, screen_height);
+    try write_image(shot.page.buf, screen_width, screen_height);
 }
 
 /// The toolbar over the invented book, with `tab`'s sheet open if there is one.

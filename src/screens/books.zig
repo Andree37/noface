@@ -606,6 +606,7 @@ fn test_write(path: [*:0]const u8, data: []const u8) !void {
     if (os.failed(rc)) return error.CantWrite;
     const fd: i32 = @intCast(rc);
     assert(fd >= 0);
+    // Ignored: the write above says whether it worked
     defer _ = calls.close(fd);
     if (calls.write(fd, data.ptr, data.len) != data.len) return error.CantWrite;
 }
@@ -620,7 +621,9 @@ fn test_folder(buffer: []u8, kindle_rows: u32, epubs: u32, cover_bytes: u32) ![:
     }, 0);
     var path: [file.own_path_bytes_max]u8 = undefined;
     _ = calls.mkdir(root, 0o755); // Ignored: the writes below say if it's missing
+    // Ignored: the writes below say if it's missing
     _ = calls.mkdir(try std.fmt.bufPrintSentinel(&path, "{s}/documents", .{root}, 0), 0o755);
+    // Ignored: the writes below say if it's missing
     _ = calls.mkdir(try std.fmt.bufPrintSentinel(&path, "{s}/state", .{root}, 0), 0o755);
     var rows: std.ArrayList(u8) = .empty;
     defer rows.deinit(alloc);

@@ -57,7 +57,7 @@ fn decode_through(alloc: std.mem.Allocator, data: []const u8, through: Through) 
     );
     if (failed(result)) return null;
     // /tmp is RAM, shared with Amazon's services: a page-sized picture isn't left there
-    defer _ = linux.unlink(through.input); // Gone already: nothing is left to free
+    defer _ = linux.unlink(through.input); // Ignored: gone already: nothing is left to free
     const written = linux.write(@intCast(result), data.ptr, data.len);
     // Ignored: the bytes are written; a close that fails loses nothing of them.
     _ = linux.close(@intCast(result));

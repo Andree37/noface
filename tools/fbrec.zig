@@ -20,15 +20,14 @@ const row_size_max = e2e.row_size_max;
 
 /// Each frame starts with the time it was taken: a little-endian u64.
 const frame_header_size = @sizeOf(u64);
-const ev_abs = 3;
-const abs_mt_tracking_id = 0x39;
+const ev_abs = core.evdev.ev_abs;
+const abs_mt_tracking_id = core.evdev.abs_mt_tracking;
 /// Reads of the touch panel per frame, each of up to `events_per_read` events: far more
 /// than fingers can make in a frame, and what's left is read on the next one.
 const touch_reads_max = 64;
 const events_per_read = 64;
 
-/// The kernel's `input_event` on 32-bit ARM.
-const InputEvent = extern struct { sec: u32, usec: u32, kind: u16, code: u16, value: i32 };
+const InputEvent = core.evdev.InputEvent;
 
 comptime {
     assert(@sizeOf(InputEvent) == 16);
@@ -62,14 +61,16 @@ pub fn main(init: std.process.Init.Minimal) !void {
     const rc = linux.open(argv[4], .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, 0o644);
     if (core.os.failed(rc)) return error.CantWrite;
     const out: i32 = @intCast(rc);
+    // Ignored: whether the frames were written is told as each is
     defer _ = linux.close(out);
     var head: [64]u8 = undefined;
     const header = try std.fmt.bufPrint(&head, "FBREC {d} {d}\n", .{ width_out, height_out });
-    _ = linux.write(out, header.ptr, header.len);
+    if (!core.file.write_all(out, header)) return error.CantWrite;
 
     // The touch panel, read beside whoever has it: events carry their own time
     const touch_flags: linux.O = .{ .ACCMODE = .RDONLY, .NONBLOCK = true };
-    const touch_rc = linux.open("/dev/input/event1", touch_flags, 0);
+    var touch_path: [32]u8 = undefined;
+    const touch_rc = linux.open(core.devices.touch_path(&touch_path), touch_flags, 0);
     const touch: i32 = if (core.os.failed(touch_rc)) -1 else @intCast(touch_rc);
     var touches_path: [512]u8 = undefined;
     const out_path = std.mem.sliceTo(argv[4], 0);
@@ -79,11 +80,12 @@ pub fn main(init: std.process.Init.Minimal) !void {
     const touches_rc = linux.open(touches_path_z, touches_flags, 0o644);
     const touches_out: i32 = if (core.os.failed(touches_rc)) -1 else @intCast(touches_rc);
     defer if (touches_out >= 0) {
-        _ = linux.close(touches_out);
+        _ = linux.close(touches_out); // Ignored: each line was written whole or stopped the log
     };
     // Event times are wall-clock; the frames use the monotonic clock. The offset
     // between the two, taken once, puts both on one clock.
     var wall: linux.timespec = undefined;
+    // Ignored: the wall clock always answers
     _ = linux.clock_gettime(.REALTIME, &wall);
     const wall_us: i64 = @as(i64, wall.sec) * 1_000_000 + @divTrunc(@as(i64, wall.nsec), 1000);
     const recording = Recording{
@@ -111,12 +113,22 @@ fn record(recording: *const Recording, frame: []u8, seconds: u32, frames_per_sec
     const end_us = now_us() + @as(u64, seconds) * 1_000_000;
     var next_us = now_us();
     var frames: u32 = 0;
+    var touches_logged = true; // Until a line of them can't be written
     while (now_us() < end_us) {
-        record_frame(recording, frame, &row, now_us());
-        _ = linux.write(recording.out, frame.ptr, frame.len);
+        if (!record_frame(recording, frame, &row, now_us())) {
+            std.debug.print("fbrec: stopped, the screen couldn't be read\n", .{});
+            break;
+        }
+        // A frame not written whole (a full drive): the recording ends with the last one
+        if (!core.file.write_all(recording.out, frame)) {
+            std.debug.print("fbrec: stopped, the frame wasn't written\n", .{});
+            break;
+        }
         frames += 1;
-        if (recording.touch >= 0 and recording.touches_out >= 0) {
-            log_touches(recording.touch, recording.touches_out, recording.wall_to_monotonic_us);
+        if (touches_logged and recording.touch >= 0 and recording.touches_out >= 0) {
+            const wall = recording.wall_to_monotonic_us;
+            touches_logged = log_touches(recording.touch, recording.touches_out, wall);
+            if (!touches_logged) std.debug.print("fbrec: touches no longer logged\n", .{});
         }
         next_us += step_us;
         const now = now_us();
@@ -131,7 +143,7 @@ fn record_frame(
     frame: []u8,
     row: *[row_size_max]u8,
     time_us: u64,
-) void {
+) bool {
     const screen = &recording.screen;
     assert(recording.scale > 0);
     assert(recording.width_out * recording.scale <= screen.width);
@@ -141,27 +153,30 @@ fn record_frame(
     // Where the shown screen starts, once a frame: it may flip between two
     const first = screen.top();
     for (0..recording.height_out) |y| {
-        screen.read_row(row, first, @as(u32, @intCast(y)) * recording.scale);
+        if (!screen.read_row(row, first, @as(u32, @intCast(y)) * recording.scale)) return false;
         const target = frame[frame_header_size + y * width_out ..][0..width_out];
         for (target, 0..) |*pixel, x| pixel.* = row[x * recording.scale];
     }
+    return true;
 }
 
-/// Writes a line for each finger landing or lifting since last time.
-fn log_touches(touch: i32, out: i32, wall_to_monotonic_us: i64) void {
+/// Writes a line for each finger landing or lifting since last time: false when one
+/// couldn't be written.
+fn log_touches(touch: i32, out: i32, wall_to_monotonic_us: i64) bool {
     assert(touch >= 0);
     assert(out >= 0);
     var events: [events_per_read]InputEvent = undefined;
     for (0..touch_reads_max) |_| {
         const n = linux.read(touch, @ptrCast(&events), @sizeOf(@TypeOf(events)));
-        if (core.os.failed(n) or n < @sizeOf(InputEvent)) return;
+        if (core.os.failed(n) or n < @sizeOf(InputEvent)) return true; // Nothing more yet
         for (events[0 .. n / @sizeOf(InputEvent)]) |event| {
             if (event.kind != ev_abs or event.code != abs_mt_tracking_id) continue;
             const time_us = @as(i64, event.sec) * 1_000_000 + event.usec + wall_to_monotonic_us;
             const finger = if (event.value >= 0) "down" else "up";
             var line: [48]u8 = undefined;
             const text = std.fmt.bufPrint(&line, "{s} {d}\n", .{ finger, time_us }) catch continue;
-            _ = linux.write(out, text.ptr, text.len);
+            if (!core.file.write_all(out, text)) return false;
         }
     }
+    return true;
 }

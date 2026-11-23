@@ -36,7 +36,7 @@ fn report_line(fd: i32, buffer: []u8, comptime format: []const u8, arguments: an
     assert(fd >= 0);
     assert(buffer.len > 0);
     const text = std.fmt.bufPrint(buffer, format ++ "\n", arguments) catch return;
-    // A report that can't be written has nowhere to say so either
+    // Ignored: A report that can't be written has nowhere to say so either
     _ = linux.write(fd, text.ptr, text.len);
 }
 

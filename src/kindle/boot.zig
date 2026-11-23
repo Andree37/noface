@@ -64,7 +64,7 @@ pub fn first_this_boot() bool {
     const flags: calls.O = .{ .ACCMODE = .WRONLY, .CREAT = true, .EXCL = true, .CLOEXEC = true };
     const rc = calls.open(mark, flags, 0o644);
     if (!failed(rc)) {
-        _ = calls.close(@intCast(rc)); // Made: it says all it needs to
+        _ = calls.close(@intCast(rc)); // Ignored: made: it says all it needs to
         return true;
     }
     if (file.exists(mark)) return false;
@@ -87,7 +87,8 @@ pub fn should_start() bool {
             // Written as noface writes it: every other setting stays as it was
             settings.autostart = false;
             file.write_small(settings_path, settings_model.format(&settings_buffer, settings));
-            _ = calls.unlink(attempts_path); // Gone already: the count starts over either way
+            // Ignored: gone already: the count starts over either way
+            _ = calls.unlink(attempts_path);
             const message = "autostart: noface failed to start 3 boots in a row, " ++
                 "autostart turned off\n";
             comptime assert(attempts_max == 3); // As the message says

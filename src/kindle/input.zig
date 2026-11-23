@@ -512,7 +512,7 @@ pub const Input = struct {
             .{ .fd = watchers.fd_of(in.usb_watcher), .events = linux.POLL.IN, .revents = 0 },
             .{ .fd = key_fd, .events = linux.POLL.IN, .revents = 0 },
         };
-        // Woken, timed out or interrupted, the loop looks at every source alike
+        // Ignored: woken, timed out or interrupted, the loop looks at every source alike
         _ = linux.poll(&fds, fds.len, in.wait_ms());
     }
 
@@ -552,16 +552,6 @@ pub const Input = struct {
 };
 
 /// The device file of input device `number`, or `fallback` when none was found.
-fn open_path(buffer: []u8, number: ?u8, fallback: [:0]const u8) [:0]const u8 {
-    // Room for any u8's three digits and the closing zero, so the fallback below is
-    // only ever taken when nothing was found
-    assert(buffer.len >= "/dev/input/event".len + 3 + 1);
-    assert(fallback.len > 0);
-    const found = number orelse return fallback;
-    const format = "/dev/input/event{d}";
-    return std.fmt.bufPrintSentinel(buffer, format, .{found}, 0) catch fallback;
-}
-
 /// Opens touch and power, and takes the touchscreen from the stock UI.
 pub fn open(width: u32, height: u32) !Input {
     // Found by what they report, as Kindles number them differently; this model's
@@ -569,14 +559,14 @@ pub fn open(width: u32, height: u32) !Input {
     const found = devices.find_inputs();
     var touch_buffer: [24]u8 = undefined;
     var power_buffer: [24]u8 = undefined;
-    const touch_path = open_path(&touch_buffer, found.touch, evdev.touch_device);
-    const power_path = open_path(&power_buffer, found.power, evdev.power_device);
+    const touch_path = devices.input_path(&touch_buffer, found.touch, evdev.touch_device);
+    const power_path = devices.input_path(&power_buffer, found.power, evdev.power_device);
     std.debug.print("input: touch {s}, power {s}\n", .{ touch_path, power_path });
     // Let go of on the way out of a failed open: closing ends a grab too
     const touch = try evdev.open_input(touch_path);
-    errdefer _ = linux.close(touch); // Only read, never written: nothing is lost
+    errdefer _ = linux.close(touch); // Ignored: only read, never written: nothing is lost
     const power = try evdev.open_input(power_path);
-    errdefer _ = linux.close(power); // Only read, never written: nothing is lost
+    errdefer _ = linux.close(power); // Ignored: only read, never written: nothing is lost
     assert(touch != power);
     if (failed(linux.ioctl(touch, eviocgrab, 1))) return error.GrabFailed;
     // The kernel only reports coordinates that change, so start from the current ones.
@@ -602,13 +592,14 @@ pub fn release(in: *const Input) void {
     // Only an Input from `open` has devices to give back: not a test's
     assert(in.touch >= 0);
     assert(in.script == null);
-    // On the way out: if the grab won't let go, closing the device does it anyway
+    // Ignored: on the way out: if the grab won't let go, closing the device does it anyway
     _ = linux.ioctl(in.touch, eviocgrab, 0);
     for ([_]?process.Child{ in.power_watcher, in.usb_watcher }) |watcher| {
         const w = watcher orelse continue;
-        // A watcher already gone needs neither: both are only to leave no child behind
+        // Ignored: A watcher already gone needs neither: both are only to leave no child behind
         _ = linux.kill(w.pid, linux.SIG.TERM);
         var status: i32 = 0;
+        // Ignored: reaped, or gone already: noface is leaving either way
         _ = linux.waitpid(w.pid, &status, 0);
     }
 }

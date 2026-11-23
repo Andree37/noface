@@ -55,7 +55,7 @@ fn set(comptime service: [*:0]const u8, comptime prop: [*:0]const u8, value: u32
     assert(argument.len > 0);
     const argv = [_:null]?[*:0]const u8{ lipc_set, service, prop, argument };
     var buffer: [32]u8 = undefined;
-    // A set answers nothing worth reading: whoever needs to know reads the value back
+    // Ignored: a set answers nothing worth reading: whoever needs to know reads the value back
     _ = process.run_until(&argv, &buffer, lipc_deadline());
 }
 
@@ -360,7 +360,7 @@ fn watch_events(comptime publisher: [*:0]const u8, comptime events: [*:0]const u
     assert(child.out >= 0);
     const flags = linux.fcntl(child.out, linux.F.GETFL, 0);
     // A pipe of our own is always ours to set: the flag can't be refused
-    _ = linux.fcntl(child.out, linux.F.SETFL, flags | 0o4000); // O_NONBLOCK
+    _ = linux.fcntl(child.out, linux.F.SETFL, flags | 0o4000); // Ignored: O_NONBLOCK
     return child;
 }
 
@@ -393,8 +393,8 @@ pub fn sync_now() void {
     comptime assert(std.mem.startsWith(u8, service, service_prefix));
     const argv = [_:null]?[*:0]const u8{ lipc_set, "-s", service, "syncAndCheck", "1" };
     var out: [32]u8 = undefined;
-    // The sync runs on its own; what the command prints says nothing about how it went.
-    // Given up on as fast as every other setting, so a hung lipc can't hold the panel
+    // Given up on as fast as every other setting, so a hung lipc can't hold the panel.
+    // Ignored: the sync runs on its own; what the command prints says nothing of it
     _ = process.run_until(&argv, &out, lipc_deadline());
 }
 
@@ -450,7 +450,7 @@ pub fn set_bluetooth(on: bool) void {
     const value: [*:0]const u8 = if (on) "1:2" else "0:2";
     const argv = [_:null]?[*:0]const u8{ lipc_set, "-s", bt_service, "BTenable", value };
     var buffer: [32]u8 = undefined;
-    // Whether it took is read back with `bluetooth_on`, as the panel does
+    // Ignored: whether it took is read back with `bluetooth_on`, as the panel does
     _ = process.run_until(&argv, &buffer, lipc_deadline());
 }
 

@@ -72,7 +72,7 @@ pub fn sleep_ms(duration_ms: u64) void {
     };
     assert(wait.nsec >= 0);
     assert(wait.nsec < std.time.ns_per_s);
-    _ = linux.nanosleep(&wait, null); // Woken early by a signal: the caller's loop goes on
+    _ = linux.nanosleep(&wait, null); // Ignored: woken early by a signal: the caller's loop goes on
 }
 
 test "error codes are told from results" {

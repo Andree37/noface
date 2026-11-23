@@ -162,7 +162,7 @@ pub fn run(envp: [*:null]const ?[*:0]const u8, folders: Folders) u32 {
     const said = std.fmt.bufPrint(&line, "exit code {d}\n", .{code}) catch "exit\n";
     file.append_file(p.log, said);
     // Leaving on purpose is a good start too, even within the first minute
-    if (code == 0) _ = calls.unlink(p.attempts); // Gone already: nothing to reset
+    if (code == 0) _ = calls.unlink(p.attempts); // Ignored: gone already: nothing to reset
     stock_ui.restore();
     assert(!stock_ui.paused);
     return code;
@@ -225,7 +225,8 @@ fn watch(
             return process.exit_code(@bitCast(status));
         }
         if (service.take_stop_request()) {
-            _ = linux.kill(pid, linux.SIG.TERM); // Ended already: then the next turn reaps it
+            // Ignored: ended already: then the next turn reaps it
+            _ = linux.kill(pid, linux.SIG.TERM);
         }
         const now_us = os.now_us();
         if (check) |c| {
@@ -239,7 +240,8 @@ fn watch(
             }
         }
         if (now_us >= next_look_us) {
-            if (!good_start_noted) _ = calls.unlink(run_paths.attempts); // Gone: nothing to reset
+            // Ignored: gone: nothing to reset
+            if (!good_start_noted) _ = calls.unlink(run_paths.attempts);
             // With the last question still out, this look waits for its answer instead
             if (good_start_noted and check == null) {
                 const deadline_us = now_us + @as(u64, timing.power_check_ms) * 1000;
@@ -287,7 +289,7 @@ const PowerCheck = struct {
         // It has exited, so what it said is in the pipe already: no need to wait
         const waited = linux.poll(&ready, 1, 0);
         const got = if (failed(waited) or waited == 0) 0 else linux.read(out, &said, said.len);
-        _ = linux.close(out); // Our end of the pipe: nothing to do if it fails
+        _ = linux.close(out); // Ignored: our end of the pipe: nothing to do if it fails
         if (failed(got) or got == 0) return .unknown;
         const text = std.mem.trimEnd(u8, said[0..got], "\n");
         // As noface reads powerd (src/kindle/lipc.zig): only awake is looked at
@@ -299,7 +301,7 @@ const PowerCheck = struct {
         assert(c.child.pid > 0);
         assert(c.child.out >= 0);
         process.stop(c.child.pid);
-        _ = linux.close(c.child.out); // Our end of the pipe: nothing to do if it fails
+        _ = linux.close(c.child.out); // Ignored: our end of the pipe: nothing to do if it fails
     }
 };
 
@@ -317,7 +319,7 @@ fn heartbeat_stale(path: [*:0]const u8) bool {
 fn stop_stuck(pid: i32) void {
     assert(pid > 0);
     file.append_file(run_paths.log, "watchdog: no heartbeat for 2 minutes, stopping noface\n");
-    _ = linux.kill(pid, linux.SIG.KILL); // Ended already: then the next turn reaps it
+    _ = linux.kill(pid, linux.SIG.KILL); // Ignored: ended already: then the next turn reaps it
 }
 
 /// Whether noface's last heartbeat (seconds since 1970, as text; none reads as 0) is

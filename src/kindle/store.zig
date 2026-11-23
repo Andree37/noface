@@ -20,7 +20,7 @@ fn read_now_action(comptime prop: []const u8, comptime fields: []const u8, args:
     const command = std.fmt.bufPrintSentinel(&buf, format, args, 0) catch return;
     const argv = [_:null]?[*:0]const u8{ "/bin/sh", "-c", command };
     var out: [64]u8 = undefined;
-    // The store answers nothing worth reading; the book's state shows in the catalog.
+    // Ignored: the store answers nothing worth reading; the book's state shows in the catalog.
     _ = process.run(&argv, &out);
 }
 

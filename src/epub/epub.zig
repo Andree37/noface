@@ -679,7 +679,7 @@ fn read_contents(
         const path = try resolve(alloc, p.dir, i.href);
         const nav = read_file(alloc, files, path) catch |err| {
             if (err == error.OutOfMemory) return err;
-            break; // Ignored: no contents to read there; the NCX's are tried
+            break; // No contents to read there: the NCX's are tried
         };
         try read_contents_nav(alloc, &out, path, nav, anchors);
         if (out.items.len > 0) return out.items;
@@ -690,7 +690,7 @@ fn read_contents(
     const path = try resolve(alloc, p.dir, ncx_item.href);
     const ncx = read_file(alloc, files, path) catch |err| {
         if (err == error.OutOfMemory) return err;
-        return out.items; // Ignored: a book without readable contents has none
+        return out.items; // A book without readable contents has none
     };
     try read_contents_ncx(alloc, &out, path, ncx, anchors);
     return out.items;
@@ -811,8 +811,8 @@ pub fn parse(alloc: std.mem.Allocator, scratch: *memory.Region, data: []const u8
             // Out of memory this time: the book doesn't open, rather than open without a
             // chapter and every paragraph after it numbered differently from before
             if (err == error.OutOfMemory) return err;
-            // Ignored: a chapter missing or damaged in the archive is passed, the same
-            // on every open, so the numbering holds
+            // A chapter missing or damaged in the archive is passed, the same on every
+            // open, so the numbering holds
             continue;
         };
         b.section = @intCast(index + 1);

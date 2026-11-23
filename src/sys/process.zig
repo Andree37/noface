@@ -57,12 +57,12 @@ pub fn spawn(argv: [*:null]const ?[*:0]const u8) ?Child {
     if (failed(linux.pipe2(&fds, .{ .CLOEXEC = true }))) return null;
     const pid = linux.fork();
     if (failed(pid)) {
-        _ = linux.close(fds[0]); // Nothing was started: only the pipe to give back
-        _ = linux.close(fds[1]); // Likewise
+        _ = linux.close(fds[0]); // Ignored: nothing was started: only the pipe to give back
+        _ = linux.close(fds[1]); // Ignored: likewise
         return null;
     }
     if (pid == 0) spawn_child(argv, fds);
-    _ = linux.close(fds[1]); // The child's end: the child holds its own copy
+    _ = linux.close(fds[1]); // Ignored: the child's end: the child holds its own copy
     const child = Child{ .pid = @intCast(pid), .out = fds[0] };
     assert(child.pid > 0);
     assert(child.out >= 0);
@@ -73,13 +73,17 @@ pub fn spawn(argv: [*:null]const ?[*:0]const u8) ?Child {
 fn spawn_child(argv: [*:null]const ?[*:0]const u8, fds: [2]i32) noreturn {
     assert(fds[0] >= 0);
     assert(fds[1] >= 0);
-    // Each failure here shows as the program's failure, through the exit status below
+    // Each failure here shows as the program's failure, through its exit status.
+    // Ignored: a group of its own only lets it be stopped with its children
     _ = linux.setpgid(0, 0);
+    // Ignored: without its output, the parent reads nothing and says so
     _ = linux.dup2(fds[1], 1);
+    // Ignored: the pipe's ends, copied above: the program needs neither
     _ = linux.close(fds[0]);
+    // Ignored: as above
     _ = linux.close(fds[1]);
     const envp = [_:null]?[*:0]const u8{};
-    _ = linux.execve(argv[0].?, argv, &envp); // Returns only on failure
+    _ = linux.execve(argv[0].?, argv, &envp); // Ignored: returns only on failure
     linux.exit(127);
 }
 
@@ -114,7 +118,7 @@ pub fn run_until(argv: [*:null]const ?[*:0]const u8, out: []u8, deadline: u64) ?
         assert(total <= out.len);
     }
     // Closing first means a child with more to say gets SIGPIPE instead of blocking.
-    _ = linux.close(child.out); // Our end of the pipe: nothing to do if it fails
+    _ = linux.close(child.out); // Ignored: our end of the pipe: nothing to do if it fails
     if (wait_until(child.pid, deadline) == null) {
         std.debug.print("command timed out: {s}\n", .{std.mem.sliceTo(argv[0].?, 0)});
         return null;
@@ -156,7 +160,7 @@ pub fn run_all(
     }
     for (0..argvs.len) |index| {
         const child = children[index] orelse continue;
-        _ = linux.close(child.out); // Our end of the pipe: nothing to do if it fails
+        _ = linux.close(child.out); // Ignored: our end of the pipe: nothing to do if it fails
         // Reaped whether or not it finished printing: one still running at the deadline
         // is killed here, so none is left behind as a zombie
         const reaped = wait_until(child.pid, deadline) != null;
@@ -223,9 +227,9 @@ pub fn wait_until(pid: i32, deadline: u64) ?u32 {
         if (failed(rc)) return null; // Not our child, or gone already: nothing to wait for
         if (look + 1 < looks_max) os.sleep_ms(reap_poll_ms);
     }
-    _ = linux.kill(-pid, linux.SIG.KILL); // Not a group's leader: no such group
-    _ = linux.kill(pid, linux.SIG.KILL); // Gone already: nothing to stop
-    _ = linux.waitpid(pid, &status, 0); // Reaped, whatever its status
+    _ = linux.kill(-pid, linux.SIG.KILL); // Ignored: not a group's leader: no such group
+    _ = linux.kill(pid, linux.SIG.KILL); // Ignored: gone already: nothing to stop
+    _ = linux.waitpid(pid, &status, 0); // Ignored: reaped, whatever its status
     return null;
 }
 
@@ -255,12 +259,12 @@ pub fn exited(pid: i32) ?bool {
 /// Stops a spawned child and everything it started, and reaps it.
 pub fn stop(pid: i32) void {
     assert(pid > 0); // So -pid is its group, not every process
-    _ = linux.kill(-pid, linux.SIG.KILL); // Already gone: then there's nothing to stop
+    _ = linux.kill(-pid, linux.SIG.KILL); // Ignored: already gone: then there's nothing to stop
     // And the child itself, in case it hadn't made its group yet: the wait below must
     // never be for a child still running
-    _ = linux.kill(pid, linux.SIG.KILL); // Already gone, with its group: nothing to do
+    _ = linux.kill(pid, linux.SIG.KILL); // Ignored: already gone, with its group: nothing to do
     var status: i32 = 0;
-    _ = linux.waitpid(pid, &status, 0); // Reaped, whatever its status
+    _ = linux.waitpid(pid, &status, 0); // Ignored: reaped, whatever its status
 }
 
 /// How long `survives` lets a check run before it's called a failure.
@@ -285,7 +289,7 @@ fn survives_within(
     const pid = linux.fork();
     if (failed(pid)) return false;
     if (pid == 0) {
-        _ = linux.setpgid(0, 0); // Its own group, so stop() ends whatever it starts too
+        _ = linux.setpgid(0, 0); // Ignored: its own group, so stop() ends whatever it starts too
         linux.exit(if (check(ctx)) 0 else 1);
     }
     assert(pid <= std.math.maxInt(i32)); // A process id

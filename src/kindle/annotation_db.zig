@@ -53,7 +53,7 @@ comptime {
 pub fn dry_run() bool {
     const result = linux.open(paths.dry_run, .{ .ACCMODE = .RDONLY }, 0);
     if (failed(result)) return false;
-    // The file was only looked for; closing it can lose nothing.
+    // Ignored: the file was only looked for; closing it can lose nothing.
     _ = linux.close(@intCast(result));
     return true;
 }
@@ -129,7 +129,7 @@ pub fn run_annotation_sql(sql: []const u8) bool {
     if (failed(result)) return false;
     const fd: i32 = @intCast(result);
     const written = linux.write(fd, sql.ptr, sql.len);
-    // The statement is written or not, which `written` says; the close adds nothing.
+    // Ignored: the statement is written or not, which `written` says; the close adds nothing.
     _ = linux.close(fd);
     if (failed(written) or written != sql.len) return false;
     const argv = [_:null]?[*:0]const u8{ "/bin/sh", "-c", write_command };

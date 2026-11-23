@@ -212,7 +212,7 @@ pub fn power_watcher_died(in: *Input) void {
 fn reap(watcher: *?process.Child) void {
     const w = watcher.* orelse return;
     assert(w.pid > 0);
-    _ = linux.close(w.out); // Dead already: closing only frees the number
+    _ = linux.close(w.out); // Ignored: dead already: closing only frees the number
     process.stop(w.pid);
     watcher.* = null;
 }

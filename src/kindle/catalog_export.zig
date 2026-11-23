@@ -130,7 +130,7 @@ fn copy_place(catalog_bytes: u64) [*:0]const u8 {
 fn remove_copy(copy: [*:0]const u8) void {
     assert(copy[0] == '/');
     const name = std.mem.sliceTo(copy, 0);
-    _ = calls.unlink(copy); // Gone already: then there's nothing to remove
+    _ = calls.unlink(copy); // Ignored: gone already: then there's nothing to remove
     for (sqlite_sidecars) |suffix| {
         var buffer: [128]u8 = undefined;
         const beside = std.fmt.bufPrintSentinel(&buffer, "{s}{s}", .{ name, suffix }, 0) catch

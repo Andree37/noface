@@ -104,7 +104,7 @@ pub fn read_size() ?Size {
     const rc = linux.open("/dev/fb0", .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0);
     if (failed(rc)) return null;
     const fd: i32 = @intCast(rc);
-    defer _ = linux.close(fd); // Only read from: a close that fails loses nothing
+    defer _ = linux.close(fd); // Ignored: only read from: a close that fails loses nothing
     var variable: [160]u8 align(4) = undefined;
     if (failed(linux.ioctl(fd, fbioget_vscreeninfo, @intFromPtr(&variable)))) return null;
     return .{
@@ -176,7 +176,7 @@ pub const Screen = struct {
         const fd: i32 = @intCast(rc);
         assert(fd >= 0);
         // A screen it can't drive is let go of: the launcher opens one at every restore
-        errdefer _ = linux.close(fd); // Nothing was drawn through it, so nothing is lost
+        errdefer _ = linux.close(fd); // Ignored: nothing was drawn through it, so nothing is lost
 
         var variable: [160]u8 align(4) = undefined;
         var fixed: [68]u8 align(4) = undefined;

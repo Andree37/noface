@@ -151,6 +151,7 @@ fn each_entry_linux(
     const rc = linux.open(dir, .{ .ACCMODE = .RDONLY, .DIRECTORY = true, .CLOEXEC = true }, 0);
     if (failed(rc)) return;
     const fd: i32 = @intCast(rc);
+    // Ignored: only read
     defer _ = linux.close(fd);
     var buffer: [4096]u8 align(8) = undefined;
     // Each read gives at least one name, so this many reads list every name allowed

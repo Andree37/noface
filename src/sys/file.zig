@@ -27,7 +27,7 @@ pub fn map(path: [*:0]const u8) MapError![]const u8 {
     assert(path[0] != 0);
     const fd = linux.open(path, .{ .ACCMODE = .RDONLY }, 0);
     if (failed(fd)) return if (os.not_found(fd)) error.NotFound else error.OpenFailed;
-    defer _ = linux.close(@intCast(fd)); // The mapping outlives it
+    defer _ = linux.close(@intCast(fd)); // Ignored: the mapping outlives it
     var end: linux.off_t = 0;
     if (failed(linux.llseek(@intCast(fd), 0, &end, linux.SEEK.END))) return error.SeekFailed;
     // A file larger than the address space (4 GB on the Kindle) can't be mapped whole
@@ -61,7 +61,7 @@ pub fn exists(path: [*:0]const u8) bool {
     const fd = linux.open(path, .{ .ACCMODE = .RDONLY }, 0);
     if (failed(fd)) return false;
     assert(fd <= std.math.maxInt(i32)); // A descriptor, as every call taking one expects
-    _ = linux.close(@intCast(fd)); // Only opened to see that it could be
+    _ = linux.close(@intCast(fd)); // Ignored: only opened to see that it could be
     return true;
 }
 
@@ -76,6 +76,7 @@ pub fn size_of(path: [*:0]const u8) u64 {
     assert(path[0] != 0);
     const fd = linux.open(path, .{ .ACCMODE = .RDONLY }, 0);
     if (failed(fd)) return 0;
+    // Ignored: only read
     defer _ = linux.close(@intCast(fd));
     var end: linux.off_t = 0;
     if (failed(linux.llseek(@intCast(fd), 0, &end, linux.SEEK.END))) return 0;
@@ -90,7 +91,7 @@ pub fn read_small(path: [*:0]const u8, buf: []u8) []const u8 {
     const rc = linux.open(path, .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0);
     if (failed(rc)) return "";
     const fd: i32 = @intCast(rc);
-    defer _ = linux.close(fd); // Only read: nothing is lost if closing fails
+    defer _ = linux.close(fd); // Ignored: only read: nothing is lost if closing fails
     const n = linux.read(fd, buf.ptr, buf.len);
     if (failed(n)) return "";
     assert(n <= buf.len);
@@ -234,7 +235,7 @@ pub fn append_file(path: [*:0]const u8, text: []const u8) void {
     if (failed(rc)) return; // A log line that can't be written is only a log line
     const fd: i32 = @intCast(rc);
     _ = write_all(fd, text); // Likewise
-    _ = linux.close(fd); // Likewise
+    _ = linux.close(fd); // Ignored: likewise
 }
 
 /// "/tmp<between>/noface-file-<pid>-<name>" in `buffer`, gone from before.

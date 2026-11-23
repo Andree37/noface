@@ -55,11 +55,12 @@ pub fn note(path: [*:0]const u8, last: *?battery.Sample) void {
     }, 0o644);
     if (os.failed(rc)) return;
     const fd: i32 = @intCast(rc);
-    // A note that doesn't get written is one sample fewer: the next change notes again
+    // Ignored: A note that doesn't get written is one sample fewer: the next change notes again
     _ = linux.write(fd, line.ptr, line.len);
     var size: linux.off_t = 0;
     const sought = !os.failed(linux.llseek(fd, 0, &size, linux.SEEK.END));
     const big = sought and size > log_bytes_max;
+    // Ignored: the line above was written or not; its close adds nothing
     _ = linux.close(fd);
     if (big) note_trim(path);
 }

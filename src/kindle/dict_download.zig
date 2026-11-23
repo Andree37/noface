@@ -99,7 +99,7 @@ pub fn start(data_dir: []const u8, base: []const u8, lang: Language) ?Download {
     }, 0) catch return null;
     const argv = [_:null]?[*:0]const u8{ "/bin/sh", "-c", script };
     const child = process.spawn(&argv) orelse return null;
-    // It prints nothing, so its output is closed unread.
+    // Ignored: it prints nothing, so its output is closed unread.
     _ = linux.close(child.out);
     d.pid = child.pid;
     assert(d.pid > 0);

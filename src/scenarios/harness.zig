@@ -266,6 +266,7 @@ pub fn matches_reference_write(
     assert(name.len > 0);
     assert(pixels.len == width * height);
     var dir_buf: [256]u8 = undefined;
+    // Ignored: the writes after it say if the folder is missing
     _ = linux.mkdir(try std.fmt.bufPrintSentinel(&dir_buf, "{s}", .{dir}, 0), 0o755);
     var path_buf: [256]u8 = undefined;
     const path = try std.fmt.bufPrintSentinel(&path_buf, "{s}/{s}.pgm", .{ dir, name }, 0);
@@ -486,7 +487,9 @@ pub fn play_on_dir(buffer: []u8) ![:0]const u8 {
         .{ linux.getpid(), run_counter },
         0,
     );
-    _ = linux.mkdir(dir, 0o755);
+    // A new folder for each run: one that couldn't be made would run on what's left
+    const made = linux.mkdir(dir, 0o755);
+    if (os.failed(made)) return error.CantMakeFolder;
     assert(run_counter > runs_before); // A name no other run has used
     assert(std.mem.startsWith(u8, dir, "/tmp/noface-scenarios-")); // As clean_up removes
     return dir;
@@ -740,7 +743,9 @@ pub fn play_on_run(a: *app.App, kindle: Kindle, book_path: [:0]const u8, dir: []
     hidden_stderr = saved_stderr;
     defer {
         hidden_stderr = -1;
+        // Ignored: the tests' own output put back: nothing is lost if it fails
         _ = linux.dup2(saved_stderr, 2);
+        // Ignored: the tests' own output put back: nothing is lost if it fails
         _ = linux.close(saved_stderr);
     }
     var log_buffer: [file.own_path_bytes_max]u8 = undefined;
@@ -748,7 +753,9 @@ pub fn play_on_run(a: *app.App, kindle: Kindle, book_path: [:0]const u8, dir: []
     const flags: linux.O = .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true };
     const quiet = linux.open(log_path, flags, 0o644);
     if (!os.failed(quiet)) {
+        // Ignored: the app's output kept out of the run's: it shows if this fails
         _ = linux.dup2(@intCast(quiet), 2);
+        // Ignored: the tests' quiet output: nothing is lost if it fails
         _ = linux.close(@intCast(quiet));
     }
     const t0 = real_ms();
@@ -918,6 +925,7 @@ pub fn write_file(path: [*:0]const u8, data: []const u8) !void {
     if (os.failed(rc)) return error.CantWrite;
     const fd: i32 = @intCast(rc);
     assert(fd >= 0);
+    // Ignored: only read
     defer _ = linux.close(fd);
     if (linux.write(fd, data.ptr, data.len) != data.len) return error.CantWrite;
 }
@@ -929,6 +937,7 @@ pub fn clean_up(dir: [:0]const u8) void {
     assert(std.mem.indexOf(u8, dir, "..") == null);
     var out: [64]u8 = undefined;
     const argv = [_:null]?[*:0]const u8{ "/bin/rm", "-rf", dir };
+    // Ignored: a folder left over is only space in /tmp
     _ = process.run(&argv, &out);
 }
 
@@ -1049,6 +1058,7 @@ pub fn expect(ok: bool, why: []const u8) !void {
 pub var hidden_stderr: i32 = -1;
 
 pub fn show_crashes() void {
+    // Ignored: showing a crash's report is all that's left to do
     if (hidden_stderr >= 0) _ = linux.dup2(hidden_stderr, 2);
 }
 
@@ -1057,6 +1067,7 @@ pub fn show_crashes() void {
 /// and a time taken from it then would be less than zero.
 pub fn real_ms() u64 {
     var ts: linux.timespec = undefined;
+    // Ignored: the monotonic clock always answers
     _ = linux.clock_gettime(.MONOTONIC, &ts);
     return @as(u64, @intCast(ts.sec)) * 1000 + @as(u64, @intCast(ts.nsec)) / 1_000_000;
 }

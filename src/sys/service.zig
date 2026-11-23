@@ -33,7 +33,7 @@ pub fn detach(log: [*:0]const u8) !Side {
     const pid = linux.fork();
     if (failed(pid)) return error.ForkFailed;
     if (pid != 0) return .parent;
-    // A fresh child is never a group leader, so this can't fail
+    // Ignored: A fresh child is never a group leader, so this can't fail
     _ = linux.setsid();
     redirect(0, "/dev/null", false);
     redirect(1, log, true);
@@ -56,8 +56,8 @@ fn redirect(target: i32, path: [*:0]const u8, append: bool) void {
     if (failed(rc)) return; // No /dev/null: nothing better to point it at
     const fd: i32 = @intCast(rc);
     if (fd == target) return;
-    _ = linux.dup2(fd, target); // Failing leaves the old one, which is all there is
-    _ = linux.close(fd); // The copy stays open as `target`
+    _ = linux.dup2(fd, target); // Ignored: failing leaves the old one, which is all there is
+    _ = linux.close(fd); // Ignored: the copy stays open as `target`
 }
 
 /// Starts `argv` with `envp`, its output appended to (or written over) the file at
@@ -84,15 +84,16 @@ pub fn spawn_to_file(
     const fd: i32 = @intCast(opened);
     const pid = linux.fork();
     if (pid == 0) {
-        // The copies dup2 makes lose close-on-exec, so the program writes to them
+        // Ignored: the copies dup2 makes lose close-on-exec, so the program writes to them
         _ = linux.dup2(fd, 1);
-        // Already 1, the file kept close-on-exec, which would lose what it writes
+        // Ignored: already 1, the file kept close-on-exec, which would lose what it writes
         if (fd == 1) _ = linux.fcntl(1, linux.F.SETFD, 0);
+        // Ignored: the copies dup2 makes lose close-on-exec, so the program writes to them
         if (errors_too) _ = linux.dup2(fd, 2);
-        _ = linux.execve(argv[0].?, argv, envp); // Returns only on failure
+        _ = linux.execve(argv[0].?, argv, envp); // Ignored: returns only on failure
         linux.exit(127);
     }
-    _ = linux.close(fd); // The child holds its own copy
+    _ = linux.close(fd); // Ignored: the child holds its own copy
     if (failed(pid)) return null;
     assert(pid > 0);
     assert(pid <= std.math.maxInt(i32));
@@ -110,7 +111,7 @@ fn on_signal(signal: linux.SIG) callconv(.c) void {
     if (signal != .CHLD) stop_requested.store(true, .release);
     const pipe = wake_pipe orelse return;
     const byte = [1]u8{0};
-    // Full pipe: a wake-up is already waiting, which is all a byte says
+    // Ignored: full pipe: a wake-up is already waiting, which is all a byte says
     _ = linux.write(pipe[1], &byte, 1);
 }
 
@@ -139,7 +140,7 @@ pub fn wait_for_wake(timeout_ms: u32) void {
     const pipe = wake_pipe.?; // Waited on only once `listen_for_signals` made it
     assert(timeout_ms <= std.math.maxInt(i32));
     var fds = [_]linux.pollfd{.{ .fd = pipe[0], .events = linux.POLL.IN, .revents = 0 }};
-    _ = linux.poll(&fds, 1, @intCast(timeout_ms)); // Interrupted or timed out: look anyway
+    _ = linux.poll(&fds, 1, @intCast(timeout_ms)); // Ignored: interrupted or timed out: look anyway
     var drain: [64]u8 = undefined;
     // The pipe is non-blocking and holds at most a few pages of wake-ups
     for (0..1024) |_| {
@@ -225,7 +226,7 @@ pub fn signal_named(name: []const u8, signal: linux.SIG) u32 {
     const send = struct {
         fn send(wanted: *const linux.SIG, pid: i32, _: []const u8) void {
             assert(pid > 0);
-            _ = linux.kill(pid, wanted.*); // Ended since it was found: nothing to signal
+            _ = linux.kill(pid, wanted.*); // Ignored: ended since it was found: nothing to signal
         }
     }.send;
     const count = each_named(name, &signal, send);

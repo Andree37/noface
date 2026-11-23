@@ -131,6 +131,6 @@ pub fn restore() void {
 /// The reader switched airplane mode themselves: theirs now, not noface's to undo.
 pub fn forget() void {
     assert(marker_is_note());
-    // A note already gone is what forgetting wants, so its failing to go is no matter
+    // Ignored: A note already gone is what forgetting wants, so its failing to go is no matter
     _ = linux.unlink(marker);
 }

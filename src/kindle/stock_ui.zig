@@ -93,7 +93,7 @@ fn stop_watcher(_: u8, pid: i32, cmdline: []const u8) void {
     assert(pid > 0);
     assert(restoring);
     if (!is_noface_watcher(cmdline)) return;
-    _ = linux.kill(pid, .TERM); // Ended since it was found: nothing to stop
+    _ = linux.kill(pid, .TERM); // Ignored: ended since it was found: nothing to stop
 }
 
 /// Whether a lipc-wait-event command line (arguments split by zero bytes) is one of

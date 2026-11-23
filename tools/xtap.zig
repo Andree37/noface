@@ -86,6 +86,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     const rc = linux.socket(linux.AF.UNIX, linux.SOCK.STREAM, 0);
     if (core.os.failed(rc)) return error.NoSocket;
     const fd: i32 = @intCast(rc);
+    // Ignored: the socket's work is done or failed by now
     defer _ = linux.close(fd);
     var address = linux.sockaddr.un{ .family = linux.AF.UNIX, .path = @splat(0) };
     @memcpy(address.path[0..socket_path.len], socket_path);

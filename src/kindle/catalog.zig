@@ -35,6 +35,7 @@ pub fn export_library() void {
     // its own limit, so it's never stopped before removing its copy of the catalog
     const grace_ms = 5_000;
     const deadline = os.now_us() + (catalog_export.time_max_ms + grace_ms) * std.time.us_per_ms;
+    // Ignored: the export says how it went in the file it leaves
     _ = process.run_until(&argv, &out, deadline);
 }
 

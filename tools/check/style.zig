@@ -50,8 +50,10 @@ pub const Rule = enum {
     bool_compared,
     /// An `if` or `else` whose body is on the next line without braces.
     if_without_braces,
-    /// `catch {}` or `catch unreachable`: every error is handled. Ignoring one counts as
-    /// handling it only with the reason on that line: `catch {}; // Ignored: …`.
+    /// `catch {}` or `catch unreachable`, or a system call's result thrown away
+    /// (`_ = linux.close(fd)`): every error is handled. Ignoring one counts as handling
+    /// it only with the reason, on that line or the comment just above it:
+    /// `catch {}; // Ignored: …`.
     error_ignored,
     /// A comment without a space after `//`, or whose first sentence doesn't start
     /// with a capital letter.
@@ -705,6 +707,7 @@ fn bad_comment(comment: []const u8, own_line: bool, previous_was_comment: bool) 
 /// The markers on the comment lines just above a line of code, each by the line it's on.
 const Said = struct {
     unbounded_at: ?u32 = null,
+    ignored_at: ?u32 = null,
     assertions_at: ?u32 = null,
     usize_at: ?u32 = null,
     not_size_at: ?u32 = null,
@@ -848,6 +851,37 @@ fn close_functions(scan: *Scan, line_number: u32) !void {
 }
 
 /// Whether a comment is a marker: it starts with `prefix`, and gives a reason after it.
+/// The calls that reach the system, whose results say whether they worked.
+const system_calls = [_][]const u8{ "linux.", "calls.", "std.posix.", "std.os.linux.", "process." };
+
+/// How many of a line's catches give up without a word (`catch return;`, `catch break`,
+/// `catch continue`): a reason may be given for them, as for an error ignored.
+fn gives_up_quietly(code: []const u8) u32 {
+    const quiet = count_token(code, "catch return") + count_token(code, "catch break") +
+        count_token(code, "catch continue");
+    assert(quiet <= code.len);
+    return quiet;
+}
+
+/// How many system calls' results a line throws away: `_ = linux.close(fd)`.
+fn system_results_dropped(code: []const u8) u32 {
+    var dropped: u32 = 0;
+    for (system_calls) |prefix| {
+        var at: u32 = 0;
+        while (std.mem.indexOfPos(u8, code, at, "_ = ")) |index| {
+            at = @intCast(index + "_ = ".len);
+            if (!std.mem.startsWith(u8, code[at..], prefix)) continue;
+            // `_ = run(…) orelse return …`: the failure is handled after all
+            const rest = code[at..];
+            const handled = std.mem.indexOf(u8, rest, " orelse ") != null or
+                std.mem.indexOf(u8, rest, " catch ") != null;
+            if (!handled) dropped += 1;
+        }
+    }
+    assert(dropped <= code.len);
+    return dropped;
+}
+
 fn is_marker(comment: []const u8, prefix: []const u8) bool {
     assert(std.mem.startsWith(u8, prefix, "// "));
     assert(prefix[prefix.len - 1] == ' ');
@@ -859,7 +893,7 @@ fn is_marker(comment: []const u8, prefix: []const u8) bool {
 fn marked_for_nothing(scan: *Scan, said: Said) !void {
     assert(scan.open_count <= Scan.open_max);
     const lines = [_]?u32{
-        said.unbounded_at, said.assertions_at, said.usize_at, said.not_size_at,
+        said.unbounded_at, said.ignored_at, said.assertions_at, said.usize_at, said.not_size_at,
     };
     comptime assert(lines.len == @typeInfo(Said).@"struct".field_names.len);
     for (lines) |marker_line| {
@@ -884,6 +918,7 @@ fn check_zig_text(scan: *Scan, line: *const Line, line_number: u32) !?Said {
     scan.previous_comment = own_line_comment;
     if (own_line_comment) {
         if (is_marker(line.comment, "// Unbounded: ")) scan.said.unbounded_at = line_number;
+        if (is_marker(line.comment, "// Ignored: ")) scan.said.ignored_at = line_number;
         if (is_marker(line.comment, "// Assertions: ")) scan.said.assertions_at = line_number;
         if (usize_marker) scan.said.usize_at = line_number;
         if (is_marker(line.comment, "// Not a size: ")) scan.said.not_size_at = line_number;
@@ -993,11 +1028,17 @@ fn check_zig_statement(scan: *Scan, line: *const Line, line_number: u32, said: S
     // A `catch` wrapped onto the next line counts the same as one on a single line.
     const wrapped = ignores_wrapped_catch(scan.after_catch, code);
     if (ending.len > 0) scan.after_catch = std.mem.endsWith(u8, ending, " catch");
-    if (!is_marker(line.comment, "// Ignored: ")) {
-        const inline_count = count_token(code, "catch {}") +
-            count_token(code, "catch unreachable") + count_token(code, "else |_| {}");
-        const ignored = inline_count + @intFromBool(wrapped);
+    const inline_count = count_token(code, "catch {}") +
+        count_token(code, "catch unreachable") + count_token(code, "else |_| {}") +
+        system_results_dropped(code);
+    const ignored = inline_count + @intFromBool(wrapped);
+    // The reason on the line, or on the comment just above it, as a long one is
+    const on_line = is_marker(line.comment, "// Ignored: ");
+    if (!on_line and said.ignored_at == null) {
         try scan.note(.error_ignored, line_number, ignored);
+    } else if (ignored + gives_up_quietly(code) == 0) {
+        // A reason for ignoring nothing: the error it was for is handled now, or gone
+        try scan.note(.marker_unused, if (on_line) line_number else said.ignored_at.?, 1);
     }
     // A loop that never ends by design says so just above it: `// Unbounded: …`
     const loops = count_token(code, "while (true)");

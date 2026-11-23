@@ -20,7 +20,10 @@ pub const eviocgabs_y: u32 = 0x80184540 + 0x36;
 pub const eviocgmtslots: u32 = 0x800c450a; // Every touch slot's value of an axis
 
 // Event kinds and codes
+pub const ev_syn = 0; // A packet's end
 pub const ev_key = 1;
+pub const btn_touch = 0x14a; // A finger is down: the stock UI waits for it
+pub const abs_mt_touch_major = 0x30; // A contact's size
 pub const ev_abs = 3;
 pub const key_power = 116;
 pub const abs_mt_slot = 0x2f;
@@ -52,7 +55,7 @@ pub fn open_input(path: [*:0]const u8) !i32 {
     const fd: i32 = @intCast(rc);
     assert(fd >= 0);
     var clock: i32 = 1; // CLOCK_MONOTONIC, so event times compare with now_us
-    // A device that keeps its own clock still works; its times are only less exact
+    // Ignored: A device that keeps its own clock still works; its times are only less exact
     _ = linux.ioctl(fd, eviocsclockid, @intFromPtr(&clock));
     return fd;
 }
@@ -61,7 +64,7 @@ pub fn axis_max(fd: i32, request: u32) i32 {
     assert(fd >= 0);
     assert(request == eviocgabs_x or request == eviocgabs_y);
     var info = std.mem.zeroes(AxisInfo);
-    // On failure `info` stays zeroed, and the floor of one below still gives a range
+    // Ignored: on failure `info` stays zeroed, and the floor of one below still gives a range
     _ = linux.ioctl(fd, request, @intFromPtr(&info));
     const maximum = @max(info[2], 1);
     assert(maximum >= 1);
@@ -73,7 +76,7 @@ pub fn slot_values(fd: i32, code: u32) [2]i32 {
     assert(fd >= 0);
     assert(code == abs_mt_x or code == abs_mt_y);
     var request = [_]i32{ @intCast(code), 0, 0 };
-    // On failure both slots read zero, as no touch would
+    // Ignored: on failure both slots read zero, as no touch would
     _ = linux.ioctl(fd, eviocgmtslots, @intFromPtr(&request));
     return .{ request[1], request[2] };
 }

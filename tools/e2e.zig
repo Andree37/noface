@@ -123,7 +123,7 @@ pub const Screen = struct {
 
     pub fn close(screen: *Screen) void {
         assert(screen.fd >= 0);
-        _ = linux.close(screen.fd); // Only read from
+        _ = linux.close(screen.fd); // Ignored: only read from
         screen.fd = -1;
     }
 
@@ -138,8 +138,9 @@ pub const Screen = struct {
         return std.mem.readInt(u32, info[yoffset_offset..][0..4], .little);
     }
 
-    /// A number standing for what's on screen: two screens that differ give two.
-    fn sample(screen: *const Screen) u64 {
+    /// A number standing for what's on screen: two screens that differ give two. Null
+    /// when a row couldn't be read: what's on screen isn't known.
+    fn sample(screen: *const Screen) ?u64 {
         assert(screen.width <= row_size_max);
         assert(screen.height > 0);
         var hash = std.hash.Wyhash.init(0);
@@ -147,7 +148,7 @@ pub const Screen = struct {
         const first = screen.top();
         var y: u32 = 0;
         while (y < screen.height) : (y += sample_step) {
-            screen.read_row(&row, first, y);
+            if (!screen.read_row(&row, first, y)) return null;
             hash.update(row[0..screen.width]);
         }
         return hash.final();
@@ -155,12 +156,13 @@ pub const Screen = struct {
 
     /// Reads row `y` of the screen shown from framebuffer row `first` (`top()`, read once
     /// by the caller: the shown screen may flip, and a whole read should be of one).
-    pub fn read_row(screen: *const Screen, row: *[row_size_max]u8, first: u32, y: u32) void {
+    /// False when it isn't read whole: the row then says nothing of the screen.
+    pub fn read_row(screen: *const Screen, row: *[row_size_max]u8, first: u32, y: u32) bool {
         assert(screen.width <= row.len);
         assert(y < screen.height);
         const offset: i64 = (@as(i64, first) + y) * screen.stride;
-        // A short read leaves the row as it was, and shows as a changed screen
-        _ = linux.pread(screen.fd, row, screen.width, offset);
+        const got = linux.pread(screen.fd, row, screen.width, offset);
+        return !core.os.failed(got) and got == screen.width;
     }
 
     /// Waits until the screen hasn't changed for `still_ms`, and says whether it did
@@ -172,8 +174,9 @@ pub const Screen = struct {
         var since = now_us();
         while (now_us() < deadline) {
             sleep_ms(poll_ms * 4);
+            // A screen that couldn't be read is never taken for one that stayed still
             const now = screen.sample();
-            if (now != last) {
+            if (now == null or now != last) {
                 last = now;
                 since = now_us();
             } else if (now_us() - since >= still_ms * 1000) {
@@ -192,6 +195,7 @@ pub const Screen = struct {
         const rc = linux.open(path, flags, 0o644);
         if (core.os.failed(rc)) return false;
         const fd: i32 = @intCast(rc);
+        // Ignored: only read
         defer _ = linux.close(fd);
         return screen.write_pgm(fd, 0, screen.height);
     }
@@ -210,7 +214,7 @@ pub const Screen = struct {
         var row: [row_size_max]u8 = undefined;
         const first = screen.top();
         for (0..band_height) |y| {
-            screen.read_row(&row, first, band_top + @as(u32, @intCast(y)));
+            if (!screen.read_row(&row, first, band_top + @as(u32, @intCast(y)))) return false;
             if (!core.file.write_all(fd, row[0..screen.width])) return false;
         }
         return true;
@@ -226,7 +230,7 @@ const Run = struct {
     /// The log's length as the last touch began: a `log` step reads what came after.
     log_mark: u64 = 0,
     /// The screen just before the last touch, and when that touch lifted.
-    before: u64 = 0,
+    before: ?u64 = null, // Null: not read, so any screen read after counts as drawn
     lifted_us: u64 = 0,
     /// Just before the last touch's finger was lifted, by the clock the panel stamps
     /// its events with: null for the power button, which lifts none.
@@ -242,10 +246,10 @@ const Run = struct {
     }
 
     /// Lifts the finger, noting when first: the panel stamps the lift no earlier.
-    fn lift(run: *Run) void {
+    fn lift(run: *Run) Failure!void {
         assert(run.panel.finger_down);
         run.lifting_us = now_us();
-        run.panel.up();
+        try run.panel.up();
     }
 
     fn lifted(run: *Run) void {
@@ -256,7 +260,16 @@ const Run = struct {
 };
 
 /// Why a step failed, to print.
-const Failure = error{ Usage, Timeout, TooSlow, CantSave, NoLog, UnknownPlace, NotPlaced };
+const Failure = error{
+    Usage,
+    Timeout,
+    TooSlow,
+    CantSave,
+    NoLog,
+    UnknownPlace,
+    NotPlaced,
+    TouchNotSent, // The panel didn't take a touch: not the app's failing
+};
 const Words = std.mem.TokenIterator(u8, .any);
 const Point = core.places.Point;
 
@@ -471,10 +484,11 @@ fn play(script: []const u8, folder: Folder) bool {
     var passed: u32 = 0;
     while (lines.next()) |line_raw| {
         line_number += 1;
-        const code = line_raw[0 .. std.mem.indexOfScalar(u8, line_raw, '#') orelse line_raw.len];
-        const line = std.mem.trim(u8, code, " \t\r");
+        const line = script_line(line_raw);
         if (line.len == 0) continue;
-        const took_ms = step(&run, line) catch |err| return step_failed(line_number, line, err);
+        // Read before any touch already (`script_reads`): it reads the same now
+        const parsed = parse_step(line) catch |err| return step_failed(line_number, line, err);
+        const took_ms = step(&run, parsed) catch |err| return step_failed(line_number, line, err);
         passed += 1;
         if (took_ms) |ms| {
             std.debug.print("ok   {d}: {s} ({d} ms)\n", .{ line_number, line, ms });
@@ -553,6 +567,8 @@ fn start_noface(folder: Folder) !void {
     var out: [64]u8 = undefined;
     const remove = [_:null]?[*:0]const u8{ "/bin/rm", "-rf", folder.data, folder.out };
     _ = core.process.run(&remove, &out) orelse return error.CantClear;
+    // Its output says nothing of how it went: the data folder gone does
+    if (core.file.presence(folder.data) != .absent) return error.CantClear;
     if (core.os.failed(core.calls.mkdir(folder.out, 0o755))) return error.CantClear;
     const launch = [_:null]?[*:0]const u8{ core.paths.launcher, "e2e", folder.root };
     _ = core.process.run(&launch, &out) orelse return error.CantStart;
@@ -575,7 +591,7 @@ fn stop_noface() void {
     defer core.lipc.hold_awake(false);
     const pid = pid_of("noface") orelse return;
     assert(pid > 0); // A process's, never 0 or -1, which would signal many
-    _ = linux.kill(pid, linux.SIG.TERM); // Already gone: nothing to stop
+    _ = linux.kill(pid, linux.SIG.TERM); // Ignored: already gone: nothing to stop
     const deadline = now_us() + stop_ms_max * 1000;
     // Bounded by the deadline
     while (pid_of("noface") != null or pid_of("noface-launch") != null) {
@@ -626,49 +642,85 @@ const Found = struct {
     }
 };
 
-/// Whether every touch in `script` reads, its places found, before any is made: a
+/// A script's line without its comment and the spaces round it: empty for none.
+fn script_line(raw: []const u8) []const u8 {
+    const code = raw[0 .. std.mem.indexOfScalar(u8, raw, '#') orelse raw.len];
+    const line = std.mem.trim(u8, code, " \t\r");
+    assert(line.len <= raw.len);
+    return line;
+}
+
+/// Whether every step of `script` reads, its places found, before any is made: a
 /// mistake in a later line would otherwise show only after the touches before it.
 fn script_reads(script: []const u8) bool {
     var lines = std.mem.splitScalar(u8, script, '\n');
     var line_number: u32 = 0;
     var bad: u32 = 0;
+    var touched = false; // A `drawn` times the touch before it: there must be one
     while (lines.next()) |line_raw| {
         line_number += 1;
-        const code = line_raw[0 .. std.mem.indexOfScalar(u8, line_raw, '#') orelse line_raw.len];
-        var words = std.mem.tokenizeAny(u8, code, " \t\r");
-        const verb = words.next() orelse continue;
-        _ = parse_touch(verb, &words) catch |err| {
+        const line = script_line(line_raw);
+        if (line.len == 0) continue;
+        const parsed = parse_step(line) catch |err| {
             // Logged, so a test of a script that mustn't read stays quiet (std.testing
             // keeps only warnings), while a run on the Kindle shows which line
-            log.info("FAIL {d}: {s}: {s}, before any touch", .{
-                line_number, std.mem.trim(u8, code, " \t\r"), @errorName(err),
-            });
+            const said = .{ line_number, line, @errorName(err) };
+            log.info("FAIL {d}: {s}: {s}, before any touch", said);
             bad += 1;
+            continue;
         };
+        if (parsed == .touch) touched = true;
+        if (parsed == .drawn and !touched) {
+            log.info("FAIL {d}: {s}: drawn needs a touch before it", .{ line_number, line });
+            bad += 1;
+        }
     }
     assert(bad <= line_number);
     return bad == 0;
 }
 
-/// Plays one step, returning how long the screen took to change for a `drawn` step.
-fn step(run: *Run, line: []const u8) Failure!?u32 {
+/// A step of a script, read whole from its line.
+const Step = union(enum) {
+    drawn: u32, // The budget, in ms, for the screen to change after the last touch
+    log: []const u8, // Text to wait for in noface's log
+    still,
+    shot: []const u8, // The shot's name
+    wait: u32, // In ms
+    touch: Touch,
+};
+
+/// The step a script's line (comment taken off, `script_line`) asks for.
+fn parse_step(line: []const u8) Failure!Step {
     assert(line.len > 0);
-    assert(!run.panel.finger_down);
     var words = std.mem.tokenizeAny(u8, line, " \t");
     const verb = words.next() orelse return error.Usage;
-    if (std.mem.eql(u8, verb, "drawn")) return try drawn(run, try number(&words));
+    if (std.mem.eql(u8, verb, "drawn")) {
+        const budget_ms = try number(&words);
+        if (budget_ms == 0) return error.Usage; // No time at all: nothing could pass
+        return .{ .drawn = budget_ms };
+    }
     if (std.mem.eql(u8, verb, "log")) {
         const wanted = std.mem.trim(u8, line[verb.len..], " \t");
         if (wanted.len == 0) return error.Usage;
-        try wait_for_log(run, wanted);
-    } else if (std.mem.eql(u8, verb, "still")) {
-        try settled(run);
-    } else if (std.mem.eql(u8, verb, "shot")) {
-        try shot(run, words.next() orelse return error.Usage);
-    } else if (std.mem.eql(u8, verb, "wait")) {
-        sleep_ms(try number(&words));
-    } else {
-        try touch(run, try parse_touch(verb, &words) orelse return error.Usage);
+        return .{ .log = wanted };
+    }
+    if (std.mem.eql(u8, verb, "still")) return .still;
+    if (std.mem.eql(u8, verb, "shot")) return .{ .shot = words.next() orelse return error.Usage };
+    if (std.mem.eql(u8, verb, "wait")) return .{ .wait = try number(&words) };
+    // Anything else is a touch, or a word that isn't a step
+    return .{ .touch = try parse_touch(verb, &words) orelse return error.Usage };
+}
+
+/// Plays one step, returning how long the screen took to change for a `drawn` step.
+fn step(run: *Run, parsed: Step) Failure!?u32 {
+    assert(!run.panel.finger_down);
+    switch (parsed) {
+        .drawn => |budget_ms| return try drawn(run, budget_ms),
+        .log => |wanted| try wait_for_log(run, wanted),
+        .still => try settled(run),
+        .shot => |name| try shot(run, name),
+        .wait => |ms| sleep_ms(ms),
+        .touch => |t| try touch(run, t),
     }
     return null;
 }
@@ -735,26 +787,26 @@ fn touch(run: *Run, t: Touch) Failure!void {
         .power => try press_power(),
         .tap => |to| {
             const at = try to.resolve(run);
-            run.panel.down(at.x, at.y);
+            try run.panel.down(at.x, at.y);
             sleep_ms(touchsim.tap_ms);
-            run.lift();
+            try run.lift();
         },
         .hold => |h| {
             const at = try h.at.resolve(run);
-            run.panel.down(at.x, at.y);
+            try run.panel.down(at.x, at.y);
             sleep_ms(h.ms);
-            run.lift();
+            try run.lift();
         },
-        .drag => |d| drag(run, try d.from.resolve(run), try d.to.resolve(run), d.ms, d.hold_ms),
+        .drag => |d| try drag(run, try d.from.resolve(run), try d.to.resolve(run), d.ms, d.hold_ms),
     }
     run.lifted();
 }
 
 /// A finger moved in `drag_steps` even steps over `total_ms`, held still at `from` for
 /// `hold_ms` first.
-fn drag(run: *Run, from: Point, to: Point, total_ms: u32, hold_ms: u32) void {
+fn drag(run: *Run, from: Point, to: Point, total_ms: u32, hold_ms: u32) Failure!void {
     assert(!run.panel.finger_down);
-    run.panel.down(from.x, from.y);
+    try run.panel.down(from.x, from.y);
     sleep_ms(hold_ms);
     var x = from.x;
     var y = from.y;
@@ -763,12 +815,12 @@ fn drag(run: *Run, from: Point, to: Point, total_ms: u32, hold_ms: u32) void {
         const i: i32 = @intCast(index);
         x = from.x + @divTrunc((to.x - from.x) * i, drag_steps);
         y = from.y + @divTrunc((to.y - from.y) * i, drag_steps);
-        run.panel.move(x, y);
+        try run.panel.move(x, y);
     }
     // The last step lands where the drag ends
     assert(x == to.x);
     assert(y == to.y);
-    run.lift();
+    try run.lift();
 }
 
 /// Waits for the screen to change from how it was before the last touch, and returns
@@ -777,11 +829,12 @@ fn drawn(run: *const Run, budget_ms: u32) Failure!u32 {
     assert(run.lifted_us > 0);
     assert(budget_ms > 0);
     const deadline = run.lifted_us + @as(u64, budget_ms) * 1000;
-    // Bounded by the deadline
-    while (run.screen.sample() == run.before) {
-        if (now_us() >= deadline) return error.TooSlow;
-        sleep_ms(poll_ms);
-    }
+    // Bounded by the deadline. A screen that can't be read now is never taken for one
+    // that changed: it's read again
+    while (now_us() < deadline) : (sleep_ms(poll_ms)) {
+        const now = run.screen.sample();
+        if (now != null and now != run.before) break;
+    } else return error.TooSlow;
     // Drawn while the finger was still down (a hold's menu, say) counts as at once
     const took_us = now_us() -| run.lifted_us;
     return @intCast(took_us / 1000);
@@ -860,7 +913,7 @@ fn read_log(path: [*:0]const u8, from: u64) Failure![]const u8 {
     const rc = linux.open(path, .{ .ACCMODE = .RDONLY }, 0);
     if (core.os.failed(rc)) return error.NoLog;
     const fd: i32 = @intCast(rc);
-    defer _ = linux.close(fd); // Only read from
+    defer _ = linux.close(fd); // Ignored: only read from
     const read = linux.pread(fd, &log_buffer, log_buffer.len, @intCast(from));
     if (core.os.failed(read)) return error.NoLog;
     assert(read <= log_buffer.len);
@@ -908,6 +961,13 @@ test "every script reads, each place it names found" {
     try std.testing.expect(script_reads("tap 10 20 # A word\ntap page.forward\n"));
     try std.testing.expect(script_reads("tap placed note\nhold placed picture 700\n"));
     try std.testing.expect(!script_reads("tap placed nothing\n"));
+    // Every kind of step is read before the first touch, not only touches
+    try std.testing.expect(!script_reads("tpa 10 20\n"));
+    try std.testing.expect(!script_reads("tap 10 20\ndrawn 0\n"));
+    try std.testing.expect(!script_reads("drawn 500\ntap 10 20\n"));
+    try std.testing.expect(!script_reads("tap 10 20\nlog\n"));
+    try std.testing.expect(!script_reads("shot\n"));
+    try std.testing.expect(script_reads("tap 10 20\ndrawn 500\nstill\nshot a\nwait 100\n"));
     try std.testing.expect(script_reads("drag placed paragraph placed paragraph_end 400 700\n"));
 }
 

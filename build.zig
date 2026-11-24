@@ -1,4 +1,5 @@
 const std = @import("std");
+const models = @import("src/model/models.zig");
 const assert = std.debug.assert;
 
 /// The development tools in tools/, each built from tools/<name>.zig.
@@ -87,10 +88,9 @@ pub fn build(b: *std.Build) void {
 const default_layout: Layout = .paperwhite_12;
 var layout_model: []const u8 = @tagName(default_layout);
 
-/// Every Kindle noface knows, as src/model/device.zig `Model` names them (which refuses
-/// a name it hasn't got): `zig build layouts` lays the interface out for each but the
-/// one built.
-const Layout = enum { paperwhite_12, basic_11, scribe, basic_10 };
+/// Every Kindle noface knows, the app's own declaration of them (src/model/models.zig):
+/// `zig build layouts` lays the interface out for each but the one built.
+const Layout = models.Model;
 const all_layouts = std.meta.fieldNames(Layout);
 
 /// The Kindles a release carries a zip for: each only once `e2e all` has passed on a

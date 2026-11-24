@@ -194,6 +194,9 @@ pub const RealBook = struct {
     /// the run: during it the pretend Kindle answers every program noface starts.
     highlights: []const u8 = "",
     bookmarks: []const u8 = "",
+    /// The database gave no whole answer for its notes: it opens as the app opens it
+    /// then, its notes off.
+    notes_unreadable: bool = false,
 };
 
 /// Built as noface-scenarios (GitHub's tests) rather than inside noface: only then are
@@ -525,6 +528,7 @@ pub fn play_on_fake(alloc: std.mem.Allocator, kindle: Kindle) !FakeKindle {
     if (kindle.real_book) |real| {
         fake.highlights = real.highlights;
         fake.bookmarks = real.bookmarks;
+        fake.notes_unreadable = real.notes_unreadable;
     }
     assert(fake.sets.items.len == 0); // Nothing asked of it yet
     assert(!fake.busy);

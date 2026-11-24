@@ -685,9 +685,15 @@ const Browser = struct {
         assert(b.over == .none);
         const outcome = closed.outcome;
         const was_read = closed.was_read;
-        b.notice = closed.notice();
+        // Waiting for the library's next drawing, which a close with nothing to say (the
+        // next of a series, read now) never clears; on leaving, said before noface goes
+        const said = closed.notice();
+        if (said.len > 0) b.notice = said;
         b.lib.save(entry); // Its place and time read, in the library's index
-        if (outcome == .quit) return .leave;
+        if (outcome == .quit) {
+            if (b.notice.len > 0) try app.show_notice(a, b.notice);
+            return .leave;
+        }
         b.status_until = now_us() + status_watch_us; // Wi-Fi coming back, and the like
         if (was_read or !entry.is_read()) return .everything;
         const next = b.lib.next_in_series(entry) orelse return .everything;
@@ -731,6 +737,7 @@ const Browser = struct {
             .redraw => return .everything,
             .reload => b.reload(.as_is),
             .other => b.reload(.export_first),
+            .not_marked => b.notice = actions.not_marked_notice,
             .downloading => {
                 // Only a download finishes later, so only it is watched
                 const until = now_us() + download_watch_us;

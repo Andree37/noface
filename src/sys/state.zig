@@ -3,6 +3,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const file = @import("file.zig");
 const calls = @import("calls.zig");
+const os = @import("os.zig");
 
 pub const State = struct {
     para: u32 = 0,
@@ -67,25 +68,33 @@ pub fn key_by_name(book_path: []const u8) u64 {
 /// (a move that failed, or hasn't come yet): its place and notes copied to its own
 /// names first, so it opens where it was. The old files stay for the library to move
 /// or remove, as a book of the same name may be using them too; one already under the
-/// new name is never written over.
-pub fn adopt_by_name(state_path: [:0]const u8, book_path: []const u8) void {
+/// new name is never written over. Whether 0.2.0's are settled: not when one is there
+/// but unreadable, or wasn't copied, and then the book's own, missing in its stead,
+/// mustn't be written, as the library would then remove the old one for it.
+pub fn adopt_by_name(state_path: [:0]const u8, book_path: []const u8) bool {
     assert(book_path.len > 0);
-    const dir = std.fs.path.dirname(state_path) orelse return;
+    const dir = std.fs.path.dirname(state_path) orelse return false;
     const old_key = key_by_name(book_path);
     // The reader's own files, in `Kind`'s order: the place after the notes
     for (std.enums.values(Kind)) |kind| {
         if (kind.remade()) continue; // Made again from the book: nothing of the reader's
         var to_buffer: [file.own_path_bytes_max]u8 = undefined;
         var from_buffer: [file.own_path_bytes_max]u8 = undefined;
-        const to = sibling(&to_buffer, state_path, kind) catch return;
-        const from = file_path(&from_buffer, dir, kind, old_key) catch return;
+        const to = sibling(&to_buffer, state_path, kind) catch return false;
+        const from = file_path(&from_buffer, dir, kind, old_key) catch return false;
         assert(!std.mem.eql(u8, from, to)); // A whole path's name is never a file name's
-        // Only into nothing, from something: an unknown either way is left alone
-        if (file.presence(to) == .absent and file.presence(from) == .here) {
-            // Not copied, the book opens fresh as before: and the place after the notes
-            if (!file.copy_file(from, to)) return;
+        // Only into nothing: its own there, or maybe there (its read will say), is newer
+        switch (file.presence(to)) {
+            .here, .unknown => continue,
+            .absent => {},
+        }
+        switch (file.presence(from)) {
+            .absent => {},
+            .unknown => return false,
+            .here => if (!file.copy_file(from, to)) return false,
         }
     }
+    return true;
 }
 
 fn md5_key(text: []const u8, ending: []const u8) u64 {
@@ -375,7 +384,7 @@ test "a book opened before its files moved takes its notes and place, never over
         _ = calls.unlink(old); // Ignored: only /tmp is left fuller
         _ = calls.unlink(own_kind); // Ignored: only /tmp is left fuller
     };
-    adopt_by_name(own, book);
+    try std.testing.expect(adopt_by_name(own, book));
     for (std.enums.values(Kind)) |kind| {
         var own_kind_buffer: [file.own_path_bytes_max]u8 = undefined;
         var old_buffer: [file.own_path_bytes_max]u8 = undefined;
@@ -392,6 +401,22 @@ test "a book opened before its files moved takes its notes and place, never over
     }
     // Its own, once there, is never written over
     try std.testing.expect(save(&file.Kept.at(own), .{ .para = 9, .percent = 70 }));
-    adopt_by_name(own, book);
+    try std.testing.expect(adopt_by_name(own, book));
     try std.testing.expectEqual(@as(?u32, 70), look(own).percent);
+}
+
+test "an old place there but unreadable leaves a book's files unsettled" {
+    const dir = "/tmp";
+    var book_buffer: [64]u8 = undefined;
+    const book_format = "/mnt/us/documents/Unread-{d}.epub";
+    const book = try std.fmt.bufPrint(&book_buffer, book_format, .{calls.getpid()});
+    var own_buffer: [file.own_path_bytes_max]u8 = undefined;
+    const own = try path_for(&own_buffer, dir, book);
+    var old_buffer: [file.own_path_bytes_max]u8 = undefined;
+    const old = try file_path(&old_buffer, dir, .state, key_by_name(book));
+    // A link to itself: there, and never opened
+    try std.testing.expect(!os.failed(calls.symlink(old, old)));
+    defer _ = calls.unlink(old); // Ignored: only /tmp is left fuller
+    try std.testing.expect(!adopt_by_name(own, book));
+    try std.testing.expect(!file.exists(own)); // Nothing written in its stead
 }

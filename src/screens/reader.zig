@@ -23,6 +23,7 @@ const unix_time = os.unix_time;
 const app = @import("../app.zig");
 const goto = @import("reader/goto.zig");
 const more = @import("reader/more.zig");
+const book_actions = @import("book_actions.zig");
 const picture_view = @import("reader/picture.zig");
 const wifi_saver = @import("../kindle/wifi_saver.zig");
 const paginate = @import("reader/paginate.zig");
@@ -33,6 +34,7 @@ const lock = @import("lock.zig");
 const screen = @import("screen.zig");
 const sess = @import("reader/session.zig");
 const book_open = @import("reader/book_open.zig");
+const note_store = @import("reader/note_store.zig");
 const hl = @import("reader/highlight.zig");
 const view_rules = @import("reader/view.zig");
 const View = view_rules.View;
@@ -123,14 +125,16 @@ fn open_book(r: *Reader) !void {
     a.layout.hyphenator = a.languages.hyphenator(a.alloc, parsed.lang);
     const t1 = now_us();
     const state_path = try a.state_path(&r.path_buffer, entry.path);
-    r.state_path = state_path;
-    // Files 0.2.0 named by the file name, the library not yet having moved them
-    state.adopt_by_name(state_path, entry.path);
+    // Files 0.2.0 named by the file name, the library not yet having moved them: not
+    // settled, the book's own are never written this opening
+    const settled = state.adopt_by_name(state_path, entry.path);
+    if (!settled) std.debug.print("open: 0.2.0's files not settled, nothing saved\n", .{});
     // Kept in the reader, as the session points to it while it lays out
     r.progress = null;
     const opened = try book_open.find_pages(a, r.alloc, entry, book.paragraphs, .{
         .book_bytes = r.data.len,
         .state_path = state_path,
+        .settled = settled,
         .progress = &r.progress,
     });
     std.debug.print("open {s}: {d} pages, parsed in {d} ms, {s} in {d} ms\n", .{
@@ -154,10 +158,12 @@ fn open_book(r: *Reader) !void {
         .book_bytes = r.data.len,
         .back = .{ .place = opened.back, .turns_since_jump = opened.back_turns },
         .place = opened.place,
+        .saved = opened.saved,
     };
     if (r.progress) |*p| r.session.progress = p;
     r.s = &r.session;
-    try book_open.read_notes(a, r.alloc, entry, state_path, r.s);
+    const own_files: note_store.Files = .{ .state_path = state_path, .settled = settled };
+    try book_open.read_notes(a, r.alloc, entry, own_files, r.s);
     r.lang = parsed.lang;
     r.start = opened.start;
     r.last_place = opened.start;
@@ -177,7 +183,6 @@ pub const Reader = struct {
     scratch: std.mem.Allocator = undefined, // One action's, emptied after it
     data: []const u8 = &.{}, // The book's file, mapped
     path_buffer: [file.own_path_bytes_max]u8 = undefined,
-    state_path: [:0]const u8 = "", // In `path_buffer`
     progress: ?paginate.Progressive = null, // A first open's layout, laid out in idle moments
     session: sess.Session = undefined,
     s: *sess.Session = undefined, // The session above
@@ -311,6 +316,10 @@ pub const Reader = struct {
                     .stay => try r.draw_toolbar(true),
                     .page => |target| try r.to_page(target),
                     .refresh => try r.to_page(@intCast(s.current)),
+                    .not_marked => {
+                        try r.draw_toolbar(true);
+                        try app.show_notice(r.a, book_actions.not_marked_notice);
+                    },
                 },
                 .closed, .interrupted => try r.draw_toolbar(true),
             },

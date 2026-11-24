@@ -21,7 +21,7 @@ const failed = os.failed;
 const settings_path = paths.data_dir ++ "/" ++ paths.data.settings;
 const attempts_path = paths.data_dir ++ "/" ++ paths.data.boot_attempts;
 const log_path = paths.data_dir ++ "/" ++ paths.data.log;
-const off_not_saved = "autostart: couldn't save it turned off, turned off next boot\n";
+const off_not_saved = "autostart: couldn't save it turned off, tried again next boot\n";
 const uncounted = "autostart: this boot couldn't be counted, so noface wasn't started\n";
 /// Boots in a row without noface running a minute before autostart turns itself off.
 pub const attempts_max = 3;
@@ -84,15 +84,27 @@ pub fn should_start() bool {
     // The reader's settings: one unreadable reads as autostart off, and is never written
     var settings_file = file.Kept.at(settings_path);
     var settings = settings_model.parse(settings_file.read(&settings_buffer));
-    const attempts = file.read_system(attempts_path, &attempts_buffer);
+    // The count is noface's own: one there but unreadable can't be counted on, so it's
+    // handled as a count that can't be written, and noface isn't started
+    const attempts = file.read_small(attempts_path, &attempts_buffer) catch |err| switch (err) {
+        error.NotFound => "",
+        error.CantRead => {
+            file.append_file(log_path, uncounted);
+            return false;
+        },
+    };
     switch (decide(&settings, attempts)) {
         .off => return false,
         .give_up => {
             // Written as noface writes it: every other setting stays as it was
             settings.autostart = false;
             const off = settings_model.format(&settings_buffer, &settings);
-            // Unwritten, autostart stays on, and this guard turns it off at the next boot
-            if (!settings_file.write(&.{off})) file.append_file(log_path, off_not_saved);
+            // Unwritten, autostart stays on: the count stays too, so the next boot gives
+            // up again and tries again, never starting noface meanwhile
+            if (!settings_file.write(&.{off})) {
+                file.append_file(log_path, off_not_saved);
+                return false;
+            }
             // Ignored: gone already: the count starts over either way
             _ = calls.unlink(attempts_path);
             const message = "autostart: noface failed to start 3 boots in a row, " ++

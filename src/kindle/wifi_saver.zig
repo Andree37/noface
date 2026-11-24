@@ -85,8 +85,8 @@ pub const Outcome = enum {
 };
 
 /// Turns the radio off, if airplane mode and Bluetooth are both off and nothing is
-/// downloading. The note goes down first and must be there to read back: without
-/// it nothing would ever turn the radio on again.
+/// downloading. The note goes down first and must land: without it nothing would
+/// ever turn the radio on again.
 pub fn pause(downloading: bool) Outcome {
     assert(marker_is_note());
     if (downloading) return .later;
@@ -99,9 +99,8 @@ pub fn pause(downloading: bool) Outcome {
         .unknown => return .later,
     }
     if (lipc.bluetooth_on() orelse return .later) return .later;
-    // Unwritten, it isn't marked, so it's never paused: noface couldn't put it back
-    _ = file.write_small(marker, "1\n");
-    if (!marked()) return .never;
+    // Unwritten, it's never paused: noface couldn't put it back
+    if (!file.write_small(marker, "1\n")) return .never;
     lipc.set_airplane(true);
     // A clear "still on": it didn't happen, try again later. No answer (cmd busy taking
     // the radio down, or not working at all): keep the note, as noface may well have
@@ -115,13 +114,15 @@ pub fn pause(downloading: bool) Outcome {
     return .paused;
 }
 
-/// Whether noface has the radio off right now (so it may turn it back on).
+/// Whether noface has the radio off right now (so it may turn it back on): its note is
+/// there, or may be, one that can't be opened being taken as there, as noface may
+/// well have turned it off and must be the one to turn it back on.
 pub fn marked() bool {
     assert(marker_is_note());
-    var buffer: [8]u8 = undefined;
-    const note = file.read_system(marker, &buffer);
-    assert(note.len <= buffer.len);
-    return note.len > 0;
+    return switch (file.presence(marker)) {
+        .here, .unknown => true,
+        .absent => false,
+    };
 }
 
 /// Turns the radio back on, if noface is the one that turned it off. The note stays

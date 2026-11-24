@@ -17,6 +17,7 @@ const Font = @import("gfx/font.zig").Font;
 const catalog = @import("model/catalog.zig");
 const kindle_catalog = @import("kindle/catalog.zig");
 const annotation_db = @import("kindle/annotation_db.zig");
+const safe = @import("kindle/safe.zig");
 const annotations = @import("kindle/annotations.zig");
 const settings_model = @import("model/settings.zig");
 const dictionary = @import("model/dictionary.zig");
@@ -207,10 +208,15 @@ fn selftest_kindle_books(alloc: std.mem.Allocator) ![]const RealBook {
         if (books.items.len == selftest_books_tried_max) break;
         if (!entry.is_local() or entry.is_epub()) continue;
         if (!file.exists(entry.path)) continue; // Gone since the list was written
+        if (!safe.safe_id(entry.key)) continue; // One the notes database can't name
+        // Notes that can't be read never stop a book opening: it opens without them
+        const highlights = try all_lines(alloc, entry.key, .highlight, page);
+        const bookmarks = try all_lines(alloc, entry.key, .bookmark, page);
         try books.append(alloc, .{
             .entry = entry,
-            .highlights = try all_lines(alloc, entry.key, .highlight, page),
-            .bookmarks = try all_lines(alloc, entry.key, .bookmark, page),
+            .highlights = highlights orelse "",
+            .bookmarks = bookmarks orelse "",
+            .notes_unreadable = highlights == null or bookmarks == null,
         });
     }
     std.sort.block(RealBook, books.items, {}, more_highlighted);
@@ -220,22 +226,20 @@ fn selftest_kindle_books(alloc: std.mem.Allocator) ![]const RealBook {
 }
 
 /// Every "id|start|end" line the database has of a book's `kind` of notes, a page at a
-/// time through `page`, as the pretend Kindle is to answer them.
+/// time through `page`, as the pretend Kindle is to answer them; null when it gave no
+/// whole answer.
 fn all_lines(
     alloc: std.mem.Allocator,
     key: []const u8,
     kind: annotations.Kind,
     page: *annotation_db.Page,
-) ![]const u8 {
-    assert(key.len > 0);
+) !?[]const u8 {
     assert(annotation_db.page_rows > 0);
     var lines: std.ArrayList(u8) = .empty;
     // A page at a time, until one isn't full
     for (0..std.math.maxInt(u32)) |index| {
         const first_row = index * annotation_db.page_rows;
-        // No whole answer: the book's real notes unknown, so it's no test of them
-        const read = annotation_db.read_page(key, kind, page, first_row) orelse
-            return error.NotesUnreadable;
+        const read = annotation_db.read_page(key, kind, page, first_row) orelse return null;
         try lines.appendSlice(alloc, read.lines);
         if (read.rows < annotation_db.page_rows) break;
     }

@@ -323,7 +323,7 @@ pub fn assemble(p: Parts) !app.App {
     const user: user_data.UserData = .load(.{
         .settings = .at(p.files.settings),
         .speed = .at(p.files.speed),
-        .journal = p.files.journal,
+        .journal = .at(p.files.journal),
     });
     const families = p.offered.families;
     const chosen = user.settings.family_index(families);

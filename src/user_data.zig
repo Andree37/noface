@@ -20,7 +20,7 @@ const log = std.log.scoped(.user_data);
 pub const Files = struct {
     settings: file.Kept,
     speed: file.Kept,
-    journal: [*:0]const u8,
+    journal: file.Kept,
 };
 
 /// The reader's own data in memory, read from its files as noface starts, and the
@@ -42,12 +42,13 @@ pub const UserData = struct {
         var kept = files;
         const speeds = load_speed(&kept.speed);
         const settings = load_settings(&kept.settings);
+        const journal = load_journal(&kept.journal);
         const u: UserData = .{
             .files = kept,
             .settings = settings,
             .speed = speeds.speed,
             .running_pace = speeds.running_pace,
-            .journal = load_journal(files.journal),
+            .journal = journal,
         };
         assert(u.journal.len <= u.journal.days.len);
         assert(u.speed.words >= 0);
@@ -70,7 +71,7 @@ pub const UserData = struct {
     }
 
     pub fn save_journal(u: *const UserData) void {
-        save_journal_to(u.files.journal, &u.journal);
+        save_journal_to(&u.files.journal, &u.journal);
     }
 };
 
@@ -128,10 +129,11 @@ pub fn save_speed_to(kept: *const file.Kept, speeds: Speeds) void {
     if (!kept.write(&parts)) log.info("reading speed not saved", .{});
 }
 
-/// The journal saved at `path`: every day is in the file, which is mapped, never read
-/// whole into memory; the journal keeps its latest days.
-pub fn load_journal(path: [*:0]const u8) journal_model.Journal {
-    const content = file.map(path) catch return .{};
+/// The journal saved in `kept`: every day is in the file, which is mapped, never read
+/// whole into memory; the journal keeps its latest days. One there but unreadable
+/// reads as none, and `kept` then never writes over it.
+pub fn load_journal(kept: *file.Kept) journal_model.Journal {
+    const content = kept.mapped() orelse return .{};
     defer file.unmap(content);
     const journal = journal_model.parse(content);
     assert(journal.len <= journal.days.len); // The latest days, the rest in the file
@@ -139,10 +141,11 @@ pub fn load_journal(path: [*:0]const u8) journal_model.Journal {
 }
 
 /// Saves the journal: the days already in the file and older than memory holds, as
-/// they are, then the days memory holds. Not saved when the file is there but can't be
-/// read: written over, the days only it holds would be lost.
-pub fn save_journal_to(path: [*:0]const u8, journal: *const journal_model.Journal) void {
+/// they are, then the days memory holds. Not saved when the file was there but couldn't
+/// be read, as it loaded or now: written over, the days only it holds would be lost.
+pub fn save_journal_to(kept: *const file.Kept, journal: *const journal_model.Journal) void {
     var buf: [journal_model.max_format_bytes]u8 = undefined;
+    const path = kept.path;
     assert(journal.len <= journal.days.len);
     const content = journal_model.format(&buf, journal);
     assert(content.len >= journal_model.tag_line_bytes); // Sized for the longest journal
@@ -164,7 +167,7 @@ pub fn save_journal_to(path: [*:0]const u8, journal: *const journal_model.Journa
         older[1], // A line break, when the file's last line had none
         content[journal_model.tag_line_bytes..],
     };
-    if (!file.write_parts(path, &parts)) log.info("journal not saved", .{});
+    if (!kept.write(&parts)) log.info("journal not saved", .{});
 }
 
 /// A path in /tmp for a test's file, "/tmp/noface-<name>-<pid>", none there yet.
@@ -181,15 +184,28 @@ test "a journal that's there but can't be read is never written over" {
     defer _ = calls.unlink(path); // Ignored: only /tmp is left fuller
     var journal: journal_model.Journal = .{};
     journal.add(20_000, 600, 3);
-    save_journal_to(path, &journal);
-    try std.testing.expectEqual(1, load_journal(path).len);
+    var kept = file.Kept.at(path);
+    save_journal_to(&kept, &journal);
+    try std.testing.expectEqual(1, load_journal(&kept).len);
     // A link to itself is there but can't be opened, as on a drive that fails a read
     _ = calls.unlink(path); // Ignored: checked by the link made in its place
     try std.testing.expect(!os.failed(calls.symlink(path, path)));
     journal.add(20_001, 600, 3);
-    save_journal_to(path, &journal);
+    save_journal_to(&kept, &journal);
     // Still the link: nothing was renamed over it
     try std.testing.expectError(error.OpenFailed, file.map(path));
+    // Unreadable as it loads, and readable again by the save: never written over, as
+    // the days it held weren't read
+    _ = calls.unlink(path); // Ignored: the file put back just below
+    try std.testing.expect(!os.failed(calls.symlink(path, path)));
+    var loaded = file.Kept.at(path);
+    try std.testing.expectEqual(0, load_journal(&loaded).len);
+    try std.testing.expect(!loaded.known);
+    _ = calls.unlink(path); // Ignored: written just below
+    try std.testing.expect(file.write_small(path, "days the reader read\n"));
+    save_journal_to(&loaded, &journal);
+    var back: [64]u8 = undefined;
+    try std.testing.expectEqualStrings("days the reader read\n", try file.read_small(path, &back));
 }
 
 test "the longest typeface name a setting holds saves and comes back" {
@@ -247,7 +263,7 @@ test "settings and a speed there but unreadable are never written over" {
     var u: UserData = .load(.{
         .settings = .at(settings_path),
         .speed = .at(speed_path),
-        .journal = journal_path,
+        .journal = .at(journal_path),
     });
     // Found unreadable, and kept so with the data
     try std.testing.expect(!u.files.settings.known);

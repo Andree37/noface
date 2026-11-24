@@ -61,6 +61,9 @@ pub const Session = struct {
     pages_path: [:0]const u8 = "", // Where this book's page breaks are saved
     /// The book's place file, as read when it opened: never saved over if unreadable.
     place: file.Kept,
+    /// The place as read when the book opened, then as last saved: each save changes
+    /// it, so anything else kept with the place is kept too, and it's never read again.
+    saved: state.State,
     book_bytes: u64 = 0, // The book file's size, part of the saved breaks' key
     // A first open still being laid out: pages count from the reader's place until done
     progress: ?*paginate.Progressive = null,
@@ -594,8 +597,7 @@ pub fn save_progress(entry: *catalog.Entry, s: *Session, percent_read: ?u32) boo
     const words_left = s.book_words_left(pos);
     const percent = percent_read orelse s.words_percent(words_left) orelse entry.percent;
     const now = unix_time();
-    // Changed in place, so anything else kept with the place is kept too
-    var saved = state.load(&s.place);
+    var saved = s.saved;
     saved.para = book_model.text_index(s.paragraphs, pos.para);
     saved.byte = pos.byte;
     saved.percent = percent;
@@ -609,6 +611,7 @@ pub fn save_progress(entry: *catalog.Entry, s: *Session, percent_read: ?u32) boo
     saved.back_turns = s.back.turns_since_jump;
     saved.numbering = state.numbering_now; // The places above are numbered as now
     const place_saved = state.save(&s.place, saved);
+    s.saved = saved; // What the next save changes, whether this one landed or not
     s.app.user.save_speed();
     s.app.user.save_journal();
     // The library shows what's saved: a place unreadable as the book opened isn't, nor

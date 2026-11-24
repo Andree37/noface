@@ -26,13 +26,13 @@ pub const BookNotes = struct {
         n: *BookNotes,
         alloc: std.mem.Allocator,
         entry: *const catalog.Entry,
-        state_path: [:0]const u8,
+        files: note_store.Files,
         paragraphs: []const book_model.Paragraph,
     ) !void {
         // Read once, into empty lists, as the book opens
         assert(n.highlights.items.len == 0);
         assert(n.bookmarks.items.len == 0);
-        n.store = try .choose(alloc, entry, state_path);
+        n.store = try .choose(alloc, entry, files);
         n.store.renumber(paragraphs); // A 0.2.0 file, numbered as now before it's read
         const highlight_notes = try n.store.read(alloc, .highlight);
         const highlights_read = try highlights.parse(alloc, paragraphs, highlight_notes);

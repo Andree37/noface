@@ -99,6 +99,7 @@ test "the charger, the quick panel, and taps on a note or a highlight never wait
         .anchor = .{},
         .progress = &progress,
         .place = undefined, // Never saved: only taps are asked of it
+        .saved = .{},
     };
     try std.testing.expect(!needs_all_pages(.charger, .page, null, &s));
     try std.testing.expect(!needs_all_pages(.pull, .page, null, &s));

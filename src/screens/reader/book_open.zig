@@ -13,6 +13,7 @@ const hyphen = @import("../../layout/hyphen.zig");
 const state = @import("../../sys/state.zig");
 const file = @import("../../sys/file.zig");
 const page_store = @import("page_store.zig");
+const note_store = @import("note_store.zig");
 const paginate = @import("paginate.zig");
 const sess = @import("session.zig");
 const hl = @import("highlight.zig");
@@ -52,6 +53,8 @@ pub const Opened = struct {
     back: ?book_model.Pos, // The Back button's place, as the book was closed
     back_turns: u32,
     place: file.Kept, // The place's file, as read: never saved over if unreadable
+    /// The place as read, renumbered as the book is now: what each save changes.
+    saved: state.State,
 };
 
 /// The pages: saved ones, or a first few laid out from the reader's place (the rest
@@ -64,6 +67,7 @@ pub fn find_pages(
     options: struct {
         book_bytes: u64,
         state_path: [:0]const u8,
+        settled: bool, // 0.2.0's files are (state.adopt_by_name): else none is written
         progress: *?paginate.Progressive,
     },
 ) !Opened {
@@ -74,7 +78,12 @@ pub fn find_pages(
     const pages_path = try alloc.dupeSentinel(u8, pages_name, 0);
     const pages_key = page_store.key(a, options.book_bytes);
     const stored_pages = page_store.load(alloc, pages_path, pages_key, paragraphs);
-    var place = file.Kept.at(options.state_path);
+    // The place's file, its path in the book's memory, as long as the book is open; read
+    // once, here: whether it can be saved over is decided as the book opens
+    var place: file.Kept = .{
+        .path = try alloc.dupeSentinel(u8, options.state_path, 0),
+        .known = options.settled,
+    };
     const saved = renumbered(state.load(&place), paragraphs);
     const from_kindle = state.prefer_kindle(saved, entry.kindle_last);
     // Without saved breaks, lay out a little from the reader's place and show it at
@@ -117,6 +126,7 @@ pub fn find_pages(
         .back = back,
         .back_turns = saved.back_turns,
         .place = place,
+        .saved = saved,
     };
 }
 
@@ -192,13 +202,13 @@ pub fn read_notes(
     a: *app.App,
     alloc: std.mem.Allocator,
     entry: *const catalog.Entry,
-    state_path: [:0]const u8,
+    files: note_store.Files,
     session: *sess.Session,
 ) !void {
     const paragraphs = session.paragraphs;
     assert(paragraphs.len > 0); // Parsing refuses a book without any
     session.words = try .count(alloc, paragraphs);
     assert(session.words.before.len == paragraphs.len + 1);
-    try session.notes.load(alloc, entry, state_path, paragraphs);
+    try session.notes.load(alloc, entry, files, paragraphs);
     try hl.refresh_marks(a, session, alloc);
 }

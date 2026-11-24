@@ -31,6 +31,10 @@ comptime {
     assert(std.mem.startsWith(u8, highlights.id_format, annotations.Kind.highlight.prefix()));
 }
 
+/// Where a book's own files are, and whether 0.2.0's are settled (`state.adopt_by_name`):
+/// not, its own are never written.
+pub const Files = struct { state_path: [:0]const u8, settled: bool };
+
 pub const NoteStore = union(enum) {
     /// The Kindle's database, by the book's key, type and GUID.
     amazon: *const catalog.Entry,
@@ -47,13 +51,15 @@ pub const NoteStore = union(enum) {
     pub fn choose(
         alloc: std.mem.Allocator,
         entry: *const catalog.Entry,
-        state_path: []const u8,
+        book_files: Files,
     ) !NoteStore {
-        assert(state_path.len > 0);
+        assert(book_files.state_path.len > 0);
         if (annotation_db.dry_run()) return .off;
         if (!entry.is_epub()) return .{ .amazon = entry };
+        // 0.2.0's notes not settled: what a file written now would replace is unknown
+        if (!book_files.settled) return .unreadable;
         var buffer: [files.path_bytes_max]u8 = undefined;
-        const path = try state.sibling(&buffer, state_path, .notes);
+        const path = try state.sibling(&buffer, book_files.state_path, .notes);
         assert(path.len > 0);
         return .{ .own_file = try alloc.dupeSentinel(u8, path, 0) };
     }

@@ -32,8 +32,18 @@ comptime {
 /// Marks a book read or unread, from its sheet here or the reader's menu. The Kindle
 /// keeps this for its own books; an EPUB's is kept with its place. Marked unread, it
 /// starts again from the beginning: a book at its last page is read, marked or not.
-pub fn mark_read(a: *app.App, e: *catalog.Entry, done: bool) void {
+/// Whether it was marked: an EPUB whose place can't be saved isn't, and then nothing
+/// changes, its journal neither.
+pub fn mark_read(a: *app.App, e: *catalog.Entry, done: bool) bool {
     const counted = e.finished; // The journal counts a book while it's marked finished
+    if (e.is_epub() or (!done and e.is_local())) {
+        save_marked(a, e, done) catch |err| {
+            std.debug.print("mark not saved with its place: {s}\n", .{@errorName(err)});
+            // An EPUB's mark is kept with its place alone; a Kindle book's, by the
+            // Kindle, stands without its place started again
+            if (e.is_epub()) return false;
+        };
+    }
     store.mark_read(e.key, e.kind, done);
     e.finished = done;
     if (!done) {
@@ -42,28 +52,27 @@ pub fn mark_read(a: *app.App, e: *catalog.Entry, done: bool) void {
     }
     assert(e.is_read() == done);
     assert(e.percent <= 100);
-    if (e.is_epub() or (!done and e.is_local())) {
-        save_marked(a, e) catch |err| {
-            std.debug.print("marked, not saved with its place: {s}\n", .{@errorName(err)});
-        };
-    }
     if (done != counted) {
         if (done) a.user.journal.finish(a.today()) else a.user.journal.unfinish(a.today());
         a.user.save_journal();
     }
     std.debug.print("marked {s}\n", .{if (done) "read" else "unread"});
+    return true;
 }
+
+/// What the library and the reader say when `mark_read` didn't mark a book.
+pub const not_marked_notice = "Couldn't mark it: its place couldn't be saved.";
 
 /// Saves whether the book is finished with its place, in one write. Unread, the place
 /// is its beginning, dated just after the last time it was opened anywhere: newer than
 /// stock's place and percent, so ours win, without moving it up in recent order.
-fn save_marked(a: *app.App, e: *const catalog.Entry) !void {
+fn save_marked(a: *app.App, e: *const catalog.Entry, done: bool) !void {
     assert(e.is_epub() or e.is_local()); // A file of its own to keep its place by
     var path_buffer: [file.own_path_bytes_max]u8 = undefined;
     var kept = file.Kept.at(try a.state_path(&path_buffer, e.path));
     var saved = state.load(&kept);
-    saved.finished = e.finished;
-    if (!e.finished) {
+    saved.finished = done;
+    if (!done) {
         saved.para = 0;
         saved.byte = 0;
         saved.percent = 0;
@@ -78,8 +87,8 @@ fn save_marked(a: *app.App, e: *const catalog.Entry) !void {
 
 /// What a book's actions changed, which decides what the library does next: `reload`
 /// re-reads the library (a series set by hand), `redraw` only repaints it (a screen of
-/// its own was shown and nothing changed).
-pub const Change = enum { none, downloading, other, reload, redraw };
+/// its own was shown and nothing changed), `not_marked` says a mark didn't land.
+pub const Change = enum { none, downloading, other, reload, redraw, not_marked };
 
 /// Starts a book's actions in `s`, where they stay while open (`screen.open`): a card
 /// of them over `background`, then for a removal the question whether to remove it,
@@ -232,8 +241,8 @@ pub const Sheet = struct {
                 return .{ .done = .downloading };
             },
             .mark_read, .mark_unread => |choice| {
-                mark_read(a, e, choice == .mark_read);
-                return .{ .done = .other };
+                const marked = mark_read(a, e, choice == .mark_read);
+                return .{ .done = if (marked) .other else .not_marked };
             },
         }
     }

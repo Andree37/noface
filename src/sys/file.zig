@@ -150,6 +150,19 @@ pub const Kept = struct {
         };
     }
 
+    /// Its contents mapped (`map`), to be let go of with `unmap`: null when there's none,
+    /// or when it's there but unreadable, which leaves it unknown, as `read` does.
+    pub fn mapped(k: *Kept) ?[]const u8 {
+        return map(k.path) catch |err| switch (err) {
+            error.NotFound, error.EmptyFile => null,
+            error.OpenFailed, error.SeekFailed, error.MmapFailed => {
+                log.info("{s}: there but unreadable, never written over", .{k.path});
+                k.known = false;
+                return null;
+            },
+        };
+    }
+
     /// Writes `parts` as the file's whole text, as `write_parts`, unless what it holds
     /// is unknown. Whether it was written, whole.
     pub fn write(k: *const Kept, parts: []const []const u8) bool {
@@ -198,7 +211,7 @@ pub fn write_parts(path: [*:0]const u8, parts: []const []const u8) bool {
     var tmp: [path_bytes_max + ".tmp".len]u8 = undefined;
     const name = std.mem.sliceTo(path, 0);
     const tmp_path = std.fmt.bufPrintSentinel(&tmp, "{s}.tmp", .{name}, 0) catch {
-        std.debug.print("not saved, its path is too long: {s}\n", .{name});
+        log.info("not saved, its path is too long: {s}", .{name});
         return false;
     };
     assert(std.mem.endsWith(u8, tmp_path, ".tmp")); // Beside the real file, never it
@@ -207,7 +220,10 @@ pub fn write_parts(path: [*:0]const u8, parts: []const []const u8) bool {
         .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true, .CLOEXEC = true },
         0o644,
     );
-    if (failed(rc)) return false;
+    if (failed(rc)) {
+        log.info("not saved, its new copy couldn't be made: {s}", .{name});
+        return false;
+    }
     const fd: i32 = @intCast(rc);
     var total: u64 = 0;
     const whole = for (parts) |part| {
@@ -217,13 +233,19 @@ pub fn write_parts(path: [*:0]const u8, parts: []const []const u8) bool {
     // On the drive before the rename: renamed first, a power cut could leave the new
     // name over contents never written, and the old contents gone
     const synced = whole and !failed(linux.fsync(fd));
-    if (whole and !synced) std.debug.print("not saved, the drive didn't take it: {s}\n", .{name});
     // A failed close may mean a short file: the rename below needs it whole
     const closed = !failed(linux.close(fd));
-    // Never an empty file in place of the old one
-    if (synced and closed and total > 0) {
-        if (!failed(linux.rename(tmp_path, path))) return true;
-    }
+    // Each way it can fail said, so a save lost leaves a line in the log. Never an
+    // empty file in place of the old one
+    const why: []const u8 = why: {
+        if (!whole) break :why "the drive didn't take all of it";
+        if (!synced) break :why "the drive didn't take it";
+        if (!closed) break :why "its new copy didn't close";
+        if (total == 0) break :why "it was empty";
+        if (failed(linux.rename(tmp_path, path))) break :why "its new copy couldn't take its place";
+        return true;
+    };
+    log.info("not saved, {s}: {s}", .{ why, name });
     // Not renamed: the old file stays, whole, and the partial new one goes
     _ = linux.unlink(tmp_path); // Ignored: one left over is only space, written over next time
     return false;

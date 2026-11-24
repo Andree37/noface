@@ -371,6 +371,60 @@ fn eql_any(name: []const u8, comptime list: []const []const u8) bool {
     return false;
 }
 
+/// Paragraphs as they're made, on shelves that never move, each twice the one before:
+/// a list grown on the book's bump region would leave every copy it outgrew behind it.
+/// Joined into one slice once the book is read, the shelves then the only bytes left.
+const Shelves = struct {
+    shelves: [shelves_max][]book.Paragraph = undefined,
+    shelf_count: u32 = 0, // Shelves made, the last being filled
+    count: u32 = 0, // Paragraphs on them
+
+    const first_shelf = 1024;
+    /// Enough for as many paragraphs as a u32 counts.
+    const shelves_max = 23;
+
+    comptime {
+        assert(first_shelf * ((1 << shelves_max) - 1) >= std.math.maxInt(u32));
+    }
+
+    /// The paragraphs every shelf made so far holds.
+    fn capacity(s: *const Shelves) u64 {
+        assert(s.shelf_count <= shelves_max);
+        return first_shelf * ((@as(u64, 1) << @intCast(s.shelf_count)) - 1);
+    }
+
+    /// Adds `p` after the others; its index.
+    fn append(s: *Shelves, alloc: std.mem.Allocator, p: book.Paragraph) !u32 {
+        assert(s.count <= s.capacity());
+        if (s.count == s.capacity()) {
+            if (s.shelf_count == shelves_max) return error.OutOfMemory;
+            const size = @as(u32, first_shelf) << @intCast(s.shelf_count);
+            s.shelves[s.shelf_count] = try alloc.alloc(book.Paragraph, size);
+            s.shelf_count += 1;
+        }
+        const last = s.shelf_count - 1;
+        const on_last = s.count - (first_shelf * ((@as(u32, 1) << @intCast(last)) - 1));
+        s.shelves[last][on_last] = p;
+        const index = s.count;
+        s.count += 1;
+        assert(s.count <= s.capacity());
+        return index;
+    }
+
+    /// Every paragraph, in order, in one slice of exactly their count.
+    fn join(s: *const Shelves, alloc: std.mem.Allocator) ![]book.Paragraph {
+        const all = try alloc.alloc(book.Paragraph, s.count);
+        var done: u32 = 0;
+        for (s.shelves[0..s.shelf_count]) |shelf| {
+            const take = @min(shelf.len, s.count - done);
+            @memcpy(all[done..][0..take], shelf[0..take]);
+            done += take;
+        }
+        assert(done == s.count);
+        return all;
+    }
+};
+
 /// A link before its target is known: from where, to which anchor.
 const PendingLink = struct { paragraph: u32, start: u32, end: u32, target: AnchorKey };
 
@@ -381,7 +435,10 @@ const Builder = struct {
     /// key): emptied with the chapter's markup.
     scratch: std.mem.Allocator,
     files: []const zip.Entry,
-    paragraphs: std.ArrayList(book.Paragraph) = .empty,
+    made: Shelves = .{},
+    /// The chapter being read is one 0.2.0 couldn't find, so its paragraphs weren't in
+    /// its numbering (`Paragraph.skipped_by_0_2`).
+    skipped_by_0_2: bool = false,
     anchors: Anchors = .empty,
     // Anchors that fall partway into a paragraph
     inner_anchors: std.AutoHashMapUnmanaged(AnchorKey, void) = .empty,
@@ -479,7 +536,7 @@ const Builder = struct {
     /// is dropped.
     fn trim_ranges(b: *Builder) void {
         const length = b.text_length();
-        const paragraph: u32 = @intCast(b.paragraphs.items.len);
+        const paragraph = b.made.count;
         var runs_kept: u32 = 0;
         for (b.runs.items) |r| {
             if (r.start >= length) continue;
@@ -505,19 +562,19 @@ const Builder = struct {
     fn flush_paragraph(b: *Builder) !void {
         assert(b.text.items.len > 0);
         assert(b.text.items[0] != ' ');
-        const index: u32 = @intCast(b.paragraphs.items.len);
-        try b.paragraphs.append(b.alloc, .{
+        const index = try b.made.append(b.alloc, .{
             .text = try b.alloc.dupe(u8, b.text.items),
             .look = b.look,
             .runs = try b.alloc.dupe(book.Run, b.runs.items),
             .section = b.section,
+            .skipped_by_0_2 = b.skipped_by_0_2,
         });
         try b.place_anchors(index);
     }
 
     fn place_anchors(b: *Builder, index: u32) !void {
         // The paragraph the anchors land on is the one just added
-        assert(index + 1 == b.paragraphs.items.len);
+        assert(index + 1 == b.made.count);
         for (b.waiting_anchors.items) |key| {
             const slot = try b.anchors.getOrPut(b.alloc, key);
             if (!slot.found_existing) slot.value_ptr.* = index;
@@ -528,20 +585,20 @@ const Builder = struct {
 
     fn add_picture(b: *Builder, dir: []const u8, src: []const u8) !void {
         assert(b.in_body);
-        const path = try resolve(b.alloc, dir, src);
+        const path = try resolve(b.scratch, dir, src);
         const entry = zip.find(b.files, path) orelse return;
         // The book's own bytes, read only as far as their size: only JPEG and PNG
         // can be drawn
         const image = picture.image(&entry) orelse return;
         assert(image.data.ptr == entry.data.ptr); // Never a copy
         try b.flush();
-        const index: u32 = @intCast(b.paragraphs.items.len);
-        const seen_by_0_2 = try found_by_0_2(b.alloc, b.files, dir, src);
-        try b.paragraphs.append(b.alloc, .{
+        // Missed by 0.2.0 with its chapter, or by itself
+        const seen_by_0_2 = try found_by_0_2(b.scratch, b.files, dir, src);
+        const index = try b.made.append(b.alloc, .{
             .text = "",
             .image = image,
             .section = b.section,
-            .skipped_by_0_2 = !seen_by_0_2,
+            .skipped_by_0_2 = b.skipped_by_0_2 or !seen_by_0_2,
         });
         try b.place_anchors(index);
     }
@@ -662,7 +719,7 @@ const Builder = struct {
         if (href.len == 0) return; // Nowhere to go, and `end_link` reads its first byte
         if (std.mem.indexOf(u8, href, "://") != null) return;
         b.link = .{
-            .paragraph = @intCast(b.paragraphs.items.len),
+            .paragraph = b.made.count,
             .start = b.text_length(),
             .target = href,
         };
@@ -677,31 +734,33 @@ const Builder = struct {
         // A paragraph ended inside it (a picture in it, a line break, "<p><a>x</p><p>y
         // </a>"): it covers the paragraph now being read from its start, all of whose
         // text came after the link opened ("<a><img/>1</a>" links its "1")
-        assert(link.paragraph <= b.paragraphs.items.len);
-        const start = if (link.paragraph == b.paragraphs.items.len) link.start else 0;
+        assert(link.paragraph <= b.made.count);
+        const start = if (link.paragraph == b.made.count) link.start else 0;
         const end = b.text_length();
         if (end <= start) return;
         const href = link.target;
         assert(href.len > 0);
         const file = if (href[0] == '#') b.file else try resolve(b.scratch, b.dir, href);
         try b.links.append(b.alloc, .{
-            .paragraph = @intCast(b.paragraphs.items.len),
+            .paragraph = b.made.count,
             .start = start,
             .end = end,
             .target = anchor_key(file, fragment_of(href)),
         });
     }
 
-    /// Ties each link to the paragraph its target landed in.
-    fn resolve_links(b: *Builder) !void {
+    /// Ties each link to the paragraph its target landed in, among `paragraphs`, the
+    /// book's, joined.
+    fn resolve_links(b: *Builder, paragraphs: []book.Paragraph) !void {
+        assert(paragraphs.len == b.made.count);
         var per_paragraph = std.AutoHashMapUnmanaged(u32, std.ArrayList(book.Link)).empty;
         for (b.links.items) |l| {
             // `end_link` keeps only links over some text
             assert(l.start < l.end);
-            if (l.paragraph >= b.paragraphs.items.len) continue;
+            if (l.paragraph >= paragraphs.len) continue;
             const target = b.anchors.get(l.target) orelse continue;
             // Anchors are placed on paragraphs as they're added
-            assert(target < b.paragraphs.items.len);
+            assert(target < paragraphs.len);
             const slot = try per_paragraph.getOrPut(b.alloc, l.paragraph);
             if (!slot.found_existing) slot.value_ptr.* = .empty;
             try slot.value_ptr.append(b.alloc, .{
@@ -712,7 +771,7 @@ const Builder = struct {
             });
         }
         var it = per_paragraph.iterator();
-        while (it.next()) |kv| b.paragraphs.items[kv.key_ptr.*].links = kv.value_ptr.items;
+        while (it.next()) |kv| paragraphs[kv.key_ptr.*].links = kv.value_ptr.items;
     }
 };
 
@@ -873,22 +932,20 @@ pub fn parse(alloc: std.mem.Allocator, scratch: *memory.Region, data: []const u8
             continue;
         };
         b.section = @intCast(index + 1);
-        const first = b.paragraphs.items.len;
+        // A chapter 0.2.0 couldn't find: none of its paragraphs were in its numbering
+        b.skipped_by_0_2 = !try found_by_0_2(alloc, files, p.dir, item.href);
         try b.chapter(path, xhtml);
         try b.keep_pending();
-        // A chapter 0.2.0 couldn't find: none of its paragraphs were in its numbering
-        if (!try found_by_0_2(alloc, files, p.dir, item.href)) {
-            for (b.paragraphs.items[first..]) |*para| para.skipped_by_0_2 = true;
-        }
     }
-    if (b.paragraphs.items.len == 0) return error.EmptyBook;
-    parse_positions(b.paragraphs.items);
-    try b.resolve_links();
-    notes.mark_notes(b.paragraphs.items);
+    if (b.made.count == 0) return error.EmptyBook;
+    const paragraphs = try b.made.join(alloc);
+    parse_positions(paragraphs);
+    try b.resolve_links(paragraphs);
+    notes.mark_notes(paragraphs);
     const chapters = try read_contents(alloc, files, &p, &b.anchors);
-    for (chapters) |c| assert(c.para < b.paragraphs.items.len);
+    for (chapters) |c| assert(c.para < paragraphs.len);
     return .{
-        .paragraphs = b.paragraphs.items,
+        .paragraphs = paragraphs,
         .chapters = chapters,
         .sections = @intCast(p.spine.len),
         .missing_refs = 0,
@@ -985,7 +1042,7 @@ test "a heading's text after a picture and a line break stays a heading" {
             "<p>It is a truth.</p></body></html>",
     );
     try b.flush();
-    const paragraphs = b.paragraphs.items;
+    const paragraphs = try b.made.join(b.alloc);
     try std.testing.expect(paragraphs[0].image != null); // The picture, first
     try std.testing.expectEqualStrings("Chapter I.", paragraphs[1].text);
     try std.testing.expect(paragraphs[1].look.size != book.normal_size); // Still a heading
@@ -1007,14 +1064,15 @@ test "a note reference ending in a space at a paragraph's end stays inside it" {
             "{s}<p id=\"fn1\">1 The note.</p></body></html>", .{ending});
         try b.chapter("c.xhtml", html);
         try b.flush();
-        try b.resolve_links();
-        notes.mark_notes(b.paragraphs.items);
-        const body = b.paragraphs.items[0];
+        const paragraphs = try b.made.join(alloc);
+        try b.resolve_links(paragraphs);
+        notes.mark_notes(paragraphs);
+        const body = paragraphs[0];
         try std.testing.expectEqual(@as(usize, 1), body.links.len);
         try std.testing.expect(body.links[0].end <= body.text.len);
         const mark = body.text[body.links[0].start..body.links[0].end];
         try std.testing.expectEqualStrings("1", std.mem.trim(u8, mark, " "));
-        try std.testing.expect(b.paragraphs.items[b.paragraphs.items.len - 1].note);
+        try std.testing.expect(paragraphs[paragraphs.len - 1].note);
     }
 }
 
@@ -1052,7 +1110,7 @@ test "bold left open at a chapter's end styles its last words and nothing after"
     var b = Builder{ .alloc = arena.allocator(), .scratch = arena.allocator(), .files = &.{} };
     try b.chapter("a.xhtml", "<html><body><p><b>x</p>Bold to the end</body></html>");
     try b.chapter("b.xhtml", "<html><body>Hello</body></html>");
-    const paragraphs = b.paragraphs.items;
+    const paragraphs = try b.made.join(b.alloc);
     try std.testing.expectEqual(@as(usize, 3), paragraphs.len);
     try std.testing.expect(paragraphs[1].runs[0].bold);
     try std.testing.expectEqual(@as(u32, 15), paragraphs[1].runs[0].end);
@@ -1066,7 +1124,7 @@ test "an empty link goes nowhere, and doesn't stop the reader" {
     var b = Builder{ .alloc = arena.allocator(), .scratch = arena.allocator(), .files = &.{} };
     try b.chapter("c.xhtml", "<html><body><p><a href=\"\">here</a></p></body></html>");
     try std.testing.expectEqual(@as(usize, 0), b.links.items.len);
-    try std.testing.expectEqualStrings("here", b.paragraphs.items[0].text);
+    try std.testing.expectEqualStrings("here", (try b.made.join(b.alloc))[0].text);
 }
 
 test "an id after a chapter's last paragraph, and an empty chapter, keep their own names" {
@@ -1112,9 +1170,10 @@ test "every link lands on the paragraph its target names, the first of an id twi
         try b.chapter(c[0], c[1]);
         try b.keep_pending();
     }
-    try b.resolve_links();
+    const paragraphs = try b.made.join(alloc);
+    try b.resolve_links(paragraphs);
     // Paragraphs: 0 the links, 1 "Own.", 2 "Two.", 3 the first "n", 4 the second
-    const links = b.paragraphs.items[0].links;
+    const links = paragraphs[0].links;
     try std.testing.expectEqual(@as(usize, 3), links.len);
     var targets: [3]u32 = undefined;
     for (links, &targets) |l, *t| t.* = l.target;
@@ -1194,7 +1253,7 @@ test "a tag that closes itself styles and links nothing; a link a block cuts cov
         "<p>Long <a href=\"#n1\">x</p><p>other words</a> here.</p>" ++
         "<p><a href=\"#n2\">*<br/>1</a> A paragraph.</p></body></html>";
     try b.chapter("c.xhtml", markup);
-    const paragraphs = b.paragraphs.items;
+    const paragraphs = try b.made.join(b.alloc);
     try std.testing.expectEqualStrings("An icon and more.", paragraphs[0].text);
     for (paragraphs[0].runs) |r| try std.testing.expect(!r.italic);
     // Of the links cut by a new paragraph, what's in the paragraph after the cut
@@ -1291,4 +1350,30 @@ test "broken markup is read or refused, never crashes, in each of the book's rea
         out.clearRetainingCapacity();
         read_contents_ncx(alloc, &out, "toc.ncx", broken, &anchors) catch {}; // Ignored: as above
     }
+}
+
+test "a book of many paragraphs leaves no outgrown list behind in its memory" {
+    var region = try memory.Region.reserve("test", .bump, 64 << 20);
+    defer region.release();
+    var budget = memory.Budget{ .name = "test", .region = &region, .limit = region.bytes.len };
+    const alloc = budget.allocator();
+    var html: std.ArrayList(u8) = .empty;
+    defer html.deinit(std.testing.allocator);
+    try html.appendSlice(std.testing.allocator, "<html><body>");
+    // Several shelves' worth, each paragraph with ids as Kobo's books have them
+    const count = 8 * Shelves.first_shelf;
+    for (0..count) |i| {
+        const paragraph = "<p id=\"p{d}\"><span id=\"k.{d}.1\">Some text.</span></p>";
+        try html.print(std.testing.allocator, paragraph, .{ i, i });
+    }
+    try html.appendSlice(std.testing.allocator, "</body></html>");
+    var b = Builder{ .alloc = alloc, .scratch = alloc, .files = &.{} };
+    try b.chapter("c.xhtml", html.items);
+    try b.keep_pending();
+    const paragraphs = try b.made.join(alloc);
+    try std.testing.expectEqual(@as(usize, count), paragraphs.len);
+    // A list grown in place of shelves strands two or three times itself; the shelves
+    // strand nothing, and what's left over is the maps' and small lists' growth
+    const list_bytes = paragraphs.len * @sizeOf(book.Paragraph);
+    try std.testing.expect(budget.stranded < list_bytes);
 }

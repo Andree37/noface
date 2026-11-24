@@ -1002,6 +1002,37 @@ test "a place there but unreadable leaves the book's record as it was, never sho
     try std.testing.expectEqual(@as(u32, 42), test_percent_of(&library, "Dune"));
 }
 
+test "an EPUB whose place can't be read keeps how far it was through a rebuild" {
+    var buffer: [64]u8 = undefined;
+    const root = try test_folder(&buffer, 0, 1, 1 << 10);
+    defer test_folder_remove(root);
+    var path: [file.own_path_bytes_max]u8 = undefined;
+    var t: TestLibrary = undefined;
+    try t.init(root);
+    defer t.deinit();
+    const book = try std.fmt.bufPrint(&path, "{s}/documents/Book 0.epub", .{root});
+    var state_buffer: [file.own_path_bytes_max]u8 = undefined;
+    const book_state = try state.path_for(&state_buffer, t.sources.state_dir, book);
+    const place: state.State = .{ .para = 3, .percent = 42, .opened = 1000 };
+    try std.testing.expect(state.save(&file.Kept.at(book_state), place));
+    {
+        var library = try load(t.sources);
+        defer library.deinit();
+        try std.testing.expectEqual(@as(u32, 42), test_percent_of(&library, "Book 0"));
+    }
+    // Unreadable at the next load, as on a drive failing a read
+    _ = calls.unlink(book_state); // Ignored: checked by the link made in its place
+    try std.testing.expect(!os.failed(calls.symlink(book_state, book_state)));
+    // And a new EPUB, so the index is built again, its records made afresh
+    const data = try test_epub(std.testing.allocator, "Book 1", 1 << 10, null);
+    defer std.testing.allocator.free(data);
+    const new_book = "{s}/documents/Book 1.epub";
+    try test_write(try std.fmt.bufPrintSentinel(&path, new_book, .{root}, 0), data);
+    var library = try load(t.sources);
+    defer library.deinit();
+    try std.testing.expectEqual(@as(u32, 42), test_percent_of(&library, "Book 0"));
+}
+
 /// The percent the library shows for the book titled `title`, hero or not.
 fn test_percent_of(library: *Library, title: []const u8) u32 {
     library.arrange(.recent, .all, "");

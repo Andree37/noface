@@ -344,9 +344,19 @@ fn add_epub(b: *Build, path: [:0]const u8) void {
     const cover_path = state.sibling(&cover_buffer, state_path, .cover) catch return;
     const each = b.scratch.mark();
     defer b.scratch.rewind(each);
-    const known = if (b.last) |*last| last.find(path, facts) else null;
+    // The last build's record of it: what the book says of itself, if its file is as it
+    // was, and how far the reader is, whatever: kept, so a place that can't be read as
+    // it's merged leaves the book as it was, never shown unread
+    var known: ?About = null;
+    var reading: Reading = .{};
+    if (b.last) |*last| {
+        if (last.find(path)) |id| {
+            known = last.about_if(id, facts);
+            reading = last.reading(id);
+        }
+    }
     const about = known orelse read_epub(b, path, cover_path) orelse return;
-    const e = epub_entry(path, &about, if (about.has_cover) cover_path else null);
+    const e = epub_entry(path, &about, if (about.has_cover) cover_path else null, reading);
     // A cover that couldn't be saved (a full drive) is tried again by the next build
     b.add(&e, if (about.cover_unsaved) null else facts);
 }
@@ -408,15 +418,33 @@ fn read_about(scratch: *memory.Budget, data: []const u8, with_cover: bool) ?epub
     return about;
 }
 
+/// How far the reader is in an EPUB, as a record keeps it: none for one new to the index.
+const Reading = struct {
+    percent: u32 = 0,
+    last: u64 = 0,
+    finished: bool = false,
+    seconds_read: u64 = 0,
+    words_left: ?u64 = null,
+};
+
 /// An EPUB's entry: the book's own title and series, else its file name's.
-fn epub_entry(path: [:0]const u8, about: *const About, cover: ?[:0]const u8) catalog.Entry {
+fn epub_entry(
+    path: [:0]const u8,
+    about: *const About,
+    cover: ?[:0]const u8,
+    reading: Reading,
+) catalog.Entry {
     assert(path.len > 0);
+    assert(reading.percent <= 100);
     const e: catalog.Entry = .{
         .path = path,
         .title = if (about.title.len > 0) about.title else std.fs.path.stem(path),
         .author = about.author,
-        .percent = 0,
-        .last = 0,
+        .percent = reading.percent,
+        .last = reading.last,
+        .finished = reading.finished,
+        .seconds_read = reading.seconds_read,
+        .words_left = reading.words_left,
         .thumbnail = cover,
         .kind = "EPUB",
         .series = about.series orelse catalog.series_from_file_name(path),
@@ -426,7 +454,8 @@ fn epub_entry(path: [:0]const u8, about: *const About, cover: ?[:0]const u8) cat
 }
 
 /// The EPUBs of the last build, their ids sorted by their path's hash, to find each by
-/// halves: what was read of a book whose file hasn't changed needn't be read again.
+/// halves: what was read of a book whose file hasn't changed needn't be read again, and
+/// how far the reader is is kept.
 const EpubsRead = struct {
     ix: *const index.Index,
     sorted: []Item,
@@ -437,10 +466,7 @@ const EpubsRead = struct {
         for (0..ix.header.count) |i| {
             const id: u32 = @intCast(i);
             const r = ix.record(id);
-            // One whose series was set by hand no longer says what the book does
-            if (r.flags & index.Record.epub == 0 or r.flags & index.Record.series_by_hand != 0) {
-                continue;
-            }
+            if (r.flags & index.Record.epub == 0) continue;
             items[count] = .{ .id = id, .key = path_key(ix.entry(id).path) };
             count += 1;
         }
@@ -451,25 +477,46 @@ const EpubsRead = struct {
         return .{ .ix = ix, .sorted = sorted };
     }
 
-    /// What the last build read of the EPUB at `path`, if its file is as it was then.
-    fn find(read: *const EpubsRead, path: []const u8, facts: calls.Facts) ?About {
+    /// The last build's record of the EPUB at `path`, if it had one.
+    fn find(read: *const EpubsRead, path: []const u8) ?u32 {
         assert(path.len > 0);
         assert(read.sorted.len <= read.ix.header.count);
         const key = path_key(path);
         for (read.sorted[first_with(read.sorted, key)..]) |item| {
             if (item.key != key) return null;
-            const r = read.ix.record(item.id);
-            const e = read.ix.entry(item.id);
-            if (!std.mem.eql(u8, e.path, path)) continue; // Another path, the same hash
-            if (r.file_size != facts.size or r.file_modified != facts.modified_s) return null;
-            return .{
-                .title = e.title,
-                .author = e.author,
-                .series = e.series,
-                .has_cover = e.thumbnail != null,
-            };
+            if (std.mem.eql(u8, read.ix.entry(item.id).path, path)) return item.id;
         }
         return null;
+    }
+
+    /// What record `id` read of its EPUB, if the file is as it was then, and its series
+    /// is the book's own, not one set by hand.
+    fn about_if(read: *const EpubsRead, id: u32, facts: calls.Facts) ?About {
+        assert(id < read.ix.header.count);
+        const r = read.ix.record(id);
+        if (r.file_size != facts.size or r.file_modified != facts.modified_s) return null;
+        if (r.flags & index.Record.series_by_hand != 0) return null;
+        const e = read.ix.entry(id);
+        return .{
+            .title = e.title,
+            .author = e.author,
+            .series = e.series,
+            .has_cover = e.thumbnail != null,
+        };
+    }
+
+    /// How far the reader was in record `id`'s EPUB.
+    fn reading(read: *const EpubsRead, id: u32) Reading {
+        assert(id < read.ix.header.count);
+        const e = read.ix.entry(id);
+        assert(e.percent <= 100); // The record's, checked as the index opened
+        return .{
+            .percent = e.percent,
+            .last = e.last,
+            .finished = e.finished,
+            .seconds_read = e.seconds_read,
+            .words_left = e.words_left,
+        };
     }
 
     fn path_key(path: []const u8) u32 {

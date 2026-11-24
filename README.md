@@ -86,10 +86,10 @@ No. Your books stay where they are, highlights on Amazon books still sync with t
 Kindle apps, and noface keeps its places, notes and stats in `noface-data`.
 
 **How do I go back to the normal Kindle?**
-noface's panel has a button that switches back to the Kindle's own screens. To remove noface, turn off opening it
-when the Kindle starts, then delete the `noface` folder and `kmc/kpm/packages/noface`.
-If you had turned that on, noface also added a startup file in `/etc/upstart`
-(`noface-autostart.conf`), which you can delete.
+noface's panel has a button that switches back to the Kindle's own screens. To remove
+noface, turn off opening it when the Kindle starts, then delete the `noface` folder and
+`kmc/kpm/packages/noface`. If you had turned that on, noface also added a startup file
+in `/etc/upstart` (`noface-autostart.conf`), which you can delete.
 
 **Does it work on my Kindle?**
 Only the Paperwhite 12th generation (2024) for now. Other models will be added after

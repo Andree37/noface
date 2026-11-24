@@ -3,7 +3,8 @@
 You need a jailbroken Kindle from the table above, with KMC and KPM. **Each zip runs
 on its own Kindle only:** noface drives the display directly and is laid out for one
 screen, so on any other model it checks the screen, says it can't run, and goes back
-to the Kindle's own home screen.
+to the Kindle's own home screen. The Kindles being worked on are listed in
+[Supported devices](https://github.com/Andree37/noface/blob/main/docs/DEVICES.md).
 
 1. Download the zip for your Kindle below and unzip it.
 2. Plug in the Kindle. Copy the **noface** folder to the Kindle's drive, then copy the

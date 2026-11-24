@@ -1,13 +1,13 @@
 <h1 align="center">noface</h1>
 
 <p align="center">
-  A home screen and reader for the Kindle Paperwhite, written to turn pages fast.
+  A home screen and reader for Kindle e-readers, written to turn pages fast.
 </p>
 
 <p align="center">
   <a href="https://github.com/Andree37/noface/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Andree37/noface?label=release"></a>
   <a href="https://github.com/Andree37/noface/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/Andree37/noface/total"></a>
-  <img alt="Kindle Paperwhite 12" src="https://img.shields.io/badge/Kindle-Paperwhite%2012-informational">
+  <a href="docs/DEVICES.md"><img alt="Supported devices" src="https://img.shields.io/badge/devices-supported%20Kindles-informational"></a>
   <a href="LICENSE.md"><img alt="License: PolyForm Noncommercial" src="https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue"></a>
 </p>
 
@@ -26,7 +26,7 @@
 
 ## About
 
-noface replaces the home screen and the reader on a jailbroken Kindle Paperwhite. It
+noface replaces the home screen and the reader on a jailbroken Kindle. It
 was written because the stock reader takes about a third of a second to show the next
 page; noface takes about 60 ms on the same Kindle.
 
@@ -63,12 +63,11 @@ back to it from noface's panel at any time.
 
 ## Install
 
-You need a Kindle Paperwhite, 12th generation (2024), jailbroken, with KMC and KPM
-installed (most jailbreak guides install both). noface only runs on that model; on
-another Kindle it prints why it can't run and goes back to the Kindle's home screen.
+You need a jailbroken Kindle with KMC and KPM installed (most jailbreak guides install
+both). Check that yours is in [Supported devices](docs/DEVICES.md) first.
 
-1. Download the latest `noface-<version>-paperwhite_12.zip` from
-   [Releases](https://github.com/Andree37/noface/releases/latest) and unzip it.
+1. Download the zip for your Kindle from the
+   [latest release](https://github.com/Andree37/noface/releases/latest) and unzip it.
 2. Connect the Kindle over USB. Copy the `noface` folder to its drive, and copy
    `noface/kpm/noface` into `kmc/kpm/packages`.
 3. Eject the Kindle and type `;kpm launch noface` in its search bar.
@@ -92,8 +91,8 @@ noface, turn off opening it when the Kindle starts, then delete the `noface` fol
 in `/etc/upstart` (`noface-autostart.conf`), which you can delete.
 
 **Does it work on my Kindle?**
-Only the Paperwhite 12th generation (2024) for now. Other models will be added after
-noface has passed its test run on each; the release notes list the supported ones.
+[Supported devices](docs/DEVICES.md) lists the Kindles noface runs on, and those being
+worked on.
 
 **Can it open books I bought from Amazon?**
 Only books without DRM. noface doesn't remove or work around DRM, so protected books

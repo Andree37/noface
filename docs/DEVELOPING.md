@@ -112,19 +112,11 @@ measured, and `shot` steps leave PGM screenshots in `out`.
 
 ## Which Kindles
 
-noface draws through MediaTek's `hwtcon` display driver, in Kindles from about 2021
-on, so only those are in its plans; earlier Kindles use NXP's `mxcfb` and would need a
-second display backend. A release carries one zip per Kindle that's been run through
-`e2e all` on a real one; `zig build layouts` only shows a layout fits.
-
-| Kindle | Status |
-|---|---|
-| Paperwhite (12th generation, 2024) | Shipped, tested |
-| Paperwhite (11th generation) and Signature, 2021 | Candidate: check its driver, then test on one |
-| Kindle (2022, 2024) | Candidate: no warm light, so its warmth controls are hidden |
-| Colorsoft (2024) | Candidate: its colour layer is drawn in grays |
-| Scribe | Unknown: its display driver is to check first |
-| Paperwhite 4, Oasis 2 and 3, Kindle (10th generation) and older | Not planned: `mxcfb` |
+The Kindles noface supports, and those it's working towards, are listed in
+[DEVICES.md](DEVICES.md), the one list of them. A release carries one zip per Kindle
+that's been run through `e2e all` on a real one (build.zig `shipped`); `zig build
+layouts` only shows a layout fits. A Kindle joins `shipped` and DEVICES.md's
+supported table together.
 
 ## The one dependency
 

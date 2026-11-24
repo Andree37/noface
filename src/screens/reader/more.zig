@@ -65,12 +65,24 @@ pub fn place(option: Option) style.Point {
 /// Starts the menu in `m`, where it stays while it's open (`screen.open`): its card
 /// over the page, then Go to page's keyboard or the book's details. Done with what the
 /// reader does after it.
-pub fn begin(m: *More, a: *app.App, s: *sess.Session, entry: *catalog.Entry) !void {
+pub fn begin(
+    m: *More,
+    a: *app.App,
+    s: *sess.Session,
+    entry: *const catalog.Entry,
+    progress: *catalog.Progress,
+) !void {
     assert(s.pages.len > 0);
     assert(s.current < s.pages.len);
-    m.* = .{ .a = a, .s = s, .entry = entry, .background = try s.lend_current() };
+    m.* = .{
+        .a = a,
+        .s = s,
+        .entry = entry,
+        .progress = progress,
+        .background = try s.lend_current(),
+    };
     // No Cancel: tapping above the sheet closes it
-    const read_option: Option = if (entry.is_read()) .unread else .finished;
+    const read_option: Option = if (progress.is_read()) .unread else .finished;
     m.list = .{ .go_to_page, .beginning, .details, .refresh, read_option };
     // Where `place` says each option is
     for (m.list, 0..) |option, row| {
@@ -84,7 +96,8 @@ pub const More = struct {
     pub const Result = Outcome;
     a: *app.App,
     s: *sess.Session,
-    entry: *catalog.Entry,
+    entry: *const catalog.Entry,
+    progress: *catalog.Progress, // The open book's, which marking it changes
     background: display.Backdrop, // The page under it
     phase: enum { menu, page_number, details } = .menu,
     list: [menu_rows]Option = undefined,
@@ -171,13 +184,15 @@ pub const More = struct {
                 return m.show_card(&m.details_rows, m.entry.title, m.entry.author);
             },
             .finished => {
-                const marked = book_actions.mark_read(m.a, m.entry, true, .{ .open = m.s });
+                const open: book_actions.Place = .{ .open = m.s };
+                const marked = book_actions.mark_read(m.a, m.entry, m.progress, true, open);
                 return .{ .done = if (marked) .stay else .not_marked };
             },
             // Unread starts again from the beginning, so the place saved on closing
             // isn't the last page, which would count it read again
             .unread => {
-                const marked = book_actions.mark_read(m.a, m.entry, false, .{ .open = m.s });
+                const open: book_actions.Place = .{ .open = m.s };
+                const marked = book_actions.mark_read(m.a, m.entry, m.progress, false, open);
                 return .{ .done = if (marked) .started_over else .not_marked };
             },
         }

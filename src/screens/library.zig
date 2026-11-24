@@ -372,10 +372,12 @@ const Browser = struct {
                     .outcome = open.child.ended().done,
                     .was_read = open.was_read,
                     .place_saved = open.child.screen.place_saved,
+                    .progress = open.child.screen.read_so_far,
                 };
-                const opened: Picked = .{ .id = open.id, .entry = open.child.screen.entry };
+                const id = open.id;
+                const entry = open.child.screen.entry;
                 b.over = .none;
-                return step(try b.book_closed(opened, closed));
+                return step(try b.book_closed(id, entry, closed));
             },
         }
     }
@@ -656,8 +658,9 @@ const Browser = struct {
                 .outcome = .failed,
                 .was_read = was_read,
                 .place_saved = true, // Never opened: never saved, nothing lost
+                .progress = .of(entry.*), // Nor read
             };
-            return b.book_closed(chosen, failed);
+            return b.book_closed(chosen.id, entry, failed);
         };
         return .{ .open = b.over.book.child.frame() };
     }
@@ -668,6 +671,7 @@ const Browser = struct {
         outcome: reader.Outcome,
         was_read: bool,
         place_saved: bool,
+        progress: catalog.Progress, // How far it was read, as it closed
 
         /// What the library says as it's back: said whatever the book's end, as a place
         /// the drive didn't take is lost.
@@ -687,9 +691,8 @@ const Browser = struct {
     /// offering the next of a series just finished, to read now. Only books on the
     /// Kindle can offer it: a series is read from a book's file name, and books in the
     /// cloud have none yet.
-    fn book_closed(b: *Browser, closed_book: Picked, closed: Closed) !Next {
+    fn book_closed(b: *Browser, id: u32, entry: *const catalog.Entry, closed: Closed) !Next {
         const a = b.a;
-        const entry = closed_book.entry;
         assert(entry.is_local());
         assert(b.over == .none);
         const outcome = closed.outcome;
@@ -698,17 +701,17 @@ const Browser = struct {
         // next of a series, read now) never clears; on leaving, said before noface goes
         const said = closed.notice();
         if (said.len > 0) b.notice = said;
-        b.lib.save(closed_book.id, entry); // Its place and time read, in the library's index
+        b.lib.save(id, closed.progress); // Its place and time read, in the library's index
         if (outcome == .quit) {
             if (b.notice.len > 0) try app.show_notice(a, b.notice);
             return .leave;
         }
         b.status_until = now_us() + status_watch_us; // Wi-Fi coming back, and the like
-        if (was_read or !entry.is_read()) return .everything;
+        if (was_read or !closed.progress.is_read()) return .everything;
         const next = b.lib.next_in_series(entry) orelse return .everything;
         // The next is one not read yet, so never the book just finished
         assert(!next.entry.is_read());
-        assert(next.id != closed_book.id);
+        assert(next.id != id);
         b.over = .{ .up_next = .{ .offer = .{}, .next = next } };
         const offer = actions.up_next(a, next.entry, &b.over.up_next.offer) orelse {
             b.over = .none;
@@ -828,12 +831,25 @@ fn sorted_notice(order: catalog.Order) []const u8 {
 
 test "a place not saved is said however the book ended, and only then" {
     const closed = Browser.Closed;
-    const read: closed = .{ .outcome = .library, .was_read = false, .place_saved = true };
+    const progress: catalog.Progress = .{
+        .percent = 10,
+        .last = 1,
+        .finished = false,
+        .seconds_read = 60,
+        .words_left = null,
+    };
+    const read: closed = .{
+        .outcome = .library,
+        .was_read = false,
+        .place_saved = true,
+        .progress = progress,
+    };
     try std.testing.expectEqualStrings("", read.notice());
     var lost = read;
     lost.place_saved = false;
     try std.testing.expect(lost.notice().len > 0);
     lost.outcome = .stopped;
-    const kept: closed = .{ .outcome = .stopped, .was_read = false, .place_saved = true };
+    var kept = read;
+    kept.outcome = .stopped;
     try std.testing.expect(!std.mem.eql(u8, lost.notice(), kept.notice()));
 }

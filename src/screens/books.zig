@@ -318,17 +318,19 @@ pub const Library = struct {
     /// Saves what reading (or marking) a book changed of it into record `id`, which it
     /// was picked by: written in place, and the books sorted again when next looked
     /// through.
-    pub fn save(l: *Library, id: u32, e: *const catalog.Entry) void {
+    pub fn save(l: *Library, id: u32, progress: catalog.Progress) void {
         const s = l.state;
-        assert(e.is_local()); // Only a book on the Kindle is read or marked
         const ix = s.opened() orelse return;
         assert(id < ix.header.count);
         var r = ix.record(id);
-        r.percent = @intCast(@min(e.percent, 100));
-        r.last = e.last;
-        r.seconds_read = e.seconds_read;
-        r.set_words_left(e.words_left);
-        if (e.finished) r.flags |= index.Record.finished else r.flags &= ~index.Record.finished;
+        // Only a book on the Kindle is read or marked
+        assert(r.availability == @backingInt(catalog.Availability.local));
+        r.percent = @intCast(@min(progress.percent, 100));
+        r.last = progress.last;
+        r.seconds_read = progress.seconds_read;
+        r.set_words_left(progress.words_left);
+        r.flags &= ~index.Record.finished;
+        if (progress.finished) r.flags |= index.Record.finished;
         ix.write_record(id, &r) catch |err| {
             // What reading changed is in its state file too, saved as the book closed:
             // every load merges those into the index (`builder.merge_states`), so the
@@ -1117,13 +1119,14 @@ test "a book read and saved moves up, and keeps its place through a reload" {
     _ = library.page(0);
     const last = library.picked(library.state.page_filled - 1); // Not the hero: page one's last
     const e = last.entry;
+    var progress: catalog.Progress = .of(e.*);
     const title = try std.testing.allocator.dupe(u8, e.title);
     defer std.testing.allocator.free(title);
-    e.percent = 50;
-    e.last = 5000;
-    e.seconds_read = 60;
-    e.words_left = 1234;
-    library.save(last.id, e);
+    progress.percent = 50;
+    progress.last = 5000;
+    progress.seconds_read = 60;
+    progress.words_left = 1234;
+    library.save(last.id, progress);
     library.arrange(.recent, .all, "");
     try std.testing.expectEqualStrings(title, library.hero().?.title);
     try std.testing.expectEqual(@as(?u64, 1234), library.hero().?.words_left);

@@ -602,7 +602,7 @@ fn middle_of(h: text.Hit) style.Point {
 /// before the place, as the time left saved with it is the words after. Whether the
 /// place was saved: not when it was unreadable as the book opened, nor when the drive
 /// didn't take it.
-pub fn save_progress(entry: *catalog.Entry, s: *Session, percent_read: ?u32) bool {
+pub fn save_progress(progress: *catalog.Progress, s: *Session, percent_read: ?u32) bool {
     assert(s.current < s.pages.len);
     assert(s.anchor.para < s.paragraphs.len);
     s.pause_clock(); // The reader's loop starts it again
@@ -610,7 +610,7 @@ pub fn save_progress(entry: *catalog.Entry, s: *Session, percent_read: ?u32) boo
     const pos = s.anchor;
     if (percent_read) |p| assert(p <= 100);
     const words_left = s.book_words_left(pos);
-    const percent = percent_read orelse s.words_percent(words_left) orelse entry.percent;
+    const percent = percent_read orelse s.words_percent(words_left) orelse progress.percent;
     const now = unix_time();
     var saved = s.saved;
     saved.para = book_model.text_index(s.paragraphs, pos.para);
@@ -619,7 +619,7 @@ pub fn save_progress(entry: *catalog.Entry, s: *Session, percent_read: ?u32) boo
     saved.opened = now;
     saved.seconds = seconds;
     saved.words_left = words_left;
-    saved.finished = entry.finished;
+    saved.finished = progress.finished;
     const back = s.back.place;
     saved.back_para = if (back) |b| book_model.text_index(s.paragraphs, b.para) else null;
     saved.back_byte = if (back) |b| b.byte else 0;
@@ -632,10 +632,10 @@ pub fn save_progress(entry: *catalog.Entry, s: *Session, percent_read: ?u32) boo
     // The library shows what's saved: a place unreadable as the book opened isn't, nor
     // one the drive didn't take
     if (!place_saved) return false;
-    entry.percent = percent;
-    entry.last = now;
-    entry.seconds_read = seconds;
-    entry.words_left = words_left;
+    progress.percent = percent;
+    progress.last = now;
+    progress.seconds_read = seconds;
+    progress.words_left = words_left;
     return true;
 }
 

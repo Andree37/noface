@@ -68,7 +68,7 @@ pub const Outcome = enum { library, quit, failed, stopped };
 
 /// Reads `entry` on its own, as the root of the stack of screens: for the scenario
 /// tests, which start in a book. noface opens books from the library (`open`).
-pub fn read_book(a: *app.App, entry: *catalog.Entry) !Outcome {
+pub fn read_book(a: *app.App, entry: *const catalog.Entry) !catalog.Progress {
     var r: Reader = undefined;
     try open(&r, a, entry);
     const ending = try screen.run_root(a, &r);
@@ -76,13 +76,13 @@ pub fn read_book(a: *app.App, entry: *catalog.Entry) !Outcome {
     assert(ending == .done);
     assert(a.regions.book.empty()); // Closing, it let go of its memory
     if (ending.done == .failed or ending.done == .stopped) return error.BookFailed;
-    return ending.done;
+    return r.read_so_far;
 }
 
 /// Opens `entry` in `r`, where it stays while it's read (`screen.open`): parses it,
 /// finds its pages and the place to open at, and reads its notes. Its first page is
 /// shown as it opens; it ends when the reader leaves the book, or noface leaves.
-pub fn open(r: *Reader, a: *app.App, entry: *catalog.Entry) !void {
+pub fn open(r: *Reader, a: *app.App, entry: *const catalog.Entry) !void {
     // Only one book is open at a time, so its regions start empty
     assert(a.regions.book.empty());
     assert(a.regions.scratch.empty());
@@ -94,6 +94,7 @@ pub fn open(r: *Reader, a: *app.App, entry: *catalog.Entry) !void {
     r.* = .{
         .a = a,
         .entry = entry,
+        .read_so_far = .of(entry.*),
         // The open book: parsed text, pages, highlights. An arena, as its region hands
         // out one block after another: all emptied together on close.
         .book_budget = .{
@@ -188,7 +189,10 @@ pub const Reader = struct {
     /// Under what's opened over it, a book takes the lock and leaving itself.
     pub const takes = screen.Takes{ .lock = true, .leave = true };
     a: *app.App,
-    entry: *catalog.Entry,
+    entry: *const catalog.Entry, // The library's, read only
+    /// How far the reader is: the open book's own, from its entry as it opened, and
+    /// read off the closed reader by whoever opened it.
+    read_so_far: catalog.Progress,
     book_budget: memory.Budget,
     scratch_budget: memory.Budget,
     alloc: std.mem.Allocator = undefined, // The book's, kept while it's open
@@ -254,7 +258,7 @@ pub const Reader = struct {
     fn show_first(r: *Reader) !void {
         assert(r.start < r.s.pages.len);
         try r.s.show(r.start, .jump, null, true);
-        r.place_saved = sess.save_progress(r.entry, r.s, r.s.percent());
+        r.place_saved = sess.save_progress(&r.read_so_far, r.s, r.s.percent());
         // Said as it opens, not only as it closes: read on, the reading isn't kept
         if (!r.place_saved) {
             // Ignored: only the notice is missed, never the book, whose page is drawn
@@ -490,7 +494,7 @@ pub const Reader = struct {
                 // so how far in it is goes by the words before its place
                 .failed, .stopped => null,
             };
-            r.place_saved = sess.save_progress(r.entry, r.s, percent);
+            r.place_saved = sess.save_progress(&r.read_so_far, r.s, percent);
             wifi_saver.restore(); // Leaving the book, Wi-Fi comes back
         }
         r.release();
@@ -550,7 +554,7 @@ pub const Reader = struct {
 
     fn save(r: *Reader) void {
         assert(r.s.current < r.s.pages.len);
-        r.place_saved = sess.save_progress(r.entry, r.s, r.s.percent());
+        r.place_saved = sess.save_progress(&r.read_so_far, r.s, r.s.percent());
         r.since_save = 0;
         assert(r.s.clock.stopped()); // Saving stops the reading clock; the loop starts it
     }
@@ -956,7 +960,7 @@ pub const Reader = struct {
             .more => {
                 // Made in place: it points into itself
                 r.over = .{ .menu = .{ .screen = undefined } };
-                try more.begin(&r.over.menu.screen, a, s, r.entry);
+                try more.begin(&r.over.menu.screen, a, s, r.entry, &r.read_so_far);
                 r.open_placed();
             },
             .search => {

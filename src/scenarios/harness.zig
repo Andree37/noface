@@ -822,7 +822,8 @@ pub fn play_on_run(a: *app.App, kindle: Kindle, book_path: [:0]const u8, dir: []
     if (kindle.library) {
         try library_screen.run_library(a);
     } else {
-        _ = try reader.read_book(a, &entry);
+        const progress = try reader.read_book(a, &entry);
+        return .{ .ms = real_ms() - t0, .book_last = progress.last };
     }
     return .{ .ms = real_ms() - t0, .book_last = entry.last };
 }

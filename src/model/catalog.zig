@@ -8,6 +8,30 @@ const stats = @import("stats.zig");
 
 pub const Availability = enum { local, cloud, downloading };
 
+/// How far the reader is in a book: what reading or marking it changes, kept by the
+/// open book as it's read and saved into the library's record as it closes.
+pub const Progress = struct {
+    percent: u32,
+    last: u64,
+    finished: bool,
+    seconds_read: u64,
+    words_left: ?u64,
+
+    pub fn of(e: Entry) Progress {
+        return .{
+            .percent = e.percent,
+            .last = e.last,
+            .finished = e.finished,
+            .seconds_read = e.seconds_read,
+            .words_left = e.words_left,
+        };
+    }
+
+    pub fn is_read(p: Progress) bool {
+        return p.finished or p.percent >= finished_percent;
+    }
+};
+
 pub const Entry = struct {
     path: [:0]const u8,
     title: []const u8,
@@ -33,7 +57,7 @@ pub const Entry = struct {
     surname: []const u8 = "",
 
     pub fn is_read(e: Entry) bool {
-        return e.finished or e.percent >= finished_percent;
+        return Progress.of(e).is_read();
     }
 
     /// Opened for reading at some point, here or in the stock reader: past the 1% stock

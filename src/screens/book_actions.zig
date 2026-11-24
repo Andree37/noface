@@ -37,9 +37,15 @@ pub const Place = union(enum) { closed, open: *sess.Session };
 /// keeps this for its own books; an EPUB's is kept with its place. Marked unread, it
 /// starts again from the beginning: a book at its last page is read, marked or not.
 /// Whether it was marked: not when its place, needed for it, can't be saved, and then
-/// nothing changes, its journal neither.
-pub fn mark_read(a: *app.App, e: *catalog.Entry, done: bool, place: Place) bool {
-    const counted = e.finished; // The journal counts a book while it's marked finished
+/// nothing changes, its journal neither. `progress` is the book's, which it changes.
+pub fn mark_read(
+    a: *app.App,
+    e: *const catalog.Entry,
+    progress: *catalog.Progress,
+    done: bool,
+    place: Place,
+) bool {
+    const counted = progress.finished; // The journal counts a book while it's finished
     // Read, a Kindle book's mark is the Kindle's alone; anything else needs its place
     if (e.is_epub() or (!done and e.is_local())) {
         save_marked(a, e, done, place) catch |err| {
@@ -48,13 +54,13 @@ pub fn mark_read(a: *app.App, e: *catalog.Entry, done: bool, place: Place) bool 
         };
     }
     store.mark_read(e.key, e.kind, done);
-    e.finished = done;
+    progress.finished = done;
     if (!done) {
-        e.percent = 0;
-        e.words_left = null; // Counted from the old place: known again once read
+        progress.percent = 0;
+        progress.words_left = null; // Counted from the old place: known again once read
     }
-    assert(e.is_read() == done);
-    assert(e.percent <= 100);
+    assert(progress.is_read() == done);
+    assert(progress.percent <= 100);
     if (done != counted) {
         if (done) a.user.journal.finish(a.today()) else a.user.journal.unfinish(a.today());
         a.user.save_journal();
@@ -258,7 +264,9 @@ pub const Sheet = struct {
                 return .{ .done = .downloading };
             },
             .mark_read, .mark_unread => |choice| {
-                const was_marked = mark_read(a, e, choice == .mark_read, .closed);
+                // The library's copy: read again from the index, merged, as the sheet ends
+                var progress: catalog.Progress = .of(e.*);
+                const was_marked = mark_read(a, e, &progress, choice == .mark_read, .closed);
                 return .{ .done = if (was_marked) .other else .not_marked };
             },
         }

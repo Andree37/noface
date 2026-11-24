@@ -17,15 +17,10 @@ const dict_download = @import("../../kindle/dict_download.zig");
 const os = @import("../../sys/os.zig");
 const screen = @import("../screen.zig");
 
-/// How long the Kindle is kept awake for a download.
-const awake_us_max = 15 * std.time.us_per_min;
 /// How long to wait for Wi-Fi to connect before giving up.
 const connect_us_max = 30 * std.time.us_per_s;
 
 comptime {
-    // Connecting is part of the download, so the Kindle stays awake through it
-    assert(connect_us_max < awake_us_max);
-    assert(connect_us_max + dict_download.download_s_max * std.time.us_per_s < awake_us_max);
     // The card shows how far it's got every second, many times before the deadline
     assert(Progress.tick_us == std.time.us_per_s);
     // The card shows the wait at least once before giving up
@@ -111,7 +106,7 @@ pub fn begin(g: *Getting, a: *app.App, background: display.Backdrop, lang: hyphe
     assert(background.holds(&a.display));
     g.* = .{ .a = a, .background = background, .lang = lang, .l = language_of(lang) };
     assert(g.phase == .starting);
-    assert(g.put_back == null);
+    assert(g.wifi_lifted == null);
 }
 
 pub const Getting = struct {
@@ -121,18 +116,13 @@ pub const Getting = struct {
     lang: hyphen.Lang,
     l: dict_download.Language,
     phase: enum { starting, waiting, telling } = .starting,
-    /// Once Wi-Fi is turned on for it and the Kindle kept awake, how to put both back
-    /// as it ends.
-    put_back: ?PutBack = null,
+    /// Whether it lifted noface's own Wi-Fi pause to download, to pause again as it
+    /// ends; null until it starts.
+    wifi_lifted: ?bool = null,
     progress: Progress = undefined,
     progress_ending: ?screen.Ending(Waited) = null,
     told: card_screen.Card = undefined,
     told_ending: ?screen.Ending(u32) = null,
-
-    /// What getting a dictionary changed, to undo: Wi-Fi turned back on from noface's
-    /// own pause (off again after, by the book's own Wi-Fi timer), and what kept the
-    /// Kindle awake before.
-    const PutBack = struct { wifi_paused: bool, downloads_until: u64 };
 
     /// Never shown itself: its cards are.
     pub fn draw(g: *Getting, part: screen.Part) !void {
@@ -162,9 +152,7 @@ pub const Getting = struct {
         // The pause noface made, known by its note whatever the Kindle answered, is undone
         const paused = wifi_saver.marked();
         if (paused) wifi_saver.restore();
-        // Kept on until it's done, then back to whatever else was keeping it on
-        g.put_back = .{ .wifi_paused = paused, .downloads_until = a.downloads_until };
-        a.downloads_until = os.now_us() + awake_us_max;
+        g.wifi_lifted = paused;
         g.phase = .waiting;
         var title_buffer: [64]u8 = undefined;
         const title_format = "Getting the {s} dictionary";
@@ -207,7 +195,7 @@ pub const Getting = struct {
 
     fn after_waiting(g: *Getting, w: Waited) screen.Step(bool) {
         assert(g.phase == .waiting);
-        assert(g.put_back != null); // Waiting has Wi-Fi on for it
+        assert(g.wifi_lifted != null); // Waiting has Wi-Fi on for it
         return switch (w) {
             .finished => {
                 g.a.languages.forget_dictionary(g.lang);
@@ -229,7 +217,7 @@ pub const Getting = struct {
     }
 
     fn cant_start(g: *Getting) screen.Step(bool) {
-        assert(g.put_back != null);
+        assert(g.wifi_lifted != null);
         assert(g.phase == .waiting);
         return g.tell("Couldn't start the download", "Try again in a moment.");
     }
@@ -243,15 +231,12 @@ pub const Getting = struct {
         return .{ .push = screen.open(&g.told, &g.told_ending) };
     }
 
-    /// Done: Wi-Fi and the Kindle's waking put back as they were.
+    /// Done: noface's Wi-Fi pause put back, if it lifted it.
     fn finish(g: *Getting, ready: bool) screen.Step(bool) {
         assert(g.phase != .starting); // Something it opened has ended
         assert(g.background.holds(&g.a.display));
-        if (g.put_back) |back| {
-            g.a.downloads_until = back.downloads_until;
-            // Off again for reading, by the book's timer, which tries again until it can
-            if (back.wifi_paused) g.a.wifi_off_at = os.now_us();
-        }
+        // Off again for reading, by the book's timer, which tries again until it can
+        if (g.wifi_lifted orelse false) g.a.wifi_pause.resume_soon(os.now_us());
         return .{ .done = ready };
     }
 };

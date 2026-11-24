@@ -262,8 +262,7 @@ pub const Reader = struct {
         }
         assert(r.s.current == r.start);
         r.reading_started = true;
-        r.a.wifi_hands_off = false;
-        r.a.wifi_off_at = now_us() + wifi_saver.after_us;
+        r.a.wifi_pause.book_opened(now_us());
     }
 
     pub fn on_open(r: *Reader) !screen.Step(Outcome) {
@@ -658,18 +657,9 @@ pub const Reader = struct {
     fn pause_wifi(r: *Reader) void {
         // Wi-Fi goes off only while the page alone is up
         assert(r.reading());
-        const a = r.a;
-        const at = a.wifi_off_at orelse return;
-        if (now_us() < at) return;
-        if (a.wifi_hands_off) {
-            a.wifi_off_at = null;
-            return;
-        }
-        a.wifi_off_at = switch (wifi_saver.pause(now_us() < a.downloads_until)) {
-            .paused, .never => null,
-            .later => now_us() + wifi_retry_us,
-        };
-        if (a.wifi_off_at) |next| assert(next > at);
+        const policy = &r.a.wifi_pause;
+        const downloading = policy.due(now_us()) orelse return;
+        policy.settle(wifi_saver.pause(downloading), now_us(), wifi_retry_us);
     }
 
     // The page alone

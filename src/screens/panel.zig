@@ -209,14 +209,14 @@ fn panel_control_shortcut(a: *app.App, choice: menu.Hit) !void {
         .airplane, .wifi => {
             // The reader's choice now: noface neither undoes nor redoes it
             wifi_saver.forget();
-            a.wifi_hands_off = true;
+            a.wifi_pause.reader_took_charge();
             lipc.set_airplane(a.quick.airplane);
         },
         .bluetooth => lipc.set_bluetooth(a.quick.bluetooth),
         .sync => {
             // Paused while reading: syncing needs it, for the rest of the book
             wifi_saver.restore();
-            a.wifi_hands_off = true;
+            a.wifi_pause.reader_took_charge();
             lipc.sync_now();
         },
         .none,

@@ -441,7 +441,7 @@ const Browser = struct {
         assert(b.index < library.page_count(b.lib.count()));
         // A book still coming down keeps Wi-Fi on, even once a book is open
         if (b.lib.downloading_count() > 0) {
-            a.downloads_until = @max(a.downloads_until, now_us() + download_watch_us);
+            a.wifi_pause.download_until(now_us() + download_watch_us);
         }
         const t0 = now_us();
         try b.render();
@@ -742,7 +742,7 @@ const Browser = struct {
                 // Only a download finishes later, so only it is watched
                 const until = now_us() + download_watch_us;
                 b.watch_until = until;
-                b.a.downloads_until = until; // Wi-Fi stays on for it while reading
+                b.a.wifi_pause.download_until(until); // Wi-Fi stays on for it while reading
                 b.reload(.export_first);
             },
         }

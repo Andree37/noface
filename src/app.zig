@@ -32,6 +32,7 @@ const os = @import("sys/os.zig");
 const battery_model = @import("model/battery.zig");
 const battery_log = @import("kindle/battery_log.zig");
 const dict_download = @import("kindle/dict_download.zig");
+const wifi_saver = @import("kindle/wifi_saver.zig");
 const Input = input_mod.Input;
 const unix_time = os.unix_time;
 /// Lines for noface's log, which the tests keep quiet (main.zig's `std_options`).
@@ -91,13 +92,9 @@ pub const App = struct {
     /// goes in the log for its tests to tap (screens/placed.zig). Never the reader's own.
     logs_placed: bool = false,
     battery_last: ?battery_model.Sample = null, // Last level noted, so only changes are logged
-    downloads_until: u64 = 0, // A download may still be running until then (now_us)
     dictionary_base: []const u8 = dict_download.default_base, // Where dictionaries download from
-    wifi_hands_off: bool = false, // The reader took charge of airplane mode in this book
-    /// When to turn Wi-Fi off while a book is read (kindle/wifi_saver.zig), null once
-    /// that's settled: set as a book opens, and again by a dictionary's download that
-    /// turned noface's pause back off.
-    wifi_off_at: ?u64 = null,
+    /// When Wi-Fi goes off while a book is read (kindle/wifi_saver.zig).
+    wifi_pause: wifi_saver.Pause = .{},
     pictures: picture_cache.Pictures = .{}, // Pictures of the open book, ready to copy onto pages
     /// The reader's settings, speed and journal, and their files (user_data.zig).
     user: user_data.UserData,

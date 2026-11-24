@@ -67,6 +67,63 @@ fn marker_is_note() bool {
     return std.mem.endsWith(u8, path, "/" ++ paths.data.wifi_paused);
 }
 
+/// When the radio goes off while a book is read, as one value: a couple of minutes in,
+/// unless the reader took charge of airplane mode, and not while a download is coming.
+/// Its verbs touch nothing of the Kindle's: the reader asks `due`, then `pause`, then
+/// says what came of it with `settle`.
+pub const Pause = struct {
+    off_at: ?u64 = null, // When to try, on the monotonic clock; null once settled
+    hands_off: bool = false, // The reader took charge of airplane mode in this book
+    downloads_until: u64 = 0, // A download may still be running until then
+
+    /// A book opened: off a couple of minutes from now, whatever came before.
+    pub fn book_opened(p: *Pause, now_us: u64) void {
+        p.hands_off = false;
+        p.off_at = now_us + after_us;
+        assert(p.off_at.? > now_us);
+    }
+
+    /// The reader turned airplane mode, Wi-Fi or a sync on or off: theirs for the book.
+    pub fn reader_took_charge(p: *Pause) void {
+        p.hands_off = true;
+    }
+
+    /// A download may run until `until`: never a shorter wait than one already asked.
+    pub fn download_until(p: *Pause, until_us: u64) void {
+        p.downloads_until = @max(p.downloads_until, until_us);
+        assert(p.downloads_until >= until_us);
+    }
+
+    /// Off again as soon as the reader is back on the page: after noface's pause was
+    /// lifted for a moment (a dictionary's download).
+    pub fn resume_soon(p: *Pause, now_us: u64) void {
+        p.off_at = now_us;
+    }
+
+    /// Whether it's time to try, and if so whether a download is coming (`pause`'s
+    /// question); null for nothing to do now. Taken charge of, it settles to never.
+    // Assertions: it reads its times against the clock's, any of which may be the later.
+    pub fn due(p: *Pause, now_us: u64) ?bool {
+        const at = p.off_at orelse return null;
+        if (now_us < at) return null;
+        if (p.hands_off) {
+            p.off_at = null;
+            return null;
+        }
+        return now_us < p.downloads_until;
+    }
+
+    /// What `pause` came to at `now_us`: settled, or tried again `retry_us` later.
+    pub fn settle(p: *Pause, outcome: Outcome, now_us: u64, retry_us: u64) void {
+        assert(retry_us > 0);
+        p.off_at = switch (outcome) {
+            .paused, .never => null,
+            .later => now_us + retry_us,
+        };
+        if (p.off_at) |next| assert(next > now_us);
+    }
+};
+
 /// Whose airplane mode is on, if it is: noface's own pause (its note is there), which
 /// noface undoes, or the reader's, which is theirs. Unknown when the Kindle didn't say.
 pub const Airplane = enum { off, noface, reader, unknown };
@@ -157,4 +214,24 @@ test "the note goes in any data folder noface takes, and a longer one is refused
     try std.testing.expect(std.mem.startsWith(u8, std.mem.span(note_path()), &longest));
     const longer: [file.own_path_bytes_max + marker_buffer.len]u8 = @splat('d');
     try std.testing.expectError(error.PathTooLong, use_data_dir(&longer));
+}
+
+test "the radio goes off a couple of minutes into a book, unless the reader took charge" {
+    var p: Pause = .{};
+    p.book_opened(0);
+    try std.testing.expectEqual(@as(?bool, null), p.due(after_us - 1));
+    try std.testing.expectEqual(@as(?bool, false), p.due(after_us)); // Nothing coming down
+    p.settle(.later, after_us, 1);
+    try std.testing.expectEqual(@as(?bool, null), p.due(after_us)); // Tried again later
+    // A download coming: asked with it, and a shorter one never cuts it short
+    p.download_until(after_us * 3);
+    p.download_until(after_us * 2);
+    try std.testing.expectEqual(@as(?bool, true), p.due(after_us + 1));
+    // Taken charge of: settles to never
+    p.reader_took_charge();
+    try std.testing.expectEqual(@as(?bool, null), p.due(after_us * 4));
+    try std.testing.expectEqual(@as(?u64, null), p.off_at);
+    // A new book, a new choice
+    p.book_opened(after_us * 4);
+    try std.testing.expect(!p.hands_off);
 }

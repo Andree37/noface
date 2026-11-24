@@ -22,6 +22,9 @@ Things the stock Kindle doesn't do:
 - **EPUBs that just open.** Copy them over USB and read them; no Send to Kindle.
 - **Wi‑Fi off while you read.** It switches itself off a couple of minutes into a
   book and back on when you're done, so the battery lasts longer.
+- **How long a book has left, at your pace.** The book you're reading says how much
+  time it has left, on the home screen and at the foot of the page, worked out from how
+  fast you actually read.
 - **How long your charge will last.** Tap the battery for an estimate in days, from
   how you actually read.
 - **Series from your own files.** Books in a series are grouped and kept in order,
@@ -35,12 +38,14 @@ Things the stock Kindle doesn't do:
 
 ## And everything you'd expect
 
-Definitions (the dictionary downloads itself the first time you hold a word) and
-highlights (synced with the Kindle apps for Amazon books), search as you type, four
-typefaces plus your own from the Kindle's `fonts` folder, size, spacing, margins and
-hyphenation, pictures full screen with zoom, reading stats with your daily minutes and
-streak, series you can fix by hand, and the book's cover or your own picture on the
-lock screen.
+Definitions (the dictionary downloads itself the first time you hold a word),
+highlights and bookmarks (synced with the Kindle apps for Amazon books), footnotes that
+open over the page, contents and Go To, a Back button after every jump, search as you
+type, four typefaces plus your own from the Kindle's `fonts` folder, size, spacing,
+margins, justification and hyphenation, a clock, pictures full screen with zoom, reading
+stats with your daily minutes and streak, series you can fix by hand, the book's cover
+or your own picture on the lock screen, and Wi‑Fi, Bluetooth, sync, light and warmth in
+a panel you pull down from the top.
 
 ## Get it
 
@@ -54,6 +59,10 @@ home screen.
 2. Plug in the Kindle. Copy the **noface** folder to its drive, and the folder
    **noface/kpm/noface** into **kmc/kpm/packages**.
 3. Eject, and type `;kpm launch noface` in the Kindle's search bar.
+
+To have noface open whenever the Kindle starts, turn on Aa > More > "Open noface when
+the Kindle starts". If noface ever fails to start on three boots in a row, it turns this
+off itself and the Kindle starts as usual.
 
 Updating is the same copy: your settings, reading positions and stats live in a
 separate **noface-data** folder that updates never touch.

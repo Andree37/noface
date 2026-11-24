@@ -195,8 +195,8 @@ pub const FakeKindle = struct {
         return null;
     }
 
-    /// The rows of `lines` a command's "limit N offset M" asks for, as sqlite gives
-    /// them: all of them when it asks for none in particular.
+    /// The rows of `lines` a command's "annotation_id > '<id>' ... limit N" asks for,
+    /// as sqlite gives them: all of them when it asks for none in particular.
     fn rows_asked(lines: []const u8, command: []const u8) []const u8 {
         assert(lines.len > 0);
         const limit = number_after(command, " limit ") orelse return lines;

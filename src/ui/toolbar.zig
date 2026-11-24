@@ -192,10 +192,9 @@ pub fn scrub_place(part: u32, parts: u32) style.Point {
     return point;
 }
 
-/// The middle of a control's taps, with the Aa sheet closed. The scrubber's is its
-/// middle, a page halfway through the book.
-/// The middle of a control's taps, or null for a `Hit` that names no control: one
-/// list, this switch, of what a script can tap (screens/places.zig).
+/// The middle of a control's taps, with the Aa sheet closed (the scrubber's is its
+/// middle, a page halfway through the book), or null for a `Hit` that names no control:
+/// one list, this switch, of what a script can tap (screens/places.zig).
 pub fn place(h: Hit) ?style.Point {
     const tools_middle = status_row + (tool_row + tool_taps_below - status_row) / 2;
     const bottom_middle = bottom_top + (scrub.y - scrub_reach - bottom_top) / 2;

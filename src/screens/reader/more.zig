@@ -22,6 +22,7 @@ pub const Outcome = union(enum) {
     page: u32, // Show this page
     refresh, // Show the current page with a full, clean refresh
     not_marked, // Marking it read or unread didn't land: said, then back to the toolbar
+    started_over, // Marked unread: its first page, nothing behind it to go back to
 };
 
 pub const Option = enum { go_to_page, beginning, details, refresh, finished, unread, cancel };
@@ -170,14 +171,14 @@ pub const More = struct {
                 return m.show_card(&m.details_rows, m.entry.title, m.entry.author);
             },
             .finished => {
-                const marked = book_actions.mark_read(m.a, m.entry, true);
+                const marked = book_actions.mark_read(m.a, m.entry, true, .{ .open = m.s });
                 return .{ .done = if (marked) .stay else .not_marked };
             },
             // Unread starts again from the beginning, so the place saved on closing
             // isn't the last page, which would count it read again
             .unread => {
-                const marked = book_actions.mark_read(m.a, m.entry, false);
-                return .{ .done = if (marked) .{ .page = 0 } else .not_marked };
+                const marked = book_actions.mark_read(m.a, m.entry, false, .{ .open = m.s });
+                return .{ .done = if (marked) .started_over else .not_marked };
             },
         }
     }

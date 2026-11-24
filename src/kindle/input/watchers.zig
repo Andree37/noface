@@ -113,8 +113,7 @@ pub fn from_power_key(in: *Input) ?Action {
 /// listened is gone for good, so then powerd is asked instead.
 pub fn restart_watcher_if_dead(in: *Input) ?Action {
     if (in.power_watcher != null or now_us() < in.watcher_retry_us) return null;
-    in.watcher_retry_us = now_us() + watcher_retry_ms * 1000;
-    assert(in.watcher_retry_us > now_us()); // Never tried again in the same turn
+    in.watcher_retry_us = now_us() + watcher_retry_ms * std.time.us_per_ms;
     start_watcher(in);
     std.debug.print("power watcher restarted: {}\n", .{in.power_watcher != null});
     if (!in.locked) return null;

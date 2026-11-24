@@ -68,20 +68,21 @@ pub fn key_by_name(book_path: []const u8) u64 {
 /// (a move that failed, or hasn't come yet): its place and notes copied to its own
 /// names first, so it opens where it was. The old files stay for the library to move
 /// or remove, as a book of the same name may be using them too; one already under the
-/// new name is never written over. Whether 0.2.0's are settled: not when one is there
-/// but unreadable, or wasn't copied, and then the book's own, missing in its stead,
-/// mustn't be written, as the library would then remove the old one for it.
-pub fn adopt_by_name(state_path: [:0]const u8, book_path: []const u8) bool {
+/// new name is never written over. Which of 0.2.0's are settled, kind by kind: not one
+/// there but unreadable, or not copied, and then the book's own of that kind, missing
+/// in its stead, mustn't be written, as the library would then remove the old one for it.
+pub fn adopt_by_name(state_path: [:0]const u8, book_path: []const u8) Adopted {
     assert(book_path.len > 0);
-    const dir = std.fs.path.dirname(state_path) orelse return false;
+    var adopted: Adopted = .{};
+    const dir = std.fs.path.dirname(state_path) orelse return .none;
     const old_key = key_by_name(book_path);
     // The reader's own files, in `Kind`'s order: the place after the notes
     for (std.enums.values(Kind)) |kind| {
         if (kind.remade()) continue; // Made again from the book: nothing of the reader's
         var to_buffer: [file.own_path_bytes_max]u8 = undefined;
         var from_buffer: [file.own_path_bytes_max]u8 = undefined;
-        const to = sibling(&to_buffer, state_path, kind) catch return false;
-        const from = file_path(&from_buffer, dir, kind, old_key) catch return false;
+        const to = sibling(&to_buffer, state_path, kind) catch return .none;
+        const from = file_path(&from_buffer, dir, kind, old_key) catch return .none;
         assert(!std.mem.eql(u8, from, to)); // A whole path's name is never a file name's
         // Only into nothing: its own there, or maybe there (its read will say), is newer
         switch (file.presence(to)) {
@@ -90,12 +91,34 @@ pub fn adopt_by_name(state_path: [:0]const u8, book_path: []const u8) bool {
         }
         switch (file.presence(from)) {
             .absent => {},
-            .unknown => return false,
-            .here => if (!file.copy_file(from, to)) return false,
+            .unknown => adopted.unsettled.insert(kind),
+            .here => if (!file.copy_file(from, to)) adopted.unsettled.insert(kind),
         }
     }
-    return true;
+    return adopted;
 }
+
+/// Which of a book's files 0.2.0 named are settled (`adopt_by_name`).
+pub const Adopted = struct {
+    unsettled: std.EnumSet(Kind) = .empty,
+
+    /// None settled: the book's own paths couldn't even be named.
+    pub const none: Adopted = .{ .unsettled = .full };
+
+    pub fn settled(a: Adopted, kind: Kind) bool {
+        assert(!kind.remade()); // Only the reader's own are adopted
+        return !a.unsettled.contains(kind);
+    }
+
+    /// The book's own file of `kind` at `path`, never written while 0.2.0's of that
+    /// kind isn't settled.
+    pub fn kept(a: Adopted, kind: Kind, path: [*:0]const u8) file.Kept {
+        var k = file.Kept.at(path);
+        if (!a.settled(kind)) k.known = false;
+        assert(k.known == a.settled(kind));
+        return k;
+    }
+};
 
 fn md5_key(text: []const u8, ending: []const u8) u64 {
     var md5 = std.crypto.hash.Md5.init(.{});
@@ -384,7 +407,7 @@ test "a book opened before its files moved takes its notes and place, never over
         _ = calls.unlink(old); // Ignored: only /tmp is left fuller
         _ = calls.unlink(own_kind); // Ignored: only /tmp is left fuller
     };
-    try std.testing.expect(adopt_by_name(own, book));
+    try std.testing.expect(adopt_by_name(own, book).unsettled.count() == 0);
     for (std.enums.values(Kind)) |kind| {
         var own_kind_buffer: [file.own_path_bytes_max]u8 = undefined;
         var old_buffer: [file.own_path_bytes_max]u8 = undefined;
@@ -401,7 +424,7 @@ test "a book opened before its files moved takes its notes and place, never over
     }
     // Its own, once there, is never written over
     try std.testing.expect(save(&file.Kept.at(own), .{ .para = 9, .percent = 70 }));
-    try std.testing.expect(adopt_by_name(own, book));
+    try std.testing.expect(adopt_by_name(own, book).unsettled.count() == 0);
     try std.testing.expectEqual(@as(?u32, 70), look(own).percent);
 }
 
@@ -417,6 +440,8 @@ test "an old place there but unreadable leaves a book's files unsettled" {
     // A link to itself: there, and never opened
     try std.testing.expect(!os.failed(calls.symlink(old, old)));
     defer _ = calls.unlink(old); // Ignored: only /tmp is left fuller
-    try std.testing.expect(!adopt_by_name(own, book));
+    const adopted = adopt_by_name(own, book);
+    try std.testing.expect(!adopted.settled(.state));
+    try std.testing.expect(adopted.settled(.notes)); // Its notes, another kind, are
     try std.testing.expect(!file.exists(own)); // Nothing written in its stead
 }

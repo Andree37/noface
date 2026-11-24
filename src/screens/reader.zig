@@ -136,14 +136,14 @@ fn open_book(r: *Reader) !void {
     const state_path = try a.state_path(&r.path_buffer, entry.path);
     // Files 0.2.0 named by the file name, the library not yet having moved them: not
     // settled, the book's own are never written this opening
-    const settled = state.adopt_by_name(state_path, entry.path);
-    if (!settled) std.debug.print("open: 0.2.0's files not settled, nothing saved\n", .{});
+    const adopted = state.adopt_by_name(state_path, entry.path);
+    if (adopted.unsettled.count() > 0) std.debug.print("open: 0.2.0's files not settled\n", .{});
     // Kept in the reader, as the session points to it while it lays out
     r.progress = null;
     const opened = try book_open.find_pages(a, r.alloc, entry, book_text, .{
         .book_bytes = r.data.len,
         .state_path = state_path,
-        .settled = settled,
+        .adopted = adopted,
         .progress = &r.progress,
     });
     std.debug.print("open {s}: {d} pages, parsed in {d} ms, {s} in {d} ms\n", .{
@@ -171,7 +171,10 @@ fn open_book(r: *Reader) !void {
     };
     if (r.progress) |*p| r.session.progress = p;
     r.s = &r.session;
-    const own_files: note_store.Files = .{ .state_path = state_path, .settled = settled };
+    const own_files: note_store.Files = .{
+        .state_path = state_path,
+        .settled = adopted.settled(.notes),
+    };
     try book_open.read_notes(a, r.alloc, entry, own_files, r.s);
     r.lang = parsed.lang;
     r.start = opened.start;
@@ -253,7 +256,10 @@ pub const Reader = struct {
         try r.s.show(r.start, .jump, null, true);
         r.place_saved = sess.save_progress(r.entry, r.s, r.s.percent());
         // Said as it opens, not only as it closes: read on, the reading isn't kept
-        if (!r.place_saved) try app.show_notice(r.a, "This book's place can't be saved now.");
+        if (!r.place_saved) {
+            // Ignored: only the notice is missed, never the book, whose page is drawn
+            app.show_notice(r.a, "This book's place can't be saved now.") catch {};
+        }
         assert(r.s.current == r.start);
         r.reading_started = true;
         r.a.wifi_hands_off = false;
@@ -327,6 +333,10 @@ pub const Reader = struct {
                     .stay => try r.draw_toolbar(true),
                     .page => |target| try r.to_page(target),
                     .refresh => try r.to_page(@intCast(s.current)),
+                    .started_over => {
+                        r.view = .page;
+                        try r.s.show(0, .start_over, null, true);
+                    },
                     .not_marked => {
                         try r.draw_toolbar(true);
                         try app.show_notice(r.a, book_actions.not_marked_notice);

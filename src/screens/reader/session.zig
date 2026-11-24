@@ -250,13 +250,13 @@ pub const Session = struct {
         s.clock.start(now_us());
     }
 
-    /// How far into the book the reader's page is, in percent, or null while a first
-    /// open is still laid out and the page count isn't known.
     /// The book's text as it's laid out: its paragraphs, and their hyphenation.
     pub fn book_text(s: *const Session) paginate.Text {
         return .{ .paragraphs = s.paragraphs, .hyphenator = s.hyphenator };
     }
 
+    /// How far into the book the reader's page is, in percent, or null while a first
+    /// open is still laid out and the page count isn't known.
     pub fn percent(s: *const Session) ?u32 {
         assert(s.current < s.pages.len);
         if (s.progress != null) return null;

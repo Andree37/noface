@@ -75,7 +75,12 @@ pub fn airplane() Airplane {
     assert(marker_is_note());
     const on = lipc.airplane_on() orelse return .unknown;
     if (!on) return .off;
-    return if (marked()) .noface else .reader;
+    // Whose, by the note: one that can't be looked at says neither
+    return switch (file.presence(marker)) {
+        .here => .noface,
+        .absent => .reader,
+        .unknown => .unknown,
+    };
 }
 
 pub const Outcome = enum {
@@ -114,15 +119,12 @@ pub fn pause(downloading: bool) Outcome {
     return .paused;
 }
 
-/// Whether noface has the radio off right now (so it may turn it back on): its note is
-/// there, or may be, one that can't be opened being taken as there, as noface may
-/// well have turned it off and must be the one to turn it back on.
+/// Whether noface has the radio off right now, so it may turn it back on: its note is
+/// seen there. One that can't be looked at is neither: nothing is turned on for it, as
+/// only a radio noface turned off is turned back on, and the note stays for next time.
 pub fn marked() bool {
     assert(marker_is_note());
-    return switch (file.presence(marker)) {
-        .here, .unknown => true,
-        .absent => false,
-    };
+    return file.presence(marker) == .here;
 }
 
 /// Turns the radio back on, if noface is the one that turned it off. The note stays

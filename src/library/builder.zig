@@ -130,7 +130,7 @@ const Build = struct {
     places: Places,
     records: files.Writer,
     text: files.Writer,
-    last: ?EpubsRead, // What the last build read of each EPUB
+    last: ?LastBuild, // What the last build kept of each book
     beat_us: u64, // When it last beat, or started
     count: u32 = 0,
     local: u32 = 0,
@@ -190,7 +190,7 @@ pub fn build(
         .places = places,
         .records = undefined,
         .text = undefined,
-        .last = if (last) |ix| EpubsRead.sort(ix, items) else null,
+        .last = if (last) |ix| LastBuild.sort(ix, items) else null,
         .beat_us = os.now_us(),
     };
     // Closed before the new files are put in place (a mapped file renamed over faults),
@@ -290,6 +290,9 @@ fn add_kindle_books(b: *Build) void {
             continue;
         // The catalog's flag can stay set long after a download ended: the file decides
         if (e.availability == .downloading and is_complete_book(e.path)) e.availability = .local;
+        if (b.last) |*last| {
+            if (last.find(e.path)) |id| kept_reading(&e, last.reading(id));
+        }
         b.add(&e, null);
     }
     if (lines.skipped > 0) log("library: {d} catalog lines too long\n", .{lines.skipped});
@@ -418,6 +421,20 @@ fn read_about(scratch: *memory.Budget, data: []const u8, with_cover: bool) ?epub
     return about;
 }
 
+/// A Kindle book's row with how far noface had it, as the last build kept it: its time
+/// read, and, while they're newer than the Kindle's, its percent, date and time left. A
+/// place merged after replaces them all; one that can't be read leaves them, never the
+/// book shown unread.
+fn kept_reading(e: *catalog.Entry, last: Reading) void {
+    assert(!e.is_epub());
+    assert(last.percent <= 100);
+    e.seconds_read = last.seconds_read;
+    if (last.last <= e.kindle_last) return; // The stock reader's since
+    e.percent = last.percent;
+    e.last = last.last;
+    e.words_left = last.words_left;
+}
+
 /// How far the reader is in an EPUB, as a record keeps it: none for one new to the index.
 const Reading = struct {
     percent: u32 = 0,
@@ -453,20 +470,18 @@ fn epub_entry(
     return e;
 }
 
-/// The EPUBs of the last build, their ids sorted by their path's hash, to find each by
-/// halves: what was read of a book whose file hasn't changed needn't be read again, and
-/// how far the reader is is kept.
-const EpubsRead = struct {
+/// The books of the last build, their ids sorted by their path's hash, to find each by
+/// halves: what was read of an EPUB whose file hasn't changed needn't be read again, and
+/// how far the reader is in every book is kept, should their place not merge.
+const LastBuild = struct {
     ix: *const index.Index,
     sorted: []Item,
 
-    fn sort(ix: *const index.Index, items: []Item) EpubsRead {
+    fn sort(ix: *const index.Index, items: []Item) LastBuild {
         assert(items.len >= ix.header.count);
         var count: u32 = 0;
         for (0..ix.header.count) |i| {
             const id: u32 = @intCast(i);
-            const r = ix.record(id);
-            if (r.flags & index.Record.epub == 0) continue;
             items[count] = .{ .id = id, .key = path_key(ix.entry(id).path) };
             count += 1;
         }
@@ -477,8 +492,8 @@ const EpubsRead = struct {
         return .{ .ix = ix, .sorted = sorted };
     }
 
-    /// The last build's record of the EPUB at `path`, if it had one.
-    fn find(read: *const EpubsRead, path: []const u8) ?u32 {
+    /// The last build's record of the book at `path`, if it had one.
+    fn find(read: *const LastBuild, path: []const u8) ?u32 {
         assert(path.len > 0);
         assert(read.sorted.len <= read.ix.header.count);
         const key = path_key(path);
@@ -491,9 +506,10 @@ const EpubsRead = struct {
 
     /// What record `id` read of its EPUB, if the file is as it was then, and its series
     /// is the book's own, not one set by hand.
-    fn about_if(read: *const EpubsRead, id: u32, facts: calls.Facts) ?About {
+    fn about_if(read: *const LastBuild, id: u32, facts: calls.Facts) ?About {
         assert(id < read.ix.header.count);
         const r = read.ix.record(id);
+        if (r.flags & index.Record.epub == 0) return null; // Not an EPUB then
         if (r.file_size != facts.size or r.file_modified != facts.modified_s) return null;
         if (r.flags & index.Record.series_by_hand != 0) return null;
         const e = read.ix.entry(id);
@@ -505,8 +521,8 @@ const EpubsRead = struct {
         };
     }
 
-    /// How far the reader was in record `id`'s EPUB.
-    fn reading(read: *const EpubsRead, id: u32) Reading {
+    /// How far the reader was in record `id`'s book.
+    fn reading(read: *const LastBuild, id: u32) Reading {
         assert(id < read.ix.header.count);
         const e = read.ix.entry(id);
         assert(e.percent <= 100); // The record's, checked as the index opened

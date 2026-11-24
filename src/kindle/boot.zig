@@ -84,6 +84,7 @@ pub fn should_start() bool {
     // The reader's settings: one unreadable reads as autostart off, and is never written
     var settings_file = file.Kept.at(settings_path);
     var settings = settings_model.parse(settings_file.read(&settings_buffer));
+    if (!settings.autostart) return false; // Off: the count isn't looked at
     // The count is noface's own: one there but unreadable can't be counted on, so it's
     // handled as a count that can't be written, and noface isn't started
     const attempts = file.read_small(attempts_path, &attempts_buffer) catch |err| switch (err) {

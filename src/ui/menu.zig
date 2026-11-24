@@ -361,10 +361,9 @@ pub fn hit(x: i32, y: i32) Hit {
     return .none;
 }
 
-/// The middle of a tile's or a slider end's taps, and for closing, of the page under the
-/// panel.
-/// The middle of a control's taps, or null for a `Hit` that names no control: one
-/// list, this switch, of what a script can tap (screens/places.zig).
+/// The middle of a control's taps (a tile's, a slider end's, and for closing, the page
+/// under the panel's), or null for a `Hit` that names no control: one list, this
+/// switch, of what a script can tap (screens/places.zig).
 pub fn place(h: Hit) ?style.Point {
     const point: style.Point = switch (h) {
         .close => .{ .x = style.screen_width / 2, .y = (height + style.screen_height) / 2 },
@@ -460,7 +459,6 @@ pub fn draw_slider_at(
     if (mono) page.threshold(band_top(row), band_height);
 }
 
-/// Where a toggle and its label sit, to redraw it alone.
 /// The round tile that `choice` taps, if it's one.
 pub fn tile_of(choice: Hit) ?Tile {
     for (tiles) |t| {
@@ -469,6 +467,7 @@ pub fn tile_of(choice: Hit) ?Tile {
     return null;
 }
 
+/// Where a toggle and its label sit, to redraw it alone.
 pub fn shortcut_box(choice: Hit) ?style.Rect {
     for (0..tiles.len) |i| {
         if (tiles[i].hit != choice) continue;

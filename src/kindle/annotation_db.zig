@@ -38,7 +38,7 @@ const read_format = find_database ++ "sqlite3 -separator '|' -cmd '.timeout 3000
 /// The line after a whole answer, never a record's: one has two '|' in it.
 pub const end_mark = "end";
 /// Room for `read_format` filled in: two record fields, four book matches (each fits
-/// `read_lines`'s buffer for it), two dataset numbers, the id a page starts after, and
+/// `read_page`'s buffer for it), two dataset numbers, the id a page starts after, and
 /// a page's limit.
 const read_command_bytes_max = 1600;
 
@@ -158,9 +158,10 @@ pub fn read_page(key: []const u8, kind: annotations.Kind, page: *Page, after: *A
     const rows = std.mem.count(u8, lines, "\n");
     // More than it asked for is no answer of the database's: taken for none at all
     if (rows > page_rows) return null;
-    if (rows > 0) {
-        // The next page starts after this one's last id: one that isn't an id, or isn't
-        // past where this page started, is no answer of the database's either
+    if (rows == page_rows) {
+        // Full: the next page starts after this one's last id, which must be one to
+        // name in its command, past where this page started. A page that isn't full is
+        // the last, its ids only read
         const body = lines[0 .. lines.len - 1]; // Without the last line's end
         const last_end = std.mem.lastIndexOfScalar(u8, body, '\n');
         const last_line = if (last_end) |at| body[at + 1 ..] else body;

@@ -41,7 +41,9 @@ comptime {
 
 /// How the reader got to a page: reading on, a page at a time, or a jump (Go To, a
 /// search, a chapter, the slider, Back), which the button remembers.
-pub const Move = enum { turn, jump };
+/// A page turned, a jump to another, or the book begun again from its start (marked
+/// unread), which leaves nothing behind to go back to.
+pub const Move = enum { turn, jump, start_over };
 
 pub const Back = struct {
     /// Where the reader was before the first jump kept; null with no button.
@@ -65,7 +67,15 @@ pub const Back = struct {
         assert(from < pages.len);
         assert(to < pages.len);
         const shown_before = b.place != null;
-        const turning = move == .turn;
+        const turning = switch (move) {
+            .turn => true,
+            .jump => false,
+            .start_over => {
+                b.place = null;
+                b.turns_since_jump = 0;
+                return shown_before;
+            },
+        };
         if (b.place) |kept| {
             if (settled and book_model.page_containing(pages, kept.para, kept.byte) == to) {
                 b.place = null; // Back where they were, however they got there

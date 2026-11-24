@@ -2,14 +2,30 @@
 
 **Your Kindle, without the wait.**
 
-noface replaces the Kindle Paperwhite's home screen and reader with one built for
-speed. Pages turn the moment you tap, and everything you rely on keeps working:
-your Amazon library, sync, highlights and Wi‑Fi.
+The Kindle Paperwhite is a wonderful screen held back by slow software: a store where
+your library should be, and a beat of lag on every page. noface replaces its home
+screen and reader with one built for one thing, reading, and built to be fast. Tap,
+and the page is already there.
 
 <p align="center"><img src="docs/speed.gif" width="600" alt="The stock Kindle reader and noface side by side, turning pages of the same book: the stock reader's new page appears about 300 ms after the tap, noface's about 60 ms after"></p>
 
 <p align="center"><b>New page in ~60 ms with noface, ~330 ms with the stock reader.</b><br>
 <sub>Same Kindle, same book, measured on the device. <a href="docs/DEVELOPING.md#how-the-speed-comparison-was-measured">How</a>.</sub></p>
+
+## Why you'll love it
+
+- **It feels like paper.** Pages turn about five times faster than the stock reader.
+  You stop noticing the device and just read.
+- **It's quiet.** Your home screen is your books and nothing else. No store, no deals,
+  no banners asking you to subscribe.
+- **Your battery lasts longer.** Wi‑Fi switches itself off while you read and comes
+  back when you're done, and the battery tells you how many days you have left.
+- **Your books, your way.** Drop EPUBs onto the Kindle over USB and they're in your
+  library, no Send to Kindle, no email, no account.
+- **Nothing you rely on breaks.** Your Amazon library, sync, highlights and Wi‑Fi all
+  keep working, and your highlights on Amazon books still reach the Kindle apps.
+- **Nothing to lose.** Your Kindle's own software stays exactly where it was: leave
+  noface from its panel and the Kindle's screens come straight back.
 
 ## Unique features
 
@@ -46,29 +62,40 @@ stats with your daily minutes and streak, series you can fix by hand, the book's
 or your own picture on the lock screen, and Wi‑Fi, Bluetooth, sync, light and warmth in
 a panel you pull down from the top.
 
-## Get it
+## Install it in five minutes
 
-You'll need a **jailbroken Kindle Paperwhite, 12th generation (2024)**, with KMC and
-KPM. **It runs on that Kindle only:** noface drives its display directly, so on any
-other model it checks the screen, says it can't run, and goes back to the Kindle's own
-home screen.
+**What you need:** a **Kindle Paperwhite, 12th generation (2024)**, jailbroken, with
+**KMC** and **KPM** installed (the usual jailbreak guides set both up). That's the
+only Kindle noface runs on: it drives the display directly, so on any other model it
+checks the screen, says it can't run, and hands straight back to the Kindle's own home
+screen.
 
-1. Download the latest **noface-&lt;version&gt;-paperwhite_12.zip** from
-   [Releases](../../releases/latest) and unzip it.
-2. Plug in the Kindle. Copy the **noface** folder to its drive, and the folder
-   **noface/kpm/noface** into **kmc/kpm/packages**.
-3. Eject, and type `;kpm launch noface` in the Kindle's search bar.
+1. **Download** the latest **noface-&lt;version&gt;-paperwhite_12.zip** from
+   [Releases](../../releases/latest) and unzip it on your computer.
+2. **Copy** it over: plug the Kindle in by USB, copy the **noface** folder to the
+   Kindle's drive, then copy the folder **noface/kpm/noface** into
+   **kmc/kpm/packages** on the same drive.
+3. **Launch** it: eject the Kindle, and type `;kpm launch noface` into its search bar.
 
-To have noface open whenever the Kindle starts, turn on Aa > More > "Open noface when
-the Kindle starts". If noface ever fails to start on three boots in a row, it turns this
-off itself and the Kindle starts as usual.
+That's it: your library appears, and your books open at the page you were on.
 
-Updating is the same copy: your settings, reading positions and stats live in a
-separate **noface-data** folder that updates never touch.
+**Start with your Kindle.** To have noface open whenever the Kindle starts, turn on
+Aa > More > "Open noface when the Kindle starts". If noface ever fails to start on three
+boots in a row, it turns this off itself and the Kindle starts as usual.
 
-Something not right? `noface doctor` and `noface selftest` check the Kindle and noface
-itself; the [release notes](../../releases/latest) say how to run them and where to
-send what they print.
+**Update** by copying the new **noface** folder over the old one. Your settings,
+reading positions, highlights and stats live in a separate **noface-data** folder that
+updates never touch.
+
+**Go back** any time: pull the panel down from the top and tap **Kindle**, and the
+Kindle's own screens return. To remove noface, turn off starting with the Kindle, then
+delete the **noface** folder and **kmc/kpm/packages/noface**. If you had turned on
+starting with the Kindle, its one small startup file stays behind in /etc/upstart, idle;
+delete **noface-autostart.conf** there too to leave no trace.
+
+**Something not right?** `noface doctor` and `noface selftest` check the Kindle and
+noface itself; the [release notes](../../releases/latest) say how to run them and where
+to send what they print.
 
 ## Good to know
 

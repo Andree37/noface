@@ -49,7 +49,27 @@ const Package = struct {
 };
 
 /// Paragraph by "file#id", or by "file" for its first paragraph.
-const Anchors = std.StringHashMapUnmanaged(u32);
+/// Where links and the contents land, by `anchor_key`: each to its paragraph.
+const Anchors = std.AutoHashMapUnmanaged(AnchorKey, u32);
+
+/// A place links and the contents name: a file's start ("c1.xhtml") or an element in it
+/// ("c1.xhtml#late"), hashed. A book of many ids keeps a number for each, never a
+/// string; two that collide can only send a link to the other's paragraph, as a target
+/// that isn't there sends it nowhere.
+const AnchorKey = u64;
+
+/// The key of `file`'s start, or of the element `id` names in it: the one way every
+/// anchor and every link's target is named, so the two always meet.
+fn anchor_key(file: []const u8, id: ?[]const u8) AnchorKey {
+    assert(std.mem.indexOfScalar(u8, file, '#') == null); // A path, its fragment apart
+    var h = std.hash.Wyhash.init(0);
+    h.update(file);
+    if (id) |name| {
+        h.update("#");
+        h.update(name);
+    }
+    return h.final();
+}
 
 /// Headings' looks, h1 to h4; h5 and h6 look like h4. Sizes index `book.size_scales`.
 const heading_looks = [_]book.Look{
@@ -351,17 +371,20 @@ fn eql_any(name: []const u8, comptime list: []const []const u8) bool {
     return false;
 }
 
-/// A link before its target is known: from where, to "file#id".
-const PendingLink = struct { paragraph: u32, start: u32, end: u32, target: []const u8 };
+/// A link before its target is known: from where, to which anchor.
+const PendingLink = struct { paragraph: u32, start: u32, end: u32, target: AnchorKey };
 
 /// Builds paragraphs from one spine file's body.
 const Builder = struct {
     alloc: std.mem.Allocator,
+    /// For what's needed only while a chapter is read (a link's path, before it's a
+    /// key): emptied with the chapter's markup.
+    scratch: std.mem.Allocator,
     files: []const zip.Entry,
     paragraphs: std.ArrayList(book.Paragraph) = .empty,
     anchors: Anchors = .empty,
-    // "file#id" that fall partway into a paragraph
-    inner_anchors: std.StringHashMapUnmanaged(void) = .empty,
+    // Anchors that fall partway into a paragraph
+    inner_anchors: std.AutoHashMapUnmanaged(AnchorKey, void) = .empty,
     links: std.ArrayList(PendingLink) = .empty,
     text: std.ArrayList(u8) = .empty,
     runs: std.ArrayList(book.Run) = .empty,
@@ -377,10 +400,9 @@ const Builder = struct {
     dir: []const u8 = "", // The chapter file's folder, for the paths it refers to
     in_body: bool = false,
     skipping: ?[]const u8 = null, // Inside <head>, <style> or <script>: no text
-    // Anchors for the next paragraph, whole: "chapter.xhtml#id", or a chapter's own
-    // path for its start. Made when seen, so one carried past its chapter's last
-    // paragraph still names that chapter.
-    waiting_anchors: std.ArrayList([]const u8) = .empty,
+    // Anchors for the next paragraph: an element's, or a chapter's start. Made when
+    // seen, so one carried past its chapter's last paragraph still names that chapter.
+    waiting_anchors: std.ArrayList(AnchorKey) = .empty,
 
     /// The paragraph's text so far, in bytes. Text comes from one chapter file, which
     /// the zip reader keeps under `zip.size_max`, and decoding it only shrinks it.
@@ -533,7 +555,7 @@ const Builder = struct {
         b.dir = std.fs.path.dirnamePosix(path) orelse "";
         // Its start: the first paragraph after it, which is the next chapter's when
         // this one has none
-        try b.waiting_anchors.append(b.alloc, path);
+        try b.waiting_anchors.append(b.alloc, anchor_key(path, null));
         b.in_body = false;
         b.skipping = null;
         var t = xml.Tokenizer{ .data = xhtml };
@@ -607,7 +629,7 @@ const Builder = struct {
     /// start, and noted as partway in when text has already started.
     fn note_anchor(b: *Builder, id: []const u8) !void {
         assert(b.in_body);
-        const key = try std.fmt.allocPrint(b.alloc, "{s}#{s}", .{ b.file, id });
+        const key = anchor_key(b.file, id);
         if (b.text.items.len > 0) try b.inner_anchors.put(b.alloc, key, {});
         try b.waiting_anchors.append(b.alloc, key);
         assert(b.waiting_anchors.items.len > 0);
@@ -661,14 +683,12 @@ const Builder = struct {
         if (end <= start) return;
         const href = link.target;
         assert(href.len > 0);
-        const fragment = href[std.mem.indexOfScalar(u8, href, '#') orelse href.len ..];
-        const file = if (href[0] == '#') b.file else try resolve(b.alloc, b.dir, href);
-        const target = try std.fmt.allocPrint(b.alloc, "{s}{s}", .{ file, fragment });
+        const file = if (href[0] == '#') b.file else try resolve(b.scratch, b.dir, href);
         try b.links.append(b.alloc, .{
             .paragraph = @intCast(b.paragraphs.items.len),
             .start = start,
             .end = end,
-            .target = target,
+            .target = anchor_key(file, fragment_of(href)),
         });
     }
 
@@ -807,12 +827,17 @@ fn anchor_for(
 ) !?u32 {
     assert(anchors.count() > 0);
     const file = try resolve(alloc, dir, href);
-    if (std.mem.indexOfScalar(u8, href, '#')) |hash| {
-        const key = try std.fmt.allocPrint(alloc, "{s}{s}", .{ file, href[hash..] });
-        assert(key.len > file.len);
-        if (anchors.get(key)) |paragraph| return paragraph;
+    if (fragment_of(href)) |id| {
+        if (anchors.get(anchor_key(file, id))) |paragraph| return paragraph;
     }
-    return anchors.get(file);
+    return anchors.get(anchor_key(file, null));
+}
+
+/// The element an href names after its '#', or null for none: a file's start.
+fn fragment_of(href: []const u8) ?[]const u8 {
+    const hash = std.mem.indexOfScalar(u8, href, '#') orelse return null;
+    assert(hash < href.len);
+    return href[hash + 1 ..];
 }
 
 /// Reads a whole EPUB. What the book keeps is allocated from `alloc`, an arena that
@@ -831,7 +856,7 @@ pub fn parse(alloc: std.mem.Allocator, scratch: *memory.Region, data: []const u8
     };
     const files = try zip.entries(alloc, data);
     const p = try read_package(alloc, files);
-    var b = Builder{ .alloc = alloc, .files = files };
+    var b = Builder{ .alloc = alloc, .scratch = markup.allocator(), .files = files };
     const each_chapter = markup.mark();
     defer markup.rewind(each_chapter);
     for (p.spine, 0..) |id, index| {
@@ -953,7 +978,7 @@ test "a heading's text after a picture and a line break stays a heading" {
     // The picture there, stored, so it's added between the heading's tag and its text
     const jpeg = &picture.test_jpeg;
     const files = [_]zip.Entry{.{ .name = "x.jpg", .method = 0, .data = jpeg, .size = jpeg.len }};
-    var b = Builder{ .alloc = arena.allocator(), .files = &files };
+    var b = Builder{ .alloc = arena.allocator(), .scratch = arena.allocator(), .files = &files };
     try b.chapter(
         "c.xhtml",
         "<html><body><h2><img src=\"x.jpg\"/><br/><br/>Chapter I.</h2>" ++
@@ -977,7 +1002,7 @@ test "a note reference ending in a space at a paragraph's end stays inside it" {
         var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
         defer arena.deinit();
         const alloc = arena.allocator();
-        var b = Builder{ .alloc = alloc, .files = &.{} };
+        var b = Builder{ .alloc = alloc, .scratch = alloc, .files = &.{} };
         const html = try std.fmt.allocPrint(alloc, "<html><body><p>Some text, with a note." ++
             "{s}<p id=\"fn1\">1 The note.</p></body></html>", .{ending});
         try b.chapter("c.xhtml", html);
@@ -1024,7 +1049,7 @@ test "a series place that isn't a number in range counts as none" {
 test "bold left open at a chapter's end styles its last words and nothing after" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    var b = Builder{ .alloc = arena.allocator(), .files = &.{} };
+    var b = Builder{ .alloc = arena.allocator(), .scratch = arena.allocator(), .files = &.{} };
     try b.chapter("a.xhtml", "<html><body><p><b>x</p>Bold to the end</body></html>");
     try b.chapter("b.xhtml", "<html><body>Hello</body></html>");
     const paragraphs = b.paragraphs.items;
@@ -1038,7 +1063,7 @@ test "bold left open at a chapter's end styles its last words and nothing after"
 test "an empty link goes nowhere, and doesn't stop the reader" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    var b = Builder{ .alloc = arena.allocator(), .files = &.{} };
+    var b = Builder{ .alloc = arena.allocator(), .scratch = arena.allocator(), .files = &.{} };
     try b.chapter("c.xhtml", "<html><body><p><a href=\"\">here</a></p></body></html>");
     try std.testing.expectEqual(@as(usize, 0), b.links.items.len);
     try std.testing.expectEqualStrings("here", b.paragraphs.items[0].text);
@@ -1047,7 +1072,7 @@ test "an empty link goes nowhere, and doesn't stop the reader" {
 test "an id after a chapter's last paragraph, and an empty chapter, keep their own names" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    var b = Builder{ .alloc = arena.allocator(), .files = &.{} };
+    var b = Builder{ .alloc = arena.allocator(), .scratch = arena.allocator(), .files = &.{} };
     const chapters = [_][2][]const u8{
         .{ "c1.xhtml", "<html><body><p>One.</p><div id=\"late\"></div></body></html>" },
         .{ "empty.xhtml", "<html><body><div id=\"none\"></div></body></html>" },
@@ -1058,12 +1083,43 @@ test "an id after a chapter's last paragraph, and an empty chapter, keep their o
         try b.keep_pending();
     }
     // Each lands on the paragraph after it, in its own chapter's name
-    try std.testing.expectEqual(@as(u32, 1), b.anchors.get("c1.xhtml#late").?);
-    try std.testing.expectEqual(@as(u32, 1), b.anchors.get("empty.xhtml").?);
-    try std.testing.expectEqual(@as(u32, 1), b.anchors.get("empty.xhtml#none").?);
-    try std.testing.expectEqual(@as(u32, 1), b.anchors.get("c2.xhtml#late").?);
-    try std.testing.expectEqual(@as(u32, 0), b.anchors.get("c1.xhtml").?);
-    try std.testing.expectEqual(@as(u32, 1), b.anchors.get("c2.xhtml").?);
+    try std.testing.expectEqual(@as(u32, 1), b.anchors.get(anchor_key("c1.xhtml", "late")).?);
+    try std.testing.expectEqual(@as(u32, 1), b.anchors.get(anchor_key("empty.xhtml", null)).?);
+    try std.testing.expectEqual(@as(u32, 1), b.anchors.get(anchor_key("empty.xhtml", "none")).?);
+    try std.testing.expectEqual(@as(u32, 1), b.anchors.get(anchor_key("c2.xhtml", "late")).?);
+    try std.testing.expectEqual(@as(u32, 0), b.anchors.get(anchor_key("c1.xhtml", null)).?);
+    try std.testing.expectEqual(@as(u32, 1), b.anchors.get(anchor_key("c2.xhtml", null)).?);
+}
+
+test "every link lands on the paragraph its target names, the first of an id twice" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    var b = Builder{ .alloc = alloc, .scratch = alloc, .files = &.{} };
+    const chapters = [_][2][]const u8{
+        .{
+            "text/c1.xhtml",
+            "<html><body><p><a href=\"c2.xhtml#n\">across</a> " ++
+                "<a href=\"#own\">here</a> <a href=\"c2.xhtml\">start</a></p>" ++
+                "<p id=\"own\">Own.</p></body></html>",
+        },
+        .{
+            "text/c2.xhtml",
+            "<html><body><p>Two.</p><p id=\"n\">Note.</p><p id=\"n\">Again.</p></body></html>",
+        },
+    };
+    for (chapters) |c| {
+        try b.chapter(c[0], c[1]);
+        try b.keep_pending();
+    }
+    try b.resolve_links();
+    // Paragraphs: 0 the links, 1 "Own.", 2 "Two.", 3 the first "n", 4 the second
+    const links = b.paragraphs.items[0].links;
+    try std.testing.expectEqual(@as(usize, 3), links.len);
+    var targets: [3]u32 = undefined;
+    for (links, &targets) |l, *t| t.* = l.target;
+    std.mem.sort(u32, &targets, {}, std.sort.asc(u32));
+    try std.testing.expectEqualSlices(u32, &.{ 1, 2, 3 }, &targets);
 }
 
 test "headings h1 to h6 each have a look, and other tags none" {
@@ -1133,7 +1189,7 @@ test "a package with an empty author or title still lists its chapters" {
 test "a tag that closes itself styles and links nothing; a link a block cuts covers what's after" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    var b = Builder{ .alloc = arena.allocator(), .files = &.{} };
+    var b = Builder{ .alloc = arena.allocator(), .scratch = arena.allocator(), .files = &.{} };
     const markup = "<html><body><p>An <i class=\"icon\"/>icon and <a href=\"#n\"/>more.</p>" ++
         "<p>Long <a href=\"#n1\">x</p><p>other words</a> here.</p>" ++
         "<p><a href=\"#n2\">*<br/>1</a> A paragraph.</p></body></html>";
@@ -1212,7 +1268,7 @@ test "broken markup is read or refused, never crashes, in each of the book's rea
         defer arena.deinit();
         const alloc = arena.allocator();
         // The chapter's markup, as the book is built
-        var b = Builder{ .alloc = alloc, .files = &.{} };
+        var b = Builder{ .alloc = alloc, .scratch = alloc, .files = &.{} };
         b.chapter("c.xhtml", broken) catch {}; // Ignored: refused is as good as read
         // The package, from a container that points at it
         const stored = 0;
@@ -1229,7 +1285,7 @@ test "broken markup is read or refused, never crashes, in each of the book's rea
         _ = read_package(alloc, &files) catch {}; // Ignored: refused is as good as read
         // The contents, either kind, against an anchor there is
         var anchors: Anchors = .empty;
-        try anchors.put(alloc, "c.xhtml#c", 0);
+        try anchors.put(alloc, anchor_key("c.xhtml", "c"), 0);
         var out: std.ArrayList(book.Chapter) = .empty;
         read_contents_nav(alloc, &out, "nav.xhtml", broken, &anchors) catch {}; // Ignored: as above
         out.clearRetainingCapacity();

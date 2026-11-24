@@ -14,7 +14,9 @@
 //!   `// Assertions: …`  just above a function that can't honestly make two assertions;
 //!   `// Not a size: …`  on a line of the screens' code (or just above it) whose number
 //!                       isn't a length on the screen: a step of a setting, a row's
-//!                       place in a list, a test page's own size.
+//!                       place in a list, a test page's own size;
+//!   `// System memory: …` on a line of the app's code (or just above it) that takes
+//!                       memory from the system rather than a budget, with why.
 //!
 //! A marker with nothing to excuse is a break too, so none outlives its reason.
 const std = @import("std");
@@ -84,6 +86,11 @@ pub const Rule = enum {
     /// dotted name (a count of a size named elsewhere), and one marked `// Not a size:
     /// …` are left alone.
     layout_number,
+    /// The system's allocator in the app's code (src/, but for the scenarios' and the
+    /// tests' own helpers, and the regions' file that maps them): everything noface
+    /// takes comes from a budget of a region reserved at startup, counted and limited.
+    /// One that can't says why on that line or just above it: `// System memory: `.
+    allocator_unbudgeted,
 };
 
 pub const rule_count = @typeInfo(Rule).@"enum".field_names.len;
@@ -600,6 +607,50 @@ fn note_unused_imports(scan: *Scan, source: []const u8, code: []const u8) !void 
     assert(line_number > 1);
 }
 
+/// Whether `path` is the app's code, whose memory comes from budgets: src/, but for
+/// the scenarios' own files and the tests' helpers, which run beside the app rather
+/// than as it, and the file that reserves the regions from the system.
+fn is_budgeted(path: []const u8) bool {
+    assert(path.len > 0);
+    assert(!std.fs.path.isAbsolute(path)); // From the repository's root, as every rule's
+    if (!std.mem.startsWith(u8, path, "src/")) return false;
+    if (std.mem.startsWith(u8, path, "src/scenarios/")) return false;
+    if (std.mem.startsWith(u8, path, "src/testing/")) return false;
+    return !std.mem.eql(u8, path, "src/base/memory.zig");
+}
+
+/// Notes a line of the app's code taking memory from the system, unless it says why:
+/// the app's memory comes from a budget.
+fn check_system_memory(scan: *Scan, line: *const Line, line_number: u32, said: Said) !void {
+    assert(line_number > 0);
+    if (said.system_memory_at) |at| assert(at < line_number); // On a comment line above
+    const system = system_allocators(line.code);
+    const marked = is_marker(line.comment, "// System memory: ") or said.system_memory_at != null;
+    if (marked) {
+        const at = said.system_memory_at orelse line_number;
+        if (system == 0 or !scan.budgeted) try scan.note(.marker_unused, at, 1);
+    } else if (scan.budgeted) {
+        try scan.note(.allocator_unbudgeted, line_number, system);
+    }
+}
+
+/// The system's allocators named on a line of code.
+// Assertions: it counts names in a line of text, and any count is one.
+fn system_allocators(code: []const u8) u32 {
+    const names = [_][]const u8{
+        "page_allocator",
+        "smp_allocator",
+        "c_allocator",
+        "raw_c_allocator",
+        "PageAllocator",
+        "DebugAllocator",
+        "GeneralPurposeAllocator",
+    };
+    var count: u32 = 0;
+    for (names) |name| count += count_token(code, name);
+    return count;
+}
+
 /// The scenarios (src/scenarios.zig and the files in src/scenarios/) are tests that
 /// also ship, as `noface selftest`: each is a function, not a test block, and states
 /// what must hold with `expect`, which reports a failure and goes on to the next
@@ -845,6 +896,7 @@ const Said = struct {
     assertions_at: ?u32 = null,
     usize_at: ?u32 = null,
     not_size_at: ?u32 = null,
+    system_memory_at: ?u32 = null,
 };
 
 /// What `check_zig` carries from one line to the next.
@@ -873,6 +925,7 @@ const Scan = struct {
     light: std.ArrayList(u32) = .empty, // Where each function with fewer than two starts
     expects_assert: bool, // In the scenarios, where `expect(` is the assertion
     lays_out: bool, // In the screens' code, where a size comes from style.zig's scale
+    budgeted: bool, // In the app's code, where memory comes from a budget (`is_budgeted`)
     in_points: bool, // In a file of points of its own (`own_points`)
 
     /// A function being read: its name, first line, depth outside it, the assertions
@@ -906,6 +959,7 @@ pub fn check_zig(path: []const u8, source: []const u8, gpa: std.mem.Allocator) !
         .gpa = gpa,
         .expects_assert = is_scenarios(path),
         .lays_out = is_layout(path),
+        .budgeted = is_budgeted(path),
         .in_points = listed(&own_points, path),
     };
     errdefer scan.breaks.deinit(gpa);
@@ -1036,7 +1090,12 @@ fn is_marker(comment: []const u8, prefix: []const u8) bool {
 fn marked_for_nothing(scan: *Scan, said: Said) !void {
     assert(scan.open_count <= Scan.open_max);
     const lines = [_]?u32{
-        said.unbounded_at, said.ignored_at, said.assertions_at, said.usize_at, said.not_size_at,
+        said.unbounded_at,
+        said.ignored_at,
+        said.assertions_at,
+        said.usize_at,
+        said.not_size_at,
+        said.system_memory_at,
     };
     comptime assert(lines.len == @typeInfo(Said).@"struct".field_names.len);
     for (lines) |marker_line| {
@@ -1065,6 +1124,9 @@ fn check_zig_text(scan: *Scan, line: *const Line, line_number: u32) !?Said {
         if (is_marker(line.comment, "// Assertions: ")) scan.said.assertions_at = line_number;
         if (usize_marker) scan.said.usize_at = line_number;
         if (is_marker(line.comment, "// Not a size: ")) scan.said.not_size_at = line_number;
+        if (is_marker(line.comment, "// System memory: ")) {
+            scan.said.system_memory_at = line_number;
+        }
         return null;
     }
     const above = scan.said;
@@ -1206,6 +1268,7 @@ fn check_zig_statement(scan: *Scan, line: *const Line, line_number: u32, said: S
     } else if (said.not_size_at) |at| {
         try scan.note(.marker_unused, at, 1);
     }
+    try check_system_memory(scan, line, line_number, said);
     // A usize the language, C or the kernel needs says so on its line or just above
     const sizes = count_token(code, "usize");
     const usize_here = is_marker(line.comment, "// usize: ");
@@ -1262,6 +1325,8 @@ fn advice(rule: Rule) []const u8 {
         .marker_unused => "the marker excuses nothing: remove it",
         .import_inline => "move the import to the top of the file",
         .import_unused => "remove the import",
+        .allocator_unbudgeted => "take it from a budget (base/memory.zig), or say why it " ++
+            "can't: `// System memory: <why>`",
         .layout_number => "take it from style.zig's scale (style.space, style.text, " ++
             "style.fingertip…) or work it out from the parts it sits by; in a file of " ++
             "points of its own (src/kindle/touch.zig), give it to its pt( in points",
@@ -2004,4 +2069,31 @@ test "a system call's result thrown away needs its reason, above or on the line"
     ;
     try std.testing.expectEqual(@as(u32, 1), try count_in(source, .error_ignored));
     try std.testing.expectEqual(@as(u32, 1), try count_in(source, .marker_unused));
+}
+
+test "the app's memory comes from a budget, or says why it can't" {
+    const source =
+        \\fn a() void {
+        \\    var arena = std.heap.ArenaAllocator.init(std.heap.smp_allocator);
+        \\    // System memory: the self-test's own lists, beside the app's regions
+        \\    var kept = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        \\    assert(true);
+        \\    assert(true);
+        \\}
+    ;
+    try std.testing.expectEqual(@as(u32, 1), try count_in(source, .allocator_unbudgeted));
+    // A marker over a line that takes nothing from the system excuses nothing
+    const needless =
+        \\fn b() void {
+        \\    // System memory: nothing
+        \\    const x = 1;
+        \\    assert(x == 1);
+        \\    assert(x > 0);
+        \\}
+    ;
+    try std.testing.expectEqual(@as(u32, 1), try count_in(needless, .marker_unused));
+    // The tests' helpers take what they like
+    const helper = try check_zig("src/testing/a.zig", source, std.testing.allocator);
+    defer std.testing.allocator.free(helper);
+    for (helper) |b| try std.testing.expect(b.rule != .allocator_unbudgeted);
 }

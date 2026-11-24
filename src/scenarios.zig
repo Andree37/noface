@@ -148,6 +148,8 @@ fn selftest_files() bool {
 /// and bookmarks: they come from outside noface, and must never stop a book opening.
 // Assertions: it lists the reader's own books, outside data, and reports on them
 fn selftest_books() bool {
+    // System memory: the self-test lists the reader's books beside the app, whose
+    // regions each run of it reserves and gives back
     var arena = std.heap.ArenaAllocator.init(std.heap.smp_allocator);
     defer arena.deinit();
     const alloc = arena.allocator();

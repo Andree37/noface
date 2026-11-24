@@ -73,6 +73,22 @@ const Paths = struct {
 /// This run's paths: one run a process.
 var run_paths: Paths = .{};
 
+/// The command line noface reads with (src/main.zig): its own name, then each argument
+/// by its name, and the null that ends it, which execve needs to find the end.
+fn reader_command(p: *const Paths) [paths.reader_args_count:null]?[*:0]const u8 {
+    var argv: [paths.reader_args_count:null]?[*:0]const u8 = @splat(null);
+    argv[0] = paths.reader;
+    for (std.enums.values(paths.ReaderArg)) |arg| {
+        argv[@backingInt(arg)] = switch (arg) {
+            .library => p.library,
+            .data => p.data,
+        };
+    }
+    for (argv) |given| assert(given != null); // Every position named
+    assert(argv[argv.len] == null);
+    return argv;
+}
+
 /// The most variables kept from the launcher's environment for noface's.
 const environment_max = 256;
 
@@ -132,15 +148,7 @@ pub fn run(envp: [*:null]const ?[*:0]const u8, folders: Folders) u32 {
     // Everything noface writes goes in its data folder, its log too, so a new one (a
     // test's, a first install's) is made here
     _ = calls.mkdir(p.data, 0o755); // Ignored: there already, or the log's open below fails
-    // The command line noface reads with (src/main.zig): each argument by its name
-    var reader_argv: [paths.reader_args_count:null]?[*:0]const u8 = undefined;
-    reader_argv[0] = paths.reader;
-    for (std.enums.values(paths.ReaderArg)) |arg| {
-        reader_argv[@backingInt(arg)] = switch (arg) {
-            .library => p.library,
-            .data => p.data,
-        };
-    }
+    const reader_argv = reader_command(p);
     var environment: [environment_max + 2:null]?[*:0]const u8 = undefined;
     const reader_envp = with_documents(envp, p.documents_env, &environment);
     // Signals first: from here, a request to stop reaches noface instead of ending
@@ -341,4 +349,14 @@ test "the watchdog ends a noface awake and without a heartbeat on its second loo
     // would come before the second, asked at 610 ms
     try std.testing.expect(took_us >= 600_000);
     try std.testing.expect(took_us < 5_000_000);
+}
+
+test "noface's command line names every argument, and ends" {
+    const p: Paths = .{ .library = "/l", .data = "/d" };
+    const argv = reader_command(&p);
+    try std.testing.expectEqual(@as(usize, paths.reader_args_count), argv.len);
+    // What execve reads: each argument, then the null after the last
+    const as_c: [*:null]const ?[*:0]const u8 = &argv;
+    try std.testing.expectEqual(@as(?[*:0]const u8, null), as_c[paths.reader_args_count]);
+    try std.testing.expectEqualStrings("/d", std.mem.span(argv[@backingInt(paths.ReaderArg.data)].?));
 }

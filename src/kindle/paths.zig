@@ -6,6 +6,7 @@
 //! (settings, places, stats, notes, dictionaries) sits in `data_dir`, which no update
 //! touches. Scratch files go in /tmp, which is in RAM and empty after a reboot.
 const std = @import("std");
+const assert = std.debug.assert;
 
 /// The app: the program, its launcher and helpers. Replaced whole by an update.
 pub const app_dir = "/mnt/us/noface";
@@ -26,6 +27,11 @@ pub const reader = app_dir ++ "/noface";
 pub const ReaderArg = enum(u8) { library = 1, data = 2 };
 /// The reader's whole command line: its own name, then each `ReaderArg`.
 pub const reader_args_count = 1 + @typeInfo(ReaderArg).@"enum".field_names.len;
+
+comptime {
+    // Positions 1 to N, each once: argv's own after the program's name
+    for (std.enums.values(ReaderArg), 1..) |arg, position| assert(@backingInt(arg) == position);
+}
 /// Starts the app, puts the Kindle's own screens back after it, starts it at boot and
 /// writes the book list for the library (src/launch.zig).
 pub const launcher = app_dir ++ "/noface-launch";

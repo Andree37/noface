@@ -199,7 +199,7 @@ fn panel_control(
 /// other side), Bluetooth or sync. Its tile is redrawn first, and the Kindle told
 /// while the screen shows it.
 fn panel_control_shortcut(a: *app.App, choice: menu.Hit) !void {
-    assert(choice == .airplane or choice == .wifi or choice == .bluetooth or choice == .sync);
+    assert(menu.tile_of(choice) != null); // One of the round tiles
     a.quick = tapped(a.quick, choice);
     const box = menu.shortcut_box(choice).?;
     assert(box.y + box.h <= menu.height);
@@ -333,9 +333,10 @@ fn paused_by_noface(on: bool) bool {
 }
 
 /// Whether `choice` is one of the radio's two tiles: Wi-Fi, or airplane mode, its other
-/// side.
+/// side, both showing airplane mode's state, as the tiles' table says.
 fn is_radio(choice: menu.Hit) bool {
-    return choice == .airplane or choice == .wifi;
+    const tile = menu.tile_of(choice) orelse return false;
+    return tile.state == .airplane;
 }
 
 /// Once the panel has ended: true to go to the Kindle's own screens.

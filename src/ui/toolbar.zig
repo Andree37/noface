@@ -194,7 +194,9 @@ pub fn scrub_place(part: u32, parts: u32) style.Point {
 
 /// The middle of a control's taps, with the Aa sheet closed. The scrubber's is its
 /// middle, a page halfway through the book.
-pub fn place(h: Hit) style.Point {
+/// The middle of a control's taps, or null for a `Hit` that names no control: one
+/// list, this switch, of what a script can tap (screens/places.zig).
+pub fn place(h: Hit) ?style.Point {
     const tools_middle = status_row + (tool_row + tool_taps_below - status_row) / 2;
     const bottom_middle = bottom_top + (scrub.y - scrub_reach - bottom_top) / 2;
     const point: style.Point = switch (h) {
@@ -207,7 +209,7 @@ pub fn place(h: Hit) style.Point {
         .chapter_next => .{ .x = (chapter_next_left + screen_width) / 2, .y = bottom_middle },
         .scrub => .{ .x = (scrub.left + scrub.right) / 2, .y = scrub.y },
         // Not a control: what's left between them, and the sheet's own controls
-        .stay, .sheet => unreachable,
+        .stay, .sheet => return null,
     };
     assert(point.x >= 0);
     assert(point.y < screen_height);
@@ -364,8 +366,7 @@ fn draw_tool(fonts: Fonts, page: Page, t: Tool, bookmarked: bool) !void {
 
 test "every control's place is a tap on it" {
     for (std.enums.values(Hit)) |h| {
-        if (h == .stay or h == .sheet) continue;
-        const p = place(h);
+        const p = place(h) orelse continue; // No control
         try std.testing.expectEqual(h, hit(p.x, p.y, null));
     }
 }

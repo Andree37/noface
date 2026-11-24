@@ -79,7 +79,7 @@ pub const all = [_]Scenario{
                 defer arena.deinit();
                 const r = try play_on(.{ .sets_into = arena.allocator() }, &(.{pull_down} ++
                     along(menu_ui.brightness_row) ++ along(menu_ui.warmth_row) ++
-                    .{tap_on(menu_ui.place(.close))}));
+                    .{tap_on(menu_ui.place(.close).?)}));
                 const rows = [_]struct { []const u8, menu_ui.Row }{
                     .{ "flIntensity", menu_ui.brightness_row },
                     .{ "currentAmberLevel", menu_ui.warmth_row },
@@ -111,8 +111,8 @@ pub const all = [_]Scenario{
                 const r = try play_on(kindle, &.{
                     pull_down,
                     wait(100), // Seen, and its status read, before a finger reaches it
-                    tap_on(menu_ui.place(.wifi)),
-                    tap_on(menu_ui.place(.close)),
+                    tap_on(menu_ui.place(.wifi).?),
+                    tap_on(menu_ui.place(.close).?),
                     wait(150_000), // Past when noface would turn Wi-Fi off while reading
                     forward,
                 });
@@ -135,13 +135,13 @@ pub const all = [_]Scenario{
             fn run() !void {
                 // A couple of minutes into the book: noface has paused Wi-Fi
                 const paused = [_]Step{ wait(150_000), forward, pull_down, wait(100) };
-                const later = [_]Step{ tap_on(menu_ui.place(.close)), wait(150_000), forward };
-                const back_on = try play(&(paused ++ .{tap_on(menu_ui.place(.wifi))} ++ later));
+                const later = [_]Step{ tap_on(menu_ui.place(.close).?), wait(150_000), forward };
+                const back_on = try play(&(paused ++ .{tap_on(menu_ui.place(.wifi).?)} ++ later));
                 try expect(back_on.airplane_asked_on, "noface didn't pause Wi-Fi to begin with");
                 try expect(!back_on.airplane_at_end, "Wi-Fi didn't come back on, or didn't stay");
                 try expect(!back_on.wifi_note_left, "noface still counts it as its own pause");
                 // Airplane mode, shown off while paused: tapped, it's on, and the reader's
-                const plane_tapped = paused ++ .{tap_on(menu_ui.place(.airplane))} ++ later;
+                const plane_tapped = paused ++ .{tap_on(menu_ui.place(.airplane).?)} ++ later;
                 const kept_off = try play(&plane_tapped);
                 try expect(kept_off.airplane_at_end, "the airplane tile turned the radio on");
                 try expect(!kept_off.wifi_note_left, "noface would turn the reader's airplane " ++
@@ -156,7 +156,7 @@ pub const all = [_]Scenario{
                 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
                 defer arena.deinit();
                 const kindle: Kindle = .{ .bluetooth = true, .sets_into = arena.allocator() };
-                const wifi = tap_on(menu_ui.place(.wifi));
+                const wifi = tap_on(menu_ui.place(.wifi).?);
                 const once = try play_on(kindle, &.{ pull_down, wait(100), wifi });
                 try expect(!once.airplane_asked_on, "the radio went off without a warning");
                 const twice = try play_on(kindle, &.{ pull_down, wait(100), wifi, wifi });
@@ -174,7 +174,7 @@ pub const all = [_]Scenario{
                 defer arena.deinit();
                 const panel = struct {
                     fn tap_panel(h: menu_ui.Hit) Step {
-                        return tap_on(menu_ui.place(h));
+                        return tap_on(menu_ui.place(h).?);
                     }
                 }.tap_panel;
                 const r = try play_on(.{ .sets_into = arena.allocator() }, &.{
@@ -188,7 +188,7 @@ pub const all = [_]Scenario{
                     panel(.airplane),
                     panel(.bluetooth),
                     panel(.sync),
-                    tap_on(menu_ui.place(.close)),
+                    tap_on(menu_ui.place(.close).?),
                 });
                 // Brightness and warmth a step up, then back down, each
                 for ([_][]const u8{ "flIntensity", "currentAmberLevel" }) |level| {

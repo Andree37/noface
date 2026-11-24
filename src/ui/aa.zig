@@ -144,6 +144,10 @@ comptime {
     for (switches, 0..) |sw, i| {
         assert(@FieldType(settings_model.Settings, @tagName(sw.field)) == bool);
         for (switches[i + 1 ..]) |other| assert(other.field != sw.field);
+        // A switch that moves page breaks lays the book out again as it's flipped: one
+        // that only said `footer` or `nothing` would leave the book on its old pages
+        const moves = settings_model.moves_breaks(@tagName(sw.field));
+        assert(moves == (sw.effect == .relayout));
     }
 }
 

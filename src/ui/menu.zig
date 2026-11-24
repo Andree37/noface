@@ -121,7 +121,7 @@ fn on_in(quick: *const Quick, comptime field: QuickBool) bool {
 
 /// A round button at the top of the panel: what a tap on it does, its icon, the
 /// setting it follows, and the word under it with that setting on and off.
-const Tile = struct {
+pub const Tile = struct {
     hit: Hit,
     glyph: Glyph,
     /// The bool of Quick the tile follows, or null for a plain button.
@@ -363,7 +363,9 @@ pub fn hit(x: i32, y: i32) Hit {
 
 /// The middle of a tile's or a slider end's taps, and for closing, of the page under the
 /// panel.
-pub fn place(h: Hit) style.Point {
+/// The middle of a control's taps, or null for a `Hit` that names no control: one
+/// list, this switch, of what a script can tap (screens/places.zig).
+pub fn place(h: Hit) ?style.Point {
     const point: style.Point = switch (h) {
         .close => .{ .x = style.screen_width / 2, .y = (height + style.screen_height) / 2 },
         // Each slider's ends step it down and up, either side of its bar
@@ -372,7 +374,7 @@ pub fn place(h: Hit) style.Point {
         .cooler => .{ .x = slider_left / 2, .y = warmth_row.y },
         .warmer => .{ .x = (slider_right + style.screen_width) / 2, .y = warmth_row.y },
         // The sliders take a level, by where along them: not a place
-        .none, .slider, .warmth => unreachable,
+        .none, .slider, .warmth => return null,
         .schedule => .{
             .x = @divTrunc(schedule_left + style.screen_width, 2),
             .y = @divTrunc(schedule_top + schedule_bottom, 2),
@@ -459,6 +461,14 @@ pub fn draw_slider_at(
 }
 
 /// Where a toggle and its label sit, to redraw it alone.
+/// The round tile that `choice` taps, if it's one.
+pub fn tile_of(choice: Hit) ?Tile {
+    for (tiles) |t| {
+        if (t.hit == choice) return t;
+    }
+    return null;
+}
+
 pub fn shortcut_box(choice: Hit) ?style.Rect {
     for (0..tiles.len) |i| {
         if (tiles[i].hit != choice) continue;
@@ -604,12 +614,8 @@ const test_bar_x = screen_width / 2;
 const test_schedule_x = schedule_left + schedule_reach / 2;
 
 test "every tile's place, and closing's, is a tap on it" {
-    for (tiles) |t| {
-        const p = place(t.hit);
-        try std.testing.expectEqual(t.hit, hit(p.x, p.y));
-    }
-    for ([_]Hit{ .close, .schedule }) |h| {
-        const p = place(h);
+    for (std.enums.values(Hit)) |h| {
+        const p = place(h) orelse continue; // No control
         try std.testing.expectEqual(h, hit(p.x, p.y));
     }
 }

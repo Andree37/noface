@@ -81,11 +81,10 @@ pub const all = places: {
         .{ .name = "key.space", .point = keyboard.place(.space) },
         .{ .name = "key.search", .point = keyboard.place(.enter) },
     };
-    for ([_]toolbar.Hit{
-        .home, .text,  .goto,         .bookmark,     .search,
-        .more, .close, .chapter_prev, .chapter_next, .scrub,
-    }) |h| {
-        list = list ++ .{Place{ .name = "toolbar." ++ @tagName(h), .point = toolbar.place(h) }};
+    // Every control the toolbar has, as its `place` says: none listed here by hand
+    for (std.enums.values(toolbar.Hit)) |h| {
+        const point = toolbar.place(h) orelse continue;
+        list = list ++ .{Place{ .name = "toolbar." ++ @tagName(h), .point = point }};
     }
     for ([_]library.Hit{
         .menu, .battery, .hero, .hero_dots, .search, .stats, .sort, .prev, .next, .clear_search,
@@ -131,11 +130,10 @@ pub const all = places: {
         if (o == .unread) continue; // Where Finished is, for a finished book
         list = list ++ .{Place{ .name = "more." ++ @tagName(o), .point = more.place(o) }};
     }
-    for ([_]menu.Hit{
-        .close, .schedule, .airplane, .bluetooth, .wifi,   .kindle,
-        .sync,  .dimmer,   .brighter, .cooler,    .warmer,
-    }) |h| {
-        list = list ++ .{Place{ .name = "panel." ++ @tagName(h), .point = menu.place(h) }};
+    // Every control the panel has, as its `place` says
+    for (std.enums.values(menu.Hit)) |h| {
+        const point = menu.place(h) orelse continue;
+        list = list ++ .{Place{ .name = "panel." ++ @tagName(h), .point = point }};
     }
     for (std.enums.values(goto.Tab)) |t| {
         const point = goto.place(.{ .tab = t });
@@ -232,7 +230,7 @@ test "running's places are its zones" {
 }
 
 test "names find their places, and no other name finds one" {
-    try std.testing.expectEqual(toolbar.place(.bookmark), find("toolbar.bookmark").?);
+    try std.testing.expectEqual(toolbar.place(.bookmark).?, find("toolbar.bookmark").?);
     try std.testing.expectEqual(card.place(3, 0), find("card.3.0").?);
     try std.testing.expectEqual(keyboard.place(.{ .char = 's' }), find("key.s").?);
     try std.testing.expectEqual(aa.family_place(.{}, 1), find("aa.family.bookerly").?);

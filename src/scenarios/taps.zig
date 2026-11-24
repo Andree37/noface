@@ -35,7 +35,7 @@ pub fn tap_on(p: style.Point) Step {
 }
 /// A tool of the toolbar's top row.
 pub fn tool(h: toolbar.Hit) Step {
-    return tap_on(toolbar.place(h));
+    return tap_on(toolbar.place(h).?);
 }
 pub const highlight_button = tap_on(definition_ui.place(.highlight)); // On the definition sheet
 pub const above_sheet = tap_on(card.place_above());
@@ -89,7 +89,7 @@ pub const backspace = tap_on(keyboard.place(.backspace));
 pub const wake: Step = .{ .act = .unlock };
 /// The quick panel pulled down from the top, and its Kindle button, which leaves noface.
 pub const pull_down: Step = .{ .act = .pull };
-pub const panel_kindle = tap_on(menu_ui.place(.kindle));
+pub const panel_kindle = tap_on(menu_ui.place(.kindle).?);
 /// Series… on a book's card, held in the library: its third row, after Remove and Mark
 /// as read. Then the series lists' second row, "Not in a series", and "Library" along
 /// their top.

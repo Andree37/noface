@@ -543,7 +543,12 @@ pub fn pick_hero(books: anytype) ?u32 {
 
 /// Whether `filter` and a search for `query` (empty for none) let book `e` through.
 pub fn lets_through(e: Entry, filter: Filter, query: []const u8) bool {
-    const by_filter = filter == .all or (filter == .read) == e.is_read();
+    // Every filter decided here, by name: a new one won't build until it says its rule
+    const by_filter = switch (filter) {
+        .all => true,
+        .unread => !e.is_read(),
+        .read => e.is_read(),
+    };
     return by_filter and (query.len == 0 or matches_query(e, query));
 }
 

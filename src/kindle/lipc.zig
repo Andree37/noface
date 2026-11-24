@@ -47,17 +47,33 @@ fn get(comptime service: [*:0]const u8, comptime prop: [*:0]const u8, deadline: 
 }
 
 fn set(comptime service: [*:0]const u8, comptime prop: [*:0]const u8, value: u32) void {
-    comptime assert(std.mem.startsWith(u8, std.mem.span(service), service_prefix));
-    comptime assert(std.mem.span(prop).len > 0);
-    // Room for any u32's ten digits and the closing zero, so formatting never fails
-    var text: [16]u8 = undefined;
-    comptime assert(text.len >= 10 + 1);
-    const argument = std.fmt.bufPrintSentinel(&text, "{d}", .{value}, 0) catch return;
-    assert(argument.len > 0);
-    const argv = [_:null]?[*:0]const u8{ lipc_set, service, prop, argument };
+    var text: [value_bytes_max]u8 = undefined;
+    const argv = set_command(&text, service, prop, value);
     var buffer: [32]u8 = undefined;
     // Ignored: a set answers nothing worth reading: whoever needs to know reads the value back
     _ = process.run_until(&argv, &buffer, lipc_deadline());
+}
+
+/// Room for any u32's ten digits and the closing zero, so formatting never fails.
+const value_bytes_max = 16;
+
+/// The command that sets `prop` of `service` to `value`, its value written in `text`.
+fn set_command(
+    text: *[value_bytes_max]u8,
+    comptime service: [*:0]const u8,
+    comptime prop: [*:0]const u8,
+    value: u32,
+) [4:null]?[*:0]const u8 {
+    comptime assert(std.mem.startsWith(u8, std.mem.span(service), service_prefix));
+    comptime assert(std.mem.span(prop).len > 0);
+    comptime assert(value_bytes_max >= 10 + 1);
+    // Ten digits at most, with room after for the closing zero
+    const digits = std.fmt.printInt(text[0 .. text.len - 1], value, 10, .lower, .{});
+    assert(digits > 0);
+    assert(digits < text.len);
+    text[digits] = 0;
+    const argument: [:0]const u8 = text[0..digits :0];
+    return .{ lipc_set, service, prop, argument };
 }
 
 fn get_text(
@@ -326,10 +342,13 @@ comptime {
     assert(readings.len <= commands_at_once_max);
 }
 
-/// Tells powerd the reader is active, so it doesn't lock while they read. noface holds
-/// the touchscreen, so powerd never sees the touches itself.
-pub fn still_active() void {
-    set("com.lab126.powerd", "touchScreenSaverTimeout", 1);
+/// Tells powerd the reader is active, so it doesn't lock while they read: noface holds
+/// the touchscreen, so powerd never sees the touches itself. Asked from the input loop,
+/// so never waited for: its child, which the caller reaps.
+pub fn tell_still_active() ?process.Child {
+    var text: [value_bytes_max]u8 = undefined;
+    const argv = set_command(&text, "com.lab126.powerd", "touchScreenSaverTimeout", 1);
+    return process.start(&argv);
 }
 
 /// What powerd's `state` says of the Kindle.

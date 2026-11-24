@@ -198,6 +198,8 @@ pub const Input = struct {
     /// charger) and the volume manager's (a computer on USB), while they run.
     power_watcher: ?process.Child = null,
     usb_watcher: ?process.Child = null,
+    /// The last word to powerd that the reader is active, while it may still be running.
+    powerd_nudge: ?process.Child = null,
     heartbeat_us: u64 = 0, // When the watchdog last heard noface is alive
     width: i32,
     height: i32,
@@ -596,6 +598,7 @@ pub fn release(in: *const Input) void {
     assert(in.script == null);
     // Ignored: on the way out: if the grab won't let go, closing the device does it anyway
     _ = linux.ioctl(in.touch, eviocgrab, 0);
+    if (in.powerd_nudge) |nudge| process.stop(nudge.pid);
     for ([_]?process.Child{ in.power_watcher, in.usb_watcher }) |watcher| {
         const w = watcher orelse continue;
         // Ignored: A watcher already gone needs neither: both are only to leave no child behind

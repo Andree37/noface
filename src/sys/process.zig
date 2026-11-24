@@ -46,6 +46,17 @@ fn answer_fake(f: Fake, argv: [*:null]const ?[*:0]const u8, out: []u8) ?u32 {
     return printed;
 }
 
+/// Starts a command whose answer isn't waited for: its child, to reap with `exited` or
+/// end with `stop`. Under the scenario tests' fake it's answered at once, as `run_until`
+/// is, so what it asked is recorded, and there's no child.
+pub fn start(argv: [*:null]const ?[*:0]const u8) ?Child {
+    assert(argv[0] != null); // A command names its program
+    const f = fake orelse return spawn(argv);
+    var unread: [32]u8 = undefined;
+    _ = answer_fake(f, argv, &unread); // Its answer is never waited for
+    return null;
+}
+
 /// Starts a program with its output on a pipe, in a process group of its own so
 /// everything it starts can be killed together.
 pub fn spawn(argv: [*:null]const ?[*:0]const u8) ?Child {

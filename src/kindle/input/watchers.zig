@@ -93,8 +93,19 @@ pub fn keep_alive(in: *Input) void {
     if (should_tell_powerd(in.locked, now_us(), in.last_input, in.told_powerd_us)) {
         assert(!in.locked);
         in.told_powerd_us = in.last_input;
-        lipc.still_active();
+        nudge_powerd(in);
     }
+}
+
+/// A word to powerd, never waited for. One at a time: the last is reaped if it's done,
+/// or ended if powerd still hasn't answered, so none pile up behind a slow one.
+fn nudge_powerd(in: *Input) void {
+    if (in.powerd_nudge) |last| {
+        if (process.exited(last.pid) == null) process.stop(last.pid);
+        _ = linux.close(last.out); // Ignored: our end of its pipe, never read
+    }
+    in.powerd_nudge = lipc.tell_still_active();
+    if (in.powerd_nudge) |nudge| assert(nudge.pid > 0);
 }
 
 /// The power key is powerd's to act on: it's read only so presses don't pile up,

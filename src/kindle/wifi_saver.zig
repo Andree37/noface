@@ -148,7 +148,8 @@ pub const Outcome = enum {
 
 /// Turns the radio off, if airplane mode and Bluetooth are both off and nothing is
 /// downloading. The note goes down first and must land: without it nothing would
-/// ever turn the radio on again.
+/// ever turn the radio on again. Asked once, it's `.later`: the next try sees airplane
+/// mode on, with noface's note, and settles it, never waiting on the radio here.
 pub fn pause(downloading: bool) Outcome {
     assert(marker_is_note());
     if (downloading) return .later;
@@ -156,7 +157,10 @@ pub fn pause(downloading: bool) Outcome {
     // else the reader's
     switch (airplane()) {
         .off => {},
-        .noface => return .paused,
+        .noface => {
+            std.debug.print("wifi: off while reading\n", .{});
+            return .paused;
+        },
         .reader => return .never,
         .unknown => return .later,
     }
@@ -164,16 +168,9 @@ pub fn pause(downloading: bool) Outcome {
     // Unwritten, it's never paused: noface couldn't put it back
     if (!file.write_small(marker, "1\n")) return .never;
     lipc.set_airplane(true);
-    // A clear "still on": it didn't happen, try again later. No answer (cmd busy taking
-    // the radio down, or not working at all): keep the note, as noface may well have
-    // turned it off and must be the one to turn it back on, and look again later
-    const now = lipc.airplane_on() orelse return .later;
-    if (!now) {
-        forget();
-        return .later;
-    }
-    std.debug.print("wifi: off while reading\n", .{});
-    return .paused;
+    // Not read back now: the radio going down is what's slow to answer. The note stays,
+    // as noface may well have turned it off and must be the one to turn it back on
+    return .later;
 }
 
 /// Whether noface has the radio off right now, so it may turn it back on: its note is

@@ -44,7 +44,7 @@ pub const shared_bytes_max: u64 = view.Shared.bytes_max;
 pub const Sources = struct {
     shared: *view.Shared,
     budget: *memory.Budget, // The library's: outlives it
-    scratch: *memory.Region, // Bump: each EPUB as it's read, and a walk's folders
+    scratch: *memory.Budget, // Bump: each EPUB as it's read, and a walk's folders
     catalog_path: [*:0]const u8, // The Kindle's catalog, exported
     documents: []const u8, // Where EPUBs are found
     state_dir: []const u8, // Each book's place and cover, and the index's folder
@@ -436,13 +436,13 @@ pub const LocalBooks = struct {
 
 pub fn load_library(a: *app.App) !Library {
     assert(a.regions.library_budget.limit > 0);
-    assert(a.regions.library_scratch.kind == .bump);
+    assert(a.regions.library_scratch_budget.region == &a.regions.library_scratch);
     // Never beside an open book's regions, as setup.zig counts them
     assert(a.regions.book.empty());
     return load(.{
         .shared = &a.regions.library_shared,
         .budget = &a.regions.library_budget,
-        .scratch = &a.regions.library_scratch,
+        .scratch = &a.regions.library_scratch_budget,
         .catalog_path = a.library_path,
         .documents = a.documents,
         .state_dir = a.state_dir,
@@ -453,7 +453,7 @@ pub fn load_library(a: *app.App) !Library {
 /// The library: its index, built again first if what it's built from changed, or it
 /// doesn't read as whole; then what noface saved of each book merged in.
 pub fn load(sources: Sources) !Library {
-    assert(sources.scratch.empty());
+    assert(sources.scratch.live == 0);
     assert(sources.state_dir.len > 0);
     assert(!sources.shared.in_use); // One library at a time: they share the items
     const s = try sources.budget.allocator().create(State);
@@ -472,14 +472,10 @@ pub fn load(sources: Sources) !Library {
 /// read as whole; then merges in what noface saved of each book.
 fn open_index(sources: Sources, s: *State) void {
     assert(s.ix == null);
-    assert(sources.scratch.empty());
+    assert(sources.scratch.live == 0);
     // Before the list is read, so a change made while it's read shows next time
     s.catalog_seen = CatalogFacts.read();
-    var scratch = memory.Budget{
-        .name = "library scratch",
-        .region = sources.scratch,
-        .limit = sources.scratch.bytes.len,
-    };
+    const scratch = sources.scratch;
     // What the load took, said before it's let go of
     defer scratch.reset(.give_back);
     defer scratch.report();
@@ -491,7 +487,7 @@ fn open_index(sources: Sources, s: *State) void {
         .heartbeat = sources.heartbeat,
     };
     const items = sources.shared.items;
-    const wanted = builder.sources_now(&scratch, places);
+    const wanted = builder.sources_now(scratch, places);
     var last: ?index.Index = index.Index.open(places.dir) catch null;
     if (last) |*ix| {
         if (std.meta.eql(ix.header.sources, wanted)) s.ix = ix.*;
@@ -500,7 +496,7 @@ fn open_index(sources: Sources, s: *State) void {
         const t0 = os.now_us();
         const buffers = &sources.shared.buffers;
         const was = if (last) |*ix| ix else null;
-        const built = builder.build(buffers, items, &scratch, places, wanted, was) catch |err| {
+        const built = builder.build(buffers, items, scratch, places, wanted, was) catch |err| {
             log("library: no index ({s})\n", .{@errorName(err)});
             return;
         };
@@ -513,7 +509,7 @@ fn open_index(sources: Sources, s: *State) void {
     // moved to its whole path's, before any book's files are read. The old ones go only
     // from an index of every book: one built with some missed says so by its sources
     const complete = std.meta.eql(ix.header.sources, wanted);
-    builder.sync_states(ix, items, places, &scratch, complete) catch |err| {
+    builder.sync_states(ix, items, places, scratch, complete) catch |err| {
         log("library: places not all merged or moved ({s}), again at the next load\n", .{
             @errorName(err),
         });
@@ -668,6 +664,7 @@ const TestLibrary = struct {
     region: memory.Region,
     budget: memory.Budget,
     scratch: memory.Region,
+    scratch_budget: memory.Budget,
     shared: *view.Shared,
     paths: [3][file.own_path_bytes_max]u8,
     sources: Sources,
@@ -677,12 +674,17 @@ const TestLibrary = struct {
         t.region = try .reserve("library", .heap, setup.region_bytes.library);
         t.budget = .{ .name = "library", .region = &t.region, .limit = t.region.bytes.len };
         t.scratch = try .reserve("library scratch", .bump, setup.region_bytes.library_scratch);
+        t.scratch_budget = .{
+            .name = "library scratch",
+            .region = &t.scratch,
+            .limit = t.scratch.bytes.len,
+        };
         t.shared = try t.budget.allocator().create(view.Shared);
         try t.shared.init(&t.budget);
         t.sources = .{
             .shared = t.shared,
             .budget = &t.budget,
-            .scratch = &t.scratch,
+            .scratch = &t.scratch_budget,
             .catalog_path = try std.fmt.bufPrintSentinel(&t.paths[0], "{s}/catalog", .{root}, 0),
             .documents = try std.fmt.bufPrint(&t.paths[1], "{s}/documents", .{root}),
             .state_dir = try std.fmt.bufPrint(&t.paths[2], "{s}/state", .{root}),

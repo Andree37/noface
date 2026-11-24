@@ -12,6 +12,8 @@ pub const Regions = struct {
     library_shared: library_view.Shared, // In the library's region, for good
     library_budget: memory.Budget, // Shared by a library list and the one reloaded after it
     library_scratch: memory.Region,
+    /// Emptied after each use: a library's load, a book's series lists.
+    library_scratch_budget: memory.Budget,
     book: memory.Region,
     pages: memory.Region,
     pages_budget: memory.Budget, // Emptied before each layout after a settings change

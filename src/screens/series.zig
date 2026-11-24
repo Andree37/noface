@@ -202,10 +202,13 @@ pub fn begin(
     a: *app.App,
     books: LocalBooks,
     e: *const catalog.Entry,
+    scratch: std.mem.Allocator,
 ) void {
     // Offered only for books on the Kindle, which have a file to key it by
     assert(e.is_local());
-    s.* = .{ .a = a, .books = books, .e = e, .arena = .init(a.alloc) };
+    // Its lists, one row a book, in the library's scratch its caller lends and empties
+    // as it ends: never the app's heap, whose room is fixed however many books
+    s.* = .{ .a = a, .books = books, .e = e, .arena = .init(scratch) };
     assert(s.phase == .choosing);
     assert(!s.changed);
 }
@@ -215,7 +218,9 @@ pub const Series = struct {
     a: *app.App,
     books: LocalBooks, // Every book on the Kindle, read from the library as needed
     e: *const catalog.Entry,
-    arena: std.heap.ArenaAllocator, // Emptied as it ends
+    /// On the library's scratch, a bump region, which takes back only its last block:
+    /// freeing here keeps nothing back, and the caller empties the scratch as it ends.
+    arena: std.heap.ArenaAllocator,
     phase: Phase = .choosing,
     /// The library's series, once each, by name, and the first list's rows.
     names: std.ArrayList([]const u8) = .empty,

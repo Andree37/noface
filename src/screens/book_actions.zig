@@ -13,7 +13,6 @@ const app = @import("../app.zig");
 const display = @import("../display.zig");
 const series_screen = @import("series.zig");
 const books = @import("books.zig");
-const memory = @import("../base/memory.zig");
 const cover_image = @import("../gfx/image.zig");
 const style = @import("../ui/style.zig");
 const screen = @import("screen.zig");
@@ -115,9 +114,6 @@ pub const Sheet = struct {
     e: *catalog.Entry,
     lib: *books.Library,
     background: display.Backdrop,
-    /// The books on this Kindle, listed for the series screens in the library's
-    /// scratch region, emptied when they end.
-    scratch: memory.Budget = undefined,
     round: u32 = 0, // Its actions, then for a removal the question
     phase: enum { card, series } = .card,
     list_buffer: [4]book_actions.Option = undefined,
@@ -185,7 +181,7 @@ pub const Sheet = struct {
                 return s.act(option);
             },
             .series => {
-                s.scratch.reset(.give_back);
+                s.a.regions.library_scratch_budget.reset(.give_back);
                 const changed = switch (s.series_ending.?) {
                     .done => |changed| changed,
                     .closed, .interrupted => false,
@@ -195,17 +191,16 @@ pub const Sheet = struct {
         }
     }
 
-    /// The books on this Kindle, their ids in the library's scratch region: null, the
-    /// log saying so, when there's no room there for them all (four bytes a book, more
-    /// than the library ever has).
+    /// The books on this Kindle, their ids in the library's scratch, where the series
+    /// lists are made too, all emptied when they end: null, the log saying so, when
+    /// there's no room there for them all.
     fn local_books(s: *Sheet) ?books.LocalBooks {
-        const region = &s.a.regions.library_scratch;
-        assert(region.empty()); // The library is read in it only between screens
+        const scratch = &s.a.regions.library_scratch_budget;
+        assert(scratch.live == 0); // The library is read in it only between screens
         assert(s.a.regions.book.empty()); // Never beside an open book, as setup.zig counts
-        s.scratch = .{ .name = "library scratch", .region = region, .limit = region.bytes.len };
-        const listed = s.lib.local_books(s.scratch.allocator()) catch |err| {
+        const listed = s.lib.local_books(scratch.allocator()) catch |err| {
             std.debug.print("series: books not listed ({s})\n", .{@errorName(err)});
-            s.scratch.reset(.give_back);
+            scratch.reset(.give_back);
             return null;
         };
         assert(listed.count() == s.lib.local_count());
@@ -227,7 +222,8 @@ pub const Sheet = struct {
             .series => {
                 const listed = s.local_books() orelse return .{ .done = .redraw };
                 s.phase = .series;
-                series_screen.begin(&s.series, a, listed, e);
+                const scratch = a.regions.library_scratch_budget.allocator();
+                series_screen.begin(&s.series, a, listed, e, scratch);
                 return .{ .push = screen.open(&s.series, &s.series_ending) };
             },
             .confirm_remove => {

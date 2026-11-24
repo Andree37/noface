@@ -358,5 +358,6 @@ test "noface's command line names every argument, and ends" {
     // What execve reads: each argument, then the null after the last
     const as_c: [*:null]const ?[*:0]const u8 = &argv;
     try std.testing.expectEqual(@as(?[*:0]const u8, null), as_c[paths.reader_args_count]);
-    try std.testing.expectEqualStrings("/d", std.mem.span(argv[@backingInt(paths.ReaderArg.data)].?));
+    const data = argv[@backingInt(paths.ReaderArg.data)].?;
+    try std.testing.expectEqualStrings("/d", std.mem.span(data));
 }

@@ -162,6 +162,7 @@ fn reserve_reading() !*Regions {
         assert(reading.pages_budget.live == 0);
         assert(reading.scratch.empty());
         assert(reading.library_scratch.empty());
+        assert(reading.library_scratch_budget.live == 0);
         // Every library let go of, only the cover pool and the shared buffers left
         assert(reading.library_budget.live == reading.covers_bytes);
         reading.covers.clear(); // The next App's covers may differ under the same names
@@ -178,6 +179,11 @@ fn reserve_reading() !*Regions {
     reading.covers_bytes = reading.library_budget.live;
     assert(reading.covers_bytes >= covers.bytes);
     reading.library_scratch = try .reserve("library scratch", .bump, region_bytes.library_scratch);
+    reading.library_scratch_budget = .{
+        .name = "library scratch",
+        .region = &reading.library_scratch,
+        .limit = region_bytes.library_scratch,
+    };
     reading.book = try .reserve("book", .bump, region_bytes.book);
     reading.pages = try .reserve("pages", .bump, region_bytes.pages);
     reading.pages_budget = .{

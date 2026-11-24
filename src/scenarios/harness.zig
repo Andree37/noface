@@ -438,7 +438,7 @@ pub fn play_on_app(kindle: Kindle, steps: []const Step, stage: Stage) !Outcome {
     const app_budget = try app_memory();
     // What an earlier scenario's app kept, which that scenario reported
     const live_before = app_budget.live;
-    defer app_budget.limit = setup.region_bytes.app; // Whatever the scenario left
+    defer app_budget.limit_to(setup.region_bytes.app); // Whatever the scenario left
     var a = try setup.assemble(.{
         .alloc = app_budget.allocator(),
         .app_budget = app_budget,
@@ -453,7 +453,7 @@ pub fn play_on_app(kindle: Kindle, steps: []const Step, stage: Stage) !Outcome {
     });
     const outcome = outcome: {
         defer a.release();
-        if (kindle.app_bytes_spare) |spare| app_budget.limit = app_budget.live + spare;
+        if (kindle.app_bytes_spare) |spare| app_budget.limit_to(app_budget.live + spare);
         try play_on_start(&a, kindle, stage.dir, stage.book_paths);
         const run = try play_on_sealed(&a, kindle, stage.book_paths[0], stage.dir);
         // Every step was played: the steps ran out and noface was told to stop, or the
@@ -731,8 +731,7 @@ pub fn play_on_start(
     // Each run starts as a new reader: nothing read before, every setting as shipped,
     // and the regions' peaks its own
     a.regions.book.restart_peak();
-    a.regions.pages_budget.peak = 0;
-    a.regions.pages_budget.limit = kindle.pages_bytes;
+    a.regions.pages_budget.limit_to(kindle.pages_bytes);
     assert(kindle.text_size < settings_model.sizes.len);
     a.user.settings = .{
         .bold_starts = kindle.bold_starts,

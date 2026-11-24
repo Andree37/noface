@@ -18,8 +18,10 @@ const play = harness.play;
 const play_on = harness.play_on;
 const same_place = harness.same_place;
 const unreadable_kept = harness.unreadable_kept;
+const word_held = harness.word_held;
 const taps = @import("taps.zig");
 const Step = taps.Step;
+const away_from_word = taps.away_from_word;
 const book_series = taps.book_series;
 const forward = taps.forward;
 const hold_in = taps.hold_in;
@@ -223,20 +225,33 @@ pub const all = [_]Scenario{
         }.run,
     },
     .{
-        .name = "an error in a screen over the library fails its run, and the next starts clean",
+        .name = "an error in a screen over a book stops the book, and the next run starts clean",
+        .run = struct {
+            fn run() !void {
+                const a_word = try word_held(.{ .dictionary = true }, &.{});
+                const define = [_]Step{ a_word, lift };
+                // No room left in the app's budget: Define's copy of the page can't be made
+                const starved: Kindle = .{ .dictionary = true, .app_bytes_spare = 0 };
+                const broken = play_on(starved, &define);
+                // The book stops, as a book's error does, never noface
+                const stopped = if (broken) |_| false else |err| err == error.BookFailed;
+                try expect(stopped, "the dictionary opened with no memory for it");
+                // The book's, the library's and the action's regions were let go of
+                const after = try play_on(.{ .dictionary = true }, &(define ++ .{away_from_word}));
+                try expect(after.looked_up, "the next run didn't look the word up");
+            }
+        }.run,
+    },
+    .{
+        .name = "a book's series lists are made in the library's scratch, never the app's room",
         .run = struct {
             fn run() !void {
                 const series = [_]Step{
-                    hold_in(library_ui.hero_rect(width)), lift, book_series,
+                    hold_in(library_ui.hero_rect(width)), lift, book_series, list_back_to_library,
                 };
-                // No room left in the app's budget: the series lists can't be made
-                const broken = play_on(.{ .library = true, .app_bytes_spare = 0 }, &series);
-                const failed = if (broken) |_| false else |err| err == error.OutOfMemory;
-                try expect(failed, "the series lists opened with no memory for them");
-                // The book's, the library's and the action's regions were let go of
-                const left = series ++ .{list_back_to_library};
-                const after = try play_on(.{ .library = true }, &left);
-                try expect(after.updates > 0, "the next run drew nothing");
+                // No room left in the app's budget, however many books there are
+                const r = try play_on(.{ .library = true, .app_bytes_spare = 0 }, &series);
+                try expect(r.updates > 0, "the series lists weren't shown");
             }
         }.run,
     },

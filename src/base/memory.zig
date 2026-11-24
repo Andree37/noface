@@ -445,6 +445,16 @@ pub const Budget = struct {
         return &one[0];
     }
 
+    /// Gives the budget `limit` from now, what it holds fitting: its peak starts again
+    /// from what it holds, as one from before, under another limit, says nothing of
+    /// this one.
+    pub fn limit_to(budget: *Budget, limit: u64) void {
+        assert(budget.live <= limit);
+        if (budget.region) |region| assert(limit <= region.bytes.len);
+        budget.limit = limit;
+        budget.peak = budget.live;
+    }
+
     pub fn allocator(budget: *Budget) Allocator {
         assert(budget.name.len > 0); // The log names it
         assert(budget.live <= budget.limit);

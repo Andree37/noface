@@ -86,6 +86,8 @@ pub fn open(r: *Reader, a: *app.App, entry: *catalog.Entry) !void {
     // Only one book is open at a time, so its regions start empty
     assert(a.regions.book.empty());
     assert(a.regions.scratch.empty());
+    // Never in use beside the library's scratch, as setup.zig counts them
+    assert(a.regions.library_scratch.empty());
     // Their peaks this book's own, as its close reports them
     a.regions.book.restart_peak();
     a.regions.scratch.restart_peak();

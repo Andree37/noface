@@ -240,6 +240,20 @@ pub const all = [_]Scenario{
             }
         }.run,
     },
+    .{
+        .name = "a book read leaves the app room for every screen and picture it makes later",
+        .run = struct {
+            fn run() !void {
+                const r = try play_on(.{}, &.{ wait(60_000), forward, forward });
+                // The screen saved as noface starts, Define's copy, and the picture
+                // cache full of pictures a screen each, on this Kindle's screen
+                const later = (setup.app_screens_later + setup.app_pictures) *
+                    @as(u64, setup.screen_bytes);
+                const room = setup.region_bytes.app - r.app_peak;
+                try expect(room >= later, "the app's region has no room for what it makes later");
+            }
+        }.run,
+    },
     .{ .name = "the app has the Kindle's memory and no more", .run = struct {
         fn run() !void {
             const alloc = (try app_memory()).allocator();

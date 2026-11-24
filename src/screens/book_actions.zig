@@ -201,6 +201,7 @@ pub const Sheet = struct {
     fn local_books(s: *Sheet) ?books.LocalBooks {
         const region = &s.a.regions.library_scratch;
         assert(region.empty()); // The library is read in it only between screens
+        assert(s.a.regions.book.empty()); // Never beside an open book, as setup.zig counts
         s.scratch = .{ .name = "library scratch", .region = region, .limit = region.bytes.len };
         const listed = s.lib.local_books(s.scratch.allocator()) catch |err| {
             std.debug.print("series: books not listed ({s})\n", .{@errorName(err)});

@@ -437,6 +437,8 @@ pub const LocalBooks = struct {
 pub fn load_library(a: *app.App) !Library {
     assert(a.regions.library_budget.limit > 0);
     assert(a.regions.library_scratch.kind == .bump);
+    // Never beside an open book's regions, as setup.zig counts them
+    assert(a.regions.book.empty());
     return load(.{
         .shared = &a.regions.library_shared,
         .budget = &a.regions.library_budget,

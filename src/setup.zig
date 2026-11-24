@@ -12,6 +12,7 @@ const Regions = @import("regions.zig").Regions;
 const display = @import("display.zig");
 const paths = @import("kindle/paths.zig");
 const memory = @import("base/memory.zig");
+const picture_cache = @import("gfx/picture_cache.zig");
 const hwtcon = @import("kindle/hwtcon.zig");
 const Input = @import("kindle/input.zig").Input;
 const Font = @import("gfx/font.zig").Font;
@@ -34,10 +35,15 @@ const file = @import("sys/file.zig");
 /// Sized from the peaks logged opening eight books of 1 to 70 MB (the
 /// largest used 78 MB of the book's region), with room to spare.
 pub const region_bytes = struct {
-    /// Screen buffers (seven, 2 MB each), fonts and their glyphs, the open book's
-    /// eight pictures and hyphenation: 16 to 24 MB measured, so 64 leaves room for
-    /// glyphs of many sizes and a full picture cache.
-    pub const app: u32 = 64 << 20;
+    /// The screens the app keeps and the open book's pictures, worked out from the
+    /// screen it runs on, and the rest it keeps: never less than the Paperwhite's
+    /// 64 MB, measured (16 to 24 MB used), with room for glyphs of many sizes.
+    pub const app: u32 = std.mem.alignForward(
+        u32,
+        @max(app_floor, (app_screens_kept + app_screens_later + app_pictures) * screen_bytes +
+            app_rest),
+        memory.unit_bytes,
+    );
     /// The glyph cache: its table and its log of bitmaps (`glyph_cache.Config`), at
     /// most 16 MB however many glyphs, fonts and sizes are drawn.
     pub const glyphs: u32 =
@@ -56,7 +62,8 @@ pub const region_bytes = struct {
     /// and the pool the covers shown are kept in.
     pub const library: u32 = std.mem.alignForward(
         u32,
-        books.shared_bytes_max + books.library_bytes + library_covers + library_slack,
+        books.shared_bytes_max + books.library_bytes + library_covers + library_screen +
+            library_slack,
         memory.unit_bytes,
     );
     /// What an EPUB is read for while the library is found: its zip directory, its
@@ -75,6 +82,25 @@ pub const region_bytes = struct {
     pub const scratch: u32 = 8 << 20;
 };
 
+/// A whole screen, a byte a pixel: every screen buffer is one.
+pub const screen_bytes: u32 = style.screen_width * style.screen_height;
+/// Whole screens the app keeps for good, made as it's assembled: the display's page
+/// slots and its overlay (display.zig), and the lock's saved screen and cover
+/// (ui/lock.zig).
+pub const app_screens_kept = display.slots_count + 1 + 2;
+/// Whole screens the app makes later: the screen saved as noface starts, put back as
+/// it leaves (main.zig), and Define's copy of the page under it
+/// (screens/reader/define.zig).
+pub const app_screens_later = 2;
+/// The open book's pictures kept drawn (gfx/picture_cache.zig), each at most a screen.
+pub const app_pictures = picture_cache.Pictures.slots;
+/// What else the app keeps: its fonts' tables, the settings, hyphenation's patterns.
+const app_rest: u32 = 16 << 20;
+/// The app's region on the Paperwhite, measured there: no Kindle's is smaller.
+const app_floor: u32 = 64 << 20;
+/// The library's own screen, drawn into before it's shown (screens/library.zig).
+const library_screen: u32 = screen_bytes;
+
 /// A page holds at least this many bytes of a book's text, at the largest type: the
 /// pages region is sized for a book region full of text cut that finely.
 const book_bytes_per_page_min = 128;
@@ -82,7 +108,7 @@ const book_bytes_per_page_min = 128;
 /// Room in the library's region for the cover pool, and for each of its two blocks
 /// being rounded up to whole units.
 const library_covers: u32 = covers.bytes + 2 * memory.unit_bytes;
-/// Each block of the library's region rounded up to whole units, and room to spare.
+/// Each block of the library's region rounded up to whole units.
 const library_slack: u32 = 4 << 20;
 
 comptime {
@@ -95,9 +121,13 @@ comptime {
 }
 
 comptime {
-    // Every region fits in the ~480 MB a Kindle has free beside Amazon's services
+    // Every region in use at once fits in the ~480 MB a Kindle has free beside
+    // Amazon's services: the library's scratch only between books, an open book's three
+    // only while it's open, each pair emptied before the other is used (asserted as
+    // the library loads and as a book opens)
     const b = region_bytes;
-    const reading_bytes = b.library + b.library_scratch + b.book + b.pages + b.scratch;
+    const book_bytes = b.book + b.pages + b.scratch;
+    const reading_bytes = b.library + @max(b.library_scratch, book_bytes);
     const glyphs_bytes = b.glyphs + b.glyph_scratch;
     assert(b.app + b.decoders + glyphs_bytes + reading_bytes < 480 << 20);
     // Regions are whole units

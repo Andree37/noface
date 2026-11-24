@@ -10,7 +10,7 @@ pub const Pictures = struct {
     entries: [slots]?Entry = @splat(null), // Null until a picture is put there
     next: u32 = 0, // Which entry to replace next
 
-    const slots = 8;
+    pub const slots = 8;
     const Entry = struct { key: [*]const u8, w: u32, h: u32, pixels: []u8 };
 
     pub fn get(p: *const Pictures, data: [*]const u8, w: u32, h: u32) ?[]const u8 {

@@ -96,6 +96,7 @@ pub const Outcome = struct {
     /// when no save of its place landed. A library's run reads none of it.
     book_last: u64,
     saved_speed_pages: u32, // Pages the speed saved in its file has counted
+    app_peak: u64, // The most of the app's region in use at once, this run or before
     shown: [3]?Shown, // As `Kindle.pages_into` asks: the pages buffered at the end
     running_pace: ?f64, // Running's pace, once it has one
     awake_at_end: bool, // The Kindle held awake as the steps ran out, before noface stopped
@@ -920,6 +921,7 @@ pub fn play_on_outcome(
         .place_kept = !kindle.place_unreadable or still_unopened(state_path),
         .book_last = ran.book_last,
         .saved_speed_pages = saved_speed_pages(a),
+        .app_peak = a.app_budget.peak,
         .shown = if (kindle.pages_into) |into| try pages_shown(into, a) else @splat(null),
         .updates = a.display.screen.updates,
         .running_pace = a.user.running_pace,

@@ -21,6 +21,11 @@ pub const test_documents_env = "NOFACE_DOCUMENTS";
 
 /// The app itself.
 pub const reader = app_dir ++ "/noface";
+/// What the reader is started with after its own name, by position: what src/main.zig
+/// reads and the launcher (supervisor.zig) gives. Its fonts it knows (fonts.zig).
+pub const ReaderArg = enum(u8) { library = 1, data = 2 };
+/// The reader's whole command line: its own name, then each `ReaderArg`.
+pub const reader_args_count = 1 + @typeInfo(ReaderArg).@"enum".field_names.len;
 /// Starts the app, puts the Kindle's own screens back after it, starts it at boot and
 /// writes the book list for the library (src/launch.zig).
 pub const launcher = app_dir ++ "/noface-launch";

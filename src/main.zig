@@ -1,5 +1,5 @@
 //! The noface app: a fast reader with its own home screen.
-//! Usage: noface <library.tsv> <body.ttf> <title.ttf> <ui.ttf> <ui-bold.ttf> <state-dir>
+//! Usage: noface <library.tsv> <data-dir> (kindle/paths.zig `ReaderArg`)
 //!
 //! In a book, touch-down turns the page: left third goes back, the rest forward.
 //! Tapping the top of a page opens the toolbar. Dragging down from the top opens
@@ -48,10 +48,6 @@ fn plain_log(
     _ = scope;
     std.debug.print(format ++ "\n", arguments);
 }
-
-/// The arguments noface is started with to read: its own name, the library, four
-/// fonts and the data folder.
-const reader_arguments_count = 7;
 
 /// A crash during `noface selftest` must say why, though the scenarios hide the app's
 /// own messages while they run. And it says where, in which build (sys/crash.zig): the
@@ -109,14 +105,14 @@ pub fn main(init: std.process.Init.Minimal) !void {
     if (argv.len == 2 and std.mem.eql(u8, std.mem.sliceTo(argv[1], 0), "selftest")) {
         std.process.exit(if (scenarios.selftest()) 0 else 1);
     }
-    if (argv.len != reader_arguments_count) return error.Usage;
+    if (argv.len != paths.reader_args_count) return error.Usage;
     try main_reader(init);
 }
 
 /// Reads: the library, then books, until noface quits.
 fn main_reader(init: std.process.Init.Minimal) !void {
     const argv = init.args.vector;
-    assert(argv.len == reader_arguments_count);
+    assert(argv.len == paths.reader_args_count);
     // The watchdog's two minutes start now, not from a beat left by an earlier run: what
     // runs long before the loop first turns (a library built) beats on its own
     heartbeat.beat_to(heartbeat.path);
@@ -135,9 +131,9 @@ fn main_reader(init: std.process.Init.Minimal) !void {
     // book, come from the Kindle's own Chinese typeface rather than as empty boxes
     main_reader_fallback();
 
-    const state_dir = std.mem.sliceTo(argv[6], 0);
+    const state_dir = std.mem.sliceTo(argv[@backingInt(paths.ReaderArg.data)], 0);
 
-    const font_files = try main_reader_fonts(argv);
+    const font_files = try main_reader_fonts();
     // A display noface can't drive: say why in the log, and hand back to the Kindle
     var screen = hwtcon.Screen.open() catch |err| {
         std.debug.print("noface can't start: {s}\n", .{@errorName(err)});
@@ -175,7 +171,7 @@ fn main_reader(init: std.process.Init.Minimal) !void {
         .kit = &kit,
         .data_dir = state_dir,
         .files = &files,
-        .library_path = argv[1],
+        .library_path = argv[@backingInt(paths.ReaderArg.library)],
         .offered = offered,
     });
     try main_reader_configure(&shared, init, &files);
@@ -199,18 +195,19 @@ fn main_reader_fallback() void {
     if (!opened) std.debug.print("no fallback font: not a font\n", .{});
 }
 
-/// The four fonts named on the command line, mapped.
-fn main_reader_fonts(argv: []const [*:0]const u8) !setup.FontFiles {
-    assert(argv.len == reader_arguments_count);
+/// The four fonts noface starts with, mapped: a Kindle without them doesn't start it.
+fn main_reader_fonts() !setup.FontFiles {
     const files: setup.FontFiles = .{
-        .book = try file.map(argv[2]),
-        .book_bold = try file.map(argv[3]),
-        .ui = try file.map(argv[4]),
-        .ui_bold = try file.map(argv[5]),
+        .book = try file.map(fonts_db.startup.book),
+        .book_bold = try file.map(fonts_db.startup.book_bold),
+        .ui = try file.map(fonts_db.startup.ui),
+        .ui_bold = try file.map(fonts_db.startup.ui_bold),
     };
     // An empty file is an error from file.map
     assert(files.book.len > 0);
+    assert(files.book_bold.len > 0);
     assert(files.ui.len > 0);
+    assert(files.ui_bold.len > 0);
     return files;
 }
 

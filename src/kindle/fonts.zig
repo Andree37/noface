@@ -46,6 +46,23 @@ const faces = [_][4][*:0]const u8{
     },
 };
 
+/// The files noface starts with, before the reader's settings choose a typeface: the
+/// book's in Bookerly, the interface's in Ember.
+pub const startup = struct {
+    pub const book = faces[builtin("Bookerly")][0];
+    pub const book_bold = faces[builtin("Bookerly")][1];
+    pub const ui = faces[builtin("Ember")][0];
+    pub const ui_bold = faces[builtin("Ember")][1];
+};
+
+/// The place among the Kindle's typefaces of the one named `name`.
+fn builtin(comptime name: []const u8) usize { // usize: an index into `faces`
+    for (settings.builtin_families, 0..) |family, i| {
+        if (std.mem.eql(u8, family, name)) return i;
+    }
+    @compileError("no typeface of the Kindle's is named " ++ name);
+}
+
 comptime {
     if (faces.len != settings.builtin_families.len) {
         @compileError("every family needs its font files");

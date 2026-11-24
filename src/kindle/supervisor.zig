@@ -24,8 +24,6 @@ const os = @import("../sys/os.zig");
 
 const failed = os.failed;
 
-const fonts = paths.kindle_fonts;
-
 /// Where a run of noface keeps what it writes (its data, its log, the boot count) and
 /// finds its books: the Kindle's own, or a test's (`noface-launch e2e <folder>`), so a
 /// test run never touches the reader's places, settings or books.
@@ -134,18 +132,15 @@ pub fn run(envp: [*:null]const ?[*:0]const u8, folders: Folders) u32 {
     // Everything noface writes goes in its data folder, its log too, so a new one (a
     // test's, a first install's) is made here
     _ = calls.mkdir(p.data, 0o755); // Ignored: there already, or the log's open below fails
-    // The command line noface reads with: the library, four fonts and the data folder
-    // (src/main.zig)
-    const reader_argv = [_:null]?[*:0]const u8{
-        paths.reader,
-        p.library,
-        fonts ++ "/Bookerly-Regular.ttf",
-        fonts ++ "/Bookerly-Bold.ttf",
-        fonts ++ "/Amazon-Ember-Regular.ttf",
-        fonts ++ "/Amazon-Ember-Bold.ttf",
-        p.data,
-    };
-    comptime assert(reader_argv.len == 7); // As src/main.zig's reader_arguments_count
+    // The command line noface reads with (src/main.zig): each argument by its name
+    var reader_argv: [paths.reader_args_count:null]?[*:0]const u8 = undefined;
+    reader_argv[0] = paths.reader;
+    for (std.enums.values(paths.ReaderArg)) |arg| {
+        reader_argv[@backingInt(arg)] = switch (arg) {
+            .library => p.library,
+            .data => p.data,
+        };
+    }
     var environment: [environment_max + 2:null]?[*:0]const u8 = undefined;
     const reader_envp = with_documents(envp, p.documents_env, &environment);
     // Signals first: from here, a request to stop reaches noface instead of ending

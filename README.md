@@ -43,21 +43,20 @@ back to it from noface's panel at any time.
   part of it.
 - EPUBs copied to the Kindle over USB show up in the library and open in noface, with
   no conversion or Send to Kindle.
-- Wi‑Fi is turned off a couple of minutes into a book and turned back on when you
-  leave it. Tapping the battery gives an estimate, in days, of how long the charge will
-  last at the rate you read.
+- Wi‑Fi is turned off while you read and turned back on when you leave the book.
+  The battery shows an estimate of how long the charge will last at the rate you read.
 - The book you're reading shows how much time it has left on the home screen, based on
   your reading speed.
 - Books in a series are grouped and sorted using their file names, and when you finish
   one, noface offers the next.
-- Running mode, for reading on a treadmill, shows a sentence or two at a time in large
-  type and moves on at your pace. It's in Aa > Themes > Running.
+- Running mode, for reading on a treadmill, shows the text a little at a time in large type
+  and moves on at your pace.
 - An optional bold-word-starts mode sets the first half of each word in bold.
 - Your places, highlights and stats are kept in a separate folder that updates don't
   touch. A file noface can't read is left as it is rather than written over.
 - Also: definitions (the dictionary downloads the first time you look up a word),
   highlights and bookmarks, footnotes, contents and Go To, a Back button after jumps,
-  search, four typefaces plus your own, size, spacing, margins, justification and
+  search, the Kindle's typefaces and your own, size, spacing, margins, justification and
   hyphenation, a clock, full-screen pictures with zoom, reading stats, your own picture
   on the lock screen, and a pull-down panel for Wi‑Fi, Bluetooth, sync, light and
   warmth.
@@ -74,9 +73,8 @@ another Kindle it prints why it can't run and goes back to the Kindle's home scr
    `noface/kpm/noface` into `kmc/kpm/packages`.
 3. Eject the Kindle and type `;kpm launch noface` in its search bar.
 
-To have noface open when the Kindle starts, turn on Aa > More > "Open noface when the
-Kindle starts". If noface fails to start three boots in a row, the setting turns itself
-off.
+noface can also be set to open when the Kindle starts. If it keeps failing to start,
+it turns that off by itself.
 
 To update, copy the new `noface` folder over the old one. Reading data is kept in a
 separate `noface-data` folder, which updates don't touch.
@@ -88,11 +86,10 @@ No. Your books stay where they are, highlights on Amazon books still sync with t
 Kindle apps, and noface keeps its places, notes and stats in `noface-data`.
 
 **How do I go back to the normal Kindle?**
-Pull the panel down from the top and tap Kindle. To remove noface, turn off "Open
-noface when the Kindle starts", then delete the `noface` folder and
-`kmc/kpm/packages/noface`. If you had turned that setting on, it also left
-`noface-autostart.conf` in `/etc/upstart`; it does nothing once the setting is off, and
-you can delete it.
+noface's panel has a button that switches back to the Kindle's own screens. To remove noface, turn off opening it
+when the Kindle starts, then delete the `noface` folder and `kmc/kpm/packages/noface`.
+If you had turned that on, noface also added a startup file in `/etc/upstart`
+(`noface-autostart.conf`), which you can delete.
 
 **Does it work on my Kindle?**
 Only the Paperwhite 12th generation (2024) for now. Other models will be added after

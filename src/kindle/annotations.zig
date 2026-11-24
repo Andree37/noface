@@ -12,8 +12,10 @@ const long_position_size = 12;
 comptime {
     assert(long_position_raw_size == 1 + 4 + 4); // Version, element, offset
     assert(std.base64.standard.Encoder.calcSize(long_position_raw_size) == long_position_size);
-    // Each kind has its own dataset, and its record IDs their own prefix.
+    // Each kind has its own dataset, its record IDs their own prefix, and its own word
+    // in the reader's notes file.
     assert(Kind.highlight.dataset() != Kind.bookmark.dataset());
+    assert(!std.mem.eql(u8, Kind.highlight.file_word(), Kind.bookmark.file_word()));
     assert(!std.mem.startsWith(u8, Kind.highlight.prefix(), Kind.bookmark.prefix()));
     assert(!std.mem.startsWith(u8, Kind.bookmark.prefix(), Kind.highlight.prefix()));
     assert(!std.mem.eql(u8, Kind.highlight.label(), Kind.bookmark.label()));
@@ -54,6 +56,23 @@ pub const Kind = enum {
             .highlight => "kindle.highlight-",
             .bookmark => "kindle.bookmark-",
         };
+    }
+
+    /// The kind's word in the reader's own notes file (screens/reader/note_store.zig):
+    /// the format's, kept here so renaming a tag never changes what's on the drive.
+    pub fn file_word(k: Kind) []const u8 {
+        return switch (k) {
+            .highlight => "highlight",
+            .bookmark => "bookmark",
+        };
+    }
+
+    /// The kind a notes file's word names, or null for a word that names none.
+    pub fn from_file_word(word: []const u8) ?Kind {
+        for (std.enums.values(Kind)) |k| {
+            if (std.mem.eql(u8, word, k.file_word())) return k;
+        }
+        return null;
     }
 
     fn label(k: Kind) []const u8 {
@@ -282,4 +301,13 @@ test "deleting a bookmark looks in the bookmark dataset" {
     var buf: [900]u8 = undefined;
     const sql = try delete_sql(&buf, .bookmark, "kindle.bookmark-5", "BOOKKEY", 1);
     try std.testing.expect(std.mem.indexOf(u8, sql, "and dataset=2;") != null);
+}
+
+test "a notes file's word names its kind, and no other word does" {
+    for (std.enums.values(Kind)) |k| {
+        try std.testing.expectEqual(@as(?Kind, k), Kind.from_file_word(k.file_word()));
+    }
+    // The numbering line the notes file starts with is never a note
+    try std.testing.expectEqual(@as(?Kind, null), Kind.from_file_word("numbering-5"));
+    try std.testing.expectEqual(@as(?Kind, null), Kind.from_file_word(""));
 }

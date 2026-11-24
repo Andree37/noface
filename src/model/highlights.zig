@@ -172,7 +172,8 @@ fn overlaps(m: book_model.Mark, w: book_model.Word) bool {
 /// highlight's start keeps its ID, so that spot can already be taken by a highlight
 /// elsewhere. A damaged book's positions can reach the largest number, past which
 /// there's no ID to give: `error.PositionTooLarge`, and the highlight can't be saved.
-const id_format = "kindle.highlight-{d}";
+/// The model can't name the Kindle's prefix itself: the reader checks the two agree.
+pub const id_format = "kindle.highlight-{d}";
 /// The longest highlight id: its prefix and the largest u32.
 const id_bytes_max = std.fmt.count(id_format, .{std.math.maxInt(u32)});
 

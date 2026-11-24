@@ -4,7 +4,8 @@
 //! the cable), or nowhere while device tests switch writes off. A file that's there but
 //! can't be read switches notes off for that opening, so it's never written over.
 //!
-//! The file has a line per note: "<highlight|bookmark> <id> <start> <end>", with
+//! The file has a line per note: "<kind> <id> <start> <end>", its kind the word
+//! `annotations.Kind.file_word` gives ("highlight" or "bookmark"), with
 //! character positions like Amazon's.
 const std = @import("std");
 const assert = std.debug.assert;
@@ -22,7 +23,13 @@ const calls = @import("../../sys/calls.zig");
 /// Lines for noface's log, which the tests keep quiet (main.zig's `std_options`).
 const log = std.log.scoped(.notes);
 
-pub const Note = @import("../../model/highlights.zig").Note;
+const highlights = @import("../../model/highlights.zig");
+pub const Note = highlights.Note;
+
+comptime {
+    // A highlight's id, made in the model, starts as the Kindle's database wants it
+    assert(std.mem.startsWith(u8, highlights.id_format, annotations.Kind.highlight.prefix()));
+}
 
 pub const NoteStore = union(enum) {
     /// The Kindle's database, by the book's key, type and GUID.
@@ -58,7 +65,6 @@ pub const NoteStore = union(enum) {
         alloc: std.mem.Allocator,
         kind: annotations.Kind,
     ) ![]const Note {
-        assert(kind == .highlight or kind == .bookmark);
         const found: ?[]const Note = switch (store.*) {
             .amazon => |entry| try annotation_db.read_notes(alloc, entry.key, kind),
             .own_file => |path| try read_file(alloc, path, kind),
@@ -212,7 +218,7 @@ fn read_file(
     var lines = std.mem.tokenizeScalar(u8, data, '\n');
     while (lines.next()) |text| {
         var words = std.mem.tokenizeScalar(u8, text, ' ');
-        const named = std.meta.stringToEnum(annotations.Kind, words.next() orelse continue);
+        const named = annotations.Kind.from_file_word(words.next() orelse continue);
         if (named != kind) continue;
         const id = words.next() orelse continue;
         const start = std.fmt.parseInt(u32, words.next() orelse continue, 10) catch continue;
@@ -248,9 +254,9 @@ fn rewrite(path: [:0]const u8, id: []const u8, line: ?Line) bool {
     if (old) |o| copy_others(&out, o, id);
     if (line) |l| {
         var text: [64 + safe.id_size_max]u8 = undefined;
-        const kind_name = @tagName(l.kind);
+        const word = l.kind.file_word();
         const format = "{s} {s} {d} {d}\n";
-        out.write(std.fmt.bufPrint(&text, format, .{ kind_name, id, l.start, l.end }) catch {
+        out.write(std.fmt.bufPrint(&text, format, .{ word, id, l.start, l.end }) catch {
             out.abandon();
             files.remove(fresh);
             return false;

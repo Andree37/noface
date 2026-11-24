@@ -26,6 +26,7 @@ const search = @import("../model/search.zig");
 const books = @import("books.zig");
 const actions = @import("book_actions.zig");
 const Library = books.Library;
+const Picked = books.Library.Picked;
 const load_library = books.load_library;
 
 const download_poll_us = 5 * std.time.us_per_s;
@@ -70,7 +71,7 @@ fn log_page(shown: []const catalog.Entry, page_index: u32) void {
 
 /// How the search sheet ended: cancelled, searching for what was typed, or a book
 /// opened from its list.
-const SearchEnd = union(enum) { cancel, search, open: *catalog.Entry };
+const SearchEnd = union(enum) { cancel, search, open: u32 }; // A match, by its row
 
 /// The search sheet, its matches listed as they're typed. Ends by cancelling (what was
 /// searched before stays), searching for what's typed (nothing clears the search), or
@@ -119,9 +120,8 @@ const LibrarySearch = struct {
                 .row => |i| {
                     // A row tapped is one of those listed
                     assert(i < ls.matches.len);
-                    const entry = &ls.matches[i];
-                    if (!entry.is_local()) return .{ .done = .search };
-                    return .{ .done = .{ .open = entry } };
+                    if (!ls.matches[i].is_local()) return .{ .done = .search };
+                    return .{ .done = .{ .open = i } };
                 },
                 .field, .none => {}, // To the keyboard: a tap here puts accents away
             }
@@ -232,9 +232,9 @@ const Browser = struct {
         search: struct { child: screen.Child(LibrarySearch), kept: search.Query },
         sheet: screen.Child(actions.Sheet),
         /// The card offering `next`, the next of a series just finished.
-        up_next: struct { offer: actions.UpNext, next: *catalog.Entry },
-        /// A book open, and whether it was read before it was opened.
-        book: struct { child: screen.Child(reader.Reader), was_read: bool },
+        up_next: struct { offer: actions.UpNext, next: Picked },
+        /// A book open, its record, and whether it was read before it was opened.
+        book: struct { child: screen.Child(reader.Reader), id: u32, was_read: bool },
     };
 
     pub const Result = void;
@@ -373,9 +373,9 @@ const Browser = struct {
                     .was_read = open.was_read,
                     .place_saved = open.child.screen.place_saved,
                 };
-                const entry = open.child.screen.entry;
+                const opened: Picked = .{ .id = open.id, .entry = open.child.screen.entry };
                 b.over = .none;
-                return step(try b.book_closed(entry, closed));
+                return step(try b.book_closed(opened, closed));
             },
         }
     }
@@ -546,16 +546,17 @@ const Browser = struct {
                 return .{ .open = b.over.battery.frame() };
             },
             .hero => {
-                const h = b.lib.hero() orelse return .nothing;
+                const h = b.lib.hero_picked() orelse return .nothing;
                 a.display.flash(library.hero_rect(a.display.screen.width));
                 return b.open_book(h);
             },
             .hero_dots => return b.act_on(b.lib.hero() orelse return .nothing),
             .book => |i| {
-                const entry = b.lib.book(i - library.page_range(b.index, b.lib.count()).first);
+                const chosen = b.lib.picked(i - library.page_range(b.index, b.lib.count()).first);
+                const entry = chosen.entry;
                 if (entry.is_local()) {
                     a.display.flash(library.book_rect(i, b.index));
-                    return b.open_book(entry);
+                    return b.open_book(chosen);
                 }
                 if (entry.availability == .downloading) {
                     b.notice = "Still downloading. It will open once it's finished.";
@@ -624,23 +625,30 @@ const Browser = struct {
                 b.index = 0;
                 return .page;
             },
-            .open => |e| {
+            .open => |row| {
+                // Picked before the search is cleared, which reads the matches no more
+                const chosen = b.lib.match_picked(row);
                 b.query = .{};
                 b.index = 0;
-                return b.open_book(e);
+                return b.open_book(chosen);
             },
         }
     }
 
     /// Reads a book, and on finishing one of a series offers the next, to go straight
     /// on with. Each next book is further on in its series, so none comes round twice.
-    fn open_book(b: *Browser, entry: *catalog.Entry) !Next {
+    fn open_book(b: *Browser, chosen: Picked) !Next {
+        const entry = chosen.entry;
         // Only books on the Kindle are opened: the hero, a book on it, a match, or the
         // next of a series
         assert(entry.is_local());
         assert(b.lib.local_count() > 0);
         const was_read = entry.is_read();
-        b.over = .{ .book = .{ .child = .{ .screen = undefined }, .was_read = was_read } };
+        b.over = .{ .book = .{
+            .child = .{ .screen = undefined },
+            .id = chosen.id,
+            .was_read = was_read,
+        } };
         reader.open(&b.over.book.child.screen, b.a, entry) catch |err| {
             std.debug.print("could not open book: {s}\n", .{@errorName(err)});
             b.over = .none;
@@ -649,7 +657,7 @@ const Browser = struct {
                 .was_read = was_read,
                 .place_saved = true, // Never opened: never saved, nothing lost
             };
-            return b.book_closed(entry, failed);
+            return b.book_closed(chosen, failed);
         };
         return .{ .open = b.over.book.child.frame() };
     }
@@ -679,8 +687,9 @@ const Browser = struct {
     /// offering the next of a series just finished, to read now. Only books on the
     /// Kindle can offer it: a series is read from a book's file name, and books in the
     /// cloud have none yet.
-    fn book_closed(b: *Browser, entry: *catalog.Entry, closed: Closed) !Next {
+    fn book_closed(b: *Browser, closed_book: Picked, closed: Closed) !Next {
         const a = b.a;
+        const entry = closed_book.entry;
         assert(entry.is_local());
         assert(b.over == .none);
         const outcome = closed.outcome;
@@ -689,7 +698,7 @@ const Browser = struct {
         // next of a series, read now) never clears; on leaving, said before noface goes
         const said = closed.notice();
         if (said.len > 0) b.notice = said;
-        b.lib.save(entry); // Its place and time read, in the library's index
+        b.lib.save(closed_book.id, entry); // Its place and time read, in the library's index
         if (outcome == .quit) {
             if (b.notice.len > 0) try app.show_notice(a, b.notice);
             return .leave;
@@ -698,10 +707,10 @@ const Browser = struct {
         if (was_read or !entry.is_read()) return .everything;
         const next = b.lib.next_in_series(entry) orelse return .everything;
         // The next is one not read yet, so never the book just finished
-        assert(!next.is_read());
-        assert(next != entry);
+        assert(!next.entry.is_read());
+        assert(next.id != closed_book.id);
         b.over = .{ .up_next = .{ .offer = .{}, .next = next } };
-        const offer = actions.up_next(a, next, &b.over.up_next.offer) orelse {
+        const offer = actions.up_next(a, next.entry, &b.over.up_next.offer) orelse {
             b.over = .none;
             return .everything;
         };
@@ -712,7 +721,7 @@ const Browser = struct {
     fn offer_ended(b: *Browser) !Next {
         const next = b.over.up_next.next;
         assert(b.over.up_next.offer.ending != null);
-        assert(next.is_local());
+        assert(next.entry.is_local());
         const chosen = actions.up_next_closed(b.a, &b.over.up_next.offer);
         b.over = .none;
         if (!chosen) return .everything;

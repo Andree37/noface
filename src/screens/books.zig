@@ -238,6 +238,30 @@ pub const Library = struct {
     }
 
     /// The book to continue, when there is one: always on this Kindle.
+    /// The hero, picked to read or act on.
+    pub fn hero_picked(l: *Library) ?Picked {
+        const slot = &l.state.hero_slot;
+        const entry = l.hero() orelse return null;
+        assert(entry == &slot.entry);
+        return .{ .id = slot.id.?, .entry = entry }; // `hero` said it holds one
+    }
+
+    /// Book `i` of the page read last (`page`), picked to read or act on.
+    pub fn picked(l: *Library, i: u32) Picked {
+        const s = l.state;
+        const entry = l.book(i);
+        assert(i < s.page_filled);
+        return .{ .id = s.page_slots[i].id.?, .entry = entry }; // `book` asserts it holds one
+    }
+
+    /// Match `i` of the last search (`matches`), picked to read.
+    pub fn match_picked(l: *Library, i: u32) Picked {
+        const s = l.state;
+        assert(i < s.search_filled);
+        assert(s.search_slots[i].holds());
+        return .{ .id = s.search_slots[i].id.?, .entry = &s.search_entries[i] };
+    }
+
     pub fn hero(l: *Library) ?*catalog.Entry {
         const slot = &l.state.hero_slot;
         if (!slot.holds()) return null;
@@ -291,14 +315,13 @@ pub const Library = struct {
         assert(range.end <= s.count);
     }
 
-    /// Saves what reading (or marking) a book changed of it, read back from this
-    /// library: its record is written in place, and the books sorted again when next
-    /// looked through.
-    pub fn save(l: *Library, e: *const catalog.Entry) void {
+    /// Saves what reading (or marking) a book changed of it into record `id`, which it
+    /// was picked by: written in place, and the books sorted again when next looked
+    /// through.
+    pub fn save(l: *Library, id: u32, e: *const catalog.Entry) void {
         const s = l.state;
         assert(e.is_local()); // Only a book on the Kindle is read or marked
         const ix = s.opened() orelse return;
-        const id = l.id_of(e) orelse return;
         assert(id < ix.header.count);
         var r = ix.record(id);
         r.percent = @intCast(@min(e.percent, 100));
@@ -316,26 +339,8 @@ pub const Library = struct {
         s.sorted = false;
     }
 
-    /// Which record a book read back from this library is, by where it was read into.
-    fn id_of(l: *Library, e: *const catalog.Entry) ?u32 {
-        const s = l.state;
-        assert(s.ix != null); // Books are read back only from an open index
-        for (s.page_entries[0..s.page_filled], s.page_slots[0..s.page_filled]) |*p, *slot| {
-            if (p == e) return slot.id;
-        }
-        for (s.search_entries[0..s.search_filled], s.search_slots[0..s.search_filled]) |*p, *slot| {
-            if (p == e) return slot.id;
-        }
-        if (e == &s.hero_slot.entry) return s.hero_slot.id;
-        for (&s.next_slots) |*slot| {
-            if (e == &slot.entry) return slot.id;
-        }
-        assert(s.page_filled <= s.page_slots.len);
-        return null;
-    }
-
-    /// The next book of `e`'s series not read yet, read back, or null.
-    pub fn next_in_series(l: *Library, e: *const catalog.Entry) ?*catalog.Entry {
+    /// The next book of `e`'s series not read yet, read back and picked, or null.
+    pub fn next_in_series(l: *Library, e: *const catalog.Entry) ?Picked {
         const s = l.state;
         const ix = s.opened() orelse return null;
         s.next_turn +%= 1;
@@ -344,8 +349,12 @@ pub const Library = struct {
         const id = catalog.next_in_series(view.ById{ .ix = ix }, e) orelse return null;
         ix.read(id, slot);
         assert(!slot.entry.is_read());
-        return &slot.entry;
+        return .{ .id = id, .entry = &slot.entry };
     }
+
+    /// A book picked from the library to read or act on: its record's id, which what it
+    /// changes is saved back by, and its entry as read back.
+    pub const Picked = struct { id: u32, entry: *catalog.Entry };
 
     pub const Matches = struct { entries: []catalog.Entry, more: bool };
 
@@ -1106,14 +1115,15 @@ test "a book read and saved moves up, and keeps its place through a reload" {
     var library = try load(t.sources);
     library.arrange(.recent, .all, "");
     _ = library.page(0);
-    const e = library.book(library.state.page_filled - 1); // Not the hero: page one's last
+    const last = library.picked(library.state.page_filled - 1); // Not the hero: page one's last
+    const e = last.entry;
     const title = try std.testing.allocator.dupe(u8, e.title);
     defer std.testing.allocator.free(title);
     e.percent = 50;
     e.last = 5000;
     e.seconds_read = 60;
     e.words_left = 1234;
-    library.save(e);
+    library.save(last.id, e);
     library.arrange(.recent, .all, "");
     try std.testing.expectEqualStrings(title, library.hero().?.title);
     try std.testing.expectEqual(@as(?u64, 1234), library.hero().?.words_left);

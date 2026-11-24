@@ -11,6 +11,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const paths = @import("paths.zig");
+const heartbeat = @import("heartbeat.zig");
 const stock_ui = @import("stock_ui.zig");
 const lipc = @import("lipc.zig");
 const wifi_saver = @import("wifi_saver.zig");
@@ -83,11 +84,9 @@ const log_bytes_max = 512 << 10;
 const good_start_ms = 60_000;
 /// How often the watchdog looks.
 const watch_every_ms = 30_000;
-/// A heartbeat older than this, with the Kindle awake, means noface is stuck.
-const heartbeat_stale_s = 120;
 /// Looks in a row, the Kindle awake, that find the heartbeat stale before noface is
 /// ended: one can land as the Kindle wakes, before noface's loop has heard of it and
-/// beaten, after a lock longer than the heartbeat's two minutes.
+/// beaten, after a lock longer than the heartbeat's stale limit.
 const stale_looks_max = 2;
 /// The longest the watchdog waits for powerd to say whether the Kindle is awake, as
 /// src/kindle/lipc.zig waits for any answer.
@@ -111,15 +110,15 @@ const timing_kindle: Timing = .{
 };
 
 comptime {
-    // A beat comes every 30 s: a couple can be late before noface is called stuck
-    assert(heartbeat_stale_s * 1000 >= watch_every_ms * 4);
+    // Looked at often enough that a stale beat is seen soon after it goes stale
+    assert(heartbeat.stale_s * 1000 >= watch_every_ms * 4);
     assert(good_start_ms > watch_every_ms);
     // A question to powerd is answered, or given up on, well before the next look
     assert(power_check_ms * 4 <= watch_every_ms);
     assert(power_poll_ms < power_check_ms);
     // A noface really stuck is still ended within a few minutes
     assert(stale_looks_max > 1);
-    assert(heartbeat_stale_s * 1000 + stale_looks_max * watch_every_ms <= 4 * 60 * 1000);
+    assert(heartbeat.stale_s * 1000 + stale_looks_max * watch_every_ms <= 4 * 60 * 1000);
 }
 
 /// Runs noface until it ends, with `envp` as its environment and `folders` for its
@@ -155,7 +154,7 @@ pub fn run(envp: [*:null]const ?[*:0]const u8, folders: Folders) u32 {
     stock_ui.pause();
     rotate_log();
     const code = if (service.spawn_to_file(&reader_argv, reader_envp, p.log, .append, true)) |pid|
-        watch(pid, listening, timing_kindle, &power_argv, paths.heartbeat)
+        watch(pid, listening, timing_kindle, &power_argv, heartbeat.path)
     else
         exit_not_started;
     var line: [32]u8 = undefined;
@@ -197,7 +196,7 @@ fn rotate_log() void {
 }
 
 /// Waits for noface to end, passing on a request to stop and running the watchdog on
-/// the heartbeat at `heartbeat`. Returns its exit code. The watchdog's question to
+/// the heartbeat at `beat_path`. Returns its exit code. The watchdog's question to
 /// powerd runs beside this loop, so a slow or stuck lipc never holds up a stop request
 /// or noface's exit.
 fn watch(
@@ -205,7 +204,7 @@ fn watch(
     listening: bool,
     timing: Timing,
     power: [*:null]const ?[*:0]const u8,
-    heartbeat: [*:0]const u8,
+    beat_path: [*:0]const u8,
 ) u32 {
     assert(pid > 0);
     assert(timing.power_check_ms < timing.watch_every_ms);
@@ -234,7 +233,7 @@ fn watch(
             if (answer != .waiting) {
                 check = null;
                 // Asleep or not known: no look, and the count starts over
-                const stale = answer == .awake and heartbeat_stale(heartbeat);
+                const stale = answer == .awake and heartbeat.stale_at(beat_path);
                 stale_looks = if (stale) stale_looks + 1 else 0;
                 if (stale_looks >= stale_looks_max) stop_stuck(pid);
             }
@@ -305,39 +304,14 @@ const PowerCheck = struct {
     }
 };
 
-/// One look by the watchdog, the Kindle being awake: whether the heartbeat at `path`
-/// is over 2 minutes old.
-fn heartbeat_stale(path: [*:0]const u8) bool {
-    assert(path[0] == '/');
-    var beat_buffer: [32]u8 = undefined;
-    const beat = file.read_system(path, &beat_buffer);
-    assert(beat.len <= beat_buffer.len);
-    return stuck(os.unix_time(), beat);
-}
-
 /// Ends noface, found stuck by the watchdog.
 fn stop_stuck(pid: i32) void {
     assert(pid > 0);
-    file.append_file(run_paths.log, "watchdog: no heartbeat for 2 minutes, stopping noface\n");
+    const said = std.fmt.comptimePrint("watchdog: no heartbeat for {d} s, stopping noface\n", .{
+        heartbeat.stale_s,
+    });
+    file.append_file(run_paths.log, said);
     _ = linux.kill(pid, linux.SIG.KILL); // Ignored: ended already: then the next turn reaps it
-}
-
-/// Whether noface's last heartbeat (seconds since 1970, as text; none reads as 0) is
-/// over 2 minutes before `now`.
-pub fn stuck(now: u64, beat_text: []const u8) bool {
-    const trimmed = std.mem.trim(u8, beat_text, " \n");
-    const beat = std.fmt.parseInt(u64, trimmed, 10) catch 0;
-    if (beat >= now) return false; // A clock set back: no sign of being stuck
-    assert(now > beat);
-    return now - beat > heartbeat_stale_s;
-}
-
-test "the watchdog ends noface only after two minutes without a heartbeat" {
-    try std.testing.expect(!stuck(1000, "900\n"));
-    try std.testing.expect(!stuck(1000, "880\n"));
-    try std.testing.expect(stuck(1000, "879\n"));
-    try std.testing.expect(stuck(1000, ""));
-    try std.testing.expect(!stuck(1000, "2000\n"));
 }
 
 test "the watchdog's question to powerd never holds up noface's exit" {

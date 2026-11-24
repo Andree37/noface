@@ -20,8 +20,6 @@ const process = @import("../sys/process.zig");
 pub const eviocgrab = evdev.eviocgrab;
 pub const should_tell_powerd = watchers.should_tell_powerd;
 pub const power_pressed = watchers.power_pressed;
-pub const beat_to = watchers.beat_to;
-pub const beat_when_due = watchers.beat_when_due;
 pub const turn_direction = gestures.turn_direction;
 const InputEvent = evdev.InputEvent;
 

@@ -21,7 +21,7 @@ const dir = @import("../sys/dir.zig");
 const epub = @import("../epub/epub.zig");
 const catalog_db = @import("../kindle/catalog.zig");
 const kfx = @import("../kindle/kfx.zig");
-const watchers = @import("../kindle/input/watchers.zig");
+const heartbeat = @import("../kindle/heartbeat.zig");
 const files = @import("files.zig");
 const index = @import("index.zig");
 
@@ -278,7 +278,7 @@ fn add_kindle_books(b: *Build) void {
     defer lines.close();
     // Each line moves on through the file, so there are fewer than it has bytes
     for (0..lines_max(&lines)) |_| {
-        if (b.places.heartbeat) |path| watchers.beat_when_due(path, &b.beat_us);
+        if (b.places.heartbeat) |path| heartbeat.beat_when_due(path, &b.beat_us);
         const line = (lines.next() catch {
             b.incomplete = true; // The rest of the catalog, next time
             break;
@@ -332,7 +332,7 @@ fn add_epub(b: *Build, path: [:0]const u8) void {
     assert(b.count <= index.books_max);
     assert(path.len > 0);
     // Each EPUB, read or not: thousands, or a few slow to read, outlast the watchdog
-    if (b.places.heartbeat) |heartbeat| watchers.beat_when_due(heartbeat, &b.beat_us);
+    if (b.places.heartbeat) |beat_path| heartbeat.beat_when_due(beat_path, &b.beat_us);
     // Listed, then not there to look at: gone meanwhile, or the drive failed
     const facts = file.facts_of(path) orelse {
         b.incomplete = true;
@@ -624,7 +624,7 @@ pub fn sync_states(
     walk.merge.sorted = &.{};
     var first_error: ?anyerror = null;
     for (keys) |key| {
-        if (places.heartbeat) |path| watchers.beat_when_due(path, &walk.beat_us);
+        if (places.heartbeat) |path| heartbeat.beat_when_due(path, &walk.beat_us);
         // One key's files failing to move leaves the others to move
         rename_key(ix, state_dir, key, by_name, complete, &walk.merge) catch |err| {
             log("library: files of {x:0>16} not moved ({s})\n", .{ key, @errorName(err) });
@@ -650,7 +650,7 @@ const Walk = struct {
 
     fn entry(w: *Walk, name: []const u8, is_dir: bool) void {
         assert(name.len > 0);
-        if (w.heartbeat) |path| watchers.beat_when_due(path, &w.beat_us);
+        if (w.heartbeat) |path| heartbeat.beat_when_due(path, &w.beat_us);
         if (is_dir or w.failed) return;
         for (std.enums.values(state.Kind)) |kind| {
             const key = state.key_of_name(name, kind) orelse continue;

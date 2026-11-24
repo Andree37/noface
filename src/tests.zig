@@ -32,6 +32,7 @@ test {
     _ = @import("screens/reader/run.zig");
     _ = @import("kindle/fonts.zig");
     _ = @import("kindle/wifi_saver.zig");
+    _ = @import("kindle/heartbeat.zig");
     _ = @import("gfx/page.zig");
     _ = @import("gfx/rows.zig");
     _ = @import("gfx/workspace.zig");

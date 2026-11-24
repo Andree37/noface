@@ -19,6 +19,7 @@ const os = @import("../sys/os.zig");
 const process = @import("../sys/process.zig");
 const state = @import("../sys/state.zig");
 const paths = @import("../kindle/paths.zig");
+const heartbeat = @import("../kindle/heartbeat.zig");
 const files = @import("../library/files.zig");
 const index = @import("../library/index.zig");
 const builder = @import("../library/builder.zig");
@@ -443,7 +444,7 @@ pub fn load_library(a: *app.App) !Library {
         .catalog_path = a.library_path,
         .documents = a.documents,
         .state_dir = a.state_dir,
-        .heartbeat = paths.heartbeat,
+        .heartbeat = heartbeat.path,
     });
 }
 

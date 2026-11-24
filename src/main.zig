@@ -21,6 +21,7 @@ const file = @import("sys/file.zig");
 const hwtcon = @import("kindle/hwtcon.zig");
 const clock = @import("sys/clock.zig");
 const input_mod = @import("kindle/input.zig");
+const heartbeat = @import("kindle/heartbeat.zig");
 const app = @import("app.zig");
 const library_screen = @import("screens/library.zig");
 const wifi_saver = @import("kindle/wifi_saver.zig");
@@ -118,7 +119,7 @@ fn main_reader(init: std.process.Init.Minimal) !void {
     assert(argv.len == reader_arguments_count);
     // The watchdog's two minutes start now, not from a beat left by an earlier run: what
     // runs long before the loop first turns (a library built) beats on its own
-    input_mod.beat_to(paths.heartbeat);
+    heartbeat.beat_to(heartbeat.path);
     // Reserved now; a book's, the library's and one action's by setup.assemble
     var app_region = try memory.Region.reserve("app", .heap, setup.region_bytes.app);
     var app_budget = memory.Budget{

@@ -20,6 +20,7 @@ const catalog = @import("../model/catalog.zig");
 const settings_model = @import("../model/settings.zig");
 const stats = @import("../model/stats.zig");
 const state = @import("../sys/state.zig");
+const user_data = @import("../user_data.zig");
 const page_store = @import("../screens/reader/page_store.zig");
 const os = @import("../sys/os.zig");
 const reader = @import("../screens/reader.zig");
@@ -91,6 +92,10 @@ pub const Outcome = struct {
     notes: u64, // A digest of the book's notes file, 0 when it has none
     unreadable_kept: bool, // Every file made unreadable is still there, unread and unwritten
     place_kept: bool, // The first book's place, made unreadable, was never written over
+    /// When the book read alone was last opened, as its record says after the run: 0
+    /// when no save of its place landed. A library's run reads none of it.
+    book_last: u64,
+    saved_speed_pages: u32, // Pages the speed saved in its file has counted
     shown: [3]?Shown, // As `Kindle.pages_into` asks: the pages buffered at the end
     running_pace: ?f64, // Running's pace, once it has one
     awake_at_end: bool, // The Kindle held awake as the steps ran out, before noface stopped
@@ -449,7 +454,7 @@ pub fn play_on_app(kindle: Kindle, steps: []const Step, stage: Stage) !Outcome {
         defer a.release();
         if (kindle.app_bytes_spare) |spare| app_budget.limit = app_budget.live + spare;
         try play_on_start(&a, kindle, stage.dir, stage.book_paths);
-        const ms = try play_on_sealed(&a, kindle, stage.book_paths[0], stage.dir);
+        const run = try play_on_sealed(&a, kindle, stage.book_paths[0], stage.dir);
         // Every step was played: the steps ran out and noface was told to stop, or the
         // last one left noface itself
         const played = stage.devices.script.at == steps.len;
@@ -459,7 +464,8 @@ pub fn play_on_app(kindle: Kindle, steps: []const Step, stage: Stage) !Outcome {
             .fake = stage.fake,
             .last_screen = stage.devices.last_screen,
             .awake_at_end = stage.devices.keep.awake,
-            .ms = ms,
+            .ms = run.ms,
+            .book_last = run.book_last,
             .dir = stage.dir,
         });
     };
@@ -489,15 +495,20 @@ pub fn app_memory() !*memory.Budget {
 
 /// Plays the script with memory sealed, as the Kindle runs: any memory asked of the
 /// system from here on fails the scenario.
-pub fn play_on_sealed(a: *app.App, kindle: Kindle, book_path: [:0]const u8, dir: []const u8) !u64 {
+pub fn play_on_sealed(
+    a: *app.App,
+    kindle: Kindle,
+    book_path: [:0]const u8,
+    dir: []const u8,
+) !Played {
     assert(!memory.sealed);
     assert(a.app_budget.region != null); // The app's memory comes from a region
     const late_before = memory.late_requests;
     memory.seal();
     defer memory.sealed = false;
-    const ms = try play_on_run(a, kindle, book_path, dir);
+    const run = try play_on_run(a, kindle, book_path, dir);
     try expect(memory.late_requests == late_before, "memory was asked of the system after startup");
-    return ms;
+    return run;
 }
 
 /// A new folder for a scenario under /tmp, named for this process and run.
@@ -683,14 +694,26 @@ pub fn unreadable_kept(alloc: std.mem.Allocator, kindle: Kindle, dir: []const u8
     assert(std.fs.path.isAbsolute(dir)); // The scenario's own folder, under /tmp
     for (kindle.unreadable) |name| {
         const link = try std.fmt.allocPrintSentinel(alloc, "{s}/{s}", .{ dir, name }, 0);
-        const data = file.map(link) catch |err| switch (err) {
-            error.OpenFailed => continue, // The link, still
-            error.NotFound, error.SeekFailed, error.EmptyFile, error.MmapFailed => return false,
-        };
-        file.unmap(data);
-        return false;
+        if (!still_unopened(link)) return false;
     }
     return true;
+}
+
+/// Whether `path` is still the link to itself a scenario made it, never opened: one
+/// gone, emptied or written over is not.
+fn still_unopened(path: [*:0]const u8) bool {
+    const data = file.map(path) catch |err| switch (err) {
+        error.OpenFailed => return true, // The link, still
+        error.NotFound, error.SeekFailed, error.EmptyFile, error.MmapFailed => return false,
+    };
+    file.unmap(data);
+    return false;
+}
+
+/// The pages the reader's speed, as saved in its file, has counted.
+fn saved_speed_pages(a: *const app.App) u32 {
+    var kept = file.Kept.at(a.user.files.speed.path);
+    return user_data.load_speed(&kept).speed.pages;
 }
 
 /// Sets the App up as a new reader's, in the scenario's folder.
@@ -761,8 +784,8 @@ pub fn play_on_start(
 
 /// Plays the script in the library or the first book, the app's own messages kept out
 /// of the run's in the scenario folder's log, which says where it placed what moves
-/// with the page (screens/placed.zig). How long it took, by the wall clock.
-pub fn play_on_run(a: *app.App, kindle: Kindle, book_path: [:0]const u8, dir: []const u8) !u64 {
+/// with the page (screens/placed.zig).
+pub fn play_on_run(a: *app.App, kindle: Kindle, book_path: [:0]const u8, dir: []const u8) !Played {
     assert(book_path.len > 0);
     assert(hidden_stderr == -1); // One scenario at a time
     const kind = if (std.mem.endsWith(u8, book_path, ".epub")) "EPUB" else "KFX";
@@ -801,8 +824,12 @@ pub fn play_on_run(a: *app.App, kindle: Kindle, book_path: [:0]const u8, dir: []
     } else {
         _ = try reader.read_book(a, &entry);
     }
-    return real_ms() - t0;
+    return .{ .ms = real_ms() - t0, .book_last = entry.last };
 }
+
+/// How long a run took, by the wall clock, and its book's record's last-opened time
+/// as the run left it (`Outcome.book_last`).
+pub const Played = struct { ms: u64, book_last: u64 };
 
 /// What `play_on_outcome` reads besides the App.
 pub const Ran = struct {
@@ -811,6 +838,7 @@ pub const Ran = struct {
     last_screen: []const u8,
     awake_at_end: bool, // As `Keep` found it when the steps ran out
     ms: u64,
+    book_last: u64,
     dir: []const u8, // The scenario's folder
 };
 
@@ -889,7 +917,9 @@ pub fn play_on_outcome(
         .notes = notes_digest(state_path),
         .unreadable_kept = try unreadable_kept(ran.alloc, kindle, ran.dir),
         // Still the link: nothing was renamed over it
-        .place_kept = !kindle.place_unreadable or std.meta.isError(file.map(state_path)),
+        .place_kept = !kindle.place_unreadable or still_unopened(state_path),
+        .book_last = ran.book_last,
+        .saved_speed_pages = saved_speed_pages(a),
         .shown = if (kindle.pages_into) |into| try pages_shown(into, a) else @splat(null),
         .updates = a.display.screen.updates,
         .running_pace = a.user.running_pace,

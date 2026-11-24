@@ -243,6 +243,8 @@ pub const Reader = struct {
         assert(r.start < r.s.pages.len);
         try r.s.show(r.start, .jump, null, true);
         r.place_saved = sess.save_progress(r.entry, r.s, r.s.percent());
+        // Said as it opens, not only as it closes: read on, the reading isn't kept
+        if (!r.place_saved) try app.show_notice(r.a, "This book's place can't be saved now.");
         assert(r.s.current == r.start);
         r.reading_started = true;
         r.a.wifi_hands_off = false;

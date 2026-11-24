@@ -176,7 +176,7 @@ pub const all = [_]Scenario{
                     wait(60_000), forward, top, tool(.home),
                 });
                 try expect(r.place_kept, "the unreadable place was written over");
-                try expect(r.speed_pages > 0, "the speed learned wasn't kept");
+                try expect(r.saved_speed_pages > 0, "the speed learned wasn't saved");
             }
         }.run,
     },
@@ -188,7 +188,10 @@ pub const all = [_]Scenario{
                 const saved = try play_on(.{}, &read);
                 const refused = try play_on(.{ .place_unwritable = true }, &read);
                 try expect(saved.saved.opened > 0, "the place wasn't saved");
+                try expect(saved.book_last > 0, "a place saved wasn't taken for saved");
                 try expect(refused.saved.opened == 0, "a place the drive refused was kept");
+                // The book's record shows only what's saved: never a place the drive refused
+                try expect(refused.book_last == 0, "a place the drive refused was taken for saved");
             }
         }.run,
     },

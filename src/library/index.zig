@@ -241,8 +241,9 @@ pub const Index = struct {
     }
 
     /// Book `id`'s record. Not hashed again: every one was as the index opened
-    /// (`check`), and each write since is sealed and read back (`write_record`), so
-    /// a sort, reading each record a few dozen times, needn't.
+    /// (`check`), and each write since was sealed, and is refused unless the mapping
+    /// shows it byte for byte (`write_record`), so a sort, reading each record a few
+    /// dozen times, needn't.
     pub fn record(ix: *const Index, id: u32) Record {
         const r = ix.record_unchecked(id);
         r.invariants();
@@ -293,16 +294,15 @@ pub const Index = struct {
         assert(id < ix.header.count);
         assert(ix.dir.len > 0);
         r.seal();
+        r.invariants(); // Noface's own, checked before it goes to the drive
         var path_buffer: [files.path_bytes_max]u8 = undefined;
         const path = try files.path_in(&path_buffer, ix.dir, "records");
         const offset = file_head_bytes + @as(u64, id) * @sizeOf(Record);
-        // One of the index's records, never past them
-        const records_end = file_head_bytes + @as(u64, ix.header.count) * @sizeOf(Record);
-        assert(offset + @sizeOf(Record) <= records_end);
         if (!files.write_at(path, offset, std.mem.asBytes(r))) return error.CantWrite;
         // The mapping showing a write made through another handle is the drive's
-        // promise, not noface's: one that doesn't keep it is a write that didn't land
-        const now = ix.record(id);
+        // promise, not noface's: one that doesn't keep it is a write that didn't land,
+        // and what it shows instead is outside data, compared, never asserted on
+        const now = ix.record_unchecked(id);
         if (!std.mem.eql(u8, std.mem.asBytes(&now), std.mem.asBytes(r))) return error.CantWrite;
     }
 

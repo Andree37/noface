@@ -53,7 +53,7 @@ pub const NoteStore = union(enum) {
         if (annotation_db.dry_run()) return .off;
         if (!entry.is_epub()) return .{ .amazon = entry };
         var buffer: [files.path_bytes_max]u8 = undefined;
-        const path = try state.sibling(&buffer, state_path, "notes");
+        const path = try state.sibling(&buffer, state_path, .notes);
         assert(path.len > 0);
         return .{ .own_file = try alloc.dupeSentinel(u8, path, 0) };
     }

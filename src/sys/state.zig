@@ -34,10 +34,16 @@ pub const numbering_now = 2;
 pub fn path_for(buf: []u8, dir: []const u8, book_path: []const u8) ![:0]u8 {
     assert(dir.len > 0);
     assert(book_path.len > 0);
-    const key = key_for(book_path);
-    const path = try std.fmt.bufPrintSentinel(buf, "{s}/state-{x:0>16}", .{ dir, key }, 0);
+    return file_path(buf, dir, .state, key_for(book_path));
+}
+
+/// A book's file of `kind`: "<dir>/<kind>-<16 hex>", the one way every name is written.
+pub fn file_path(buf: []u8, dir: []const u8, kind: Kind, key: u64) ![:0]u8 {
+    assert(dir.len > 0);
+    const named = .{ dir, kind.name(), key };
+    const path = try std.fmt.bufPrintSentinel(buf, "{s}/{s}-{x:0>16}", named, 0);
     assert(std.mem.startsWith(u8, path, dir));
-    assert(key_of_name(std.fs.path.basename(path), "state") == key);
+    assert(key_of_name(std.fs.path.basename(path), kind) == key); // Read back as written
     return path;
 }
 
@@ -66,13 +72,13 @@ pub fn adopt_by_name(state_path: [:0]const u8, book_path: []const u8) void {
     assert(book_path.len > 0);
     const dir = std.fs.path.dirname(state_path) orelse return;
     const old_key = key_by_name(book_path);
-    inline for (.{ "notes", "state" }) |kind| {
+    // The reader's own files, in `Kind`'s order: the place after the notes
+    for (std.enums.values(Kind)) |kind| {
+        if (kind.remade()) continue; // Made again from the book: nothing of the reader's
         var to_buffer: [file.own_path_bytes_max]u8 = undefined;
         var from_buffer: [file.own_path_bytes_max]u8 = undefined;
         const to = sibling(&to_buffer, state_path, kind) catch return;
-        const named = .{ dir, kind, old_key };
-        const from = std.fmt.bufPrintSentinel(&from_buffer, "{s}/{s}-{x:0>16}", named, 0) catch
-            return;
+        const from = file_path(&from_buffer, dir, kind, old_key) catch return;
         assert(!std.mem.eql(u8, from, to)); // A whole path's name is never a file name's
         // Only into nothing, from something: an unknown either way is left alone
         if (file.presence(to) == .absent and file.presence(from) == .here) {
@@ -91,29 +97,59 @@ fn md5_key(text: []const u8, ending: []const u8) u64 {
     return std.mem.readInt(u64, digest[0..8], .big);
 }
 
-/// The kinds of file kept about a book, each "<kind>-<key>": its place, its page breaks,
-/// its notes and its cover. Every one is named through `sibling`, which takes only these.
-pub const kinds = [_][]const u8{ "state", "pages", "notes", "cover" };
+/// The kinds of file kept about a book, each "<kind>-<key>" (`file_path`). Declared in
+/// the order a book's files are moved (library/builder.zig): those remade first, then
+/// the notes, the place last, so a move cut short never leaves a place without its notes.
+pub const Kind = enum {
+    pages,
+    cover,
+    notes,
+    state,
 
-/// The book's key in a file name "<kind>-<16 hex>", as `path_for` and `sibling` write
-/// them; null for any other name.
+    /// The kind's word in its files' names: the drive's, so never a tag's name.
+    pub fn name(k: Kind) []const u8 {
+        const word = switch (k) {
+            .pages => "pages",
+            .cover => "cover",
+            .notes => "notes",
+            .state => "state",
+        };
+        // A file's name in the data folder, never a path
+        assert(word.len > 0);
+        assert(std.mem.indexOfScalar(u8, word, '/') == null);
+        return word;
+    }
+
+    /// Made again from the book when it's missing: nothing of the reader's, so never
+    /// adopted or copied to another book, only removed.
+    pub fn remade(k: Kind) bool {
+        return switch (k) {
+            .pages, .cover => true,
+            .notes, .state => false,
+        };
+    }
+};
+
+comptime {
+    const all = std.enums.values(Kind);
+    // Remade ones first, and the place last: the order a book's files move in
+    for (all[1..], 1..) |k, i| assert(!(k.remade() and !all[i - 1].remade()));
+    assert(all[all.len - 1] == .state);
+}
+
+/// The book's key in a file name "<kind>-<16 hex>", as `file_path` writes them; null
+/// for any other name.
 // Assertions: it reads a file's name from a folder: outside data.
-pub fn key_of_name(name: []const u8, kind: []const u8) ?u64 {
+pub fn key_of_name(name: []const u8, kind: Kind) ?u64 {
     const hex_len = 16;
-    if (name.len != kind.len + 1 + hex_len) return null;
-    if (!std.mem.startsWith(u8, name, kind) or name[kind.len] != '-') return null;
-    const hex = name[kind.len + 1 ..];
+    const word = kind.name();
+    if (name.len != word.len + 1 + hex_len) return null;
+    if (!std.mem.startsWith(u8, name, word) or name[word.len] != '-') return null;
+    const hex = name[word.len + 1 ..];
     for (hex) |c| {
         if (!std.ascii.isDigit(c) and (c < 'a' or c > 'f')) return null;
     }
     return std.fmt.parseInt(u64, hex, 16) catch null;
-}
-
-fn is_kind(kind: []const u8) bool {
-    for (kinds) |k| {
-        if (std.mem.eql(u8, k, kind)) return true;
-    }
-    return false;
 }
 
 /// True when the Kindle's own position should win over ours: we have nothing
@@ -126,15 +162,13 @@ pub fn prefer_kindle(saved: State, kindle_last: u64) bool {
 
 /// Another file about the same book, beside its state file: "<dir>/<kind>-<book>" for
 /// "<dir>/state-<book>". Used for saved page breaks, covers and local notes.
-pub fn sibling(buf: []u8, state_path: []const u8, kind: []const u8) ![:0]u8 {
-    assert(kind.len > 0);
-    assert(is_kind(kind)); // So moving a book's files moves every one of them
+pub fn sibling(buf: []u8, state_path: []const u8, kind: Kind) ![:0]u8 {
     const dir = std.fs.path.dirname(state_path) orelse ".";
     const name = std.fs.path.basename(state_path);
-    if (!std.mem.startsWith(u8, name, "state-")) return error.NotAStateFile;
-    const book = name["state-".len..];
-    const path = try std.fmt.bufPrintSentinel(buf, "{s}/{s}-{s}", .{ dir, kind, book }, 0);
-    assert(std.mem.endsWith(u8, path, book)); // The same book's
+    const key = key_of_name(name, .state) orelse return error.NotAStateFile;
+    const path = try file_path(buf, dir, kind, key);
+    assert(std.mem.endsWith(u8, path, name[Kind.state.name().len..])); // The same book's
+    assert(std.mem.startsWith(u8, path, dir));
     return path;
 }
 
@@ -229,11 +263,26 @@ test "a book's files are named by its whole path, as they were by its file name"
     try std.testing.expectEqual(key_by_name("/books/abc"), key_by_name("/old/abc"));
     // As 0.2 named them: `printf 'abc\n' | md5sum` starts 0bee89b07a248e27
     try std.testing.expectEqual(@as(u64, 0x0bee89b07a248e27), key_by_name("/books/abc"));
-    const key = key_of_name("state-0bee89b07a248e27", "state");
+    const key = key_of_name("state-0bee89b07a248e27", .state);
     try std.testing.expectEqual(@as(?u64, 0x0bee89b07a248e27), key);
-    try std.testing.expectEqual(@as(?u64, null), key_of_name("state-0bee89b07a248e2", "state"));
-    try std.testing.expectEqual(@as(?u64, null), key_of_name("cover-0bee89b07a248e27", "state"));
-    try std.testing.expectEqual(@as(?u64, null), key_of_name("state-0BEE89B07A248E27", "state"));
+    try std.testing.expectEqual(@as(?u64, null), key_of_name("state-0bee89b07a248e2", .state));
+    try std.testing.expectEqual(@as(?u64, null), key_of_name("cover-0bee89b07a248e27", .state));
+    try std.testing.expectEqual(@as(?u64, null), key_of_name("state-0BEE89B07A248E27", .state));
+}
+
+test "a book's files keep the names they have on the drive" {
+    var buf: [128]u8 = undefined;
+    // Each kind's name, pinned: a different one would leave every reader's files behind
+    const want = [_][]const u8{
+        "/d/pages-0bee89b07a248e27",
+        "/d/cover-0bee89b07a248e27",
+        "/d/notes-0bee89b07a248e27",
+        "/d/state-0bee89b07a248e27",
+    };
+    for (std.enums.values(Kind), want) |kind, path| {
+        const written = try file_path(&buf, "/d", kind, 0x0bee89b07a248e27);
+        try std.testing.expectEqualStrings(path, written);
+    }
 }
 
 test "kindle position wins until we have our own" {
@@ -256,9 +305,11 @@ test "a value a file doesn't have reads as its default" {
 
 test "a book's other files sit beside its state file" {
     var buf: [128]u8 = undefined;
-    const notes = try sibling(&buf, "/d/state-0bee89b07a248e27", "notes");
+    const notes = try sibling(&buf, "/d/state-0bee89b07a248e27", .notes);
     try std.testing.expectEqualStrings("/d/notes-0bee89b07a248e27", notes);
-    try std.testing.expectError(error.NotAStateFile, sibling(&buf, "/d/other", "notes"));
+    try std.testing.expectError(error.NotAStateFile, sibling(&buf, "/d/other", .notes));
+    const not_state = "/d/notes-0bee89b07a248e27";
+    try std.testing.expectError(error.NotAStateFile, sibling(&buf, not_state, .notes));
 }
 
 test "files are written by name and read back" {
@@ -301,24 +352,44 @@ test "the longest state there can be is saved whole" {
     try std.testing.expectEqual(longest, look(path));
 }
 
-test "a book opened before its files were moved takes a copy of its old place, never over one" {
+test "a book opened before its files moved takes its notes and place, never over its own" {
     // In /tmp, by a book named for this run, so runs side by side don't meet
     const dir = "/tmp";
     var book_buffer: [64]u8 = undefined;
     const book_format = "/mnt/us/documents/Dune-{d}.epub";
     const book = try std.fmt.bufPrint(&book_buffer, book_format, .{calls.getpid()});
-    var old_buffer: [file.own_path_bytes_max]u8 = undefined;
-    const old_format = "{s}/state-{x:0>16}";
-    const old_named = .{ dir, key_by_name(book) };
-    const old = try std.fmt.bufPrintSentinel(&old_buffer, old_format, old_named, 0);
-    defer _ = calls.unlink(old); // Ignored: only /tmp is left fuller
     var own_buffer: [file.own_path_bytes_max]u8 = undefined;
     const own = try path_for(&own_buffer, dir, book);
-    defer _ = calls.unlink(own); // Ignored: only /tmp is left fuller
-    try std.testing.expect(save(&file.Kept.at(old), .{ .para = 7, .percent = 60 }));
+    // Every kind of the reader's own, as 0.2.0 named it, the kind's name its content
+    for (std.enums.values(Kind)) |kind| {
+        if (kind.remade()) continue;
+        var old_buffer: [file.own_path_bytes_max]u8 = undefined;
+        const old = try file_path(&old_buffer, dir, kind, key_by_name(book));
+        try std.testing.expect(file.write_small(old, kind.name()));
+    }
+    defer for (std.enums.values(Kind)) |kind| {
+        var old_buffer: [file.own_path_bytes_max]u8 = undefined;
+        var own_kind_buffer: [file.own_path_bytes_max]u8 = undefined;
+        const old = file_path(&old_buffer, dir, kind, key_by_name(book)) catch continue;
+        const own_kind = sibling(&own_kind_buffer, own, kind) catch continue;
+        _ = calls.unlink(old); // Ignored: only /tmp is left fuller
+        _ = calls.unlink(own_kind); // Ignored: only /tmp is left fuller
+    };
     adopt_by_name(own, book);
-    try std.testing.expectEqual(@as(?u32, 60), look(own).percent);
-    try std.testing.expectEqual(@as(?u32, 60), look(old).percent); // Kept for its twins
+    for (std.enums.values(Kind)) |kind| {
+        var own_kind_buffer: [file.own_path_bytes_max]u8 = undefined;
+        var old_buffer: [file.own_path_bytes_max]u8 = undefined;
+        var read_buffer: [16]u8 = undefined;
+        const own_kind = try sibling(&own_kind_buffer, own, kind);
+        const old = try file_path(&old_buffer, dir, kind, key_by_name(book));
+        if (kind.remade()) {
+            try std.testing.expect(!file.exists(own_kind)); // Made again, never adopted
+        } else {
+            const adopted = try file.read_small(own_kind, &read_buffer);
+            try std.testing.expectEqualStrings(kind.name(), adopted);
+            try std.testing.expect(file.exists(old)); // Kept for its twins
+        }
+    }
     // Its own, once there, is never written over
     try std.testing.expect(save(&file.Kept.at(own), .{ .para = 9, .percent = 70 }));
     adopt_by_name(own, book);

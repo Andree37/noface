@@ -785,7 +785,7 @@ test "an EPUB whose cover couldn't be saved is listed without one, not with a mi
     var tmp_buffer: [file.own_path_bytes_max]u8 = undefined;
     const book = try std.fmt.bufPrint(&book_buffer, "{s}/documents/Book 0.epub", .{root});
     const state_path = try state.path_for(&state_buffer, t.sources.state_dir, book);
-    const cover = try state.sibling(&cover_buffer, state_path, "cover");
+    const cover = try state.sibling(&cover_buffer, state_path, .cover);
     const tmp = try std.fmt.bufPrintSentinel(&tmp_buffer, "{s}.tmp", .{cover}, 0);
     try std.testing.expect(!os.failed(calls.mkdir(tmp, 0o755)));
     var library = try load(t.sources);
@@ -840,9 +840,9 @@ test "files an older noface named by a book's file name move to its whole path's
     defer t.deinit();
     const dir = t.sources.state_dir;
     // As 0.2 named them: Dune's place and notes, shared by both; Other's, old and new
-    try test_old_file(dir, "state", dune, "para 3\npercent 42\nopened 1000\n");
-    try test_old_file(dir, "notes", dune, "highlight 1 0 5\n");
-    try test_old_file(dir, "state", other, "para 3\npercent 77\nopened 1000\n");
+    try test_old_file(dir, .state, dune, "para 3\npercent 42\nopened 1000\n");
+    try test_old_file(dir, .notes, dune, "highlight 1 0 5\n");
+    try test_old_file(dir, .state, other, "para 3\npercent 77\nopened 1000\n");
     const other_state = try state.path_for(&path, dir, other);
     const other_place: state.State = .{ .para = 1, .percent = 10, .opened = 2000 };
     try std.testing.expect(state.save(&file.Kept.at(other_state), other_place));
@@ -854,7 +854,7 @@ test "files an older noface named by a book's file name move to its whole path's
         try std.testing.expectEqual(@as(?u32, 42), saved.percent);
         var notes_buffer: [file.own_path_bytes_max]u8 = undefined;
         const own_state = try state.path_for(&path, dir, book);
-        const notes = try state.sibling(&notes_buffer, own_state, "notes");
+        const notes = try state.sibling(&notes_buffer, own_state, .notes);
         try std.testing.expect(file.exists(notes));
     }
     // Merged in the load that moved them, under the names the listing hadn't seen
@@ -872,8 +872,8 @@ test "files an older noface named by a book's file name move to its whole path's
     const other_now = state.look(try state.path_for(&path, dir, other));
     try std.testing.expectEqual(@as(?u32, 10), other_now.percent);
     // Moved: Dune's old files are gone
-    try std.testing.expect(!file.exists(try test_old_path(&path, dir, "state", dune)));
-    try std.testing.expect(!file.exists(try test_old_path(&path, dir, "notes", dune)));
+    try std.testing.expect(!file.exists(try test_old_path(&path, dir, .state, dune)));
+    try std.testing.expect(!file.exists(try test_old_path(&path, dir, .notes, dune)));
 }
 
 test "0.2.0's shared files stay for a book of the same name still downloading, and its cover goes" {
@@ -894,8 +894,8 @@ test "0.2.0's shared files stay for a book of the same name still downloading, a
     try t.init(root);
     defer t.deinit();
     const dir = t.sources.state_dir;
-    try test_old_file(dir, "state", here, "para 3\npercent 42\nopened 1000\n");
-    try test_old_file(dir, "cover", here, "a cover");
+    try test_old_file(dir, .state, here, "para 3\npercent 42\nopened 1000\n");
+    try test_old_file(dir, .cover, here, "a cover");
     {
         var library = try load(t.sources);
         defer library.deinit();
@@ -903,9 +903,9 @@ test "0.2.0's shared files stay for a book of the same name still downloading, a
     // The one here has its copy; the one coming will want the old one, which stays
     const here_now = state.look(try state.path_for(&path, dir, here));
     try std.testing.expectEqual(@as(?u32, 42), here_now.percent);
-    try std.testing.expect(file.exists(try test_old_path(&path, dir, "state", here)));
+    try std.testing.expect(file.exists(try test_old_path(&path, dir, .state, here)));
     // A cover's made again from the book: the old one goes now
-    try std.testing.expect(!file.exists(try test_old_path(&path, dir, "cover", here)));
+    try std.testing.expect(!file.exists(try test_old_path(&path, dir, .cover, here)));
     // Downloaded: it takes its copy, and the old one is no one's. The catalog exported
     // again, a line longer, so the library sees it's changed within the same second
     const both_here = try std.fmt.bufPrint(&rows_buffer, "\n" ++ rows, .{ here, 0, coming, 0 });
@@ -916,7 +916,7 @@ test "0.2.0's shared files stay for a book of the same name still downloading, a
     }
     const coming_now = state.look(try state.path_for(&path, dir, coming));
     try std.testing.expectEqual(@as(?u32, 42), coming_now.percent);
-    try std.testing.expect(!file.exists(try test_old_path(&path, dir, "state", here)));
+    try std.testing.expect(!file.exists(try test_old_path(&path, dir, .state, here)));
 }
 
 test "a catalog that couldn't be read is read again at the next load, unchanged" {
@@ -963,13 +963,13 @@ test "a move of a book's files cut short goes on at the next load, from what's l
     const dune_state = try state.path_for(&path, dir, dune);
     const dune_place: state.State = .{ .para = 3, .percent = 42, .opened = 1000 };
     try std.testing.expect(state.save(&file.Kept.at(dune_state), dune_place));
-    try test_old_file(dir, "notes", dune, "highlight 1 0 5\n");
+    try test_old_file(dir, .notes, dune, "highlight 1 0 5\n");
     var library = try load(t.sources);
     defer library.deinit();
     var notes_buffer: [file.own_path_bytes_max]u8 = undefined;
     const own_state = try state.path_for(&path, dir, dune);
-    try std.testing.expect(file.exists(try state.sibling(&notes_buffer, own_state, "notes")));
-    try std.testing.expect(!file.exists(try test_old_path(&path, dir, "notes", dune)));
+    try std.testing.expect(file.exists(try state.sibling(&notes_buffer, own_state, .notes)));
+    try std.testing.expect(!file.exists(try test_old_path(&path, dir, .notes, dune)));
     const dune_now = state.look(try state.path_for(&path, dir, dune));
     try std.testing.expectEqual(@as(?u32, 42), dune_now.percent);
 }
@@ -1016,12 +1016,11 @@ fn test_percent_of(library: *Library, title: []const u8) u32 {
 }
 
 /// Where noface 0.2 kept a `kind` of file about `book`.
-fn test_old_path(buffer: []u8, dir: []const u8, kind: []const u8, book: []const u8) ![:0]u8 {
-    const key = state.key_by_name(book);
-    return std.fmt.bufPrintSentinel(buffer, "{s}/{s}-{x:0>16}", .{ dir, kind, key }, 0);
+fn test_old_path(buffer: []u8, dir: []const u8, kind: state.Kind, book: []const u8) ![:0]u8 {
+    return state.file_path(buffer, dir, kind, state.key_by_name(book));
 }
 
-fn test_old_file(dir: []const u8, kind: []const u8, book: []const u8, text: []const u8) !void {
+fn test_old_file(dir: []const u8, kind: state.Kind, book: []const u8, text: []const u8) !void {
     var buffer: [file.own_path_bytes_max]u8 = undefined;
     try test_write(try test_old_path(&buffer, dir, kind, book), text);
 }

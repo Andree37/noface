@@ -77,7 +77,7 @@ fn key_setting(comptime name: []const u8, value: anytype, families: settings_mod
 /// "<dir>/pages-<book>", beside the book's state file "<dir>/state-<book>".
 pub fn path_for(buf: []u8, state_path: []const u8) ![:0]u8 {
     assert(state_path.len > 0);
-    const path = try state.sibling(buf, state_path, "pages");
+    const path = try state.sibling(buf, state_path, .pages);
     assert(path.len < buf.len); // Room for the sentinel too
     return path;
 }

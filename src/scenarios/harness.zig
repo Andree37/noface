@@ -341,7 +341,7 @@ pub fn count_notes(state_path: []const u8, kind: []const u8) u32 {
     assert(kind.len > 0);
     assert(state_path.len > 0);
     var path_buf: [file.own_path_bytes_max]u8 = undefined;
-    const path = state.sibling(&path_buf, state_path, "notes") catch return 0;
+    const path = state.sibling(&path_buf, state_path, .notes) catch return 0;
     // Mapped whole, however many notes it has: none when there's no file
     const content = file.map(path) catch return 0;
     defer file.unmap(content);
@@ -725,7 +725,7 @@ pub fn play_on_start(
         var state_buf: [file.own_path_bytes_max]u8 = undefined;
         const state_path = try a.state_path(&state_buf, book_paths[0]);
         var notes_buf: [file.own_path_bytes_max]u8 = undefined;
-        const notes_path = try state.sibling(&notes_buf, state_path, "notes");
+        const notes_path = try state.sibling(&notes_buf, state_path, .notes);
         try write_file(notes_path, kindle.notes_before);
     }
     if (kindle.read_before) |before| {
@@ -933,7 +933,7 @@ pub fn breaks_digest(state_path: []const u8) u64 {
 pub fn notes_digest(state_path: []const u8) u64 {
     assert(state_path.len > 0);
     var path_buf: [file.own_path_bytes_max]u8 = undefined;
-    const path = state.sibling(&path_buf, state_path, "notes") catch return 0;
+    const path = state.sibling(&path_buf, state_path, .notes) catch return 0;
     assert(std.mem.startsWith(u8, path, std.fs.path.dirname(state_path) orelse ""));
     // Mapped whole, so two files differing anywhere differ here: 0 when there's none
     const content = file.map(path) catch return 0;

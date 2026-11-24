@@ -341,7 +341,7 @@ fn add_epub(b: *Build, path: [:0]const u8) void {
     var state_buffer: [files.path_bytes_max]u8 = undefined;
     var cover_buffer: [files.path_bytes_max]u8 = undefined;
     const state_path = state.path_for(&state_buffer, b.places.state_dir, path) catch return;
-    const cover_path = state.sibling(&cover_buffer, state_path, "cover") catch return;
+    const cover_path = state.sibling(&cover_buffer, state_path, .cover) catch return;
     const each = b.scratch.mark();
     defer b.scratch.rewind(each);
     const known = if (b.last) |*last| last.find(path, facts) else null;
@@ -652,9 +652,9 @@ const Walk = struct {
         assert(name.len > 0);
         if (w.heartbeat) |path| watchers.beat_when_due(path, &w.beat_us);
         if (is_dir or w.failed) return;
-        for (state.kinds) |kind| {
+        for (std.enums.values(state.Kind)) |kind| {
             const key = state.key_of_name(name, kind) orelse continue;
-            if (std.mem.eql(u8, kind, "state")) {
+            if (kind == .state) {
                 w.merge.merge_key(key) catch {
                     w.merge_failed = true;
                 };
@@ -750,25 +750,15 @@ fn rename_key(
     assert(here <= twins);
     if (here == 0) return; // None of its books here: kept till one is
     const done = complete and here == twins;
-    // Remade ones, then the notes, then the place
-    const order = [_][]const u8{ "pages", "cover", "notes", "state" };
-    // Every kind a book has, each once
-    comptime assert(order.len == state.kinds.len);
-    comptime for (state.kinds) |kind| {
-        var found = false;
-        for (order) |o| found = found or std.mem.eql(u8, o, kind);
-        assert(found);
-    };
-    inline for (order) |kind| {
+    // In `state.Kind`'s order: remade ones, then the notes, then the place
+    for (std.enums.values(state.Kind)) |kind| {
         var from_buffer: [files.path_bytes_max]u8 = undefined;
-        const named = .{ state_dir, kind, key };
-        const from = try std.fmt.bufPrintSentinel(&from_buffer, "{s}/{s}-{x:0>16}", named, 0);
+        const from = try state.file_path(&from_buffer, state_dir, kind, key);
         switch (file.presence(from)) {
             .absent => {},
             .unknown => return error.CantRead, // Tried again at the next load
             .here => {
-                const remade = comptime std.mem.eql(u8, kind, "pages") or
-                    std.mem.eql(u8, kind, "cover");
+                const remade = kind.remade();
                 if (!remade) try copy_to_twins(ix, state_dir, kind, from, key, by_name, merge);
                 if (remade or done) {
                     if (os.failed(calls.unlink(from))) return error.CantRemove;
@@ -783,7 +773,7 @@ fn rename_key(
 fn copy_to_twins(
     ix: *const index.Index,
     state_dir: []const u8,
-    comptime kind: []const u8,
+    kind: state.Kind,
     from: [:0]const u8,
     key: u64,
     by_name: []const Item,
@@ -808,7 +798,7 @@ fn copy_to_twins(
         }
         if (!file.copy_file(from, to)) return error.CantCopy;
         // Merged now: the walk listed the folder before it was there
-        if (comptime std.mem.eql(u8, kind, "state")) try merge.merge_at(item.id, to);
+        if (kind == .state) try merge.merge_at(item.id, to);
     }
 }
 
@@ -820,9 +810,7 @@ const Merge = struct {
     fn merge_key(m: *Merge, key: u64) !void {
         assert(m.state_dir.len > 0);
         var path_buffer: [files.path_bytes_max]u8 = undefined;
-        const format = "{s}/state-{x:0>16}";
-        const path = try std.fmt.bufPrintSentinel(&path_buffer, format, .{ m.state_dir, key }, 0);
-        assert(state.key_of_name(std.fs.path.basename(path), "state").? == key); // Its own
+        const path = try state.file_path(&path_buffer, m.state_dir, .state, key);
         // Read only for a book here: the drive is slow, and a file may be a deleted book's
         const high: u32 = @truncate(key >> 32);
         // Books whose keys share a high half: only the one with the whole key is merged

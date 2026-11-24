@@ -1,8 +1,7 @@
 <h1 align="center">noface</h1>
 
 <p align="center">
-  <b>Your Kindle, without the wait.</b><br>
-  A fast, quiet home screen and reader for the Kindle Paperwhite.
+  A home screen and reader for the Kindle Paperwhite, written to turn pages fast.
 </p>
 
 <p align="center">
@@ -27,94 +26,86 @@
 
 ## About
 
-The Kindle Paperwhite has a wonderful screen held back by slow software: a store where
-your library should be, and a beat of lag on every page. noface replaces its home
-screen and reader with one built for reading, and built to be fast. Tap, and the page
-is already there.
+noface replaces the home screen and the reader on a jailbroken Kindle Paperwhite. It
+was written because the stock reader takes about a third of a second to show the next
+page; noface takes about 60 ms on the same Kindle.
 
-Everything you rely on keeps working: your Amazon library, sync, highlights, the
-dictionary and Wi‑Fi. And the Kindle's own software is never touched, so going back is
-one tap.
+It works with the books already on your Kindle and with EPUBs you copy over USB.
+Highlights on Amazon books still sync with the Kindle apps, and Wi‑Fi, sync and the
+dictionary keep working. noface doesn't change the Kindle's own software: you can go
+back to it from noface's panel at any time.
 
 ## Features
 
-- **Fast.** Pages turn in about 60 ms, five times faster than the stock reader on the
-  same Kindle. You stop noticing the device and just read.
-- **Quiet.** Your home screen is your books and nothing else: no store, no deals, no
-  banners asking you to subscribe.
-- **EPUBs that just open.** Copy them over USB and they're in your library. No Send to
-  Kindle, no email, no account.
-- **Kind to your battery.** Wi‑Fi switches itself off a couple of minutes into a book
-  and back on when you're done, and a tap on the battery says how many days it has left
-  at the way you read.
-- **Knows your pace.** The book you're reading says how long it has left, right on the
-  home screen, from how fast you actually read.
-- **Series, sorted.** Books in a series are grouped and kept in order from your own
-  files, and finishing one offers the next.
-- **Running mode.** Read on a treadmill: a sentence or so at a time, large and still at
-  one spot, moving on at your running pace, with big taps to go back, skip or pause.
-  Aa > Themes > Running.
-- **Bold word starts.** An option that sets the first half of each word in bold, to
-  lead the eye along the line.
-- **Safe with your reading.** Your places, highlights and stats live apart from the
-  app, so updates never touch them, and noface never writes over one it couldn't read.
-- **And everything you'd expect:** definitions (the dictionary downloads itself the
-  first time you hold a word), highlights and bookmarks synced with the Kindle apps for
-  Amazon books, footnotes over the page, contents and Go To, a Back button after every
-  jump, search as you type, four typefaces plus your own, size, spacing, margins,
-  justification and hyphenation, a clock, pictures full screen with zoom, reading stats
-  with your daily minutes and streak, the book's cover or your own picture on the lock
-  screen, and Wi‑Fi, Bluetooth, sync, light and warmth in a panel you pull down from the
-  top.
+- Pages turn in about 60 ms, against about 330 ms in the stock reader on the same
+  Kindle.
+- The home screen shows your books only. The store, recommendations and ads aren't
+  part of it.
+- EPUBs copied to the Kindle over USB show up in the library and open in noface, with
+  no conversion or Send to Kindle.
+- Wi‑Fi is turned off a couple of minutes into a book and turned back on when you
+  leave it. Tapping the battery gives an estimate, in days, of how long the charge will
+  last at the rate you read.
+- The book you're reading shows how much time it has left on the home screen, based on
+  your reading speed.
+- Books in a series are grouped and sorted using their file names, and when you finish
+  one, noface offers the next.
+- Running mode, for reading on a treadmill, shows a sentence or two at a time in large
+  type and moves on at your pace. It's in Aa > Themes > Running.
+- An optional bold-word-starts mode sets the first half of each word in bold.
+- Your places, highlights and stats are kept in a separate folder that updates don't
+  touch. A file noface can't read is left as it is rather than written over.
+- Also: definitions (the dictionary downloads the first time you look up a word),
+  highlights and bookmarks, footnotes, contents and Go To, a Back button after jumps,
+  search, four typefaces plus your own, size, spacing, margins, justification and
+  hyphenation, a clock, full-screen pictures with zoom, reading stats, your own picture
+  on the lock screen, and a pull-down panel for Wi‑Fi, Bluetooth, sync, light and
+  warmth.
 
 ## Install
 
-**You'll need** a **Kindle Paperwhite, 12th generation (2024)**, jailbroken, with
-**KMC** and **KPM** installed (the usual jailbreak guides set both up). That's the only
-Kindle noface runs on: on any other model it checks the screen, says it can't run, and
-hands straight back to the Kindle's own home screen.
+You need a Kindle Paperwhite, 12th generation (2024), jailbroken, with KMC and KPM
+installed (most jailbreak guides install both). noface only runs on that model; on
+another Kindle it prints why it can't run and goes back to the Kindle's home screen.
 
-1. **Download** the latest `noface-<version>-paperwhite_12.zip` from
+1. Download the latest `noface-<version>-paperwhite_12.zip` from
    [Releases](https://github.com/Andree37/noface/releases/latest) and unzip it.
-2. **Copy** the `noface` folder to the Kindle's drive over USB, and the folder
-   `noface/kpm/noface` into `kmc/kpm/packages` on the same drive.
-3. **Launch**: eject, and type `;kpm launch noface` into the Kindle's search bar.
+2. Connect the Kindle over USB. Copy the `noface` folder to its drive, and copy
+   `noface/kpm/noface` into `kmc/kpm/packages`.
+3. Eject the Kindle and type `;kpm launch noface` in its search bar.
 
-Your library appears, and your books open at the page you were on.
+To have noface open when the Kindle starts, turn on Aa > More > "Open noface when the
+Kindle starts". If noface fails to start three boots in a row, the setting turns itself
+off.
 
-**Start with your Kindle:** turn on Aa > More > "Open noface when the Kindle starts".
-If noface ever fails to start on three boots in a row, it turns this off itself.
-
-**Update** by copying the new `noface` folder over the old one. Your reading lives in a
-separate `noface-data` folder that updates never touch.
+To update, copy the new `noface` folder over the old one. Reading data is kept in a
+separate `noface-data` folder, which updates don't touch.
 
 ## FAQ
 
 **Will I lose my books, highlights or places?**
-No. Your books stay where they are, your highlights on Amazon books keep syncing with
-the Kindle apps, and noface keeps its own places, notes and stats in `noface-data`,
-apart from the app.
+No. Your books stay where they are, highlights on Amazon books still sync with the
+Kindle apps, and noface keeps its places, notes and stats in `noface-data`.
 
 **How do I go back to the normal Kindle?**
-Pull the panel down from the top and tap **Kindle**: the Kindle's own screens return.
-To remove noface, turn off starting with the Kindle, then delete the `noface` folder and
-`kmc/kpm/packages/noface`. If you had turned on starting with the Kindle, its one small
-startup file stays behind, idle, in `/etc/upstart`: delete `noface-autostart.conf` there
-to leave no trace.
+Pull the panel down from the top and tap Kindle. To remove noface, turn off "Open
+noface when the Kindle starts", then delete the `noface` folder and
+`kmc/kpm/packages/noface`. If you had turned that setting on, it also left
+`noface-autostart.conf` in `/etc/upstart`; it does nothing once the setting is off, and
+you can delete it.
 
 **Does it work on my Kindle?**
-Only on the Paperwhite 12th generation (2024) today. Other Kindles are added once noface
-has passed its full test run on a real one; the release notes list which.
+Only the Paperwhite 12th generation (2024) for now. Other models will be added after
+noface has passed its test run on each; the release notes list the supported ones.
 
 **Can it open books I bought from Amazon?**
-Books without DRM, yes. Most bought from Amazon are protected, and noface never removes
-or works around DRM: those open in the Kindle's own reader instead.
+Only books without DRM. noface doesn't remove or work around DRM, so protected books
+(most books bought from Amazon) open in the Kindle's own reader.
 
-**Something's not right. What do I do?**
-`noface doctor` and `noface selftest` check the Kindle and noface itself; the
-[release notes](https://github.com/Andree37/noface/releases/latest) say how to run them
-and where to send what they print. A crash is written to `noface.log`, and attaching it
-to a report is enough.
+**How do I report a problem?**
+Run `noface doctor` and `noface selftest`; the
+[release notes](https://github.com/Andree37/noface/releases/latest) explain how. Open an
+issue with their output and `noface-data/noface.log`, which records crashes.
 
 ## Good to know
 

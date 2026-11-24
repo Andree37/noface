@@ -14,6 +14,8 @@ const book_model = @import("../../model/book.zig");
 const file = @import("../../sys/file.zig");
 const state = @import("../../sys/state.zig");
 const app = @import("../../app.zig");
+const paginate = @import("paginate.zig");
+const hyphen = @import("../../layout/hyphen.zig");
 
 const magic = "NFPG";
 
@@ -28,8 +30,9 @@ const magic = "NFPG";
 /// note. Pages saved by 0.2.0 would skip lines.
 const layout_version: u64 = 5;
 
-/// Everything the breaks depend on.
-pub fn key(a: *const app.App, book_bytes: u64) u64 {
+/// Everything the breaks depend on: the screen, the settings, and the book's text as
+/// it's laid out, its hyphenation's language too.
+pub fn key(a: *const app.App, book_bytes: u64, book_text: paginate.Text) u64 {
     assert(a.display.screen.width > 0);
     assert(a.display.screen.height > 0);
     var h = std.hash.Wyhash.init(layout_version);
@@ -37,6 +40,7 @@ pub fn key(a: *const app.App, book_bytes: u64) u64 {
     const l = a.layout;
     const parts = [_]u64{
         book_bytes,
+        hyphenation_part(book_text.hyphenator),
         a.display.screen.width,
         a.display.screen.height,
         @bitCast(@as(i64, l.margin_top)),
@@ -52,6 +56,13 @@ pub fn key(a: *const app.App, book_bytes: u64) u64 {
         }
     }
     return h.final();
+}
+
+/// Hyphenation's part of the key: its language, or none, so breaks laid out without
+/// it, or with another language's, never serve it.
+fn hyphenation_part(hyphenator: ?*const hyphen.Hyphenator) u64 {
+    const made = hyphenator orelse return 0;
+    return 1 + @as(u64, @backingInt(made.lang));
 }
 
 /// One setting's part of the key: a switch as 0 or 1, a choice by its number.
@@ -240,4 +251,18 @@ test "pages files sit beside state files" {
     var buf: [128]u8 = undefined;
     const path = try path_for(&buf, "/d/state-0bee89b07a248e27");
     try std.testing.expectEqualStrings("/d/pages-0bee89b07a248e27", path);
+}
+
+test "breaks laid out with one hyphenation, or none, are kept apart" {
+    // Every language's part, and none's, differs from every other's
+    var parts: [std.enums.values(hyphen.Lang).len + 1]u64 = undefined;
+    parts[0] = hyphenation_part(null);
+    for (std.enums.values(hyphen.Lang), parts[1..]) |lang, *part| {
+        var made = try hyphen.Hyphenator.init(std.testing.allocator, lang);
+        defer made.deinit();
+        part.* = hyphenation_part(&made);
+    }
+    for (parts, 0..) |part, i| {
+        for (parts[i + 1 ..]) |other| try std.testing.expect(part != other);
+    }
 }

@@ -7,19 +7,24 @@ const app = @import("../../app.zig");
 const book_model = @import("../../model/book.zig");
 const check = @import("../../base/check.zig");
 const text = @import("../../layout/text.zig");
+const hyphen = @import("../../layout/hyphen.zig");
+
+/// What's laid out: a book's paragraphs, and the hyphenation of its language, or none
+/// to break only at spaces and dashes. Both the open book's: the App's layout holds
+/// neither.
+pub const Text = struct {
+    paragraphs: []const book_model.Paragraph,
+    hyphenator: ?*const hyphen.Hyphenator,
+};
 
 /// The most pages a book may have: page indexes and counts are u32.
 const book_pages_max = std.math.maxInt(u32);
 
 /// Lays out the whole book so going backwards is exact.
-pub fn book(
-    a: *app.App,
-    alloc: std.mem.Allocator,
-    paragraphs: []const book_model.Paragraph,
-) ![]const book_model.Pos {
-    assert(paragraphs.len > 0); // Parsing refuses a book without any
+pub fn book(a: *app.App, alloc: std.mem.Allocator, book_text: Text) ![]const book_model.Pos {
+    assert(book_text.paragraphs.len > 0); // Parsing refuses a book without any
     var pages: std.ArrayList(book_model.Pos) = .empty;
-    const rest = try run(a, alloc, paragraphs, .{}, null, &pages, book_pages_max);
+    const rest = try run(a, alloc, book_text, .{}, null, &pages, book_pages_max);
     // With no stop and no page limit worth the name, only the book's end stops it
     assert(rest == null);
     assert(std.meta.eql(pages.items[0], book_model.Pos{})); // A book's first page starts it
@@ -32,16 +37,18 @@ pub fn book(
 fn run(
     a: *app.App,
     alloc: std.mem.Allocator,
-    paragraphs: []const book_model.Paragraph,
+    book_text: Text,
     from: book_model.Pos,
     stop: ?book_model.Pos,
     out: *std.ArrayList(book_model.Pos),
     pages_max: u32,
 ) !?book_model.Pos {
     assert(pages_max > 0);
+    const paragraphs = book_text.paragraphs;
     assert(from.para <= paragraphs.len);
     const geometry = a.display.page(&.{});
     var layout = a.layout;
+    layout.hyphenator = book_text.hyphenator;
     layout.stop = stop;
     var position = from;
     for (0..pages_max) |_| {
@@ -84,7 +91,7 @@ fn run_continues(
 /// `pages()` is the forward part alone, so page indexes count from the reader's place.
 pub const Progressive = struct {
     alloc: std.mem.Allocator,
-    paragraphs: []const book_model.Paragraph,
+    book_text: Text,
     anchor: book_model.Pos,
     forward: std.ArrayList(book_model.Pos) = .empty, // From the place on: never empty
     before: std.ArrayList(book_model.Pos) = .empty, // From the book's start to the place
@@ -109,17 +116,17 @@ pub const Progressive = struct {
     pub fn start(
         a: *app.App,
         alloc: std.mem.Allocator,
-        paragraphs: []const book_model.Paragraph,
+        book_text: Text,
         anchor: book_model.Pos,
     ) !?Progressive {
-        assert(anchor.para <= paragraphs.len);
+        assert(anchor.para <= book_text.paragraphs.len);
         var p = Progressive{
             .alloc = alloc,
-            .paragraphs = paragraphs,
+            .book_text = book_text,
             .anchor = anchor,
             .phase = .done,
         };
-        const rest = try run(a, alloc, paragraphs, anchor, null, &p.forward, first_pages);
+        const rest = try run(a, alloc, book_text, anchor, null, &p.forward, first_pages);
         if (p.forward.items.len == 0) return null;
         p.phase = p.after_forward(rest);
         assert(p.forward.items.len <= first_pages);
@@ -149,12 +156,12 @@ pub const Progressive = struct {
         const count_before = p.forward.items.len + p.before.items.len;
         switch (p.phase) {
             .forward => |from| {
-                const rest = try run(a, p.alloc, p.paragraphs, from, null, &p.forward, step_pages);
+                const rest = try run(a, p.alloc, p.book_text, from, null, &p.forward, step_pages);
                 p.phase = p.after_forward(rest);
             },
             .before => |from| {
                 const stop = p.anchor;
-                const rest = try run(a, p.alloc, p.paragraphs, from, stop, &p.before, step_pages);
+                const rest = try run(a, p.alloc, p.book_text, from, stop, &p.before, step_pages);
                 p.phase = if (rest) |at| .{ .before = at } else .done;
             },
             .done => {},

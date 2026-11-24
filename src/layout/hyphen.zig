@@ -63,6 +63,7 @@ comptime {
 }
 
 pub const Hyphenator = struct {
+    lang: Lang, // Whose patterns: page breaks are kept by it (screens/reader/page_store.zig)
     arena: std.heap.ArenaAllocator,
     patterns: Patterns,
     // A word, to its breaks: "as-so-ciate" is "associate" -> 2,4
@@ -73,6 +74,7 @@ pub const Hyphenator = struct {
     pub fn init(child: std.mem.Allocator, lang: Lang) !Hyphenator {
         const chosen = source(lang);
         var h = Hyphenator{
+            .lang = lang,
             .arena = std.heap.ArenaAllocator.init(child),
             .patterns = undefined, // Read below, into the arena in its place
             .left = chosen.left,

@@ -3,6 +3,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const line_of = @import("../../text/line.zig").of;
 const page_store = @import("page_store.zig");
+const hyphen = @import("../../layout/hyphen.zig");
 const paginate = @import("paginate.zig");
 const check = @import("../../base/check.zig");
 const Page = @import("../../gfx/page.zig").Page;
@@ -49,6 +50,8 @@ pub const Move = back_button.Move;
 pub const Session = struct {
     app: *app.App,
     paragraphs: []const book_model.Paragraph,
+    /// The hyphenation of the book's language, or none: the book's, never the App's.
+    hyphenator: ?*const hyphen.Hyphenator,
     pages: []const book_model.Pos,
     current: u32,
     /// Whether a page read forward teaches the reader's speed: not while running mode
@@ -105,7 +108,8 @@ pub const Session = struct {
         s.current += whole.before;
         s.progress = null;
         assert(s.current < s.pages.len);
-        page_store.save(p.alloc, s.pages_path, page_store.key(s.app, s.book_bytes), s.pages);
+        const pages_key = page_store.key(s.app, s.book_bytes, s.book_text());
+        page_store.save(p.alloc, s.pages_path, pages_key, s.pages);
         std.debug.print(
             "laid out in the background: {d} pages, {d} before the reader's place\n",
             .{ s.pages.len, whole.before },
@@ -248,6 +252,11 @@ pub const Session = struct {
 
     /// How far into the book the reader's page is, in percent, or null while a first
     /// open is still laid out and the page count isn't known.
+    /// The book's text as it's laid out: its paragraphs, and their hyphenation.
+    pub fn book_text(s: *const Session) paginate.Text {
+        return .{ .paragraphs = s.paragraphs, .hyphenator = s.hyphenator };
+    }
+
     pub fn percent(s: *const Session) ?u32 {
         assert(s.current < s.pages.len);
         if (s.progress != null) return null;
@@ -399,7 +408,13 @@ pub const Session = struct {
         const hits = &slot.hits;
         // Drawn to end where the next page starts, as it was laid out: the page before
         // the reader's place was cut short there, and would otherwise run on into it
+        // The App's layout, from the settings, with the book's own: its marks and its
+        // hyphenation, which the App never holds
+        assert(a.layout.marks.len == 0);
+        assert(a.layout.hyphenator == null);
         var layout = a.layout;
+        layout.marks = s.notes.marks.items;
+        layout.hyphenator = s.hyphenator;
         layout.stop = s.page_end(index);
         _ = try text.render_page(a.body, page, s.paragraphs, s.pages[index], &layout, hits);
 
@@ -668,7 +683,7 @@ pub fn relayout(a: *app.App, s: *Session) !void {
     a.user.save_settings();
     a.display.forget_pages();
     const t0 = now_us();
-    const pages_key = page_store.key(a, s.book_bytes);
+    const pages_key = page_store.key(a, s.book_bytes, s.book_text());
     s.progress = null; // A layout still running was for the old settings
     s.pages = &pages_fallback;
     s.current = 0;
@@ -683,7 +698,7 @@ pub fn relayout(a: *app.App, s: *Session) !void {
         // settings; the rest follows in idle moments, as on a first open
         const p = try alloc.create(paginate.Progressive);
         // The anchor starts the page that was on screen, so a page is laid out from it
-        p.* = (try paginate.Progressive.start(a, alloc, s.paragraphs, s.anchor)).?;
+        p.* = (try paginate.Progressive.start(a, alloc, s.book_text(), s.anchor)).?;
         s.progress = p;
         s.pages = p.pages();
         s.current = 0;

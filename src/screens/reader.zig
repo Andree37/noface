@@ -121,8 +121,12 @@ fn open_book(r: *Reader) !void {
     r.data = try file.map(entry.path);
     const parsed = try book_open.parse(a, r.alloc, entry, r.data);
     const book = parsed.book;
-    // Laid out from here on with the book's language's hyphenation
-    a.layout.hyphenator = a.languages.hyphenator(a.alloc, parsed.lang);
+    // Laid out with the book's language's hyphenation, made once for the App and kept
+    // for the next book of that language, but the open book's to lay out with
+    const book_text: paginate.Text = .{
+        .paragraphs = book.paragraphs,
+        .hyphenator = a.languages.hyphenator(a.alloc, parsed.lang),
+    };
     const t1 = now_us();
     const state_path = try a.state_path(&r.path_buffer, entry.path);
     // Files 0.2.0 named by the file name, the library not yet having moved them: not
@@ -131,7 +135,7 @@ fn open_book(r: *Reader) !void {
     if (!settled) std.debug.print("open: 0.2.0's files not settled, nothing saved\n", .{});
     // Kept in the reader, as the session points to it while it lays out
     r.progress = null;
-    const opened = try book_open.find_pages(a, r.alloc, entry, book.paragraphs, .{
+    const opened = try book_open.find_pages(a, r.alloc, entry, book_text, .{
         .book_bytes = r.data.len,
         .state_path = state_path,
         .settled = settled,
@@ -145,10 +149,10 @@ fn open_book(r: *Reader) !void {
         (now_us() - t1) / std.time.us_per_ms,
     });
     assert(opened.start < opened.pages.len);
-    a.layout.marks = &.{};
     r.session = .{
         .app = a,
         .paragraphs = book.paragraphs,
+        .hyphenator = book_text.hyphenator,
         .pages = opened.pages,
         .current = opened.start,
         .anchor = opened.pages[opened.start],
@@ -486,7 +490,6 @@ pub const Reader = struct {
         if (r.data.len > 0) file.unmap(r.data);
         r.data = &.{};
         a.pictures.clear(a.alloc); // Its keys point into this book's memory
-        a.layout.marks = &.{}; // So do the highlights layout shades
         // Emptied for the next book, the pages touched handed back
         r.scratch_budget.reset(.give_back);
         r.book_budget.reset(.give_back);

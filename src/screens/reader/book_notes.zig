@@ -49,11 +49,10 @@ pub const BookNotes = struct {
     }
 
     /// Rebuilds the marks layout shades after highlights change, into one list reused
-    /// rather than a new one each time. Layout points at the list given back.
-    pub fn rebuild_marks(n: *BookNotes, alloc: std.mem.Allocator) ![]const book_model.Mark {
+    /// rather than a new one each time: each page drawn reads it (`Session.ensure`).
+    pub fn rebuild_marks(n: *BookNotes, alloc: std.mem.Allocator) !void {
         n.marks.clearRetainingCapacity();
         for (n.highlights.items) |h| try n.marks.append(alloc, h.mark);
         assert(n.marks.items.len == n.highlights.items.len);
-        return n.marks.items;
     }
 };

@@ -44,10 +44,9 @@ pub fn save_highlight(
 
 /// Rebuilds the marks drawn on pages, after highlights change.
 pub fn refresh_marks(a: *app.App, s: *sess.Session, alloc: std.mem.Allocator) !void {
-    a.layout.marks = try s.notes.rebuild_marks(alloc);
-    // Layout reads the session's list itself, so the two can't drift apart
-    assert(a.layout.marks.ptr == s.notes.marks.items.ptr);
-    a.display.forget_pages();
+    try s.notes.rebuild_marks(alloc);
+    assert(s.notes.marks.items.len == s.notes.highlights.items.len);
+    a.display.forget_pages(); // Drawn again with the marks as they are now
 }
 
 /// Shows the page, with handles on a highlight when one is active.

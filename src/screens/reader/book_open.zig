@@ -63,7 +63,7 @@ pub fn find_pages(
     a: *app.App,
     alloc: std.mem.Allocator,
     entry: *const catalog.Entry,
-    paragraphs: []const book_model.Paragraph,
+    book_text: paginate.Text,
     options: struct {
         book_bytes: u64,
         state_path: [:0]const u8,
@@ -72,11 +72,12 @@ pub fn find_pages(
     },
 ) !Opened {
     assert(options.progress.* == null);
+    const paragraphs = book_text.paragraphs;
     assert(paragraphs.len > 0); // Parsing refuses a book without any
     var pages_buffer: [file.own_path_bytes_max]u8 = undefined;
     const pages_name = try page_store.path_for(&pages_buffer, options.state_path);
     const pages_path = try alloc.dupeSentinel(u8, pages_name, 0);
-    const pages_key = page_store.key(a, options.book_bytes);
+    const pages_key = page_store.key(a, options.book_bytes, book_text);
     const stored_pages = page_store.load(alloc, pages_path, pages_key, paragraphs);
     // The place's file, its path in the book's memory, as long as the book is open; read
     // once, here: whether it can be saved over is decided as the book opens
@@ -90,7 +91,7 @@ pub fn find_pages(
     // once; the rest follows in idle moments. Stock's place is a percent of the
     // pages, so that one needs them all first.
     if (stored_pages == null and !from_kindle) {
-        options.progress.* = try progressive(a, alloc, paragraphs, saved);
+        options.progress.* = try progressive(a, alloc, book_text, saved);
     }
     var pages: []const book_model.Pos = &.{};
     var source: PagesSource = .@"laid out";
@@ -101,7 +102,7 @@ pub fn find_pages(
         pages = stored;
         source = .@"saved pages";
     } else {
-        pages = try paginate.book(a, alloc, paragraphs);
+        pages = try paginate.book(a, alloc, book_text);
     }
     // Saved pages are never none, and a book with paragraphs lays out a page at least
     assert(pages.len > 0);
@@ -148,14 +149,15 @@ fn renumbered(saved: state.State, paragraphs: []const book_model.Paragraph) stat
 fn progressive(
     a: *app.App,
     alloc: std.mem.Allocator,
-    paragraphs: []const book_model.Paragraph,
+    book_text: paginate.Text,
     saved: state.State,
 ) !?paginate.Progressive {
+    const paragraphs = book_text.paragraphs;
     // One outside the book starts it from the beginning
     const place = place_in(paragraphs, saved.para, saved.byte) orelse book_model.Pos{};
     assert(place.para <= paragraphs.len);
     // Nothing from there on: null, and it's all laid out instead
-    const progress = try paginate.Progressive.start(a, alloc, paragraphs, place) orelse return null;
+    const progress = try paginate.Progressive.start(a, alloc, book_text, place) orelse return null;
     assert(std.meta.eql(progress.pages()[0], place));
     return progress;
 }

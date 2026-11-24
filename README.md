@@ -40,8 +40,8 @@ can go back to it from noface's panel at any time.
 
 ## Features
 
-- Pages turn in about 90 ms, against about 300 ms in the device's own reader, and the
-  toolbar, contents and chapter jumps are just as quick.
+- Pages turn in about 90 ms, against about 300 ms in the device's own reader. The
+  toolbar and contents open in about 110 ms, against about 580 ms.
 - The home screen shows your books only. The store, recommendations and ads aren't
   part of it.
 - EPUBs copied over USB show up in the library and open in noface, with no conversion.

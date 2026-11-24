@@ -91,11 +91,28 @@ pub fn size_of(path: [*:0]const u8) u64 {
 /// to write over it must never take for nothing.
 pub const ReadError = error{ NotFound, CantRead };
 
-/// A small file's contents. Its start, as much as `buf` holds: a file noface writes is
-/// sized to fit the buffer it's read back into, so one longer was damaged or written by
-/// hand, and that's said in the log. A file that only grows, read for its newest part, is
-/// read with `read_end`.
+/// A small file of noface's own: its start, as much as `buf` holds. noface writes such
+/// a file sized to fit the buffer it's read back into, so one longer was damaged or
+/// written by hand, and that's said in the log. A file that only grows, read for its
+/// newest part, is read with `read_end`.
 pub fn read_small(path: [*:0]const u8, buf: []u8) ReadError![]const u8 {
+    const read = try read_start(path, buf);
+    if (read.longer) {
+        std.debug.print("{s}: longer than the {d} bytes read of it\n", .{ path, buf.len });
+    }
+    return read.text;
+}
+
+/// A file the system keeps (in /sys or /proc, a mark in /tmp): its text, as much as
+/// `buf` holds, or nothing when it's missing or can't be read, which for such a file
+/// says the same. Its length is the system's, so one longer than `buf` is no news.
+pub fn read_system(path: [*:0]const u8, buf: []u8) []const u8 {
+    const read = read_start(path, buf) catch return "";
+    return read.text;
+}
+
+/// A file's start, as much as `buf` holds, and whether there's more past it.
+fn read_start(path: [*:0]const u8, buf: []u8) ReadError!struct { text: []const u8, longer: bool } {
     assert(path[0] != 0);
     assert(buf.len > 0);
     const rc = linux.open(path, .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0);
@@ -105,21 +122,13 @@ pub fn read_small(path: [*:0]const u8, buf: []u8) ReadError![]const u8 {
     const n = linux.read(fd, buf.ptr, buf.len);
     if (failed(n)) return error.CantRead;
     assert(n <= buf.len);
+    var longer = false;
     if (n == buf.len) {
         var more: [1]u8 = undefined;
         const past = linux.pread(fd, &more, more.len, @intCast(buf.len));
-        if (!failed(past) and past > 0) {
-            std.debug.print("{s}: longer than the {d} bytes read of it\n", .{ path, buf.len });
-        }
+        longer = !failed(past) and past > 0;
     }
-    return buf[0..n];
-}
-
-/// A file the system keeps (in /sys or /proc, a mark in /tmp): its text, or nothing
-/// when it's missing or can't be read, which for such a file says the same.
-pub fn read_system(path: [*:0]const u8, buf: []u8) []const u8 {
-    assert(path[0] != 0);
-    return read_small(path, buf) catch "";
+    return .{ .text = buf[0..n], .longer = longer };
 }
 
 /// One of the reader's own files that noface reads and writes back whole: a book's

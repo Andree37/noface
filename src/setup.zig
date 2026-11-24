@@ -94,9 +94,10 @@ pub const app_screens_kept = display.screens_kept + lock_ui.Kept.screens_kept;
 pub const app_screens_later = 2;
 /// The open book's pictures kept drawn (gfx/picture_cache.zig), each at most a screen.
 pub const app_pictures = picture_cache.Pictures.slots;
-/// Room for the rest the app keeps (its fonts' tables, the settings, hyphenation's
-/// patterns: about 1 MB measured on the Paperwhite), and headroom past it for what grows
-/// with use, as glyphs at many sizes.
+/// Room for the rest the app keeps: its fonts' tables, the settings, hyphenation's
+/// patterns, a dictionary's index once one is opened, and the open book's lists of
+/// pictures and covers. About 1 MB measured on the Paperwhite before a dictionary is
+/// opened; the rest is room left for those, not measured.
 const app_rest: u32 = 16 << 20;
 /// The app's region on the Paperwhite, measured there: no Kindle's is smaller.
 const app_floor: u32 = 64 << 20;

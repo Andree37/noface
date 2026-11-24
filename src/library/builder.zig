@@ -291,7 +291,7 @@ fn add_kindle_books(b: *Build) void {
         // The catalog's flag can stay set long after a download ended: the file decides
         if (e.availability == .downloading and is_complete_book(e.path)) e.availability = .local;
         if (b.last) |*last| {
-            if (has_file(e)) {
+            if (has_path(e)) {
                 if (last.find(e.path)) |id| kept_reading(&e, last.reading(id));
             }
         }
@@ -353,11 +353,11 @@ fn add_epub(b: *Build, path: [:0]const u8) void {
     // was, and how far the reader is, whatever: kept, so a place that can't be read as
     // it's merged leaves the book as it was, never shown unread
     var known: ?About = null;
-    var reading: Reading = .{};
+    var reading: catalog.Progress = .none;
     if (b.last) |*last| {
         if (last.find(path)) |id| {
             known = last.about_if(id, facts);
-            reading = last.reading(id);
+            reading = last.reading(id).progress;
         }
     }
     const about = known orelse read_epub(b, path, cover_path) orelse return;
@@ -424,36 +424,32 @@ fn read_about(scratch: *memory.Budget, data: []const u8, with_cover: bool) ?epub
 }
 
 /// A Kindle book's row with how far noface had it, as the last build kept it: its time
-/// read, and, unless the Kindle's are newer, its percent, date and time left. A
-/// place merged after replaces them all; one that can't be read leaves them, never the
-/// book shown unread.
-fn kept_reading(e: *catalog.Entry, last: Reading) void {
+/// read, and its percent, date and time left while they were noface's and the stock
+/// reader hasn't read it since. A place merged after replaces them all; one that can't
+/// be read leaves them, never the book shown unread.
+fn kept_reading(e: *catalog.Entry, last: Kept) void {
     assert(!e.is_epub());
-    assert(last.percent <= 100);
-    e.seconds_read = last.seconds_read;
-    // The stock reader's since, as `state.prefer_kindle` says it: only a later reading
-    // there; the record's own date, taken as the merge took it, is noface's or the same
-    if (e.kindle_last > last.last) return;
-    e.percent = last.percent;
-    e.last = last.last;
-    e.words_left = last.words_left;
+    assert(last.progress.percent <= 100);
+    e.seconds_read = last.progress.seconds_read;
+    // The record's date the Kindle's own then: the catalog's numbers are the newer
+    if (!state.kindle_newer(last.progress.last, last.kindle_last)) return;
+    // The stock reader read it since
+    if (state.kindle_newer(e.kindle_last, last.progress.last)) return;
+    e.percent = last.progress.percent;
+    e.last = last.progress.last;
+    e.words_left = last.progress.words_left;
 }
 
-/// How far the reader is in an EPUB, as a record keeps it: none for one new to the index.
-const Reading = struct {
-    percent: u32 = 0,
-    last: u64 = 0,
-    finished: bool = false,
-    seconds_read: u64 = 0,
-    words_left: ?u64 = null,
-};
+/// What the last build's record kept of a book: how far the reader was, and the
+/// Kindle's own date then, to tell whose that was.
+const Kept = struct { progress: catalog.Progress, kindle_last: u64 };
 
 /// An EPUB's entry: the book's own title and series, else its file name's.
 fn epub_entry(
     path: [:0]const u8,
     about: *const About,
     cover: ?[:0]const u8,
-    reading: Reading,
+    reading: catalog.Progress,
 ) catalog.Entry {
     assert(path.len > 0);
     assert(reading.percent <= 100);
@@ -487,7 +483,7 @@ const LastBuild = struct {
         for (0..ix.header.count) |i| {
             const id: u32 = @intCast(i);
             const e = ix.entry(id);
-            if (!has_file(e)) continue; // A book in the cloud has no path to be found by
+            if (!has_path(e)) continue;
             items[count] = .{ .id = id, .key = path_key(e.path) };
             count += 1;
         }
@@ -527,18 +523,12 @@ const LastBuild = struct {
         };
     }
 
-    /// How far the reader was in record `id`'s book.
-    fn reading(read: *const LastBuild, id: u32) Reading {
+    /// What record `id` kept of its book's reading.
+    fn reading(read: *const LastBuild, id: u32) Kept {
         assert(id < read.ix.header.count);
         const e = read.ix.entry(id);
         assert(e.percent <= 100); // The record's, checked as the index opened
-        return .{
-            .percent = e.percent,
-            .last = e.last,
-            .finished = e.finished,
-            .seconds_read = e.seconds_read,
-            .words_left = e.words_left,
-        };
+        return .{ .progress = .of(e), .kindle_last = e.kindle_last };
     }
 
     fn path_key(path: []const u8) u32 {
@@ -569,21 +559,20 @@ fn by_state_key(ix: *const index.Index, items: []Item) []Item {
     return sorted_by(ix, items, state.key_for);
 }
 
-/// The books on this Kindle, their ids sorted by `key_of` their path (a key's high half),
-/// to find each by halves: by the names their files have now, or had before.
-/// Whether book `e` is on the Kindle with a file: only such a book is found by its path,
-/// a book in the cloud having none.
-fn has_file(e: catalog.Entry) bool {
-    return e.is_local() and e.path.len > 0;
+/// Whether book `e` has a path to be found by: a book in the cloud has none.
+fn has_path(e: catalog.Entry) bool {
+    return e.path.len > 0;
 }
 
+/// The books on this Kindle, their ids sorted by `key_of` their path (a key's high half),
+/// to find each by halves: by the names their files have now, or had before.
 fn sorted_by(ix: *const index.Index, items: []Item, comptime key_of: fn ([]const u8) u64) []Item {
     assert(items.len >= ix.header.count);
     var count: u32 = 0;
     for (0..ix.header.count) |i| {
         const id: u32 = @intCast(i);
         const e = ix.entry(id);
-        if (!has_file(e)) continue;
+        if (!e.is_local() or !has_path(e)) continue;
         items[count] = .{ .id = id, .key = @truncate(key_of(e.path) >> 32) };
         count += 1;
     }
@@ -775,7 +764,7 @@ fn sorted_by_name(ix: *const index.Index, items: []Item) []Item {
     for (0..ix.header.count) |i| {
         const id: u32 = @intCast(i);
         const e = ix.entry(id);
-        if (e.path.len == 0) continue;
+        if (!has_path(e)) continue;
         items[count] = .{ .id = id, .key = @truncate(state.key_by_name(e.path) >> 32) };
         count += 1;
     }

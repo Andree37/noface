@@ -105,7 +105,6 @@ fn nudge_powerd(in: *Input) void {
         _ = linux.close(last.out); // Ignored: our end of its pipe, never read
     }
     in.powerd_nudge = lipc.tell_still_active();
-    if (in.powerd_nudge) |nudge| assert(nudge.pid > 0);
 }
 
 /// The power key is powerd's to act on: it's read only so presses don't pile up,

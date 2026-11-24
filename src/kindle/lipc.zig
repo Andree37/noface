@@ -28,6 +28,8 @@ pub fn parse_int(output: []const u8) ?u32 {
 
 /// Settings calls answer at once when lipc is healthy; when it isn't, give up fast.
 const lipc_timeout_ms = 3000;
+/// As long as a call waits for its answer, in µs: what a setting is given to take.
+pub const answer_us: u64 = lipc_timeout_ms * std.time.us_per_ms;
 
 fn lipc_deadline() u64 {
     const now = os.now_us();

@@ -80,7 +80,6 @@ pub const Pause = struct {
     pub fn book_opened(p: *Pause, now_us: u64) void {
         p.hands_off = false;
         p.off_at = now_us + after_us;
-        assert(p.off_at.? > now_us);
     }
 
     /// The reader turned airplane mode, Wi-Fi or a sync on or off: theirs for the book.
@@ -91,7 +90,6 @@ pub const Pause = struct {
     /// A download may run until `until`: never a shorter wait than one already asked.
     pub fn download_until(p: *Pause, until_us: u64) void {
         p.downloads_until = @max(p.downloads_until, until_us);
-        assert(p.downloads_until >= until_us);
     }
 
     /// Off again as soon as the reader is back on the page: after noface's pause was
@@ -118,9 +116,10 @@ pub const Pause = struct {
         assert(retry_us > 0);
         p.off_at = switch (outcome) {
             .paused, .never => null,
+            .asked => now_us + check_us,
             .later => now_us + retry_us,
         };
-        if (p.off_at) |next| assert(next > now_us);
+        if (p.off_at) |next| assert(next > now_us); // Never due again at once
     }
 };
 
@@ -141,22 +140,32 @@ pub fn airplane() Airplane {
 }
 
 pub const Outcome = enum {
-    paused, // Off now
-    later, // Not now (a download, Bluetooth, or lipc not answering): try again
+    paused, // Off, seen so
+    asked, // Asked off just now: looked at again `check_us` later, never waited for here
+    later, // Not now (a download, Bluetooth, lipc not answering, or an ask that didn't take)
     never, // Airplane mode is the reader's own, or noface couldn't note that it acted
 };
 
+/// How long after asking for airplane mode it's looked at again: as long as a call to the
+/// Kindle is given to answer, so the radio has had that long to go down.
+pub const check_us = lipc.answer_us;
+
 /// Turns the radio off, if airplane mode and Bluetooth are both off and nothing is
 /// downloading. The note goes down first and must land: without it nothing would
-/// ever turn the radio on again. Asked once, it's `.later`: the next try sees airplane
-/// mode on, with noface's note, and settles it, never waiting on the radio here.
+/// ever turn the radio on again. Asked once, it's `.asked`: the next try, moments later,
+/// sees airplane mode on with noface's note and settles it, never waiting on the radio.
 pub fn pause(downloading: bool) Outcome {
     assert(marker_is_note());
     if (downloading) return .later;
-    // On already: noface's own doing if its note is there (a switch that answered late),
+    // On already: noface's own doing if its note is there (the ask made at the last try),
     // else the reader's
     switch (airplane()) {
-        .off => {},
+        // Still off with noface's note: the last ask didn't take. The note goes, as it's
+        // no pause of noface's, and the next try asks again
+        .off => if (marked()) {
+            forget();
+            return .later;
+        },
         .noface => {
             std.debug.print("wifi: off while reading\n", .{});
             return .paused;
@@ -170,7 +179,7 @@ pub fn pause(downloading: bool) Outcome {
     lipc.set_airplane(true);
     // Not read back now: the radio going down is what's slow to answer. The note stays,
     // as noface may well have turned it off and must be the one to turn it back on
-    return .later;
+    return .asked;
 }
 
 /// Whether noface has the radio off right now, so it may turn it back on: its note is
@@ -221,9 +230,13 @@ test "the radio goes off a couple of minutes into a book, unless the reader took
     p.settle(.later, after_us, 1);
     try std.testing.expectEqual(@as(?bool, null), p.due(after_us)); // Tried again later
     // A download coming: asked with it, and a shorter one never cuts it short
+    // Asked: looked at again moments later, not a retry's wait
+    p.settle(.asked, after_us, after_us);
+    try std.testing.expectEqual(@as(?u64, after_us + check_us), p.off_at);
     p.download_until(after_us * 3);
     p.download_until(after_us * 2);
-    try std.testing.expectEqual(@as(?bool, true), p.due(after_us + 1));
+    try std.testing.expectEqual(@as(?bool, null), p.due(after_us + check_us - 1));
+    try std.testing.expectEqual(@as(?bool, true), p.due(after_us + check_us));
     // Taken charge of: settles to never
     p.reader_took_charge();
     try std.testing.expectEqual(@as(?bool, null), p.due(after_us * 4));

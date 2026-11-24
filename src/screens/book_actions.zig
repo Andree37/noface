@@ -99,7 +99,7 @@ pub const Change = enum { none, downloading, other, reload, redraw, not_marked }
 pub fn begin_sheet(
     s: *Sheet,
     a: *app.App,
-    e: *catalog.Entry,
+    e: *const catalog.Entry,
     lib: *books.Library,
     background: display.Backdrop,
 ) void {
@@ -115,7 +115,7 @@ pub const Sheet = struct {
     /// long acts as it lands, never as a hold the library's touches would make of it.
     pub const touches = input_mod.Input.Modes.sheet;
     a: *app.App,
-    e: *catalog.Entry,
+    e: *const catalog.Entry,
     lib: *books.Library,
     background: display.Backdrop,
     round: u32 = 0, // Its actions, then for a removal the question

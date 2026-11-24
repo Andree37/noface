@@ -15,6 +15,14 @@ pub fn not_found(rc: usize) bool { // usize: Linux's syscall ABI
     return rc == not_found_rc;
 }
 
+/// Whether a failed call was cut short by a signal (EINTR), to be made again.
+pub fn interrupted(rc: usize) bool { // usize: Linux's syscall ABI
+    return rc == interrupted_rc;
+}
+
+// usize: Linux's syscall ABI
+const interrupted_rc: usize = @bitCast(-@as(isize, @backingInt(std.posix.E.INTR)));
+
 /// ENOENT as a call reports it, negated: the system's own number, which calls_portable
 /// reports the same way, so it holds on Linux and on a Mac running the tests alike.
 // usize: Linux's syscall ABI

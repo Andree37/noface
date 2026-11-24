@@ -17,6 +17,15 @@ pub const Progress = struct {
     seconds_read: u64,
     words_left: ?u64,
 
+    /// None yet: a book new to noface.
+    pub const none: Progress = .{
+        .percent = 0,
+        .last = 0,
+        .finished = false,
+        .seconds_read = 0,
+        .words_left = null,
+    };
+
     pub fn of(e: Entry) Progress {
         return .{
             .percent = e.percent,

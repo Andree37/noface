@@ -75,7 +75,8 @@ pub const Display = struct {
         const overlay = try alloc.alloc(u8, pixels);
         const d: Display = .{ .screen = screen, .slots = slots, .overlay = overlay };
         assert(d.overlay.len == pixels);
-        assert(d.slots.len + 1 == screens_kept); // As setup.zig counts them
+        // Every screen it made, as setup.zig counts them
+        assert(d.slots.len * pixels + d.overlay.len == screens_kept * pixels);
         return d;
     }
 

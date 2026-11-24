@@ -153,6 +153,10 @@ pub const Getting = struct {
         const paused = wifi_saver.marked();
         if (paused) wifi_saver.restore();
         g.wifi_lifted = paused;
+        // Held awake while it comes down, which can take longer than the Kindle waits
+        // untouched before it locks, and a lock would end it. Running mode, the one other
+        // holder, never looks a word up, so the two never overlap
+        lipc.hold_awake(true);
         g.phase = .waiting;
         var title_buffer: [64]u8 = undefined;
         const title_format = "Getting the {s} dictionary";
@@ -231,10 +235,12 @@ pub const Getting = struct {
         return .{ .push = screen.open(&g.told, &g.told_ending) };
     }
 
-    /// Done: noface's Wi-Fi pause put back, if it lifted it.
+    /// Done: noface's Wi-Fi pause put back, if it lifted it, and the Kindle let sleep
+    /// again, if it was held awake for the download.
     fn finish(g: *Getting, ready: bool) screen.Step(bool) {
         assert(g.phase != .starting); // Something it opened has ended
         assert(g.background.holds(&g.a.display));
+        if (g.wifi_lifted != null) lipc.hold_awake(false); // Held as it started waiting
         // Off again for reading, by the book's timer, which tries again until it can
         if (g.wifi_lifted orelse false) g.a.wifi_pause.resume_soon(os.now_us());
         return .{ .done = ready };

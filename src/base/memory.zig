@@ -455,10 +455,11 @@ pub const Budget = struct {
         budget.peak = budget.live;
     }
 
-    /// Starts its counts again, for a budget kept for good and reported for each use: its
-    /// peak from what it holds now, its allocations and refusals from none.
+    /// Starts its counts again, for a budget kept for good and reported for each use, as
+    /// each use starts, holding nothing: its peak, allocations and refusals from none.
     pub fn restart(budget: *Budget) void {
-        assert(budget.live <= budget.limit);
+        assert(budget.live == 0); // Between uses: a block it held couldn't be freed after
+        assert(budget.stranded == 0);
         budget.peak = budget.live;
         budget.allocations = 0;
         budget.refused = 0;

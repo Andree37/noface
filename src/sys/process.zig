@@ -22,6 +22,9 @@ const fake_arguments_max = 12;
 /// The most commands `run_all` runs at once.
 const run_all_commands_max = 16;
 
+/// Room for what the fake answers a command `start` makes, never read: a set's answer.
+const fake_answer_bytes = 32;
+
 /// How often a child that hasn't exited is looked at again.
 const reap_poll_ms = 5;
 
@@ -52,7 +55,7 @@ fn answer_fake(f: Fake, argv: [*:null]const ?[*:0]const u8, out: []u8) ?u32 {
 pub fn start(argv: [*:null]const ?[*:0]const u8) ?Child {
     assert(argv[0] != null); // A command names its program
     const f = fake orelse return spawn(argv);
-    var unread: [32]u8 = undefined;
+    var unread: [fake_answer_bytes]u8 = undefined;
     _ = answer_fake(f, argv, &unread); // Its answer is never waited for
     return null;
 }
@@ -274,9 +277,17 @@ pub fn stop(pid: i32) void {
     // And the child itself, in case it hadn't made its group yet: the wait below must
     // never be for a child still running
     _ = linux.kill(pid, linux.SIG.KILL); // Ignored: already gone, with its group: nothing to do
+    // Reaped, whatever its status, though a signal cut the wait short: noface's own
+    // stop signals are caught without restarting calls
     var status: i32 = 0;
-    _ = linux.waitpid(pid, &status, 0); // Ignored: reaped, whatever its status
+    for (0..stop_waits_max) |_| {
+        if (!os.interrupted(linux.waitpid(pid, &status, 0))) break;
+    }
 }
+
+/// Waits `stop` makes again after a signal cut one short: a signal each, which only
+/// noface's stop and a few others send.
+const stop_waits_max = 8;
 
 /// How long `survives` lets a check run before it's called a failure.
 const survives_timeout_ms = 5_000;
@@ -362,4 +373,24 @@ test "a check that hangs is ended at its deadline" {
     try std.testing.expect(os.now_us() - started < 1_500_000);
     var status: i32 = 0;
     try std.testing.expect(failed(linux.waitpid(-1, &status, linux.W.NOHANG))); // Reaped
+}
+
+test "a child started is reaped once it's done, or stopped, and none is left behind" {
+    const done = start(&.{ "/bin/sh", "-c", "exit 0" }) orelse return error.NotStarted;
+    defer _ = linux.close(done.out); // Ignored: our end of its pipe, never read
+    // Looked at until it's ended, as the input loop looks at the last nudge
+    for (0..command_timeout_ms / reap_poll_ms) |_| {
+        if (exited(done.pid)) |clean| {
+            try std.testing.expect(clean);
+            break;
+        }
+        os.sleep_ms(reap_poll_ms);
+    } else return error.NeverEnded;
+    const stuck = start(&.{ "/bin/sleep", "10" }) orelse return error.NotStarted;
+    defer _ = linux.close(stuck.out); // Ignored: as above
+    try std.testing.expectEqual(@as(?bool, null), exited(stuck.pid));
+    stop(stuck.pid);
+    // Every child reaped: nothing left to wait for
+    var status: i32 = 0;
+    try std.testing.expect(os.failed(linux.waitpid(-1, &status, linux.W.NOHANG)));
 }

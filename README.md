@@ -22,9 +22,8 @@ Things the stock Kindle doesn't do:
 - **EPUBs that just open.** Copy them over USB and read them; no Send to Kindle.
 - **Wi‑Fi off while you read.** It switches itself off a couple of minutes into a
   book and back on when you're done, so the battery lasts longer.
-- **How long a book has left, at your pace.** The book you're reading says how much
-  time it has left, on the home screen and at the foot of the page, worked out from how
-  fast you actually read.
+- **Time left on the home screen.** The book you're reading says how long it has left
+  right on the home screen, worked out from how fast you actually read.
 - **How long your charge will last.** Tap the battery for an estimate in days, from
   how you actually read.
 - **Series from your own files.** Books in a series are grouped and kept in order,

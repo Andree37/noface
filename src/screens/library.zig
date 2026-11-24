@@ -732,7 +732,7 @@ const Browser = struct {
     }
 
     /// A book's actions sheet, and the library read again if they changed it.
-    fn act_on(b: *Browser, entry: *catalog.Entry) Next {
+    fn act_on(b: *Browser, entry: *const catalog.Entry) Next {
         assert(b.buf.len == b.a.display.screen.pixels.len);
         assert(b.over == .none);
         b.over = .{ .sheet = .{ .screen = undefined } };

@@ -237,7 +237,6 @@ pub const Library = struct {
         return l.shared.items[0..ix.header.count];
     }
 
-    /// The book to continue, when there is one: always on this Kindle.
     /// The hero, picked to read or act on.
     pub fn hero_picked(l: *Library) ?Picked {
         const slot = &l.state.hero_slot;
@@ -250,7 +249,6 @@ pub const Library = struct {
     pub fn picked(l: *Library, i: u32) Picked {
         const s = l.state;
         const entry = l.book(i);
-        assert(i < s.page_filled);
         return .{ .id = s.page_slots[i].id.?, .entry = entry }; // `book` asserts it holds one
     }
 
@@ -262,6 +260,7 @@ pub const Library = struct {
         return .{ .id = s.search_slots[i].id.?, .entry = &s.search_entries[i] };
     }
 
+    /// The book to continue, when there is one: always on this Kindle.
     pub fn hero(l: *Library) ?*catalog.Entry {
         const slot = &l.state.hero_slot;
         if (!slot.holds()) return null;
@@ -356,7 +355,9 @@ pub const Library = struct {
 
     /// A book picked from the library to read or act on: its record's id, which what it
     /// changes is saved back by, and its entry as read back.
-    pub const Picked = struct { id: u32, entry: *catalog.Entry };
+    /// Its entry is the library's, read only, and good until the library reads that
+    /// slot again (another page, search or next book).
+    pub const Picked = struct { id: u32, entry: *const catalog.Entry };
 
     pub const Matches = struct { entries: []catalog.Entry, more: bool };
 

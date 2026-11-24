@@ -1218,8 +1218,9 @@ test "a '#' written as %23 in a link or a file's name is a name like any other" 
     try test_scratch.init();
     defer test_scratch.deinit();
     var b = Builder{ .alloc = alloc, .scratch = &test_scratch.budget, .files = &.{} };
+    // Named as `parse` names it: decoded, a '#' in its name
     try b.chapter(
-        "C%23.xhtml",
+        "C#.xhtml",
         "<html><body><p><a href=\"C%23.xhtml#n\">one</a> <a href=\"%23n\">two</a> " ++
             "<a href=\"mailto:a@b.c?subject=Issue%231\">three</a></p>" ++
             "<p id=\"n\">Note.</p></body></html>",
@@ -1227,8 +1228,13 @@ test "a '#' written as %23 in a link or a file's name is a name like any other" 
     try b.keep_pending();
     const paragraphs = try b.made.join(alloc);
     try b.resolve_links(paragraphs);
-    // Read whole, its links kept or passed over, never a crash
     try std.testing.expectEqual(@as(usize, 2), paragraphs.len);
+    // "one" names the '#' file and its note: it lands there
+    const links = paragraphs[0].links;
+    try std.testing.expect(links.len >= 1);
+    try std.testing.expectEqual(@as(u32, 1), links[0].target);
+    // A file with '#' in its name is never another file's element
+    try std.testing.expect(anchor_key("a#b", null) != anchor_key("a", "b"));
 }
 
 test "headings h1 to h6 each have a look, and other tags none" {

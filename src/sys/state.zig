@@ -222,7 +222,13 @@ pub fn mark(saved: *State, done: bool, kindle_last: u64) void {
 pub fn prefer_kindle(saved: State, kindle_last: u64) bool {
     // Older files have no time, so only an empty one gives way.
     if (saved.opened == 0) return saved.para == 0 and saved.byte == 0;
-    return kindle_last > saved.opened;
+    return kindle_newer(kindle_last, saved.opened);
+}
+
+/// Whether the stock reader read a book after noface last did, by their two dates: the
+/// one rule for whose reading a book shows, its place merged or its record kept.
+pub fn kindle_newer(kindle_last: u64, noface_last: u64) bool {
+    return kindle_last > noface_last;
 }
 
 /// Another file about the same book, beside its state file: "<dir>/<kind>-<book>" for

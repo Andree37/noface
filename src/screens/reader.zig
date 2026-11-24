@@ -60,8 +60,6 @@ comptime {
     assert(clock_check_us < wifi_retry_us);
 }
 
-/// How reading a book ended: back to the library, leaving noface, or the book
-/// couldn't be read (the library says so).
 /// How a book closed: back to the library, leaving noface, or on an error, either
 /// before its first page was read (`failed`, it can't be opened) or after (`stopped`).
 pub const Outcome = enum { library, quit, failed, stopped };

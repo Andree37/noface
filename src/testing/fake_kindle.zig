@@ -200,20 +200,26 @@ pub const FakeKindle = struct {
     fn rows_asked(lines: []const u8, command: []const u8) []const u8 {
         assert(lines.len > 0);
         const limit = number_after(command, " limit ") orelse return lines;
-        const offset = number_after(command, " offset ") orelse 0;
         assert(limit > 0); // A page holds a row at least
-        // usize: an index into `lines`, as `for` counts them
-        var start: usize = 0;
-        var row: u64 = 0;
+        // The rows past the id the page starts after, as sqlite orders ids: `lines` in
+        // that order, as the database answers them
+        const opening = "annotation_id > '";
+        const at = (std.mem.indexOf(u8, command, opening) orelse return lines) + opening.len;
+        const after = command[at .. at + (std.mem.indexOfScalar(u8, command[at..], '\'') orelse 0)];
+        var start: ?usize = null; // usize: an index into `lines`, as `for` counts them
+        var line_start: usize = 0; // usize: as `start`
+        var taken: u64 = 0;
         // A row a line, each passed once
         for (lines, 0..) |c, i| {
             if (c != '\n') continue;
-            row += 1;
-            if (row == offset) start = i + 1;
-            if (row == offset + limit) return lines[start .. i + 1];
+            const line = lines[line_start..i];
+            const id = line[0 .. std.mem.indexOfScalar(u8, line, '|') orelse line.len];
+            if (start == null and std.mem.lessThan(u8, after, id)) start = line_start;
+            if (start != null) taken += 1;
+            line_start = i + 1;
+            if (taken == limit) return lines[start.? .. i + 1];
         }
-        if (row <= offset) return "";
-        return lines[start..];
+        return lines[start orelse lines.len ..];
     }
 
     fn number_after(text: []const u8, word: []const u8) ?u64 {

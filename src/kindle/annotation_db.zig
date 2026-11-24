@@ -34,11 +34,12 @@ const read_format = find_database ++ "sqlite3 -separator '|' -cmd '.timeout 3000
     "\"select * from (select {s} from server_view where dataset={d} and {s} and " ++
     "annotation_id not in (select annotation_id from local_edit where {s}) " ++
     "union select {s} from local_edit where dataset={d} and action != 3 and {s}) " ++
-    "order by 1 limit {d} offset {d}\" && echo " ++ end_mark;
+    "where annotation_id > '{s}' order by 1 limit {d}\" && echo " ++ end_mark;
 /// The line after a whole answer, never a record's: one has two '|' in it.
 pub const end_mark = "end";
 /// Room for `read_format` filled in: two record fields, four book matches (each fits
-/// `read_lines`'s buffer for it), two dataset numbers, and a page's limit and offset.
+/// `read_lines`'s buffer for it), two dataset numbers, the id a page starts after, and
+/// a page's limit.
 const read_command_bytes_max = 1600;
 
 /// The longest line the database answers: an id, two positions, two '|' and its end.
@@ -57,8 +58,8 @@ const write_command = find_database ++ "sqlite3 -bail -cmd '.timeout 3000' \"$db
     paths.annotation_sql ++ " && echo ok";
 
 comptime {
-    assert(read_format.len + 2 * record_fields.len + 4 * book_match_bytes_max + 4 * 10 <
-        read_command_bytes_max);
+    assert(read_format.len + 2 * record_fields.len + 4 * book_match_bytes_max +
+        safe.id_size_max + 3 * 10 < read_command_bytes_max);
     assert(page_rows > 0);
     // The SQL file's path goes into a shell command unquoted.
     assert(std.mem.indexOfAny(u8, paths.annotation_sql, " '\"$;|&") == null);
@@ -84,10 +85,11 @@ pub fn read_notes(
     kind: annotations.Kind,
 ) !?[]const Note {
     var page: Page = undefined;
+    var after: After = .{};
     var notes: std.ArrayList(Note) = .empty;
     // A page at a time, until one isn't full: however many a book has, all are read
-    for (0..pages_max) |index| {
-        const read = read_page(key, kind, &page, index * page_rows) orelse return null;
+    for (0..pages_max) |_| {
+        const read = read_page(key, kind, &page, &after) orelse return null;
         try parse_notes(alloc, read.lines, &notes);
         if (read.rows < page_rows) break;
     }
@@ -117,18 +119,31 @@ pub fn parse_notes(alloc: std.mem.Allocator, lines: []const u8, notes: *std.Arra
 /// database gave, so a page holding fewer than `page_rows` is the last.
 pub const Read = struct { lines: []const u8, rows: u64 };
 
-/// Fetches page rows `first_row` on of a book's highlights or bookmarks as the database
-/// answers them: the self-test hands them to its pretend Kindle, to open a book with its
-/// own. Null when there's no whole answer: the database couldn't be asked, or didn't
-/// say its end mark (locked, missing, cut short, too slow).
-pub fn read_page(key: []const u8, kind: annotations.Kind, page: *Page, first_row: u64) ?Read {
+/// Where the next page starts: after the last id read, none at first. Paged by id, not
+/// by row number, so a note stock's sync adds or removes between two pages never moves
+/// another into both pages, or out of both.
+pub const After = struct {
+    bytes: [safe.id_size_max]u8 = undefined,
+    len: u32 = 0,
+
+    fn id(a: *const After) []const u8 {
+        assert(a.len <= a.bytes.len);
+        return a.bytes[0..a.len];
+    }
+};
+
+/// Fetches the page of a book's highlights or bookmarks after `after`, as the database
+/// answers them, and moves `after` to its last: the self-test hands them to its pretend
+/// Kindle, to open a book with its own. Null when there's no whole answer: the database
+/// couldn't be asked, or didn't say its end mark (locked, missing, cut short, too slow).
+pub fn read_page(key: []const u8, kind: annotations.Kind, page: *Page, after: *After) ?Read {
     if (!safe.safe_id(key)) return null; // Not a book this database could name
     var match_buf: [book_match_bytes_max]u8 = undefined;
     const book = annotations.book_match(&match_buf, key) catch return null;
     var buf: [read_command_bytes_max]u8 = undefined;
     const dataset = kind.dataset();
     const command = std.fmt.bufPrintSentinel(&buf, read_format, .{
-        record_fields, dataset, book, book, record_fields, dataset, book, page_rows, first_row,
+        record_fields, dataset, book, book, record_fields, dataset, book, after.id(), page_rows,
     }, 0) catch return null;
     const argv = [_:null]?[*:0]const u8{ "/bin/sh", "-c", command };
     const output_size = process.run(&argv, page) orelse return null;
@@ -138,9 +153,23 @@ pub fn read_page(key: []const u8, kind: annotations.Kind, page: *Page, first_row
     const answer = page[0..output_size];
     if (!std.mem.endsWith(u8, answer, end_line)) return null;
     const lines = answer[0 .. answer.len - end_line.len];
+    // Whole lines, each a row: the mark on a line of its own
+    if (lines.len > 0 and lines[lines.len - 1] != '\n') return null;
     const rows = std.mem.count(u8, lines, "\n");
     // More than it asked for is no answer of the database's: taken for none at all
     if (rows > page_rows) return null;
+    if (rows > 0) {
+        // The next page starts after this one's last id: one that isn't an id, or isn't
+        // past where this page started, is no answer of the database's either
+        const body = lines[0 .. lines.len - 1]; // Without the last line's end
+        const last_end = std.mem.lastIndexOfScalar(u8, body, '\n');
+        const last_line = if (last_end) |at| body[at + 1 ..] else body;
+        const last_id = last_line[0 .. std.mem.indexOfScalar(u8, last_line, '|') orelse 0];
+        if (!safe.safe_id(last_id)) return null;
+        if (!std.mem.lessThan(u8, after.id(), last_id)) return null;
+        @memcpy(after.bytes[0..last_id.len], last_id);
+        after.len = @intCast(last_id.len);
+    }
     return .{ .lines = lines, .rows = rows };
 }
 

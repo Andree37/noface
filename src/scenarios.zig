@@ -236,10 +236,10 @@ fn all_lines(
 ) !?[]const u8 {
     assert(annotation_db.page_rows > 0);
     var lines: std.ArrayList(u8) = .empty;
+    var after: annotation_db.After = .{};
     // A page at a time, until one isn't full
-    for (0..std.math.maxInt(u32)) |index| {
-        const first_row = index * annotation_db.page_rows;
-        const read = annotation_db.read_page(key, kind, page, first_row) orelse return null;
+    for (0..std.math.maxInt(u32)) |_| {
+        const read = annotation_db.read_page(key, kind, page, &after) orelse return null;
         try lines.appendSlice(alloc, read.lines);
         if (read.rows < annotation_db.page_rows) break;
     }

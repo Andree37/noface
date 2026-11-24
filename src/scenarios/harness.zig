@@ -729,7 +729,7 @@ pub fn play_on_start(
     a.logs_placed = true; // The scenarios tap what moves with the text where it's logged
     // Each run starts as a new reader: nothing read before, every setting as shipped,
     // and the regions' peaks its own
-    a.regions.book.end_peak = 0;
+    a.regions.book.restart_peak();
     a.regions.pages_budget.peak = 0;
     a.regions.pages_budget.limit = kindle.pages_bytes;
     assert(kindle.text_size < settings_model.sizes.len);

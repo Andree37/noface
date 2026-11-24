@@ -478,7 +478,9 @@ fn open_index(sources: Sources, s: *State) void {
         .region = sources.scratch,
         .limit = sources.scratch.bytes.len,
     };
+    // What the load took, said before it's let go of
     defer scratch.reset(.give_back);
+    defer scratch.report();
     const places: builder.Places = .{
         .catalog_path = sources.catalog_path,
         .documents = sources.documents,

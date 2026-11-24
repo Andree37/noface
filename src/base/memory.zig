@@ -7,6 +7,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const assert = std.debug.assert;
+const log = std.log.scoped(.memory);
 const Allocator = std.mem.Allocator;
 const Alignment = std.mem.Alignment;
 
@@ -180,14 +181,17 @@ pub const Region = struct {
         };
     }
 
-    /// Takes back a block `take` handed out, at its current length.
-    fn give(region: *Region, block: []u8, alignment: Alignment) void {
+    /// Takes back a block `take` handed out, at its current length. The bytes it took
+    /// back: on a bump region none, but for its last block.
+    fn give(region: *Region, block: []u8, alignment: Alignment) u64 {
         const at = region.offset_of(block.ptr);
         assert(at + block.len <= region.bytes.len);
         switch (region.kind) {
             // Only the last block comes back, as an arena's would
-            .bump => if (at + block.len == region.end) {
+            .bump => {
+                if (at + block.len != region.end) return 0;
                 region.end = at;
+                return block.len;
             },
             .heap => {
                 const size = slot_size(block.len, alignment.toByteUnits()).?;
@@ -198,6 +202,7 @@ pub const Region = struct {
                     assert(region.taken[at / unit_bytes] == units_for(block.len));
                     region.run_give(at / unit_bytes);
                 }
+                return block.len;
             },
         }
     }
@@ -209,7 +214,7 @@ pub const Region = struct {
         assert(new_len > 0);
         switch (region.kind) {
             .bump => {
-                if (at + block.len != region.end) return new_len <= block.len;
+                if (!region.is_last(block)) return new_len <= block.len;
                 if (at + new_len > region.bytes.len) return false;
                 region.bump_to(at + @as(u32, @intCast(new_len)));
                 return true;
@@ -224,6 +229,19 @@ pub const Region = struct {
                 return region.run_resize(at / unit_bytes, units_for(new_len));
             },
         }
+    }
+
+    /// Whether `block` ends where the bump region does: the one block it takes back.
+    fn is_last(region: *const Region, block: []u8) bool {
+        assert(region.kind == .bump);
+        return region.offset_of(block.ptr) + block.len == region.end;
+    }
+
+    /// Starts the region's peak again from what it holds now: a book's own, as it opens.
+    pub fn restart_peak(region: *Region) void {
+        assert(region.kind == .bump);
+        assert(region.end <= region.end_peak);
+        region.end_peak = region.end;
     }
 
     fn bump_take(region: *Region, len: u32, align_bytes: u32) ?[*]u8 {
@@ -390,8 +408,12 @@ pub const Budget = struct {
     region: ?*Region = null, // Where its memory comes from: reserved at startup
     child: ?Allocator = null, // Or, before `seal` only (tests, tools), the system
     limit: u64, // Bytes
-    live: u64 = 0, // Bytes handed out and not yet freed
+    /// Bytes this budget holds of its region: handed out and not yet taken back. A bump
+    /// region takes back only its last block, so what's freed before it stays held.
+    live: u64 = 0,
     peak: u64 = 0, // The most bytes live at once
+    /// Of `live`, bytes freed but held, as a bump region holds them till a rewind or reset.
+    stranded: u64 = 0,
     allocations: u64 = 0,
     refused: u64 = 0, // Requests turned down for going over the limit, or a full region
 
@@ -430,22 +452,35 @@ pub const Budget = struct {
         return .{ .ptr = budget, .vtable = &vtable };
     }
 
-    /// One line for the log: "memory book: 3120 KB live, 8440 KB peak, 1520 allocations,
-    /// region 9216 of 131072 KB used at most".
+    /// One line for the log: "memory book: 3120 KB live (40 KB stranded), 8440 KB peak,
+    /// 1520 allocations, region 9216 of 131072 KB used at most".
     pub fn report(budget: *const Budget) void {
         assert(budget.live <= budget.peak);
         assert(budget.peak <= budget.limit);
+        assert(budget.stranded <= budget.live);
         const over = if (budget.refused > 0) ", OVER LIMIT" else "";
-        std.debug.print("memory {s}: {d} KB live, {d} KB peak, {d} allocations{s}", .{
-            budget.name, budget.live / 1024, budget.peak / 1024, budget.allocations, over,
-        });
-        if (budget.region) |region| {
-            std.debug.print(", region {d} of {d} KB used at most", .{
+        // A budget of the system's has no region to say. Room for any two numbers, so
+        // the region's part is always said
+        const region_format = ", region {d} of {d} KB used at most";
+        const most = std.math.maxInt(u64);
+        var region_buffer: [std.fmt.count(region_format, .{ most, most })]u8 = undefined;
+        const region_part = if (budget.region) |region|
+            std.fmt.bufPrint(&region_buffer, region_format, .{
                 region.used_peak() / 1024,
                 region.bytes.len / 1024,
-            });
-        }
-        std.debug.print("\n", .{});
+            }) catch ""
+        else
+            "";
+        // A line of noface's log, which the tests keep quiet
+        log.info("memory {s}: {d} KB live ({d} KB stranded), {d} KB peak, {d} allocations{s}{s}", .{
+            budget.name,
+            budget.live / 1024,
+            budget.stranded / 1024,
+            budget.peak / 1024,
+            budget.allocations,
+            over,
+            region_part,
+        });
     }
 
     /// Forgets all a budget on a bump region handed out, at once, as an arena is
@@ -455,18 +490,19 @@ pub const Budget = struct {
         assert(region.kind == .bump);
         assert(budget.live <= budget.limit);
         budget.live = 0;
+        budget.stranded = 0;
         region.reset(pages);
         assert(region.empty());
     }
 
     /// Where a budget on a bump region has got to, for `rewind`.
-    pub const Mark = struct { end: u32, live: u64 };
+    pub const Mark = struct { end: u32, live: u64, stranded: u64 };
 
     pub fn mark(budget: *const Budget) Mark {
         const region = budget.region.?;
         assert(region.kind == .bump);
         assert(budget.live <= region.end); // What's live lies before the end
-        return .{ .end = region.end, .live = budget.live };
+        return .{ .end = region.end, .live = budget.live, .stranded = budget.stranded };
     }
 
     /// Forgets what the budget handed out since `at`, as `reset` forgets all of it:
@@ -478,6 +514,7 @@ pub const Budget = struct {
         assert(at.live <= budget.live);
         region.end = at.end;
         budget.live = at.live;
+        budget.stranded = at.stranded;
     }
 
     /// The system's allocator, for a budget without a region: never after `seal`. One
@@ -498,12 +535,19 @@ pub const Budget = struct {
         return budget.child.?;
     }
 
+    /// Whether `more` bytes fit under the limit, counting a request turned down: one an
+    /// `alloc` makes. A block that can't grow in place (`resize`, `remap`) asks
+    /// `has_room` alone: its caller moves it instead, through `alloc`, which counts.
     fn fits(budget: *Budget, more: u64) bool {
-        assert(budget.live <= budget.limit);
-        assert(more > 0); // Growing by nothing needs no room
-        if (budget.live + more <= budget.limit) return true;
+        if (budget.has_room(more)) return true;
         budget.refuse("over its limit");
         return false;
+    }
+
+    fn has_room(budget: *const Budget, more: u64) bool {
+        assert(budget.live <= budget.limit);
+        assert(more > 0); // Growing by nothing needs no room
+        return budget.live + more <= budget.limit;
     }
 
     /// Counts a request turned down, saying why in the log the first time.
@@ -531,15 +575,26 @@ pub const Budget = struct {
         assert(budget.live <= budget.peak);
     }
 
-    /// Counts a block that went from `old_len` bytes to `new_len`.
-    fn resized(budget: *Budget, old_len: u64, new_len: u64) void {
+    /// Counts a block that went from `old_len` bytes to `new_len`, of which `taken_back`
+    /// the region took back when it shrank.
+    fn resized(budget: *Budget, old_len: u64, new_len: u64, taken_back: u64) void {
         assert(old_len <= budget.live);
         if (new_len > old_len) {
+            assert(taken_back == 0);
             budget.grew(new_len - old_len);
         } else {
-            budget.shrank(old_len - new_len);
+            budget.let_go(old_len - new_len, taken_back);
         }
         assert(new_len <= budget.live);
+    }
+
+    /// `freed` bytes this budget handed out are free again, `taken_back` of them taken
+    /// back by the region; the rest stay held, stranded.
+    fn let_go(budget: *Budget, freed: u64, taken_back: u64) void {
+        assert(taken_back <= freed);
+        budget.shrank(taken_back);
+        budget.stranded += freed - taken_back;
+        assert(budget.stranded <= budget.live);
     }
 
     // usize: std.mem.Allocator's interface
@@ -570,13 +625,14 @@ pub const Budget = struct {
     ) bool {
         const budget: *Budget = @ptrCast(@alignCast(context));
         assert(memory.len <= budget.live); // Memory this budget handed out
-        if (new_len > memory.len and !budget.fits(new_len - memory.len)) return false;
+        if (new_len > memory.len and !budget.has_room(new_len - memory.len)) return false;
+        const taken_back = budget.taken_back_by_resize(memory, new_len);
         const done = if (budget.region) |region|
             region.resize(memory, alignment, new_len)
         else
             budget.system().rawResize(memory, alignment, new_len, return_address);
         if (!done) return false;
-        budget.resized(memory.len, new_len);
+        budget.resized(memory.len, new_len, taken_back);
         assert(budget.live <= budget.limit);
         return true;
     }
@@ -590,13 +646,14 @@ pub const Budget = struct {
     ) ?[*]u8 {
         const budget: *Budget = @ptrCast(@alignCast(context));
         assert(memory.len <= budget.live); // Memory this budget handed out
-        if (new_len > memory.len and !budget.fits(new_len - memory.len)) return null;
+        if (new_len > memory.len and !budget.has_room(new_len - memory.len)) return null;
+        const taken_back = budget.taken_back_by_resize(memory, new_len);
         const moved = if (budget.region) |region|
             (if (region.resize(memory, alignment, new_len)) memory.ptr else null)
         else
             budget.system().rawRemap(memory, alignment, new_len, return_address);
         const pointer = moved orelse return null;
-        budget.resized(memory.len, new_len);
+        budget.resized(memory.len, new_len, taken_back);
         assert(budget.live <= budget.limit);
         return pointer;
     }
@@ -606,13 +663,25 @@ pub const Budget = struct {
         const budget: *Budget = @ptrCast(@alignCast(context));
         assert(memory.len <= budget.live); // Memory this budget handed out
         assert(budget.allocations > 0);
-        if (budget.region) |region| {
-            region.give(memory, alignment);
-        } else {
+        const taken_back = if (budget.region) |region|
+            region.give(memory, alignment)
+        else taken_back: {
             // Handed out before `seal`, so given back to the system even after it
             budget.child.?.rawFree(memory, alignment, return_address);
-        }
-        budget.shrank(memory.len);
+            break :taken_back memory.len;
+        };
+        budget.let_go(memory.len, taken_back);
+    }
+
+    /// The bytes a region takes back as `memory` shrinks to `new_len`, should it: all
+    /// of them, but from a bump region's block before its last, which keeps them.
+    fn taken_back_by_resize(budget: *const Budget, memory: []u8, new_len: u64) u64 {
+        if (new_len >= memory.len) return 0;
+        const region = budget.region orelse return memory.len - new_len;
+        return switch (region.kind) {
+            .heap => memory.len - new_len,
+            .bump => if (region.is_last(memory)) memory.len - new_len else 0,
+        };
     }
 };
 
@@ -802,4 +871,49 @@ test "an untouched block leaves its pages out of memory until written" {
     const one = try b.untouched_one(u64);
     one.* = 7;
     try std.testing.expectEqual(@as(u64, 7), one.*);
+}
+
+test "a bump region's budget counts what it holds, its freed blocks before the last too" {
+    var region = try Region.reserve("test", .bump, 1 << 20);
+    defer region.release();
+    var b = Budget{ .name = "test", .region = &region, .limit = region.bytes.len };
+    const a = b.allocator();
+    // A list grown between other blocks leaves each copy it moved from behind
+    var list: std.ArrayList(u8) = .empty;
+    for (0..8) |i| {
+        try list.appendNTimes(a, 'x', 1000);
+        _ = try a.alloc(u8, 10 + i); // After the list, so its old copy can't come back
+    }
+    // Live is what the region holds, the copies left behind included: bytes, aligned
+    // to a byte, so the region skipped none between them
+    try std.testing.expect(b.stranded > 0);
+    try std.testing.expectEqual(@as(u64, region.end), b.live);
+    try std.testing.expect(b.peak >= b.live);
+}
+
+test "freed blocks a bump region holds still count against the budget's limit" {
+    var region = try Region.reserve("test", .bump, 1 << 20);
+    defer region.release();
+    // A limit below the region's size, as the picture viewer's
+    var b = Budget{ .name = "test", .region = &region, .limit = 4096 };
+    const a = b.allocator();
+    const first = try a.alloc(u8, 3000);
+    _ = try a.alloc(u8, 16); // After it, so it can't come back
+    a.free(first);
+    try std.testing.expectEqual(@as(u64, 3000), b.stranded);
+    // Held still: what's left under the limit is the limit less all it holds
+    try std.testing.expectError(error.OutOfMemory, a.alloc(u8, 3000));
+}
+
+test "a block that can't grow in place, moved instead, isn't counted as refused" {
+    var region = try Region.reserve("test", .bump, 1 << 20);
+    defer region.release();
+    var b = Budget{ .name = "test", .region = &region, .limit = region.bytes.len };
+    const a = b.allocator();
+    const block = try a.alloc(u8, 100);
+    _ = try a.alloc(u8, 16); // After it: it can't grow where it is
+    try std.testing.expect(!a.resize(block, 200));
+    const moved = try a.realloc(block, 200);
+    try std.testing.expectEqual(@as(usize, 200), moved.len);
+    try std.testing.expectEqual(@as(u64, 0), b.refused);
 }

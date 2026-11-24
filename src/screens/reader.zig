@@ -86,6 +86,9 @@ pub fn open(r: *Reader, a: *app.App, entry: *catalog.Entry) !void {
     // Only one book is open at a time, so its regions start empty
     assert(a.regions.book.empty());
     assert(a.regions.scratch.empty());
+    // Their peaks this book's own, as its close reports them
+    a.regions.book.restart_peak();
+    a.regions.scratch.restart_peak();
     r.* = .{
         .a = a,
         .entry = entry,
@@ -490,18 +493,19 @@ pub const Reader = struct {
         if (r.data.len > 0) file.unmap(r.data);
         r.data = &.{};
         a.pictures.clear(a.alloc); // Its keys point into this book's memory
-        // Emptied for the next book, the pages touched handed back
-        r.scratch_budget.reset(.give_back);
-        r.book_budget.reset(.give_back);
-        a.regions.pages_budget.reset(.give_back); // The pages of layouts after settings changes
-        assert(a.regions.book.empty());
-        assert(a.regions.scratch.empty());
+        // Said as the book closes, what it holds still counted
         r.book_budget.report();
         a.regions.pages_budget.report();
         r.scratch_budget.report();
         a.regions.library_budget.report();
         a.app_budget.report();
         a.decoders_budget.report();
+        // Emptied for the next book, the pages touched handed back
+        r.scratch_budget.reset(.give_back);
+        r.book_budget.reset(.give_back);
+        a.regions.pages_budget.reset(.give_back); // The pages of layouts after settings changes
+        assert(a.regions.book.empty());
+        assert(a.regions.scratch.empty());
     }
 
     /// What holds of an open book between actions: its first page shown, and the page

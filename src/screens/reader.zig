@@ -91,6 +91,7 @@ pub fn open(r: *Reader, a: *app.App, entry: *const catalog.Entry) !void {
     // Their peaks this book's own, as its close reports them
     a.regions.book.restart_peak();
     a.regions.scratch.restart_peak();
+    a.regions.pages_budget.restart();
     r.* = .{
         .a = a,
         .entry = entry,
@@ -261,8 +262,7 @@ pub const Reader = struct {
         r.place_saved = sess.save_progress(&r.read_so_far, r.s, r.s.percent());
         // Said as it opens, not only as it closes: read on, the reading isn't kept
         if (!r.place_saved) {
-            // Ignored: only the notice is missed, never the book, whose page is drawn
-            app.show_notice(r.a, "This book's place can't be saved now.") catch {};
+            app.show_notice(r.a, "This book's place can't be saved now.");
         }
         assert(r.s.current == r.start);
         r.reading_started = true;
@@ -342,7 +342,7 @@ pub const Reader = struct {
                     },
                     .not_marked => {
                         try r.draw_toolbar(true);
-                        try app.show_notice(r.a, book_actions.not_marked_notice);
+                        app.show_notice(r.a, book_actions.not_marked_notice);
                     },
                 },
                 .closed, .interrupted => try r.draw_toolbar(true),

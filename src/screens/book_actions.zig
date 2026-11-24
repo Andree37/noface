@@ -77,37 +77,15 @@ pub const not_marked_notice = "Couldn't mark it: its place couldn't be saved.";
 fn save_marked(a: *app.App, e: *const catalog.Entry, done: bool, place: Place) !void {
     assert(e.is_epub() or e.is_local()); // A file of its own to keep its place by
     switch (place) {
-        .open => |s| {
-            marked(&s.saved, done, e.kindle_last);
-            if (!state.save(&s.place, s.saved)) return error.PlaceNotSaved;
-        },
+        .open => |s| if (!s.save_marked(done, e.kindle_last)) return error.PlaceNotSaved,
         .closed => {
             var path_buffer: [file.own_path_bytes_max]u8 = undefined;
             const path = try a.state_path(&path_buffer, e.path);
-            var kept = state.adopt_by_name(path, e.path).kept(.state, path);
-            var saved = state.load(&kept);
-            marked(&saved, done, e.kindle_last);
-            if (!state.save(&kept, saved)) return error.PlaceNotSaved;
+            var own = state.open_own(path, state.adopt_by_name(path, e.path));
+            state.mark(&own.saved, done, e.kindle_last);
+            if (!state.save(&own.kept, own.saved)) return error.PlaceNotSaved;
         },
     }
-}
-
-/// A place marked finished, or not. Unread, it's the book's beginning, numbered as now,
-/// dated just after the last time it was opened anywhere: newer than stock's place and
-/// percent, so ours win, without moving it up in recent order.
-fn marked(saved: *state.State, done: bool, kindle_last: u64) void {
-    saved.finished = done;
-    if (done) return;
-    saved.para = 0;
-    saved.byte = 0;
-    saved.percent = 0;
-    saved.words_left = null;
-    saved.back_para = null; // Nowhere to go back to from a fresh start
-    // The start is the start however 0.2.0 numbered the rest
-    saved.numbering = state.numbering_now;
-    // Saturating: both times come from files, and a broken one mustn't stop this
-    saved.opened = @max(saved.opened, kindle_last) +| 1;
-    assert(!state.prefer_kindle(saved.*, kindle_last));
 }
 
 /// What a book's actions changed, which decides what the library does next: `reload`
@@ -223,6 +201,7 @@ pub const Sheet = struct {
     fn local_books(s: *Sheet) ?books.LocalBooks {
         const scratch = &s.a.regions.library_scratch_budget;
         assert(scratch.live == 0); // The library is read in it only between screens
+        scratch.restart();
         assert(s.a.regions.book.empty()); // Never beside an open book, as setup.zig counts
         const listed = s.lib.local_books(scratch.allocator()) catch |err| {
             std.debug.print("series: books not listed ({s})\n", .{@errorName(err)});

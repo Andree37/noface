@@ -12,6 +12,8 @@ const page_cache = @import("layout/page_cache.zig");
 
 /// How many pages the cache keeps drawn (layout/page_cache.zig picks which).
 pub const slots_count = page_cache.slots;
+/// Whole screens a display keeps for good: its page slots, and its overlay.
+pub const screens_kept = slots_count + 1;
 
 /// The outline `flash` draws round a book, its bars this thick.
 const flash_bar_px = style.flash_bar;
@@ -73,6 +75,7 @@ pub const Display = struct {
         const overlay = try alloc.alloc(u8, pixels);
         const d: Display = .{ .screen = screen, .slots = slots, .overlay = overlay };
         assert(d.overlay.len == pixels);
+        assert(d.slots.len + 1 == screens_kept); // As setup.zig counts them
         return d;
     }
 

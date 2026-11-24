@@ -291,7 +291,9 @@ fn add_kindle_books(b: *Build) void {
         // The catalog's flag can stay set long after a download ended: the file decides
         if (e.availability == .downloading and is_complete_book(e.path)) e.availability = .local;
         if (b.last) |*last| {
-            if (last.find(e.path)) |id| kept_reading(&e, last.reading(id));
+            if (has_file(e)) {
+                if (last.find(e.path)) |id| kept_reading(&e, last.reading(id));
+            }
         }
         b.add(&e, null);
     }
@@ -422,14 +424,16 @@ fn read_about(scratch: *memory.Budget, data: []const u8, with_cover: bool) ?epub
 }
 
 /// A Kindle book's row with how far noface had it, as the last build kept it: its time
-/// read, and, while they're newer than the Kindle's, its percent, date and time left. A
+/// read, and, unless the Kindle's are newer, its percent, date and time left. A
 /// place merged after replaces them all; one that can't be read leaves them, never the
 /// book shown unread.
 fn kept_reading(e: *catalog.Entry, last: Reading) void {
     assert(!e.is_epub());
     assert(last.percent <= 100);
     e.seconds_read = last.seconds_read;
-    if (last.last <= e.kindle_last) return; // The stock reader's since
+    // The stock reader's since, as `state.prefer_kindle` says it: only a later reading
+    // there; the record's own date, taken as the merge took it, is noface's or the same
+    if (e.kindle_last > last.last) return;
     e.percent = last.percent;
     e.last = last.last;
     e.words_left = last.words_left;
@@ -482,7 +486,9 @@ const LastBuild = struct {
         var count: u32 = 0;
         for (0..ix.header.count) |i| {
             const id: u32 = @intCast(i);
-            items[count] = .{ .id = id, .key = path_key(ix.entry(id).path) };
+            const e = ix.entry(id);
+            if (!has_file(e)) continue; // A book in the cloud has no path to be found by
+            items[count] = .{ .id = id, .key = path_key(e.path) };
             count += 1;
         }
         assert(count <= ix.header.count);
@@ -565,13 +571,19 @@ fn by_state_key(ix: *const index.Index, items: []Item) []Item {
 
 /// The books on this Kindle, their ids sorted by `key_of` their path (a key's high half),
 /// to find each by halves: by the names their files have now, or had before.
+/// Whether book `e` is on the Kindle with a file: only such a book is found by its path,
+/// a book in the cloud having none.
+fn has_file(e: catalog.Entry) bool {
+    return e.is_local() and e.path.len > 0;
+}
+
 fn sorted_by(ix: *const index.Index, items: []Item, comptime key_of: fn ([]const u8) u64) []Item {
     assert(items.len >= ix.header.count);
     var count: u32 = 0;
     for (0..ix.header.count) |i| {
         const id: u32 = @intCast(i);
         const e = ix.entry(id);
-        if (!e.is_local() or e.path.len == 0) continue;
+        if (!has_file(e)) continue;
         items[count] = .{ .id = id, .key = @truncate(key_of(e.path) >> 32) };
         count += 1;
     }

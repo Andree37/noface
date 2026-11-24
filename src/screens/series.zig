@@ -380,7 +380,7 @@ pub const Series = struct {
             s.changed = true;
             return true;
         }
-        try app.show_notice(s.a, "This series couldn't be saved.");
+        app.show_notice(s.a, "This series couldn't be saved.");
         return false;
     }
 

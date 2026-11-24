@@ -48,7 +48,6 @@ const Package = struct {
     }
 };
 
-/// Paragraph by "file#id", or by "file" for its first paragraph.
 /// Where links and the contents land, by `anchor_key`: each to its paragraph.
 const Anchors = std.AutoHashMapUnmanaged(AnchorKey, u32);
 
@@ -60,9 +59,11 @@ const AnchorKey = u64;
 
 /// The key of `file`'s start, or of the element `id` names in it: the one way every
 /// anchor and every link's target is named, so the two always meet.
+// Assertions: it hashes a book's own names, any bytes at all ('#' too, from "%23").
 fn anchor_key(file: []const u8, id: ?[]const u8) AnchorKey {
-    assert(std.mem.indexOfScalar(u8, file, '#') == null); // A path, its fragment apart
     var h = std.hash.Wyhash.init(0);
+    // The file's length first, so where its name ends is never read from its bytes
+    h.update(std.mem.asBytes(&@as(u64, file.len)));
     h.update(file);
     if (id) |name| {
         h.update("#");
@@ -380,11 +381,13 @@ const Shelves = struct {
     count: u32 = 0, // Paragraphs on them
 
     const first_shelf = 1024;
-    /// Enough for as many paragraphs as a u32 counts.
-    const shelves_max = 23;
+    /// As many as a shelf's size fits a u32: some four billion paragraphs, far past what
+    /// a book's region holds, which runs out long before `append` says so itself.
+    const shelves_max = 22;
 
     comptime {
-        assert(first_shelf * ((1 << shelves_max) - 1) >= std.math.maxInt(u32));
+        assert(@as(u64, first_shelf) << (shelves_max - 1) <= std.math.maxInt(u32));
+        assert(@as(u64, first_shelf) << shelves_max > std.math.maxInt(u32));
     }
 
     /// The paragraphs every shelf made so far holds.
@@ -431,9 +434,9 @@ const PendingLink = struct { paragraph: u32, start: u32, end: u32, target: Ancho
 /// Builds paragraphs from one spine file's body.
 const Builder = struct {
     alloc: std.mem.Allocator,
-    /// For what's needed only while a chapter is read (a link's path, before it's a
-    /// key): emptied with the chapter's markup.
-    scratch: std.mem.Allocator,
+    /// The chapter's scratch, where its markup was read: a link's or picture's path is
+    /// worked out there and given back as soon as it's a key or found, so none pile up.
+    scratch: *memory.Budget,
     files: []const zip.Entry,
     made: Shelves = .{},
     /// The chapter being read is one 0.2.0 couldn't find, so its paragraphs weren't in
@@ -585,7 +588,9 @@ const Builder = struct {
 
     fn add_picture(b: *Builder, dir: []const u8, src: []const u8) !void {
         assert(b.in_body);
-        const path = try resolve(b.scratch, dir, src);
+        const at = b.scratch.mark();
+        defer b.scratch.rewind(at);
+        const path = try resolve(b.scratch.allocator(), dir, src);
         const entry = zip.find(b.files, path) orelse return;
         // The book's own bytes, read only as far as their size: only JPEG and PNG
         // can be drawn
@@ -593,7 +598,7 @@ const Builder = struct {
         assert(image.data.ptr == entry.data.ptr); // Never a copy
         try b.flush();
         // Missed by 0.2.0 with its chapter, or by itself
-        const seen_by_0_2 = try found_by_0_2(b.scratch, b.files, dir, src);
+        const seen_by_0_2 = try found_by_0_2(b.scratch.allocator(), b.files, dir, src);
         const index = try b.made.append(b.alloc, .{
             .text = "",
             .image = image,
@@ -740,12 +745,18 @@ const Builder = struct {
         if (end <= start) return;
         const href = link.target;
         assert(href.len > 0);
-        const file = if (href[0] == '#') b.file else try resolve(b.scratch, b.dir, href);
+        const target = target: {
+            const at = b.scratch.mark();
+            defer b.scratch.rewind(at);
+            const scratch = b.scratch.allocator();
+            const file = if (href[0] == '#') b.file else try resolve(scratch, b.dir, href);
+            break :target anchor_key(file, fragment_of(href));
+        };
         try b.links.append(b.alloc, .{
             .paragraph = b.made.count,
             .start = start,
             .end = end,
-            .target = anchor_key(file, fragment_of(href)),
+            .target = target,
         });
     }
 
@@ -915,7 +926,7 @@ pub fn parse(alloc: std.mem.Allocator, scratch: *memory.Region, data: []const u8
     };
     const files = try zip.entries(alloc, data);
     const p = try read_package(alloc, files);
-    var b = Builder{ .alloc = alloc, .scratch = markup.allocator(), .files = files };
+    var b = Builder{ .alloc = alloc, .scratch = &markup, .files = files };
     const each_chapter = markup.mark();
     defer markup.rewind(each_chapter);
     for (p.spine, 0..) |id, index| {
@@ -1035,7 +1046,10 @@ test "a heading's text after a picture and a line break stays a heading" {
     // The picture there, stored, so it's added between the heading's tag and its text
     const jpeg = &picture.test_jpeg;
     const files = [_]zip.Entry{.{ .name = "x.jpg", .method = 0, .data = jpeg, .size = jpeg.len }};
-    var b = Builder{ .alloc = arena.allocator(), .scratch = arena.allocator(), .files = &files };
+    var test_scratch: TestScratch = undefined;
+    try test_scratch.init();
+    defer test_scratch.deinit();
+    var b = Builder{ .alloc = arena.allocator(), .scratch = &test_scratch.budget, .files = &files };
     try b.chapter(
         "c.xhtml",
         "<html><body><h2><img src=\"x.jpg\"/><br/><br/>Chapter I.</h2>" ++
@@ -1059,7 +1073,10 @@ test "a note reference ending in a space at a paragraph's end stays inside it" {
         var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
         defer arena.deinit();
         const alloc = arena.allocator();
-        var b = Builder{ .alloc = alloc, .scratch = alloc, .files = &.{} };
+        var test_scratch: TestScratch = undefined;
+        try test_scratch.init();
+        defer test_scratch.deinit();
+        var b = Builder{ .alloc = alloc, .scratch = &test_scratch.budget, .files = &.{} };
         const html = try std.fmt.allocPrint(alloc, "<html><body><p>Some text, with a note." ++
             "{s}<p id=\"fn1\">1 The note.</p></body></html>", .{ending});
         try b.chapter("c.xhtml", html);
@@ -1107,7 +1124,10 @@ test "a series place that isn't a number in range counts as none" {
 test "bold left open at a chapter's end styles its last words and nothing after" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    var b = Builder{ .alloc = arena.allocator(), .scratch = arena.allocator(), .files = &.{} };
+    var test_scratch: TestScratch = undefined;
+    try test_scratch.init();
+    defer test_scratch.deinit();
+    var b = Builder{ .alloc = arena.allocator(), .scratch = &test_scratch.budget, .files = &.{} };
     try b.chapter("a.xhtml", "<html><body><p><b>x</p>Bold to the end</body></html>");
     try b.chapter("b.xhtml", "<html><body>Hello</body></html>");
     const paragraphs = try b.made.join(b.alloc);
@@ -1121,7 +1141,10 @@ test "bold left open at a chapter's end styles its last words and nothing after"
 test "an empty link goes nowhere, and doesn't stop the reader" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    var b = Builder{ .alloc = arena.allocator(), .scratch = arena.allocator(), .files = &.{} };
+    var test_scratch: TestScratch = undefined;
+    try test_scratch.init();
+    defer test_scratch.deinit();
+    var b = Builder{ .alloc = arena.allocator(), .scratch = &test_scratch.budget, .files = &.{} };
     try b.chapter("c.xhtml", "<html><body><p><a href=\"\">here</a></p></body></html>");
     try std.testing.expectEqual(@as(usize, 0), b.links.items.len);
     try std.testing.expectEqualStrings("here", (try b.made.join(b.alloc))[0].text);
@@ -1130,7 +1153,10 @@ test "an empty link goes nowhere, and doesn't stop the reader" {
 test "an id after a chapter's last paragraph, and an empty chapter, keep their own names" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    var b = Builder{ .alloc = arena.allocator(), .scratch = arena.allocator(), .files = &.{} };
+    var test_scratch: TestScratch = undefined;
+    try test_scratch.init();
+    defer test_scratch.deinit();
+    var b = Builder{ .alloc = arena.allocator(), .scratch = &test_scratch.budget, .files = &.{} };
     const chapters = [_][2][]const u8{
         .{ "c1.xhtml", "<html><body><p>One.</p><div id=\"late\"></div></body></html>" },
         .{ "empty.xhtml", "<html><body><div id=\"none\"></div></body></html>" },
@@ -1153,7 +1179,10 @@ test "every link lands on the paragraph its target names, the first of an id twi
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const alloc = arena.allocator();
-    var b = Builder{ .alloc = alloc, .scratch = alloc, .files = &.{} };
+    var test_scratch: TestScratch = undefined;
+    try test_scratch.init();
+    defer test_scratch.deinit();
+    var b = Builder{ .alloc = alloc, .scratch = &test_scratch.budget, .files = &.{} };
     const chapters = [_][2][]const u8{
         .{
             "text/c1.xhtml",
@@ -1179,6 +1208,27 @@ test "every link lands on the paragraph its target names, the first of an id twi
     for (links, &targets) |l, *t| t.* = l.target;
     std.mem.sort(u32, &targets, {}, std.sort.asc(u32));
     try std.testing.expectEqualSlices(u32, &.{ 1, 2, 3 }, &targets);
+}
+
+test "a '#' written as %23 in a link or a file's name is a name like any other" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    var test_scratch: TestScratch = undefined;
+    try test_scratch.init();
+    defer test_scratch.deinit();
+    var b = Builder{ .alloc = alloc, .scratch = &test_scratch.budget, .files = &.{} };
+    try b.chapter(
+        "C%23.xhtml",
+        "<html><body><p><a href=\"C%23.xhtml#n\">one</a> <a href=\"%23n\">two</a> " ++
+            "<a href=\"mailto:a@b.c?subject=Issue%231\">three</a></p>" ++
+            "<p id=\"n\">Note.</p></body></html>",
+    );
+    try b.keep_pending();
+    const paragraphs = try b.made.join(alloc);
+    try b.resolve_links(paragraphs);
+    // Read whole, its links kept or passed over, never a crash
+    try std.testing.expectEqual(@as(usize, 2), paragraphs.len);
 }
 
 test "headings h1 to h6 each have a look, and other tags none" {
@@ -1248,7 +1298,10 @@ test "a package with an empty author or title still lists its chapters" {
 test "a tag that closes itself styles and links nothing; a link a block cuts covers what's after" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    var b = Builder{ .alloc = arena.allocator(), .scratch = arena.allocator(), .files = &.{} };
+    var test_scratch: TestScratch = undefined;
+    try test_scratch.init();
+    defer test_scratch.deinit();
+    var b = Builder{ .alloc = arena.allocator(), .scratch = &test_scratch.budget, .files = &.{} };
     const markup = "<html><body><p>An <i class=\"icon\"/>icon and <a href=\"#n\"/>more.</p>" ++
         "<p>Long <a href=\"#n1\">x</p><p>other words</a> here.</p>" ++
         "<p><a href=\"#n2\">*<br/>1</a> A paragraph.</p></body></html>";
@@ -1327,7 +1380,10 @@ test "broken markup is read or refused, never crashes, in each of the book's rea
         defer arena.deinit();
         const alloc = arena.allocator();
         // The chapter's markup, as the book is built
-        var b = Builder{ .alloc = alloc, .scratch = alloc, .files = &.{} };
+        var test_scratch: TestScratch = undefined;
+        try test_scratch.init();
+        defer test_scratch.deinit();
+        var b = Builder{ .alloc = alloc, .scratch = &test_scratch.budget, .files = &.{} };
         b.chapter("c.xhtml", broken) catch {}; // Ignored: refused is as good as read
         // The package, from a container that points at it
         const stored = 0;
@@ -1367,7 +1423,10 @@ test "a book of many paragraphs leaves no outgrown list behind in its memory" {
         try html.print(std.testing.allocator, paragraph, .{ i, i });
     }
     try html.appendSlice(std.testing.allocator, "</body></html>");
-    var b = Builder{ .alloc = alloc, .scratch = alloc, .files = &.{} };
+    var test_scratch: TestScratch = undefined;
+    try test_scratch.init();
+    defer test_scratch.deinit();
+    var b = Builder{ .alloc = alloc, .scratch = &test_scratch.budget, .files = &.{} };
     try b.chapter("c.xhtml", html.items);
     try b.keep_pending();
     const paragraphs = try b.made.join(alloc);
@@ -1377,3 +1436,19 @@ test "a book of many paragraphs leaves no outgrown list behind in its memory" {
     const list_bytes = paragraphs.len * @sizeOf(book.Paragraph);
     try std.testing.expect(budget.stranded < list_bytes);
 }
+
+/// A chapter's scratch for a test's Builder, as `parse` gives it one.
+const TestScratch = struct {
+    region: memory.Region,
+    budget: memory.Budget,
+
+    fn init(t: *TestScratch) !void {
+        t.region = try .reserve("test scratch", .bump, 1 << 20);
+        t.budget = .{ .name = "test scratch", .region = &t.region, .limit = t.region.bytes.len };
+    }
+
+    fn deinit(t: *TestScratch) void {
+        assert(t.budget.live == 0); // Every path given back
+        t.region.release();
+    }
+};

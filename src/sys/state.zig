@@ -98,6 +98,20 @@ pub fn adopt_by_name(state_path: [:0]const u8, book_path: []const u8) Adopted {
     return adopted;
 }
 
+/// A book's own place: its file, never written while it's unreadable or 0.2.0's isn't
+/// settled, and what it held, as a book opening it reads it.
+pub const Own = struct { kept: file.Kept, saved: State };
+
+/// Opens and reads a book's own place at `path`, `adopted` saying whether 0.2.0's is
+/// settled: the one way a place is opened, by the reader and by a mark from the library.
+pub fn open_own(path: [*:0]const u8, adopted: Adopted) Own {
+    var kept = adopted.kept(.state, path);
+    assert(kept.path == path);
+    const saved = load(&kept);
+    if (!adopted.settled(.state)) assert(!kept.known); // Still unwritable, however it read
+    return .{ .kept = kept, .saved = saved };
+}
+
 /// Which of a book's files 0.2.0 named are settled (`adopt_by_name`).
 pub const Adopted = struct {
     unsettled: std.EnumSet(Kind) = .empty,
@@ -182,6 +196,25 @@ pub fn key_of_name(name: []const u8, kind: Kind) ?u64 {
         if (!std.ascii.isDigit(c) and (c < 'a' or c > 'f')) return null;
     }
     return std.fmt.parseInt(u64, hex, 16) catch null;
+}
+
+/// A place marked finished, or not. Unread, it's the book's beginning, numbered as now,
+/// dated just after the last time it was opened anywhere: newer than stock's place and
+/// percent, so ours win, without moving it up in recent order.
+// Assertions: the place it marks was read from a file: only what it makes is its own.
+pub fn mark(saved: *State, done: bool, kindle_last: u64) void {
+    saved.finished = done;
+    if (done) return;
+    saved.para = 0;
+    saved.byte = 0;
+    saved.percent = 0;
+    saved.words_left = null;
+    saved.back_para = null; // Nowhere to go back to from a fresh start
+    // The start is the start however 0.2.0 numbered the rest
+    saved.numbering = numbering_now;
+    // Saturating: both times come from files, and a broken one mustn't stop this
+    saved.opened = @max(saved.opened, kindle_last) +| 1;
+    assert(!prefer_kindle(saved.*, kindle_last));
 }
 
 /// True when the Kindle's own position should win over ours: we have nothing

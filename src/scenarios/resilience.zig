@@ -232,7 +232,10 @@ pub const all = [_]Scenario{
                 const define = [_]Step{ a_word, lift };
                 // No room left in the app's budget: Define's copy of the page can't be made
                 const starved: Kindle = .{ .dictionary = true, .app_bytes_spare = 0 };
+                const app_before = (try app_memory()).live;
                 const broken = play_on(starved, &define);
+                // Everything the stopped book held of the app's memory given back
+                try expect((try app_memory()).live == app_before, "the app kept memory");
                 // The book stops, as a book's error does, never noface
                 const stopped = if (broken) |_| false else |err| err == error.BookFailed;
                 try expect(stopped, "the dictionary opened with no memory for it");
@@ -246,12 +249,16 @@ pub const all = [_]Scenario{
         .name = "a book's series lists are made in the library's scratch, never the app's room",
         .run = struct {
             fn run() !void {
-                const series = [_]Step{
-                    hold_in(library_ui.hero_rect(width)), lift, book_series, list_back_to_library,
-                };
-                // No room left in the app's budget, however many books there are
-                const r = try play_on(.{ .library = true, .app_bytes_spare = 0 }, &series);
-                try expect(r.updates > 0, "the series lists weren't shown");
+                const sheet = [_]Step{ hold_in(library_ui.hero_rect(width)), lift };
+                const series = sheet ++ .{book_series};
+                // No room left in the app's budget, however many books there are: the
+                // lists as they are with all of it
+                const starved = try play_on(.{ .library = true, .app_bytes_spare = 0 }, &series);
+                const roomy = try play_on(.{ .library = true }, &series);
+                const no_lists = try play_on(.{ .library = true }, &sheet);
+                try expect(roomy.screen_hash != no_lists.screen_hash, "the lists never opened");
+                const same = starved.screen_hash == roomy.screen_hash;
+                try expect(same, "the series lists weren't shown with no app room left");
             }
         }.run,
     },

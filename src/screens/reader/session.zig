@@ -250,6 +250,17 @@ pub const Session = struct {
         s.clock.start(now_us());
     }
 
+    /// The book marked finished, or not (`state.mark`), saved with its place: kept only
+    /// when the save lands, as the reader is told it didn't otherwise. Whether it did.
+    pub fn save_marked(s: *Session, done: bool, kindle_last: u64) bool {
+        var marked = s.saved;
+        state.mark(&marked, done, kindle_last);
+        if (!state.save(&s.place, marked)) return false;
+        s.saved = marked;
+        assert(s.saved.finished == done);
+        return true;
+    }
+
     /// The book's text as it's laid out: its paragraphs, and their hyphenation.
     pub fn book_text(s: *const Session) paginate.Text {
         return .{ .paragraphs = s.paragraphs, .hyphenator = s.hyphenator };
@@ -677,7 +688,7 @@ pub fn relayout(a: *app.App, s: *Session) !void {
         a.user.settings = a.user.saved_settings();
         try a.apply_settings();
         // Said, so the tap isn't taken for one that did nothing; the page is as it was
-        try app.show_notice(a, "That setting couldn't be used here.");
+        app.show_notice(a, "That setting couldn't be used here.");
         return;
     };
     a.user.save_settings();

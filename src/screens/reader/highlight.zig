@@ -77,7 +77,7 @@ pub fn show_page(a: *app.App, s: *sess.Session, active: ?[]const u8) !?u32 {
 pub fn highlight_not_saved(a: *app.App, s: *sess.Session) !void {
     assert(s.current < s.pages.len);
     _ = try show_page(a, s, null);
-    try app.show_notice(a, "This highlight couldn't be saved.");
+    app.show_notice(a, "This highlight couldn't be saved.");
     _ = try show_page(a, s, null);
 }
 

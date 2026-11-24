@@ -283,8 +283,15 @@ pub const App = struct {
     }
 };
 
-/// Says something went wrong, over the page, for a moment.
-pub fn show_notice(a: *App, message: []const u8) !void {
+/// Says something went wrong, over the page, for a moment. One that can't be drawn is
+/// only missed, never an error of the screen that said it.
+pub fn show_notice(a: *App, message: []const u8) void {
+    show_notice_drawn(a, message) catch |err| {
+        std.debug.print("notice not shown: {s}\n", .{@errorName(err)});
+    };
+}
+
+fn show_notice_drawn(a: *App, message: []const u8) !void {
     const d = &a.display;
     const screen_page = d.page(d.screen.pixels);
     assert(message.len > 0);

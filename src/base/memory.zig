@@ -455,6 +455,18 @@ pub const Budget = struct {
         budget.peak = budget.live;
     }
 
+    /// Starts its counts again, for a budget kept for good and reported for each use: its
+    /// peak from what it holds now, its allocations and refusals from none.
+    pub fn restart(budget: *Budget) void {
+        assert(budget.live <= budget.limit);
+        budget.peak = budget.live;
+        budget.allocations = 0;
+        budget.refused = 0;
+        if (budget.region) |region| {
+            if (region.kind == .bump) region.restart_peak();
+        }
+    }
+
     pub fn allocator(budget: *Budget) Allocator {
         assert(budget.name.len > 0); // The log names it
         assert(budget.live <= budget.limit);

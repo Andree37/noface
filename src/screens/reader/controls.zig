@@ -391,7 +391,7 @@ pub fn resumed(
             if (ask.ending.? != .done) return draw_toolbar(a, s, book, sheet_only);
             if (autostart.install()) return flip(a, s, book, ask.toggle);
             try draw_toolbar(a, s, book, sheet_only);
-            try app.show_notice(a, "Couldn't set up starting with the Kindle.");
+            app.show_notice(a, "Couldn't set up starting with the Kindle.");
         },
         .lock_picture => |ask| {
             try card_screen.closed(a, ask.background);

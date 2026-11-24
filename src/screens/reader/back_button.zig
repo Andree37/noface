@@ -39,8 +39,6 @@ comptime {
     assert(label_inset_px < width_px);
 }
 
-/// How the reader got to a page: reading on, a page at a time, or a jump (Go To, a
-/// search, a chapter, the slider, Back), which the button remembers.
 /// A page turned, a jump to another, or the book begun again from its start (marked
 /// unread), which leaves nothing behind to go back to.
 pub const Move = enum { turn, jump, start_over };

@@ -10,6 +10,7 @@ const user_data = @import("user_data.zig");
 const fonts_db = @import("kindle/fonts.zig");
 const Regions = @import("regions.zig").Regions;
 const display = @import("display.zig");
+const lock_ui = @import("ui/lock.zig");
 const paths = @import("kindle/paths.zig");
 const memory = @import("base/memory.zig");
 const picture_cache = @import("gfx/picture_cache.zig");
@@ -84,17 +85,18 @@ pub const region_bytes = struct {
 
 /// A whole screen, a byte a pixel: every screen buffer is one.
 pub const screen_bytes: u32 = style.screen_width * style.screen_height;
-/// Whole screens the app keeps for good, made as it's assembled: the display's page
-/// slots and its overlay (display.zig), and the lock's saved screen and cover
-/// (ui/lock.zig).
-pub const app_screens_kept = display.slots_count + 1 + 2;
+/// Whole screens the app keeps for good, made as it's assembled, each as its owner
+/// counts them: the display's (display.zig) and the lock screen's (ui/lock.zig).
+pub const app_screens_kept = display.screens_kept + lock_ui.Kept.screens_kept;
 /// Whole screens the app makes later: the screen saved as noface starts, put back as
 /// it leaves (main.zig), and Define's copy of the page under it
 /// (screens/reader/define.zig).
 pub const app_screens_later = 2;
 /// The open book's pictures kept drawn (gfx/picture_cache.zig), each at most a screen.
 pub const app_pictures = picture_cache.Pictures.slots;
-/// What else the app keeps: its fonts' tables, the settings, hyphenation's patterns.
+/// Room for the rest the app keeps (its fonts' tables, the settings, hyphenation's
+/// patterns: about 1 MB measured on the Paperwhite), and headroom past it for what grows
+/// with use, as glyphs at many sizes.
 const app_rest: u32 = 16 << 20;
 /// The app's region on the Paperwhite, measured there: no Kindle's is smaller.
 const app_floor: u32 = 64 << 20;
@@ -108,7 +110,8 @@ const book_bytes_per_page_min = 128;
 /// Room in the library's region for the cover pool, and for each of its two blocks
 /// being rounded up to whole units.
 const library_covers: u32 = covers.bytes + 2 * memory.unit_bytes;
-/// Each block of the library's region rounded up to whole units.
+/// Each block of the library's region rounded up to whole units, and room to spare
+/// past its measured peak (40 MB of 44 on the Paperwhite).
 const library_slack: u32 = 4 << 20;
 
 comptime {

@@ -34,8 +34,18 @@ pub const Shown = union(enum) { picture: u64, book: u64, no_book };
 pub const Kept = struct {
     saved: []u8, // The screen under it, to put back on waking
     cover: []u8, // What the lock screen last drew, full screen
+
     shown: ?Shown = null, // What `cover` holds, so it isn't drawn again; null at first
     picture_bad: ?u64 = null, // A picture of the reader's that didn't decode, by its hash
+
+    /// Whole screens it keeps, as setup.zig counts them: one a field that holds one.
+    pub const screens_kept = screens: {
+        var count = 0;
+        for (@typeInfo(Kept).@"struct".field_types) |field_type| {
+            if (field_type == []u8) count += 1;
+        }
+        break :screens count;
+    };
 
     /// Room for a screen of `pixels` under the lock screen and one for what it draws,
     /// made in `alloc`.

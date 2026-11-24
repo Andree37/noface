@@ -81,8 +81,9 @@ pub fn find_pages(
     const stored_pages = page_store.load(alloc, pages_path, pages_key, paragraphs);
     // The place's file, its path in the book's memory, as long as the book is open; read
     // once, here: whether it can be saved over is decided as the book opens
-    var place = options.adopted.kept(.state, try alloc.dupeSentinel(u8, options.state_path, 0));
-    const saved = renumbered(state.load(&place), paragraphs);
+    const own = state.open_own(try alloc.dupeSentinel(u8, options.state_path, 0), options.adopted);
+    const place = own.kept;
+    const saved = renumbered(own.saved, paragraphs);
     const from_kindle = state.prefer_kindle(saved, entry.kindle_last);
     // Without saved breaks, lay out a little from the reader's place and show it at
     // once; the rest follows in idle moments. Stock's place is a percent of the

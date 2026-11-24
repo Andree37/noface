@@ -703,7 +703,7 @@ const Browser = struct {
         if (said.len > 0) b.notice = said;
         b.lib.save(id, closed.progress); // Its place and time read, in the library's index
         if (outcome == .quit) {
-            if (b.notice.len > 0) try app.show_notice(a, b.notice);
+            if (b.notice.len > 0) app.show_notice(a, b.notice);
             return .leave;
         }
         b.status_until = now_us() + status_watch_us; // Wi-Fi coming back, and the like

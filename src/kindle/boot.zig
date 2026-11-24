@@ -37,14 +37,18 @@ pub const Decision = union(enum) {
     off,
     /// Too many failed starts: turn the setting off, and don't start.
     give_up,
+    /// On, but the count of failed boots can't be read: not started, as the guard
+    /// that stops a noface failing to start couldn't count this one.
+    uncounted,
     /// Start noface, noting this as attempt number `attempt`.
     start: u32,
 };
 
-/// What to do at boot, from the settings and the count of failed boots.
-pub fn decide(settings: *const settings_model.Settings, attempts_text: []const u8) Decision {
+/// What to do at boot, from the settings and the count of failed boots: its file's
+/// text, or null when it's there but unreadable.
+pub fn decide(settings: *const settings_model.Settings, attempts_text: ?[]const u8) Decision {
     if (!settings.autostart) return .off;
-    const attempts = parse_attempts(attempts_text);
+    const attempts = parse_attempts(attempts_text orelse return .uncounted);
     if (attempts >= attempts_max) return .give_up;
     return .{ .start = attempts + 1 };
 }
@@ -84,18 +88,18 @@ pub fn should_start() bool {
     // The reader's settings: one unreadable reads as autostart off, and is never written
     var settings_file = file.Kept.at(settings_path);
     var settings = settings_model.parse(settings_file.read(&settings_buffer));
-    if (!settings.autostart) return false; // Off: the count isn't looked at
-    // The count is noface's own: one there but unreadable can't be counted on, so it's
-    // handled as a count that can't be written, and noface isn't started
-    const attempts = file.read_small(attempts_path, &attempts_buffer) catch |err| switch (err) {
-        error.NotFound => "",
-        error.CantRead => {
+    // The count is noface's own: one there but unreadable is no count (`decide`)
+    const attempts: ?[]const u8 = file.read_small(attempts_path, &attempts_buffer) catch |err|
+        switch (err) {
+            error.NotFound => "",
+            error.CantRead => null,
+        };
+    switch (decide(&settings, attempts)) {
+        .off => return false,
+        .uncounted => {
             file.append_file(log_path, uncounted);
             return false;
         },
-    };
-    switch (decide(&settings, attempts)) {
-        .off => return false,
         .give_up => {
             // Written as noface writes it: every other setting stays as it was
             settings.autostart = false;
@@ -138,6 +142,9 @@ test "autostart starts only when on, and gives up after three failed boots" {
     try std.testing.expectEqual(Decision{ .start = 3 }, decide(&on, "2\n"));
     try std.testing.expectEqual(Decision.give_up, decide(&on, "3\n"));
     try std.testing.expectEqual(Decision{ .start = 1 }, decide(&on, "junk"));
+    // A count that can't be read: off says nothing of it, on doesn't start
+    try std.testing.expectEqual(Decision.off, decide(&off, null));
+    try std.testing.expectEqual(Decision.uncounted, decide(&on, null));
 }
 
 test "giving up turns the setting off and keeps the rest, the reader's own typeface too" {

@@ -614,7 +614,7 @@ fn is_budgeted(path: []const u8) bool {
     assert(path.len > 0);
     assert(!std.fs.path.isAbsolute(path)); // From the repository's root, as every rule's
     if (!std.mem.startsWith(u8, path, "src/")) return false;
-    if (std.mem.startsWith(u8, path, "src/scenarios/")) return false;
+    if (is_scenarios(path)) return false;
     if (std.mem.startsWith(u8, path, "src/testing/")) return false;
     return !std.mem.eql(u8, path, "src/base/memory.zig");
 }

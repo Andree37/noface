@@ -252,7 +252,7 @@ pub fn begin(viewer: *Viewer, a: *app.App, img: book_model.Image) !?screen.Frame
     const alloc = viewer.budget.allocator();
     viewer.saved = try alloc.dupe(u8, a.display.screen.pixels);
     const picture = decode(alloc, img) orelse {
-        try app.show_notice(a, "This picture can't be shown larger.");
+        app.show_notice(a, "This picture can't be shown larger.");
         // The notice was drawn over the page: put the page back
         try a.display.present(viewer.saved, .page);
         viewer.release();

@@ -487,6 +487,7 @@ fn open_index(sources: Sources, s: *State) void {
     // Before the list is read, so a change made while it's read shows next time
     s.catalog_seen = CatalogFacts.read();
     const scratch = sources.scratch;
+    scratch.restart(); // Its report this load's own
     // What the load took, said before it's let go of
     defer scratch.reset(.give_back);
     defer scratch.report();
@@ -1056,7 +1057,8 @@ test "a Kindle book whose place can't be read keeps how far it was through a reb
     defer test_folder_remove(root);
     var path: [file.own_path_bytes_max]u8 = undefined;
     const dune = "/mnt/us/documents/Dune.azw3";
-    const rows = "\n" ++ dune ++ "\tDune\tA\t0\t0\t0\t\t0\t0\n";
+    // And a book in the cloud, which has no file, so no path
+    const rows = "\n" ++ dune ++ "\tDune\tA\t0\t0\t0\t\t0\t0\n" ++ "\tAway\tB\t0\t0\t0\t\t0\t1\n";
     try test_write(try std.fmt.bufPrintSentinel(&path, "{s}/catalog", .{root}, 0), rows);
     var t: TestLibrary = undefined;
     try t.init(root);

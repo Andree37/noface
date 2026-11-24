@@ -20,16 +20,18 @@
   <a href="docs/DEVELOPING.md">Developing</a>
 </p>
 
-<p align="center"><img src="docs/speed.gif" width="600" alt="The device's own reader and noface side by side, turning pages of the same book: the own reader's new page appears about 300 ms after the tap, noface's about 60 ms after"></p>
+<p align="center"><a href="docs/speed.mp4"><img src="docs/speed.gif" width="720" alt="The stock reader and noface side by side doing the same things in the same book: four page turns, opening the toolbar, opening the contents, going to a chapter and two more page turns. Under each, the time each step took."></a></p>
 
-<p align="center"><b>New page in ~60 ms with noface, ~330 ms with the device's own reader.</b><br>
-<sub>Same e-reader, same book, measured on the device. <a href="docs/DEVELOPING.md#how-the-speed-comparison-was-measured">How</a>.</sub></p>
+<p align="center"><b>Same book, same steps, on the same e-reader.</b><br>
+Page turn: about 90 ms with noface, about 300 ms with the stock reader.<br>
+Going to a chapter: 84 ms with noface, 1.2 s with the stock reader.<br>
+<sub>Measured on the device, from finger down until the new screen is complete. <a href="docs/DEVELOPING.md#how-the-speed-comparison-was-measured">How</a> · <a href="docs/speed.mp4">Video</a></sub></p>
 
 ## About
 
 noface replaces the home screen and the reader on an e-reader. It was written because
 the device's own reader takes about a third of a second to show the next page; noface
-takes about 60 ms on the same device.
+takes under a tenth of a second on the same device.
 
 It works with the books already on your device and with EPUBs you copy over USB.
 Highlights on books from the device's store still sync with its apps, and Wi‑Fi, sync
@@ -38,7 +40,8 @@ can go back to it from noface's panel at any time.
 
 ## Features
 
-- Pages turn in about 60 ms, against about 330 ms in the device's own reader.
+- Pages turn in about 90 ms, against about 300 ms in the device's own reader, and the
+  toolbar, contents and chapter jumps are just as quick.
 - The home screen shows your books only. The store, recommendations and ads aren't
   part of it.
 - EPUBs copied over USB show up in the library and open in noface, with no conversion.

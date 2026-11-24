@@ -302,14 +302,18 @@ only the one loop.
 
 ## How the speed comparison was measured
 
-`docs/speed.gif` was recorded on a Kindle Paperwhite 12th gen with `tools/fbrec`
-(the screen's memory, 30 frames a second, each with its time) while `tools/xtap`
-(stock reader) and `tools/touchsim` (noface) tapped to turn eight pages of the same
-public-domain book. The time is from the tap until the new page is in the screen's
-memory; the e‑ink panel's own refresh follows and takes the same time in both. The
-book is Project Gutenberg's edition of *Pride and Prejudice*, with Hugh Thomson's 1894
-illustrations.
-
+`docs/speed.gif`, and the video it's made from, `docs/speed.mp4`, were recorded on a
+Kindle Paperwhite 12th gen with `tools/fbrec`, the screen's memory 30 frames a second,
+each frame with its time. Both readers do the same steps in Project Gutenberg's edition
+of *Pride and Prejudice*, with Hugh Thomson's 1894 illustrations, starting from its
+cover: four page turns, the toolbar, the contents, Chapter V, and two more page turns.
+`tools/xtap` tapped the stock reader, logging each finger down on the recorder's clock;
+`tools/e2e` played the same steps on noface, its `drawn` check timing each from the
+finger's lift, to which the tap's 80 ms down is added. A step's time runs from the
+finger down until its screen is last drawn before the next tap: the stock reader draws
+some steps in stages (its chapter jump first closes the contents, then shows the
+chapter), and the time is to the last of them. The e‑ink panel's own refresh follows
+and takes the same time in both, so it's left out.
 
 ## Tests
 

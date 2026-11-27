@@ -24,6 +24,7 @@ const user_data = @import("../user_data.zig");
 const page_store = @import("../screens/reader/page_store.zig");
 const os = @import("../sys/os.zig");
 const reader = @import("../screens/reader.zig");
+const lipc = @import("../kindle/lipc.zig");
 const library_screen = @import("../screens/library.zig");
 const style = @import("../ui/style.zig");
 const toolbar = @import("../ui/toolbar.zig");
@@ -826,6 +827,8 @@ pub fn play_on_run(a: *app.App, kindle: Kindle, book_path: [:0]const u8, dir: []
     if (kindle.library) {
         try library_screen.run_library(a);
     } else {
+        // Read once up front, as noface's start does in the library before any book
+        a.quick = lipc.read(a.quick);
         const progress = try reader.read_book(a, &entry);
         return .{ .ms = real_ms() - t0, .book_last = progress.last };
     }

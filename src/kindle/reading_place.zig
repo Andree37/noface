@@ -97,17 +97,11 @@ pub fn look(entry: *const catalog.Entry, paragraphs: []const book_model.Paragrap
     return .{ .answer = newest(rows, paragraphs), .book = book };
 }
 
-/// Keeps `at` as the book's place on this Kindle and queues it for Amazon, stamped
-/// `when_s`, the time noface saved it with. True when the database took it.
-pub fn keep(
-    book: *const Book,
-    paragraphs: []const book_model.Paragraph,
-    at: book_model.Pos,
-    when_s: u64,
-) bool {
-    assert(at.para < paragraphs.len);
+/// Keeps `short`, a place in Amazon's positions (`position`), as the book's place on
+/// this Kindle and queues it for Amazon, stamped `when_s`, the time noface saved it
+/// with. True when the database took it.
+pub fn keep(book: *const Book, short: u32, when_s: u64) bool {
     assert(when_s > 0); // A save's time
-    const short = short_before(paragraphs, at) orelse return false;
     var buf: [keep_sql_bytes_max]u8 = undefined;
     const sql = keep_sql(&buf, book, short, when_s * std.time.ms_per_s) catch return false;
     return annotation_db.run_annotation_sql(sql);
@@ -151,7 +145,7 @@ pub fn send() void {
 
 /// Amazon's position for `at`, or for the start of the nearest paragraph before it that
 /// Amazon numbers: a place in one it doesn't number goes by that.
-fn short_before(paragraphs: []const book_model.Paragraph, at: book_model.Pos) ?u32 {
+pub fn position(paragraphs: []const book_model.Paragraph, at: book_model.Pos) ?u32 {
     assert(at.para < paragraphs.len);
     assert(at.byte <= paragraphs[at.para].text.len);
     if (highlights.short_at(&paragraphs[at.para], at.byte)) |short| return short;

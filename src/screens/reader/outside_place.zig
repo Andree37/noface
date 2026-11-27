@@ -53,6 +53,26 @@ pub fn start_over(a: *const app.App, entry: *const catalog.Entry, marked_at: u64
     return reading_place.start_over(entry, marked_at);
 }
 
+/// A place to keep outside noface: made while the book is open, from its text, and
+/// kept then or after it has closed, as it borrows nothing of the book's.
+/// Asks the device to send what was kept, as the book closes.
+pub fn send() void {
+    reading_place.send();
+}
+
+pub const Kept = struct {
+    book: reading_place.Book,
+    short: u32, // In the device's own numbering (`reading_place.position`)
+    when_s: u64,
+
+    pub fn keep(k: *const Kept) void {
+        assert(k.when_s > 0);
+        if (!reading_place.keep(&k.book, k.short, k.when_s)) {
+            log.info("place not kept outside noface", .{});
+        }
+    }
+};
+
 pub const OutsidePlace = struct {
     /// The book as the device names it, its place kept by that: null when nothing may
     /// be written (no counterpart on the device, device tests, or an answer that
@@ -65,21 +85,21 @@ pub const OutsidePlace = struct {
     title: [title_bytes_max]u8 = undefined,
     note: [note_bytes_max]u8 = undefined,
 
-    /// Keeps the session's place outside noface, stamped with the time its own save
-    /// just gave it, so it never reads back as a later one.
-    pub fn keep(o: *const OutsidePlace, s: *const sess.Session) void {
+    /// The session's place, to keep outside noface, stamped with the time its own save
+    /// just gave it, so it never reads back as a later one: null when there's nowhere
+    /// to keep it, or the device numbers no place before it.
+    pub fn to_keep(o: *const OutsidePlace, s: *const sess.Session) ?Kept {
         assert(s.anchor.para < s.paragraphs.len);
         assert(s.saved.opened > 0); // Kept only after a save landed
-        const book = if (o.book) |*b| b else return;
-        if (!reading_place.keep(book, s.paragraphs, s.anchor, s.saved.opened)) {
-            log.info("place not kept outside noface", .{});
-        }
+        const book = o.book orelse return null;
+        const short = reading_place.position(s.paragraphs, s.anchor) orelse return null;
+        return .{ .book = book, .short = short, .when_s = s.saved.opened };
     }
 
-    /// Asks the device to send what was kept, as the book closes.
-    pub fn send(o: *const OutsidePlace) void {
-        if (o.book == null) return; // Nothing was kept
-        reading_place.send();
+    /// Keeps the session's place outside noface now.
+    pub fn keep(o: *const OutsidePlace, s: *const sess.Session) void {
+        const kept = o.to_keep(s) orelse return;
+        kept.keep();
     }
 
     /// The card asking whether to go to the offered place, over the page as it is.

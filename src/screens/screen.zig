@@ -114,6 +114,12 @@ fn interrupts(action: Action) bool {
     return takes_it(all, action);
 }
 
+/// How soon after a screen is shown it does what can wait for it to be: reading the
+/// status, writing out the book list. At once, once it's shown: a screen counts as shown
+/// once it's drawn, and a tap touched before that is dropped, so doing it while drawing
+/// would lose the taps of a reader who saw the screen and went on.
+pub const after_shown_us = 1000;
+
 /// The most screens open at once, each over the one before: the library, a book, a
 /// card over it, a list from the card, a list from that, the keyboard, and the lock
 /// screen over them all, with room to spare.

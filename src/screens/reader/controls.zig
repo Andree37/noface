@@ -62,6 +62,10 @@ pub fn draw_toolbar(a: *app.App, s: *sess.Session, book: Book, drawn: Drawn) !vo
 pub fn close_toolbar(a: *app.App, s: *sess.Session, sheet_open: bool) !void {
     assert(s.current < s.pages.len);
     @memcpy(a.display.screen.pixels, try s.ensure(s.current, s.current));
+    // The page's clock, as it is now, shown with the top bar's band it sits in: one
+    // refresh, where a second for the clock alone blinked it
+    comptime assert(app.clock_top_px + app.clock_height_px <= toolbar.top_height);
+    a.stamp_clock();
     // The page under the bars is all that changed
     assert(a.display.screen.pixels.len > 0);
     try show_bars(a, s, sheet_open);
@@ -278,6 +282,7 @@ pub fn tap_sheet(
     }
     try sess.relayout(a, s);
     try draw_toolbar(a, s, book, .{ .sheet_open = true, .whole_page = true });
+    a.user.save_settings(); // Once it's shown (`sess.relayout`)
     return .done;
 }
 
@@ -299,12 +304,12 @@ fn flip(
             try draw_toolbar(a, s, book, .{ .sheet_open = true, .whole_page = true });
         },
         .footer, .nothing => {
-            a.user.save_settings();
             // The footer is drawn into each page
             if (switch_hit.effect == .footer) a.display.forget_pages();
             try draw_toolbar(a, s, book, .{ .sheet_open = true, .whole_page = false });
         },
     }
+    a.user.save_settings(); // Once it's shown: a save on the user drive takes a while
 }
 
 /// Before a switch with this guard turns on: a card asking, or saying what's
@@ -385,6 +390,8 @@ pub fn resumed(
             }
             try draw_toolbar(a, s, book, .{ .sheet_open = true, .whole_page = true });
             if (lifted) try a.display.clean_band(setting.row.top, aa.row_height);
+            // Once it's shown (`sess.relayout`), and only when it changed
+            if (lifted and setting.value != setting.started) a.user.save_settings();
         },
         .autostart => |ask| {
             try card_screen.closed(a, ask.background);
@@ -394,8 +401,9 @@ pub fn resumed(
             app.show_notice(a, "Couldn't set up starting with the Kindle.");
         },
         .lock_picture => |ask| {
-            try card_screen.closed(a, ask.background);
-            try draw_toolbar(a, s, book, sheet_only);
+            // The card's page and the sheet over it drawn whole, in one refresh
+            card_screen.closed_quietly(a, ask.background);
+            try draw_toolbar(a, s, book, .{ .sheet_open = true, .whole_page = true });
         },
     }
 }

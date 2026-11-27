@@ -144,13 +144,25 @@ pub const More = struct {
     pub fn on_resume(m: *More) !screen.Step(Outcome) {
         switch (m.phase) {
             .menu => {
-                try card_screen.closed(m.a, m.background);
                 const picked = switch (m.card_ending.?) {
                     .done => |picked| picked,
-                    .closed, .interrupted => return .{ .done = .stay },
+                    .closed, .interrupted => {
+                        // The reader draws the toolbar and its page whole next
+                        card_screen.closed_quietly(m.a, m.background);
+                        return .{ .done = .stay };
+                    },
                 };
                 assert(picked < m.list.len);
-                return m.chosen(m.list[picked]);
+                const option = m.list[picked];
+                // Go to page opens its keys over part of the screen: the rest shown first.
+                // Every other choice ends in the reader drawing the screen whole, or in a
+                // card drawn whole over the same page
+                if (option == .go_to_page) {
+                    try card_screen.closed(m.a, m.background);
+                } else {
+                    card_screen.closed_quietly(m.a, m.background);
+                }
+                return m.chosen(option);
             },
             .page_number => {
                 const index = switch (m.page_ending.?) {
@@ -161,7 +173,8 @@ pub const More = struct {
                 return .{ .done = .{ .page = index } };
             },
             .details => {
-                try card_screen.closed(m.a, m.background);
+                // The reader draws the toolbar and its page whole next
+                card_screen.closed_quietly(m.a, m.background);
                 return .{ .done = .stay };
             },
         }

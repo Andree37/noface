@@ -61,6 +61,22 @@ comptime {
     assert(clock_check_us < wifi_retry_us);
 }
 
+/// What's left of closing a book once the library is back: its place kept outside
+/// noface, Wi-Fi back on, and the sync asked for, in that order. Done just after the
+/// library is shown, or at once when noface leaves, so the library never waits for it.
+/// It borrows nothing of the book's, whose memory has been let go of by then.
+pub const Leaving = struct {
+    place: ?outside_place.Kept = null,
+    restores_wifi: bool = false, // Read in: Wi-Fi may have been paused meanwhile
+    sends: bool = false, // The device's own place was asked for, so it's told of noface's
+
+    pub fn finish(l: *const Leaving) void {
+        if (l.place) |*kept| kept.keep();
+        if (l.restores_wifi) wifi_saver.restore(); // Leaving the book, Wi-Fi comes back
+        if (l.sends) outside_place.send(); // With Wi-Fi back
+    }
+};
+
 /// How a book closed: back to the library, leaving noface, or on an error, either
 /// before its first page was read (`failed`, it can't be opened) or after (`stopped`).
 pub const Outcome = enum { library, quit, failed, stopped };
@@ -71,6 +87,7 @@ pub fn read_book(a: *app.App, entry: *const catalog.Entry) !catalog.Progress {
     var r: Reader = undefined;
     try open(&r, a, entry);
     const ending = try screen.run_root(a, &r);
+    r.leaving.finish(); // No library to come back to: at once
     // A book takes the lock and leaving, so it only ever ends itself
     assert(ending == .done);
     assert(a.regions.book.empty()); // Closing, it let go of its memory
@@ -215,11 +232,17 @@ pub const Reader = struct {
     reading_started: bool = false, // The first page shown, so its place is saved on leaving
     /// Whether the place's last save landed: the library says so as the book closes.
     place_saved: bool = true,
+    /// What's left to do once the book has closed, for the library (`Leaving`).
+    leaving: Leaving = .{},
     failed: ?anyerror = null, // The first page couldn't be shown
     view: View = .page,
     since_save: u32 = 0,
     last_place: u32 = 0,
     battery_minute: u64 = 0, // The battery is noted once a minute at most
+    /// The status (battery, Wi-Fi, the panel's switches) may have changed since it was
+    /// read: after waking or a charger. Only the toolbar shows it, so it's read just
+    /// after the toolbar is shown (`screen.after_shown_us`), never before a draw.
+    status_stale: bool = true,
     /// What's open over the book, if anything, with how it ended once it has; those
     /// that keep their state across openings (a picture, words being selected, Aa's
     /// controls) keep it in their own fields. `opening` is one a handler has just made,
@@ -303,6 +326,7 @@ pub const Reader = struct {
             }
         }
         if (r.s.layout_pending()) tick_us = layout_tick_us;
+        if (r.status_due()) tick_us = screen.after_shown_us;
         // The Back button counts, where a resting thumb otherwise wouldn't
         const exempt = if (r.reading()) r.s.back_zone() else null;
         assert(tick_us > 0);
@@ -440,8 +464,9 @@ pub const Reader = struct {
     fn woken(r: *Reader) !void {
         assert(!r.a.input.locked);
         r.a.note_battery(); // What sleeping cost
-        r.a.quick = lipc.read(r.a.quick); // Hours may have passed
-        try r.show_status();
+        r.status_stale = true; // Hours may have passed: read once the toolbar shows
+        // The page's clock came back with it (`lock.Options.page_clock`)
+        if (r.view != .page) try r.show_status();
         assert(r.since_save == 0);
     }
 
@@ -458,10 +483,8 @@ pub const Reader = struct {
         switch (action) {
             .lock => return r.on_lock(),
             .tick => try r.on_tick_any(),
-            .charger => {
-                r.a.quick = lipc.read(r.a.quick);
-                try r.show_status();
-            },
+            // The bolt shows in the toolbar, read once it's shown
+            .charger => r.status_stale = true,
             .power, .computer, .stop => return r.finish(.quit),
             .unlock, .drag, .drag_end => {},
             .tap, .hold, .swipe, .pull => {
@@ -511,9 +534,13 @@ pub const Reader = struct {
                 .failed, .stopped => null,
             };
             r.place_saved = sess.save_progress(&r.read_so_far, r.s, percent);
-            if (r.place_saved) r.outside.keep(r.s);
-            wifi_saver.restore(); // Leaving the book, Wi-Fi comes back
-            r.outside.send(); // With Wi-Fi back, as the book closes
+            sess.save_learned(r.s);
+            // The rest once the library is back (`Leaving`): made now, from the text
+            r.leaving = .{
+                .place = if (r.place_saved) r.outside.to_keep(r.s) else null,
+                .restores_wifi = true,
+                .sends = r.outside.book != null,
+            };
         }
         r.release();
         assert(r.a.regions.book.empty());
@@ -601,6 +628,23 @@ pub const Reader = struct {
         }
     }
 
+    /// Whether the status is to be read now: out of date, with the toolbar showing it.
+    fn status_due(r: *const Reader) bool {
+        return r.status_stale and r.view == .toolbar;
+    }
+
+    /// The status read again, just after the toolbar is shown, and the toolbar drawn
+    /// again only if something changed.
+    fn read_status(r: *Reader) !void {
+        assert(r.status_due());
+        r.status_stale = false;
+        const fresh = lipc.read(r.a.quick);
+        if (fresh.same(&r.a.quick)) return;
+        r.a.quick = fresh;
+        try r.draw_toolbar(false);
+        assert(!r.status_due());
+    }
+
     /// After the whole book is laid out: the page count, where it shows.
     fn show_page_count(r: *Reader) !void {
         // Called once the layout is done, with the count known
@@ -656,15 +700,19 @@ pub const Reader = struct {
             run.release_awake();
         }
         r.save(); // A lock is a natural stop, and anything after it may end noface
+        sess.save_learned(r.s);
         assert(r.since_save == 0);
         if (r.place_saved) r.outside.keep(r.s);
-        r.open_child(.{ .lock = .{ .screen = lock.make(r.a, r.entry, .{}) } });
+        // The page's clock is drawn afresh as it's put back, in the same refresh
+        const options: lock.Options = .{ .page_clock = r.view == .page };
+        r.open_child(.{ .lock = .{ .screen = lock.make(r.a, r.entry, options) } });
         return r.after();
     }
 
     fn on_tick_any(r: *Reader) !void {
         r.invariants();
         const a = r.a;
+        if (r.status_due()) try r.read_status();
         if (r.s.layout_pending()) { // A first open laid out a little more
             if (try r.s.layout_step()) try r.show_page_count();
             // Running goes on meanwhile: its pages are laid out ahead as it turns
@@ -954,10 +1002,9 @@ pub const Reader = struct {
         // Its controls reach the bottom edge before the next touch arrives
         r.a.input.apply(r.setting(), false);
         try r.draw_toolbar(false);
-        const fresh = lipc.read(r.a.quick);
-        if (fresh.same(&r.a.quick)) return;
-        r.a.quick = fresh;
-        try r.draw_toolbar(false);
+        // Read just after it's shown, so its first taps aren't kept waiting
+        r.status_stale = true;
+        assert(r.status_due());
     }
 
     fn on_toolbar(r: *Reader, action: input_mod.Action) !?Outcome {
@@ -978,7 +1025,6 @@ pub const Reader = struct {
             .close => {
                 try controls.close_toolbar(a, s, r.sheet() != null);
                 r.view = .page;
-                try a.update_clock();
             },
             .text => {
                 const opening = r.sheet() == null;

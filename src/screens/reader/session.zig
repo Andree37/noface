@@ -608,6 +608,15 @@ fn middle_of(h: text.Hit) style.Point {
     return .{ .x = h.x + @divTrunc(h.w, 2), .y = h.y + @divTrunc(h.h, 2) };
 }
 
+/// Saves what reading the book has taught: the reading speed and the day's reading.
+/// Only on locking and closing, not with every place: each is a write on the user
+/// drive, and a page turn would wait for it.
+pub fn save_learned(s: *const Session) void {
+    assert(s.current < s.pages.len);
+    s.app.user.save_speed();
+    s.app.user.save_journal();
+}
+
 /// Saves the reader's place, `s.anchor`, which stays what they're at even while the
 /// pages are being laid out again or failed to be. `percent` is how far in they are,
 /// or null when the pages don't say (see `Session.percent`): then it's the words
@@ -640,8 +649,6 @@ pub fn save_progress(progress: *catalog.Progress, s: *Session, percent_read: ?u3
     saved.outside_end = platform.reading_place.end(s.paragraphs);
     const place_saved = state.save(&s.place, saved);
     s.saved = saved; // What the next save changes, whether this one landed or not
-    s.app.user.save_speed();
-    s.app.user.save_journal();
     // The library shows what's saved: a place unreadable as the book opened isn't, nor
     // one the drive didn't take
     if (!place_saved) return false;
@@ -681,7 +688,8 @@ const pages_fallback = [_]book_model.Pos{.{}};
 /// Re-lays out the book after a text setting changed, keeping the reading position.
 /// The new pages go in the pages region, emptied first: the pages of the last change,
 /// and of a layout still running for it, are no longer wanted, so changing settings
-/// again and again takes no more memory.
+/// again and again takes no more memory. The caller saves the settings once the page
+/// is drawn: a save on the user drive can take a while, and the drawing never waits.
 pub fn relayout(a: *app.App, s: *Session) !void {
     assert(s.current < s.pages.len);
     assert(a.regions.pages_budget.region.?.kind == .bump);
@@ -693,7 +701,6 @@ pub fn relayout(a: *app.App, s: *Session) !void {
         app.show_notice(a, "That setting couldn't be used here.");
         return;
     };
-    a.user.save_settings();
     a.display.forget_pages();
     const t0 = now_us();
     const pages_key = page_store.key(a, s.book_bytes, s.book_text());

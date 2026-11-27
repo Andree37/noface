@@ -21,11 +21,14 @@ fn reading_place_of(comptime family: models.Family) type {
 }
 
 /// What every family's reading place module has. `Book` is the family's own name for a
-/// book, copied as it opens; the rest is in noface's own numbering.
+/// book, copied as it opens. Places are in noface's own numbering, but for `position`
+/// and `end`, which turn a place and the book's end into the device's own, as `keep`
+/// takes it and the library reads it.
 fn expect_reading_place(comptime M: type) void {
     const Book = M.Book;
     expect(M, "look", fn (*const catalog.Entry, []const book_model.Paragraph) M.Found);
-    expect(M, "keep", fn (*const Book, []const book_model.Paragraph, book_model.Pos, u64) bool);
+    expect(M, "position", fn ([]const book_model.Paragraph, book_model.Pos) ?u32);
+    expect(M, "keep", fn (*const Book, u32, u64) bool);
     expect(M, "send", fn () void);
     expect(M, "start_over", fn (*const catalog.Entry, u64) bool);
     expect(M, "end", fn ([]const book_model.Paragraph) ?u32);

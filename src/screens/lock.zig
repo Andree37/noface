@@ -27,8 +27,9 @@ comptime {
 }
 
 /// `restore` puts the screen from before back on waking; a caller that redraws
-/// everything anyway passes false, saving a whole-screen refresh.
-pub const Options = struct { restore: bool = true };
+/// everything anyway passes false, saving a whole-screen refresh. `page_clock`: what's
+/// put back is a book's page, whose clock is drawn afresh into it, in the same refresh.
+pub const Options = struct { restore: bool = true, page_clock: bool = false };
 
 /// The lock screen, to open over the library or a book while the Kindle sleeps: the
 /// book's cover, drawn again when stock paints over it, until the Kindle wakes (done)
@@ -114,7 +115,14 @@ pub const Lock = struct {
         assert(l.a.input.locked);
         l.a.input.last_input = now_us();
         if (l.options.restore) {
-            l.a.display.present(l.a.lock_kept.saved, .flash) catch |err| {
+            const screen_now = l.a.display.screen;
+            @memcpy(screen_now.pixels, l.a.lock_kept.saved);
+            if (l.options.page_clock) l.a.stamp_clock();
+            const shown = screen_now.show(.flash) catch |err| {
+                std.debug.print("screen not put back: {s}\n", .{@errorName(err)});
+                return;
+            };
+            screen_now.wait_complete(shown) catch |err| {
                 std.debug.print("screen not put back: {s}\n", .{@errorName(err)});
             };
         }

@@ -221,9 +221,15 @@ const Browser = struct {
     /// The minute (since 1970) the status was last read in: the strip along the top is
     /// read again once a new one has begun, however often the library ticks.
     status_minute: u64 = 0,
-    /// Woken and drawn as it was before sleeping: the status and the list are read
-    /// again on the first tick, a moment after it's shown (`on_woken_read`).
-    woken: bool = false,
+    /// Woken and drawn as it was before sleeping: the book list is written out afresh
+    /// on the first tick, a moment after it's shown (`on_woken_read`).
+    list_stale: bool = false,
+    /// Drawn whole with the status as last read: it's read again on the first tick, a
+    /// moment after the library is shown, so the drawing never waits for it.
+    status_stale: bool = false,
+    /// What's left of a book just closed (`reader.Leaving`): done on the first tick, a
+    /// moment after the library is shown, or before anything else that comes first.
+    leaving: ?reader.Leaving = null,
 
     /// The screens the library opens over itself, each kept with its ending.
     const Over = union(enum) {
@@ -276,31 +282,34 @@ const Browser = struct {
     pub fn setting(b: *const Browser) input_mod.Input.Scope {
         const now = now_us();
         var tick_us: u64 = idle_tick_us;
-        if (b.woken) {
-            tick_us = woken_read_after_us;
+        if (b.list_stale or b.status_stale or b.leaving != null) {
+            tick_us = screen.after_shown_us;
         } else if (b.watching(now)) {
             tick_us = download_poll_us;
         } else if (now < b.status_until) {
             tick_us = status_poll_us;
         }
-        if (!b.woken) assert(tick_us >= download_poll_us);
+        if (tick_us != screen.after_shown_us) assert(tick_us >= download_poll_us);
         assert(tick_us <= idle_tick_us);
         return .{ .modes = touches, .tick_us = tick_us };
     }
 
     pub fn on_tap(b: *Browser, t: screen.Tap) !screen.Step(void) {
         assert(b.index < library.page_count(b.lib.count()));
+        b.finish_leaving();
         return step(try b.on_tap_at(t.x, t.y));
     }
 
     pub fn on_tick(b: *Browser) !screen.Step(void) {
         assert(b.index < library.page_count(b.lib.count()));
+        b.finish_leaving();
         return step(try b.on_tick_next());
     }
 
     pub fn on_action(b: *Browser, action: input_mod.Action) !screen.Step(void) {
         assert(b.index < library.page_count(b.lib.count())); // A page of the books shown
         assert(b.buf.len == b.a.display.screen.pixels.len);
+        b.finish_leaving(); // Before locking or leaving, too
         const next: Next = switch (action) {
             .tap, .tick => unreachable, // `on_tap` and `on_tick` take those
             .hold => |h| try b.on_hold(h.x, h.y),
@@ -308,13 +317,21 @@ const Browser = struct {
             .pull => b.open_panel(),
             .lock => b.on_lock(),
             .charger => blk: {
-                try b.refresh_status(.strip);
+                b.status_stale = true; // Read on the next tick, at once
                 break :blk .nothing;
             },
             .power, .computer, .stop => .leave,
             .drag, .drag_end, .unlock => .nothing,
         };
         return step(next);
+    }
+
+    /// What's left of the book just closed, done now if it isn't yet.
+    fn finish_leaving(b: *Browser) void {
+        const leaving = b.leaving orelse return;
+        b.leaving = null;
+        leaving.finish();
+        assert(b.leaving == null);
     }
 
     /// What `Next` asks of the screen.
@@ -379,6 +396,7 @@ const Browser = struct {
                     .was_read = open.was_read,
                     .place_saved = open.child.screen.place_saved,
                     .progress = open.child.screen.read_so_far,
+                    .leaving = open.child.screen.leaving,
                 };
                 const id = open.id;
                 const entry = open.child.screen.entry;
@@ -457,7 +475,7 @@ const Browser = struct {
         try b.present(.flash);
         b.notice = "";
         a.note_battery();
-        try b.refresh_status(.screen);
+        b.status_stale = true; // Read once it's shown (`on_tick_next`)
         // A notice is for one drawing only
         assert(b.notice.len == 0);
     }
@@ -646,6 +664,7 @@ const Browser = struct {
     /// Reads a book, and on finishing one of a series offers the next, to go straight
     /// on with. Each next book is further on in its series, so none comes round twice.
     fn open_book(b: *Browser, chosen: Picked) !Next {
+        b.finish_leaving(); // The last book's, before this one's
         const entry = chosen.entry;
         // Only books on the Kindle are opened: the hero, a book on it, a match, or the
         // next of a series
@@ -665,6 +684,7 @@ const Browser = struct {
                 .was_read = was_read,
                 .place_saved = true, // Never opened: never saved, nothing lost
                 .progress = .of(entry.*), // Nor read
+                .leaving = .{}, // Nor anything to finish
             };
             return b.book_closed(chosen.id, entry, failed);
         };
@@ -678,6 +698,7 @@ const Browser = struct {
         was_read: bool,
         place_saved: bool,
         progress: catalog.Progress, // How far it was read, as it closed
+        leaving: reader.Leaving, // What's left to do of it
 
         /// What the library says as it's back: said whatever the book's end, as a place
         /// the drive didn't take is lost.
@@ -708,7 +729,10 @@ const Browser = struct {
         const said = closed.notice();
         if (said.len > 0) b.notice = said;
         b.lib.save(id, closed.progress); // Its place and time read, in the library's index
+        assert(b.leaving == null); // The last book's was done before this one opened
+        b.leaving = closed.leaving; // Once the library is shown
         if (outcome == .quit) {
+            b.finish_leaving(); // No library shown: before noface goes
             if (b.notice.len > 0) app.show_notice(a, b.notice);
             return .leave;
         }
@@ -718,6 +742,7 @@ const Browser = struct {
         // The next is one not read yet, so never the book just finished
         assert(!next.entry.is_read());
         assert(next.id != id);
+        b.finish_leaving(); // The card may open the next book straight away
         b.over = .{ .up_next = .{ .offer = .{}, .next = next } };
         const offer = actions.up_next(a, next.entry, &b.over.up_next.offer) orelse {
             b.over = .none;
@@ -770,7 +795,12 @@ const Browser = struct {
     fn on_tick_next(b: *Browser) !Next {
         assert(b.index < library.page_count(b.lib.count())); // A page of the books shown
         assert(b.over == .none); // In front, ticking
-        if (b.woken) return b.on_woken_read();
+        if (b.list_stale) return b.on_woken_read();
+        if (b.status_stale) {
+            b.status_stale = false;
+            try b.refresh_status(.strip); // Only its strip, if it moved on
+            return .nothing;
+        }
         const now = now_us();
         // The status: the whole screen while it's settling after a book; else just the
         // strip, once a new minute has begun, the clock showing minutes, even while a
@@ -788,24 +818,23 @@ const Browser = struct {
     }
 
     /// The first tick after waking: the catalog written out afresh, for a download that
-    /// finished or a book another device read on while the Kindle slept, and the status.
-    /// A list that changed is shown whole, with the status; else only the status strip,
-    /// if it moved on.
+    /// finished or a book another device read on while the Kindle slept. A list that
+    /// changed is shown whole, its status read after it as any whole drawing's is; else
+    /// only the status strip, if it moved on.
     fn on_woken_read(b: *Browser) !Next {
-        assert(b.woken);
-        b.woken = false;
+        assert(b.list_stale);
+        b.list_stale = false;
         const a = b.a;
         const listed = file.facts_of(a.library_path);
         catalog_db.export_library();
         // Written over only when it says something new (catalog_export.zig)
         if (std.meta.eql(listed, file.facts_of(a.library_path))) {
+            b.status_stale = false;
             try b.refresh_status(.strip);
             return .nothing;
         }
-        a.quick = lipc.read(a.quick); // Drawn with the books
-        b.status_minute = os.unix_time() / std.time.s_per_min;
         b.reload(.as_is);
-        assert(!b.woken);
+        assert(!b.list_stale);
         return .everything;
     }
 
@@ -844,16 +873,10 @@ const Browser = struct {
         a.note_battery(); // What sleeping (or charging) did
         // Drawn at once, as it was before sleeping: the status and the list are read on
         // the first tick, once it's shown, so the wake waits for neither
-        b.woken = true;
+        b.list_stale = true;
         return .everything;
     }
 };
-
-/// How soon after waking, drawn, the library reads the status and the list: at once,
-/// once it's shown. A screen counts as shown once it's drawn, and a tap touched before
-/// that is dropped, so reading them while drawing would lose the taps of a reader who
-/// saw the library and went on.
-const woken_read_after_us = 1000;
 
 /// What the library says, once, as the books are put in `order`.
 fn sorted_notice(order: catalog.Order) []const u8 {
@@ -878,6 +901,7 @@ test "a place not saved is said however the book ended, and only then" {
         .was_read = false,
         .place_saved = true,
         .progress = progress,
+        .leaving = .{},
     };
     try std.testing.expectEqualStrings("", read.notice());
     var lost = read;

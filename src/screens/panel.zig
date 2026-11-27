@@ -12,9 +12,6 @@ const display = @import("../display.zig");
 const screen = @import("screen.zig");
 const input_mod = @import("../kindle/input.zig");
 
-/// How soon after it opens the panel reads the status: at once, once it's shown.
-const status_read_after_us = 1000;
-
 comptime {
     // A row is told apart from the other by its place alone
     assert(menu.warmth_row.y != menu.brightness_row.y);
@@ -388,7 +385,7 @@ pub const Panel = struct {
 
     /// Touches as a sheet takes them, and one tick at once, to read the status.
     pub fn setting(p: *const Panel) input_mod.Input.Scope {
-        const tick_us: ?u64 = if (p.status_read) null else status_read_after_us;
+        const tick_us: ?u64 = if (p.status_read) null else screen.after_shown_us;
         return .{ .modes = input_mod.Input.Modes.sheet, .tick_us = tick_us };
     }
 

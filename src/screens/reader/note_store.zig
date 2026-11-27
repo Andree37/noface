@@ -167,15 +167,13 @@ fn put_amazon(
     end: annotations.Point,
 ) bool {
     assert(!entry.is_epub());
-    if (!safe.safe_id(entry.key) or !safe.safe_id(entry.kind)) return false;
-    if (!safe.safe_id(id) or !safe.safe_guid(entry.guid)) return false;
+    const book = annotations.name_of(entry);
+    if (!book.is_safe() or !safe.safe_id(id)) return false;
     var buffer: [1200]u8 = undefined;
     const sql = annotations.insert_sql(&buffer, .{
         .kind = kind,
         .id = id,
-        .key = entry.key,
-        .content_type = entry.kind,
-        .guid = entry.guid,
+        .book = book,
         .start = start,
         .end = end,
         .now_ms = os.unix_time() * std.time.ms_per_s,

@@ -4,6 +4,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const check = @import("../base/check.zig");
 const safe = @import("safe.zig");
+const catalog = @import("../model/catalog.zig");
 
 /// The bytes of a long position, and their size in base64.
 const long_position_raw_size = 9;
@@ -91,12 +92,63 @@ pub const Kind = enum {
     }
 };
 
-pub const Record = struct {
-    kind: Kind = .highlight,
-    id: []const u8,
+/// A book as Amazon's records name it: its key, type and GUID, and whether the reader
+/// owns it, bought or sent rather than copied onto the Kindle. Every record of a book,
+/// a highlight or a place, is named from this, by `book_id` and `book_data`.
+pub const BookName = struct {
     key: []const u8,
     content_type: []const u8, // PDOC, EBOK and so on
     guid: []const u8,
+    owned: bool,
+
+    /// Whether every part can go into SQL: the ids as the Kindle makes them.
+    pub fn is_safe(b: BookName) bool {
+        return safe.safe_id(b.key) and safe.safe_id(b.content_type) and safe.safe_guid(b.guid);
+    }
+};
+
+/// How the records name a book in the library: owned unless copied onto the Kindle.
+pub fn name_of(entry: *const catalog.Entry) BookName {
+    assert(!entry.is_epub()); // Amazon names no EPUB copied over the cable
+    const name: BookName = .{
+        .key = entry.key,
+        .content_type = entry.kind,
+        .guid = entry.guid,
+        .owned = !entry.sideloaded,
+    };
+    assert(name.owned != entry.sideloaded);
+    return name;
+}
+
+/// A record's dataset id: the book's key, type and GUID, and its owned flag last.
+const book_id_format = "{s}-{s}-{s}-{d}";
+/// The book as a record's JSON holds it, its keys in the stock reader's order.
+const book_data_format = "{{\"asin\":\"{s}\",\"contentType\":\"{s}\",\"guid\":\"{s}\"," ++
+    "\"isOwnedByCustomer\":{d},\"isSample\":0}}";
+/// The longest of either, for a buffer to make it in.
+pub const book_name_bytes_max = book_data_format.len + 3 * safe.id_size_max + 1;
+
+pub fn book_id(buf: []u8, b: BookName) ![]const u8 {
+    check.that(b.is_safe(), "a book's ids were checked before they reach SQL");
+    const owned = @intFromBool(b.owned);
+    const id = try std.fmt.bufPrint(buf, book_id_format, .{ b.key, b.content_type, b.guid, owned });
+    assert(id.len > b.key.len);
+    return id;
+}
+
+pub fn book_data(buf: []u8, b: BookName) ![]const u8 {
+    check.that(b.is_safe(), "a book's ids were checked before they reach SQL");
+    const owned = @intFromBool(b.owned);
+    const parts = .{ b.key, b.content_type, b.guid, owned };
+    const data = try std.fmt.bufPrint(buf, book_data_format, parts);
+    assert(data[0] == '{');
+    return data;
+}
+
+pub const Record = struct {
+    kind: Kind = .highlight,
+    id: []const u8,
+    book: BookName,
     start: Point,
     end: Point,
     now_ms: u64,
@@ -108,9 +160,8 @@ const local_edit_columns = "(annotation_id, action, dataset, dataset_id, seriali
 
 /// A record as stock queues it: its row, with the record itself as JSON.
 const insert_format = "insert or replace into local_edit " ++ local_edit_columns ++
-    " values ('{s}',1,{d},'{s}-{s}-{s}-1','" ++
-    "{{\"book_data\":{{\"asin\":\"{s}\",\"contentType\":\"{s}\",\"guid\":\"{s}\"," ++
-    "\"isOwnedByCustomer\":1,\"isSample\":0}}," ++
+    " values ('{s}',1,{d},'{s}','" ++
+    "{{\"book_data\":{s}," ++
     "\"created_time\":{d}," ++
     "\"end_position\":{{\"longPosition\":\"{s}\",\"shortPosition\":{d}}}," ++
     "\"json_metadata\":\"{s}\",\"last_modified\":{d},\"position_type\":0," ++
@@ -120,18 +171,18 @@ const insert_format = "insert or replace into local_edit " ++ local_edit_columns
 /// The statement that queues a record for sync.
 pub fn insert_sql(buf: []u8, h: Record) ![]const u8 {
     check.that(safe.safe_id(h.id), "record ids were checked before they reach SQL");
-    check.that(safe.safe_id(h.key), "record keys were checked before they reach SQL");
-    check.that(safe.safe_id(h.content_type), "record types were checked before they reach SQL");
-    check.that(safe.safe_guid(h.guid), "record guids were checked before they reach SQL");
+    var id_buf: [book_name_bytes_max]u8 = undefined;
+    const dataset_id = try book_id(&id_buf, h.book);
+    var data_buf: [book_name_bytes_max]u8 = undefined;
+    const data = try book_data(&data_buf, h.book);
     var start_buf: [long_position_size]u8 = undefined;
     var end_buf: [long_position_size]u8 = undefined;
     const start = long_position(&start_buf, h.start.element, h.start.offset);
     const end = long_position(&end_buf, h.end.element, h.end.offset);
     const result = try std.fmt.bufPrint(buf, insert_format, .{
-        h.id,     h.kind.dataset(), h.key,          h.content_type,
-        h.guid,   h.key,            h.content_type, h.guid,
-        h.now_ms, end,              h.end.short,    h.kind.metadata(),
-        h.now_ms, start,            h.start.short,  h.kind.label(),
+        h.id,     h.kind.dataset(), dataset_id,    data,
+        h.now_ms, end,              h.end.short,   h.kind.metadata(),
+        h.now_ms, start,            h.start.short, h.kind.label(),
         h.now_ms, h.now_ms,
     });
     assert(std.mem.endsWith(u8, result, ";"));
@@ -184,13 +235,29 @@ test "long positions match what the Kindle stores" {
     try std.testing.expectEqualStrings("AVAAAABhEgAA", long_position(&buf, 80, 4705));
 }
 
+/// A book sent to the Kindle, as the rows the stock reader wrote name it.
+const test_book: BookName = .{
+    .key = "0123456789ABCDEF0123456789ABCDEF",
+    .content_type = "PDOC",
+    .guid = "CR!0000000000000000000000000000",
+    .owned = true,
+};
+
+test "a book copied onto the Kindle is named as not owned, as the stock reader names it" {
+    var copied = test_book;
+    copied.owned = false;
+    var buf: [book_name_bytes_max]u8 = undefined;
+    try std.testing.expect(std.mem.endsWith(u8, try book_id(&buf, copied), "-0"));
+    const data = try book_data(&buf, copied);
+    try std.testing.expect(std.mem.indexOf(u8, data, "\"isOwnedByCustomer\":0") != null);
+    try std.testing.expect(std.mem.endsWith(u8, try book_id(&buf, test_book), "-1"));
+}
+
 test "row matches the one the stock reader wrote" {
     var buf: [1024]u8 = undefined;
     const sql = try insert_sql(&buf, .{
         .id = "kindle.highlight-381908",
-        .key = "0123456789ABCDEF0123456789ABCDEF",
-        .content_type = "PDOC",
-        .guid = "CR!0000000000000000000000000000",
+        .book = test_book,
         .start = .{ .element = 80, .offset = 4570, .short = 381908 },
         .end = .{ .element = 80, .offset = 4705, .short = 382043 },
         .now_ms = 1794005896131,
@@ -226,9 +293,7 @@ test "every key of the queued record is spelled as the stock reader spells it" {
         const sql = try insert_sql(&buf, .{
             .kind = kind,
             .id = "kindle.highlight-381908",
-            .key = "0123456789ABCDEF0123456789ABCDEF",
-            .content_type = "PDOC",
-            .guid = "CR!0000000000000000000000000000",
+            .book = test_book,
             .start = .{ .element = 80, .offset = 4570, .short = 381908 },
             .end = .{ .element = 80, .offset = 4705, .short = 382043 },
             .now_ms = 1794005896131,
@@ -276,9 +341,7 @@ test "bookmark row matches the one the stock reader wrote" {
     const sql = try insert_sql(&buf, .{
         .kind = .bookmark,
         .id = "kindle.bookmark-381741",
-        .key = "0123456789ABCDEF0123456789ABCDEF",
-        .content_type = "PDOC",
-        .guid = "CR!0000000000000000000000000000",
+        .book = test_book,
         .start = .{ .element = 80, .offset = 4403, .short = 381741 },
         .end = .{ .element = 80, .offset = 4403, .short = 381741 },
         .now_ms = 1793991983543,

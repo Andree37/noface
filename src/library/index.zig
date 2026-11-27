@@ -62,6 +62,8 @@ pub const Record = extern struct {
     pub const series_by_hand: u8 = 4;
     /// `words_left` is known.
     pub const words_known: u8 = 8;
+    /// Copied onto the device rather than bought or sent (`catalog.Entry.sideloaded`).
+    pub const sideloaded: u8 = 16;
 
     /// The words left from the book's place, or that they aren't known.
     pub fn set_words_left(r: *Record, words: ?u64) void {
@@ -397,6 +399,7 @@ fn entry_of(r: *const Record, texts: *const [8][:0]const u8) catalog.Entry {
         .key = texts[@backingInt(Field.key)],
         .kind = texts[@backingInt(Field.kind)],
         .guid = texts[@backingInt(Field.guid)],
+        .sideloaded = r.flags & Record.sideloaded != 0,
         // An empty name in the file: not in a series
         .series = if (texts[@backingInt(Field.series)].len > 0)
             .{ .name = texts[@backingInt(Field.series)], .index = r.series_index }
@@ -498,7 +501,9 @@ pub fn record_of(e: *const catalog.Entry, text_offset: u64, text_len: u32) Recor
         .percent = @intCast(@min(e.percent, 100)),
         .kindle_percent = @intCast(@min(e.kindle_percent, 100)),
         .availability = @backingInt(e.availability),
-        .flags = (if (e.finished) Record.finished else 0) | (if (e.is_epub()) Record.epub else 0),
+        .flags = (if (e.finished) Record.finished else 0) |
+            (if (e.is_epub()) Record.epub else 0) |
+            (if (e.sideloaded) Record.sideloaded else 0),
     };
     r.set_words_left(e.words_left);
     r.seal();

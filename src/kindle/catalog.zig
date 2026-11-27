@@ -115,6 +115,8 @@ pub fn parse_line(alloc: std.mem.Allocator, line: []const u8) !?library.Entry {
     const key = fields.next() orelse "";
     const kind = fields.next() orelse "";
     const guid = fields.next() orelse "";
+    // A list from before the column, or a flag that isn't one, counts as bought or sent
+    const sideloaded = std.mem.eql(u8, fields.next() orelse "0", "1");
     if (path.len == 0 and availability == .local) return null;
     // The export lists only KFX files and cloud books, so never an EPUB; one that came
     // anyway is left to the library's own walk of the folder, which lists every EPUB
@@ -140,6 +142,7 @@ pub fn parse_line(alloc: std.mem.Allocator, line: []const u8) !?library.Entry {
         .key = try alloc.dupe(u8, key),
         .kind = try alloc.dupe(u8, kind),
         .guid = try alloc.dupe(u8, guid),
+        .sideloaded = sideloaded,
         .series = series,
     };
 }

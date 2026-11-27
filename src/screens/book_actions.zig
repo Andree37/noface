@@ -7,6 +7,7 @@ const card = @import("../ui/card.zig");
 const catalog = @import("../model/catalog.zig");
 const book_actions = @import("../ui/book_actions.zig");
 const state = @import("../sys/state.zig");
+const platform = @import("../platform.zig");
 const file = @import("../sys/file.zig");
 const store = @import("../kindle/store.zig");
 const app = @import("../app.zig");
@@ -76,15 +77,26 @@ pub const not_marked_notice = "Couldn't mark it: its place couldn't be saved.";
 /// owns the place: never written while it's unreadable, or while 0.2.0's isn't settled.
 fn save_marked(a: *app.App, e: *const catalog.Entry, done: bool, place: Place) !void {
     assert(e.is_epub() or e.is_local()); // A file of its own to keep its place by
-    switch (place) {
-        .open => |s| if (!s.save_marked(done, e.kindle_last)) return error.PlaceNotSaved,
-        .closed => {
+    const marked_at: u64 = switch (place) {
+        .open => |s| at: {
+            if (!s.save_marked(done, e.kindle_last)) return error.PlaceNotSaved;
+            break :at s.saved.opened;
+        },
+        .closed => at: {
             var path_buffer: [file.own_path_bytes_max]u8 = undefined;
             const path = try a.state_path(&path_buffer, e.path);
             var own = state.open_own(path, state.adopt_by_name(path, e.path));
             state.mark(&own.saved, done, e.kindle_last);
             if (!state.save(&own.kept, own.saved)) return error.PlaceNotSaved;
+            break :at own.saved.opened;
         },
+    };
+    // Unread, the book starts over wherever its place is kept: the device's old place,
+    // later than the mark, would otherwise win as the book next opens
+    if (done) return;
+    assert(marked_at > 0); // `state.mark` dates a book marked unread
+    if (!platform.reading_place.start_over(e, marked_at)) {
+        std.debug.print("marked unread: its place outside noface not started over\n", .{});
     }
 }
 

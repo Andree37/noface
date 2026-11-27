@@ -60,6 +60,9 @@ pub const Entry = struct {
     key: []const u8 = "",
     kind: []const u8 = "",
     guid: []const u8 = "",
+    /// Copied onto the device rather than bought or sent: the store doesn't own it for
+    /// the reader, and its notes and place are named so.
+    sideloaded: bool = false,
     series: ?Series = null, // The series it belongs to, if known
     /// The name its author sorts under (`surname`), for sorting by author: found once
     /// a book, as a sort compares each book a few dozen times.

@@ -32,8 +32,21 @@ pub const time_max_ms = 60_000;
 
 /// One line per book: its file, title, author, progress, last opened, read state,
 /// cover, modified, whether it's on the Kindle (0), in the cloud (1) or downloading
-/// (2), and its ids for the store. src/kindle/catalog.zig reads it.
-pub const query = "select " ++
+/// (2), its ids for the store, and whether it was copied onto the Kindle (1) rather
+/// than bought or sent (0). src/kindle/catalog.zig reads it.
+pub const query = columns ++ ", " ++ sideloaded_from_assets ++ from_entries;
+/// The same without the stock library's record, where there's none to read: every
+/// book counts as bought or sent, as Amazon names all but a copied one.
+pub const query_without_assets = columns ++ ", 0" ++ from_entries;
+/// Whether a book was copied onto the Kindle, by the stock library's own flag, read
+/// from the copy attached as `assets` (`attach_assets`).
+const sideloaded_from_assets = "coalesce((select SIDELOAD from assets.Nodes " ++
+    "where ASIN = p_cdeKey limit 1), 0)";
+/// `query` after attaching the copy of the stock library's record, in one sqlite3.
+pub const query_attached = "attach '" ++ paths.assets_copy ++ "' as assets; " ++ query;
+const from_entries = " from Entries where p_location like '%.kfx'" ++
+    " or (p_isArchived = 1 and p_isVisibleInHome = 1 and p_type = 'Entry:Item')";
+const columns = "select " ++
     one_line("coalesce(p_location, '')") ++ ", " ++
     one_line("p_titles_0_nominal") ++ ", " ++
     one_line("coalesce(json_extract(j_credits, '$[0].name.display'), '')") ++ ", " ++
@@ -45,9 +58,7 @@ pub const query = "select " ++
     "when coalesce(p_location, '') = '' then 1 else 0 end, " ++
     one_line("coalesce(p_cdeKey, '')") ++ ", " ++
     one_line("coalesce(p_cdeType, '')") ++ ", " ++
-    one_line("coalesce(p_guid, '')") ++
-    " from Entries where p_location like '%.kfx'" ++
-    " or (p_isArchived = 1 and p_isVisibleInHome = 1 and p_type = 'Entry:Item')";
+    one_line("coalesce(p_guid, '')");
 
 /// A text column with its tabs, line feeds and carriage returns made spaces: sqlite3
 /// writes values as they are, so a title with a tab would shift every column after it,
@@ -93,7 +104,12 @@ pub fn run() void {
         return;
     }
     defer remove_copy(copy);
-    const argv = [_:null]?[*:0]const u8{ sqlite, "-separator", "\t", copy, query };
+    // Which books were copied on, from the stock library's record: copied too, and
+    // left out when there's none to copy, or it wouldn't fit in RAM
+    const with_assets = copy_assets();
+    defer if (with_assets) remove_copy(paths.assets_copy);
+    const sql: [*:0]const u8 = if (with_assets) query_attached else query_without_assets;
+    const argv = [_:null]?[*:0]const u8{ sqlite, "-separator", "\t", copy, sql };
     const envp = [_:null]?[*:0]const u8{};
     const finished = finished: {
         const pid = service.spawn_to_file(&argv, &envp, library_tmp, .replace, false) orelse
@@ -117,6 +133,15 @@ pub fn run() void {
     if (failed(calls.rename(library_tmp, library_path))) {
         std.debug.print("export: couldn't replace {s}\n", .{library_path});
     }
+}
+
+/// Copies the stock library's record into RAM, when there's one small enough.
+fn copy_assets() bool {
+    const bytes = file.size_of(paths.assets);
+    if (bytes == 0) return false; // None, or not measured
+    if (bytes > copy_to_ram_bytes_max) return false;
+    assert(std.mem.startsWith(u8, paths.assets_copy, "/tmp/"));
+    return file.copy_file(paths.assets, paths.assets_copy);
 }
 
 /// Where a catalog of `catalog_bytes` (0: not measured) is copied.
@@ -166,20 +191,22 @@ test "a small catalog is copied to RAM, a large or unmeasured one to the user dr
     try std.testing.expectEqual(copy_on_drive, copy_place(0));
 }
 
-test "the query lists the twelve columns the library reads" {
-    // Commas outside brackets part the columns
-    const select = query[0..std.mem.indexOf(u8, query, "from Entries").?];
-    var columns: u32 = 1;
-    var depth: u32 = 0;
-    for (select) |c| {
-        if (c == '(') depth += 1;
-        if (c == ')') depth -= 1;
-        if (c == ',' and depth == 0) columns += 1;
+test "both queries list the thirteen columns the library reads" {
+    for ([_][]const u8{ query, query_without_assets }) |q| {
+        // Commas outside brackets part the columns
+        const select = q[0..std.mem.indexOf(u8, q, " from Entries").?];
+        var count: u32 = 1;
+        var depth: u32 = 0;
+        for (select) |c| {
+            if (c == '(') depth += 1;
+            if (c == ')') depth -= 1;
+            if (c == ',' and depth == 0) count += 1;
+        }
+        try std.testing.expectEqual(@as(u32, 13), count);
     }
-    try std.testing.expectEqual(@as(u32, 12), columns);
 }
 
-test "a title with a tab or a line break stays one line of twelve columns" {
+test "a title with a tab or a line break stays one line of thirteen columns" {
     // Run by the sqlite3 there is, as on the Kindle: none on this computer, nothing to run
     const sqlite = for (sqlite_places) |place| {
         if (file.exists(place)) break place;
@@ -196,10 +223,10 @@ test "a title with a tab or a line break stays one line of twelve columns" {
     var out: [1024]u8 = undefined;
     const made = [_:null]?[*:0]const u8{ sqlite, db, schema };
     _ = process.run(&made, &out) orelse return error.CantMake;
-    const asked = [_:null]?[*:0]const u8{ sqlite, "-separator", "\t", db, query };
+    const asked = [_:null]?[*:0]const u8{ sqlite, "-separator", "\t", db, query_without_assets };
     const length = process.run(&asked, &out) orelse return error.CantQuery;
     const rows = std.mem.trimEnd(u8, out[0..length], "\n");
     try std.testing.expectEqual(@as(usize, 0), std.mem.count(u8, rows, "\n")); // One book
-    try std.testing.expectEqual(@as(usize, 11), std.mem.count(u8, rows, "\t")); // Twelve columns
+    try std.testing.expectEqual(@as(usize, 12), std.mem.count(u8, rows, "\t")); // Thirteen columns
     try std.testing.expect(std.mem.indexOf(u8, rows, "One Two Three") != null);
 }

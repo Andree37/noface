@@ -66,6 +66,10 @@ pub const fallback_font = kindle_fonts ++ "/STSongMedium.ttf";
 /// Amazon's catalog of books, and the copy read so Amazon's own is never held open.
 pub const catalog = "/var/local/cc.db";
 pub const catalog_copy = "/tmp/kf-cc.db";
+/// The stock library's own record of each book, which says which were copied onto the
+/// Kindle rather than bought or sent (`SIDELOAD`); and where the export copies it.
+pub const assets = "/var/local/ksdk.asset.db";
+pub const assets_copy = "/tmp/kf-assets.db";
 /// There once the launcher has looked at starting noface this boot (/tmp is in RAM).
 pub const autostart_ran = "/tmp/noface-autostart-ran";
 

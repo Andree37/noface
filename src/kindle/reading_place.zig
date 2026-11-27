@@ -4,11 +4,12 @@
 //! Kindle apps open at, and `kindle.last_read`, the furthest read, which only moves
 //! forward). Read once as a book opens; kept as noface closes it or locks, queued for
 //! Amazon as the stock reader queues them, so the Kindle apps and other devices open
-//! where noface left off. A book is named as the database already names it, so one the
-//! Kindle has never named is left alone. (Found on firmware 5.20: docs/DEVELOPING.md.)
+//! where noface left off. A book is named as its highlights are (`annotations.name_of`).
+//! (Found on firmware 5.20: docs/DEVELOPING.md.)
 const std = @import("std");
 const assert = std.debug.assert;
 const annotation_db = @import("annotation_db.zig");
+const annotations = @import("annotations.zig");
 const lipc = @import("lipc.zig");
 const safe = @import("safe.zig");
 const os = @import("../sys/os.zig");
@@ -38,41 +39,37 @@ const this_device_name = "Local";
 /// How long the question as a book opens may take: past it, nothing is known.
 const ask_ms_max = 1500;
 
-/// The longest dataset id: a book's key, type and GUID, and its owned flag.
-const book_id_bytes_max = 3 * safe.id_size_max + 4;
-/// The longest `book_data` kept: the database's own, with its ids and flags.
-const book_data_bytes_max = 3 * safe.id_size_max + 128;
-/// Besides letters and digits, what a book's dataset id and its `book_data` hold.
-const book_id_extra = "-_.!:";
-const book_data_extra = book_id_extra ++ "{}\",";
-
-comptime {
-    // What's written back sits inside SQL's single quotes and the shell's double ones
-    for ([_][]const u8{ book_id_extra, book_data_extra }) |extra| {
-        assert(std.mem.indexOfAny(u8, extra, "'$`\\") == null);
-    }
-    assert(std.mem.indexOfScalar(u8, book_id_extra, '"') == null);
-}
-
-/// A book as the Kindle's database names it, copied from its own rows as the book
-/// opened: written back as found, so a place noface keeps is named as stock names it.
+/// A book as Amazon's records name it, made as it opens: its dataset id and its JSON,
+/// copied, so nothing of the library's is borrowed while the book is open.
 pub const Book = struct {
-    id_bytes: [book_id_bytes_max]u8 = undefined,
+    id_bytes: [annotations.book_name_bytes_max]u8 = undefined,
     id_len: u16 = 0,
-    data_bytes: [book_data_bytes_max]u8 = undefined,
+    data_bytes: [annotations.book_name_bytes_max]u8 = undefined,
     data_len: u16 = 0,
     /// Amazon's furthest read as the book opened: `last_read` moves only past it.
     furthest: ?u32 = null,
 
     fn id(b: *const Book) []const u8 {
         assert(b.id_len > 0);
-        assert(b.id_len <= book_id_bytes_max);
+        assert(b.id_len <= b.id_bytes.len);
         return b.id_bytes[0..b.id_len];
+    }
+
+    /// The book as `name` names it, or null for one whose ids can't go into SQL.
+    fn of(name: annotations.BookName) ?Book {
+        if (!name.is_safe()) return null;
+        var b: Book = .{};
+        const named = annotations.book_id(&b.id_bytes, name) catch return null;
+        b.id_len = @intCast(named.len);
+        const held = annotations.book_data(&b.data_bytes, name) catch return null;
+        b.data_len = @intCast(held.len);
+        assert(b.id_len > 0);
+        return b;
     }
 
     fn data(b: *const Book) []const u8 {
         assert(b.data_len > 0);
-        assert(b.data_len <= book_data_bytes_max);
+        assert(b.data_len <= b.data_bytes.len);
         return b.data_bytes[0..b.data_len];
     }
 };
@@ -95,7 +92,8 @@ pub fn look(entry: *const catalog.Entry, paragraphs: []const book_model.Paragrap
     assert(lines.len <= out.len);
     const rows = parse(lines);
     // Device tests read places but write none (annotation_db.dry_run)
-    const book = if (annotation_db.dry_run()) null else rows.book;
+    var book = if (annotation_db.dry_run()) null else Book.of(annotations.name_of(entry));
+    if (book) |*b| b.furthest = rows.furthest;
     return .{ .answer = newest(rows, paragraphs), .book = book };
 }
 
@@ -114,6 +112,25 @@ pub fn keep(
     const sql = keep_sql(&buf, book, short, when_s * std.time.ms_per_s) catch return false;
     return annotation_db.run_annotation_sql(sql);
 }
+
+/// The book's place outside noface back at its start, stamped `when_s`, the time of
+/// the mark that started it over: Amazon's furthest read stays, as it only moves on.
+/// True when the database took it, or there's no place outside noface to start over.
+pub fn start_over(entry: *const catalog.Entry, when_s: u64) bool {
+    assert(when_s > 0); // A save's time
+    // An EPUB copied over the cable has no key: no place of it is kept outside noface
+    if (!safe.safe_id(entry.key)) return true;
+    if (annotation_db.dry_run()) return true; // Device tests write none
+    var book = Book.of(annotations.name_of(entry)) orelse return false;
+    book.furthest = std.math.maxInt(u32); // Never moved back
+    var buf: [keep_sql_bytes_max]u8 = undefined;
+    const sql = keep_sql(&buf, &book, book_start, when_s * std.time.ms_per_s) catch return false;
+    assert(std.mem.indexOf(u8, sql, Record.last_read.id()) == null);
+    return annotation_db.run_annotation_sql(sql);
+}
+
+/// Amazon's position for a book's start.
+const book_start = 0;
 
 /// Asks the Kindle to send what was queued: once, as a book closes.
 pub fn send() void {
@@ -136,14 +153,9 @@ fn short_before(paragraphs: []const book_model.Paragraph, at: book_model.Pos) ?u
 
 // The question
 
-/// One line each: the book's name (`I|<dataset id>|<book_data>`), then its places
-/// (`<dataset>|<short>|<time ms>|<device>`), in any order.
-const question_format = "select 'I', dataset_id, " ++
-    "json_extract(serialized_payload, '$.book_data') " ++
-    "from server_view where {[match]s} and dataset in (4, 9) " ++
-    "union all select 'I', book_id, json_extract(serialized_payload, '$.book_data') " ++
-    "from nonsyncable_annotations where {[book]s} and dataset = 8; " ++
-    "select dataset, json_extract(serialized_payload, '$.position.shortPosition'), " ++
+/// One line a place: `<dataset>|<short>|<time ms>|<device>`, in any order.
+const question_format = "select dataset, " ++
+    "json_extract(serialized_payload, '$.position.shortPosition'), " ++
     "modified_time, json_extract(serialized_payload, '$.device_name') " ++
     "from server_view where {[match]s} and dataset in (4, 9) " ++
     "union all select dataset, json_extract(start_position, '$.shortPosition'), " ++
@@ -177,27 +189,21 @@ const answer_bytes_max = 4096;
 
 const Place = struct { short: u32, when_ms: u64, from: place.From };
 
-/// What the database's lines said: the book as named, and each place found.
+/// What the database's lines said: each place found.
 const Rows = struct {
-    book: ?Book = null,
     local: ?Place = null,
     recent: ?Place = null,
+    furthest: ?u32 = null,
 };
 
 // Assertions: the lines are the database's, outside data: a line that isn't what it
 // should be is passed over, never asserted on.
 fn parse(lines: []const u8) Rows {
     var rows: Rows = .{};
-    var furthest: ?u32 = null;
     var it = std.mem.tokenizeScalar(u8, lines, '\n');
     while (it.next()) |line| {
         var fields = std.mem.splitScalar(u8, line, '|');
         const first = fields.next() orelse continue;
-        if (std.mem.eql(u8, first, "I")) {
-            const book_id = fields.next() orelse continue;
-            if (rows.book == null) rows.book = book_named(book_id, fields.rest());
-            continue;
-        }
         const dataset = std.fmt.parseInt(u8, first, 10) catch continue;
         const record = std.enums.fromInt(Record, dataset) orelse continue;
         const short = std.fmt.parseInt(u32, fields.next() orelse continue, 10) catch continue;
@@ -206,39 +212,15 @@ fn parse(lines: []const u8) Rows {
         switch (record) {
             .local_most_recent_read => rows.local = found,
             .most_recent_read => rows.recent = found,
-            .last_read => furthest = short,
+            .last_read => rows.furthest = short,
         }
     }
-    if (rows.book) |*b| b.furthest = furthest;
     return rows;
 }
 
 fn from(device: []const u8) place.From {
     if (std.mem.eql(u8, device, this_device_name)) return .this_device;
     return .{ .elsewhere = place.Name.of(device) };
-}
-
-// Assertions: the id and `book_data` are the database's, outside data: one with
-// anything an id or its JSON doesn't hold is never written back.
-fn book_named(book_id: []const u8, data: []const u8) ?Book {
-    if (book_id.len == 0 or book_id.len > book_id_bytes_max) return null;
-    if (data.len == 0 or data.len > book_data_bytes_max) return null;
-    if (!only(book_id, book_id_extra)) return null;
-    if (!only(data, book_data_extra)) return null;
-    var b: Book = .{};
-    @memcpy(b.id_bytes[0..book_id.len], book_id);
-    b.id_len = @intCast(book_id.len);
-    @memcpy(b.data_bytes[0..data.len], data);
-    b.data_len = @intCast(data.len);
-    return b;
-}
-
-fn only(text: []const u8, extra: []const u8) bool {
-    for (text) |c| {
-        if (std.ascii.isAlphanumeric(c)) continue;
-        if (std.mem.indexOfScalar(u8, extra, c) == null) return false;
-    }
-    return true;
 }
 
 /// The newer of this Kindle's own place and Amazon's, found in the text.
@@ -288,9 +270,9 @@ const position_format = "{{\"longPosition\":\"\",\"shortPosition\":{d}}}";
 const position_bytes_max = std.fmt.count(position_format, .{std.math.maxInt(u32)});
 /// Room for the numbers each row holds: a dataset, and a time twice.
 const numbers_bytes_max = 3 * std.fmt.count("{d}", .{std.math.maxInt(u64)});
-const queue_bytes_max = queue_format.len + 32 + book_id_bytes_max + book_data_bytes_max +
+const queue_bytes_max = queue_format.len + 32 + 2 * annotations.book_name_bytes_max +
     position_bytes_max + numbers_bytes_max;
-const keep_sql_bytes_max = keep_format.len + 32 + book_id_bytes_max + book_data_bytes_max +
+const keep_sql_bytes_max = keep_format.len + 32 + 2 * annotations.book_name_bytes_max +
     2 * position_bytes_max + numbers_bytes_max + 2 * queue_bytes_max;
 
 fn keep_sql(buf: []u8, book: *const Book, short: u32, when_ms: u64) ![]const u8 {
@@ -330,34 +312,27 @@ fn queued(buf: []u8, record: Record, book: *const Book, pos: []const u8, when_ms
     return row;
 }
 
-const test_book_id = "277DAA321EC04D398AE2F6993A2A915E-PDOC-CR!RFGXBF45VX5DZ0S2TNGG49EM146Z-1";
-const test_book_data = "{\"asin\":\"277DAA321EC04D398AE2F6993A2A915E\"," ++
-    "\"contentType\":\"PDOC\",\"guid\":\"CR!RFGXBF45VX5DZ0S2TNGG49EM146Z\"," ++
-    "\"isOwnedByCustomer\":1,\"isSample\":0}";
+const test_book: annotations.BookName = .{
+    .key = "277DAA321EC04D398AE2F6993A2A915E",
+    .content_type = "PDOC",
+    .guid = "CR!RFGXBF45VX5DZ0S2TNGG49EM146Z",
+    .owned = true,
+};
 
-test "the database's rows give the book's name and its newest place" {
-    const lines = "I|" ++ test_book_id ++ "|" ++ test_book_data ++ "\n" ++
-        "9|340000|1795788283288|Local\n" ++
+test "the database's rows give the book's newest place, and its furthest" {
+    const lines = "9|340000|1795788283288|Local\n" ++
         "4|321375|1795788453912|Andre's iPhone\n" ++
         "8|321000|1795788400000|Local\n" ++
         "a line that isn't one\n";
     const rows = parse(lines);
-    try std.testing.expectEqualStrings(test_book_id, rows.book.?.id());
-    try std.testing.expectEqual(@as(?u32, 340000), rows.book.?.furthest);
+    try std.testing.expectEqual(@as(?u32, 340000), rows.furthest);
     try std.testing.expectEqual(@as(u32, 321375), rows.recent.?.short);
     try std.testing.expectEqualStrings("Andre's iPhone", rows.recent.?.from.elsewhere.text());
     try std.testing.expect(rows.local.?.from == .this_device);
 }
 
-test "a name with anything an id or its JSON doesn't hold is never written back" {
-    try std.testing.expect(book_named(test_book_id, test_book_data) != null);
-    try std.testing.expect(book_named("x'; drop table", test_book_data) == null);
-    try std.testing.expect(book_named(test_book_id, "{\"a\":\"'\"}") == null);
-    try std.testing.expect(book_named("", test_book_data) == null);
-}
-
 test "keeping writes this Kindle's place and queues Amazon's, the furthest only past it" {
-    var book = book_named(test_book_id, test_book_data).?;
+    var book = Book.of(test_book).?;
     book.furthest = 340000;
     var buf: [keep_sql_bytes_max]u8 = undefined;
     const behind = try keep_sql(&buf, &book, 321375, 1795788453000);

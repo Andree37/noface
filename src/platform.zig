@@ -28,6 +28,7 @@ fn expect_reading_place(comptime M: type) void {
     expect(M, "keep", fn (*const Book, []const book_model.Paragraph, book_model.Pos, u64) bool);
     expect(M, "send", fn () void);
     expect(M, "start_over", fn (*const catalog.Entry, u64) bool);
+    expect(M, "end", fn ([]const book_model.Paragraph) ?u32);
     if (@FieldType(M.Found, "answer") != place.Answer) {
         @compileError(@typeName(M) ++ ".Found.answer isn't a place.Answer");
     }

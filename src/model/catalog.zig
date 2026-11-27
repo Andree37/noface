@@ -41,6 +41,10 @@ pub const Progress = struct {
     }
 };
 
+/// A book's place outside noface, as the device keeps it: its position, in the device's
+/// own numbering, and when it was made, in seconds.
+pub const OutsidePlace = struct { short: u32, last: u64 };
+
 pub const Entry = struct {
     path: [:0]const u8,
     title: []const u8,
@@ -63,6 +67,10 @@ pub const Entry = struct {
     /// Copied onto the device rather than bought or sent: the store doesn't own it for
     /// the reader, and its notes and place are named so.
     sideloaded: bool = false,
+    /// The latest place the device's own software has for it from any device, in the
+    /// device's own numbering: read by the library as how far in it is, once noface
+    /// knows where the book ends in that numbering (`sys/state.zig` `outside_end`).
+    outside: ?OutsidePlace = null,
     series: ?Series = null, // The series it belongs to, if known
     /// The name its author sorts under (`surname`), for sorting by author: found once
     /// a book, as a sort compares each book a few dozen times.

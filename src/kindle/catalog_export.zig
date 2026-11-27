@@ -32,18 +32,45 @@ pub const time_max_ms = 60_000;
 
 /// One line per book: its file, title, author, progress, last opened, read state,
 /// cover, modified, whether it's on the Kindle (0), in the cloud (1) or downloading
-/// (2), its ids for the store, and whether it was copied onto the Kindle (1) rather
-/// than bought or sent (0). src/kindle/catalog.zig reads it.
-pub const query = columns ++ ", " ++ sideloaded_from_assets ++ from_entries;
-/// The same without the stock library's record, where there's none to read: every
-/// book counts as bought or sent, as Amazon names all but a copied one.
-pub const query_without_assets = columns ++ ", 0" ++ from_entries;
+/// (2), its ids for the store, whether it was copied onto the Kindle (1) rather than
+/// bought or sent (0), and Amazon's latest place for it from any device, its position
+/// and when, in ms (both empty when there's none). src/kindle/catalog.zig reads it.
+/// Each copy the export could make of the stock library's record and of Amazon's
+/// places is attached first, in the same sqlite3; without one, its columns are filled
+/// as a book that has none.
+pub fn query(comptime with: Attached) [:0]const u8 {
+    const attach_assets = "attach '" ++ paths.assets_copy ++ "' as assets; ";
+    const attach_notes = "attach '" ++ paths.annotations_copy ++ "' as notes; ";
+    const sql = (if (with.assets) attach_assets else "") ++
+        (if (with.notes) attach_notes else "") ++
+        columns ++ ", " ++
+        // Every book counts as bought or sent, as Amazon names all but a copied one
+        (if (with.assets) sideloaded_from_assets else "0") ++ ", " ++
+        (if (with.notes) outside_from_notes else "char(9)") ++ from_entries;
+    // The attached copies come first, then one select over the catalog's books: each
+    // check a step a byte, compared at build time
+    @setEvalBranchQuota(2 * sql.len);
+    const first = if (with.assets) attach_assets else if (with.notes) attach_notes else columns;
+    comptime assert(std.mem.startsWith(u8, sql, first));
+    comptime assert(std.mem.endsWith(u8, sql, from_entries));
+    return sql;
+}
+
+/// Which copies the export made, to attach: the stock library's record, Amazon's places.
+pub const Attached = struct { assets: bool, notes: bool };
+
 /// Whether a book was copied onto the Kindle, by the stock library's own flag, read
-/// from the copy attached as `assets` (`attach_assets`).
+/// from the copy attached as `assets`.
 const sideloaded_from_assets = "coalesce((select SIDELOAD from assets.Nodes " ++
     "where ASIN = p_cdeKey limit 1), 0)";
-/// `query` after attaching the copy of the stock library's record, in one sqlite3.
-pub const query_attached = "attach '" ++ paths.assets_copy ++ "' as assets; " ++ query;
+/// Amazon's latest place for a book, `kindle.most_recent_read` from whichever device
+/// made it (src/kindle/reading_place.zig), from the copy attached as `notes`: its
+/// position, a tab and its time, two columns in one, or a tab alone for none.
+const outside_from_notes = "coalesce((select " ++
+    "json_extract(serialized_payload, '$.position.shortPosition') || char(9) || " ++
+    "modified_time from notes.server_view where dataset = 4 and p_cdeKey != '' and " ++
+    "substr(dataset_id, 1, length(p_cdeKey) + 1) = p_cdeKey || '-' " ++
+    "order by modified_time desc limit 1), char(9))";
 const from_entries = " from Entries where p_location like '%.kfx'" ++
     " or (p_isArchived = 1 and p_isVisibleInHome = 1 and p_type = 'Entry:Item')";
 const columns = "select " ++
@@ -104,11 +131,21 @@ pub fn run() void {
         return;
     }
     defer remove_copy(copy);
-    // Which books were copied on, from the stock library's record: copied too, and
-    // left out when there's none to copy, or it wouldn't fit in RAM
-    const with_assets = copy_assets();
-    defer if (with_assets) remove_copy(paths.assets_copy);
-    const sql: [*:0]const u8 = if (with_assets) query_attached else query_without_assets;
+    // Which books were copied on, from the stock library's record, and where Amazon has
+    // each from any device: copied too, and left out when there's none to copy, or it
+    // wouldn't fit in RAM
+    const with: Attached = .{
+        .assets = copy_small(paths.assets, paths.assets_copy),
+        .notes = copy_annotations(),
+    };
+    defer if (with.assets) remove_copy(paths.assets_copy);
+    defer if (with.notes) remove_copy(paths.annotations_copy);
+    if (with.notes) assert(file.exists(paths.annotations_copy));
+    const sql: [*:0]const u8 = switch (with.assets) {
+        inline else => |assets| switch (with.notes) {
+            inline else => |notes| query(.{ .assets = assets, .notes = notes }),
+        },
+    };
     const argv = [_:null]?[*:0]const u8{ sqlite, "-separator", "\t", copy, sql };
     const envp = [_:null]?[*:0]const u8{};
     const finished = finished: {
@@ -135,14 +172,56 @@ pub fn run() void {
     }
 }
 
-/// Copies the stock library's record into RAM, when there's one small enough.
-fn copy_assets() bool {
-    const bytes = file.size_of(paths.assets);
+/// Copies the database at `source` into RAM at `target`, when it's there and small
+/// enough. Whether it did.
+fn copy_small(source: [*:0]const u8, target: [*:0]const u8) bool {
+    assert(std.mem.startsWith(u8, std.mem.sliceTo(target, 0), "/tmp/"));
+    const bytes = file.size_of(source);
     if (bytes == 0) return false; // None, or not measured
     if (bytes > copy_to_ram_bytes_max) return false;
-    assert(std.mem.startsWith(u8, paths.assets_copy, "/tmp/"));
-    return file.copy_file(paths.assets, paths.assets_copy);
+    return file.copy_file(source, target);
 }
+
+/// Copies Amazon's places, the current account's database: the one changed last, as
+/// an earlier account's folder can be there too. Whether it did.
+fn copy_annotations() bool {
+    var newest: Newest = .{};
+    // Ignored: a folder listed in part still names the newest database it saw
+    _ = calls.each_entry(paths.annotations_dir, &newest, Newest.entry);
+    const found = newest.found() orelse return false;
+    return copy_small(found, paths.annotations_copy);
+}
+
+/// The database in the account folders changed last, as they're listed.
+const Newest = struct {
+    buffer: [annotations_path_bytes_max]u8 = undefined,
+    len: u32 = 0,
+    modified_s: i64 = std.math.minInt(i64),
+
+    fn entry(n: *Newest, name: []const u8, is_dir: bool) void {
+        assert(name.len > 0);
+        if (!is_dir) return;
+        if (name[0] == '.') return; // The folder itself and the one above it
+        var buffer: [annotations_path_bytes_max]u8 = undefined;
+        const named = .{ paths.annotations_dir, name, paths.annotations_name };
+        const path = std.fmt.bufPrintSentinel(&buffer, "{s}/{s}/{s}", named, 0) catch return;
+        const facts = calls.facts_at(path) orelse return; // No database in this one
+        if (facts.modified_s <= n.modified_s) return;
+        @memcpy(n.buffer[0 .. path.len + 1], path[0 .. path.len + 1]);
+        n.len = @intCast(path.len);
+        n.modified_s = facts.modified_s;
+        assert(n.buffer[n.len] == 0);
+    }
+
+    fn found(n: *const Newest) ?[*:0]const u8 {
+        if (n.len == 0) return null;
+        assert(n.buffer[n.len] == 0);
+        return n.buffer[0..n.len :0];
+    }
+};
+
+/// Room for an account folder's database: the folder's name is Amazon's account id.
+const annotations_path_bytes_max = 256;
 
 /// Where a catalog of `catalog_bytes` (0: not measured) is copied.
 fn copy_place(catalog_bytes: u64) [*:0]const u8 {
@@ -191,10 +270,17 @@ test "a small catalog is copied to RAM, a large or unmeasured one to the user dr
     try std.testing.expectEqual(copy_on_drive, copy_place(0));
 }
 
-test "both queries list the thirteen columns the library reads" {
-    for ([_][]const u8{ query, query_without_assets }) |q| {
+test "every query lists the fourteen columns the library reads, the last two in one" {
+    const queries = [_][]const u8{
+        query(.{ .assets = true, .notes = true }),
+        query(.{ .assets = true, .notes = false }),
+        query(.{ .assets = false, .notes = true }),
+        query(.{ .assets = false, .notes = false }),
+    };
+    for (queries) |q| {
         // Commas outside brackets part the columns
-        const select = q[0..std.mem.indexOf(u8, q, " from Entries").?];
+        const start = std.mem.indexOf(u8, q, "select ").?;
+        const select = q[start..std.mem.indexOf(u8, q, " from Entries").?];
         var count: u32 = 1;
         var depth: u32 = 0;
         for (select) |c| {
@@ -202,11 +288,11 @@ test "both queries list the thirteen columns the library reads" {
             if (c == ')') depth -= 1;
             if (c == ',' and depth == 0) count += 1;
         }
-        try std.testing.expectEqual(@as(u32, 13), count);
+        try std.testing.expectEqual(@as(u32, 14), count);
     }
 }
 
-test "a title with a tab or a line break stays one line of thirteen columns" {
+test "a title with a tab or a line break stays one line of fifteen columns" {
     // Run by the sqlite3 there is, as on the Kindle: none on this computer, nothing to run
     const sqlite = for (sqlite_places) |place| {
         if (file.exists(place)) break place;
@@ -223,10 +309,11 @@ test "a title with a tab or a line break stays one line of thirteen columns" {
     var out: [1024]u8 = undefined;
     const made = [_:null]?[*:0]const u8{ sqlite, db, schema };
     _ = process.run(&made, &out) orelse return error.CantMake;
-    const asked = [_:null]?[*:0]const u8{ sqlite, "-separator", "\t", db, query_without_assets };
+    const sql = query(.{ .assets = false, .notes = false });
+    const asked = [_:null]?[*:0]const u8{ sqlite, "-separator", "\t", db, sql };
     const length = process.run(&asked, &out) orelse return error.CantQuery;
     const rows = std.mem.trimEnd(u8, out[0..length], "\n");
     try std.testing.expectEqual(@as(usize, 0), std.mem.count(u8, rows, "\n")); // One book
-    try std.testing.expectEqual(@as(usize, 12), std.mem.count(u8, rows, "\t")); // Thirteen columns
+    try std.testing.expectEqual(@as(usize, 14), std.mem.count(u8, rows, "\t")); // Fifteen columns
     try std.testing.expect(std.mem.indexOf(u8, rows, "One Two Three") != null);
 }

@@ -117,6 +117,9 @@ pub fn parse_line(alloc: std.mem.Allocator, line: []const u8) !?library.Entry {
     const guid = fields.next() orelse "";
     // A list from before the column, or a flag that isn't one, counts as bought or sent
     const sideloaded = std.mem.eql(u8, fields.next() orelse "0", "1");
+    // Amazon's latest place, from any device: none in a list from before the columns
+    const outside_short = std.fmt.parseInt(u32, fields.next() orelse "", 10) catch null;
+    const outside_ms = std.fmt.parseInt(u64, fields.next() orelse "", 10) catch 0;
     if (path.len == 0 and availability == .local) return null;
     // The export lists only KFX files and cloud books, so never an EPUB; one that came
     // anyway is left to the library's own walk of the folder, which lists every EPUB
@@ -143,6 +146,10 @@ pub fn parse_line(alloc: std.mem.Allocator, line: []const u8) !?library.Entry {
         .kind = try alloc.dupe(u8, kind),
         .guid = try alloc.dupe(u8, guid),
         .sideloaded = sideloaded,
+        .outside = if (outside_short) |short| .{
+            .short = short,
+            .last = outside_ms / std.time.ms_per_s,
+        } else null,
         .series = series,
     };
 }
@@ -214,6 +221,22 @@ test "a series place or percent that isn't a number counts as none" {
     try std.testing.expect(rows[1].series == null);
     try std.testing.expectEqual(@as(f32, 2), rows[2].series.?.index);
     for ([_]library.Order{ .title, .author, .series }) |order| library.sort(rows, order);
+}
+
+test "Amazon's latest place is read with its time in seconds, and none when it's not there" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const columns = "\tB0\tEBOK\tg\t0";
+    const data = "/a.kfx\tA\tx\t10\t1\t0\t\t1\t0" ++ columns ++ "\t4321\t1800000000123\n" ++
+        "/b.kfx\tB\tx\t10\t1\t0\t\t1\t0" ++ columns ++ "\t\t\n" ++
+        "/c.kfx\tC\tx\t10\t1\t0\t\t1\t0" ++ columns ++ "\n";
+    const rows = try parse(arena.allocator(), data);
+    try std.testing.expectEqual(@as(usize, 3), rows.len);
+    const outside = rows[0].outside.?;
+    try std.testing.expectEqual(@as(u32, 4321), outside.short);
+    try std.testing.expectEqual(@as(u64, 1_800_000_000), outside.last);
+    try std.testing.expect(rows[1].outside == null);
+    try std.testing.expect(rows[2].outside == null);
 }
 
 test "an EPUB in the catalog is left to the library's walk of the folder" {

@@ -48,6 +48,10 @@ pub const Record = extern struct {
     file_modified: i64,
     text_len: u32,
     series_index: f32,
+    /// The device's own latest place for it from any device (`catalog.Entry.outside`):
+    /// its position, and when, in seconds, 0 for none. Seconds fit 32 bits until 2106.
+    outside_short: u32,
+    outside_last: u32,
     percent: u8,
     kindle_percent: u8,
     availability: u8, // A `catalog.Availability`
@@ -98,7 +102,7 @@ pub const Record = extern struct {
 };
 
 comptime {
-    assert(@sizeOf(Record) == 80);
+    assert(@sizeOf(Record) == 88);
     assert(@as(u64, books_max) * @sizeOf(Record) + text_file_bytes_max <= 1400 << 20);
     assert(blob_bytes_max < std.math.maxInt(u16) * 8);
 }
@@ -113,7 +117,7 @@ pub const file_head_bytes: u32 = @sizeOf(FileHead);
 
 /// Its version: an index written by a noface that wrote records differently is built
 /// again.
-pub const header_magic = "NFLIB004".*;
+pub const header_magic = "NFLIB005".*;
 
 pub const Header = extern struct {
     magic: [8]u8 = header_magic,
@@ -400,6 +404,10 @@ fn entry_of(r: *const Record, texts: *const [8][:0]const u8) catalog.Entry {
         .kind = texts[@backingInt(Field.kind)],
         .guid = texts[@backingInt(Field.guid)],
         .sideloaded = r.flags & Record.sideloaded != 0,
+        .outside = if (r.outside_last > 0)
+            .{ .short = r.outside_short, .last = r.outside_last }
+        else
+            null,
         // An empty name in the file: not in a series
         .series = if (texts[@backingInt(Field.series)].len > 0)
             .{ .name = texts[@backingInt(Field.series)], .index = r.series_index }
@@ -498,6 +506,8 @@ pub fn record_of(e: *const catalog.Entry, text_offset: u64, text_len: u32) Recor
         .file_modified = 0,
         .text_len = text_len,
         .series_index = if (storable) series_index else 0,
+        .outside_short = if (e.outside) |o| o.short else 0,
+        .outside_last = if (e.outside) |o| @intCast(@min(o.last, std.math.maxInt(u32))) else 0,
         .percent = @intCast(@min(e.percent, 100)),
         .kindle_percent = @intCast(@min(e.kindle_percent, 100)),
         .availability = @backingInt(e.availability),
@@ -529,6 +539,7 @@ test "a book's record and texts read back as the entry they were made from" {
         .key = "B000",
         .kind = "EBOK",
         .guid = "g",
+        .outside = .{ .short = 4321, .last = 1_800_000_000 },
         .series = .{ .name = "The Dune Saga", .index = 1.5 },
     };
     var bytes: [blob_bytes_max]u8 = undefined;
@@ -599,6 +610,8 @@ fn test_check_path(path_len: u16) !void {
         .file_modified = 0,
         .text_len = blob_len,
         .series_index = 0,
+        .outside_short = 0,
+        .outside_last = 0,
         .percent = 0,
         .kindle_percent = 0,
         .availability = 0,

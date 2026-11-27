@@ -225,6 +225,17 @@ for a write: a reader that holds it makes the stock reader's own saves fail. The
 reader on the same Kindle opens at a place of its own, in each book's `.sdr` sidecar,
 not at these, so a place noface keeps reaches it only through Amazon.
 
+The library shows a place made on another device too, without opening the book. The
+catalog export (`noface-launch export`, run as noface starts
+and as the Kindle wakes) copies the database to RAM, as it copies the catalog, and
+lists each book's latest `kindle.most_recent_read`: its position and time. Each time
+noface saves a place it also saves where the book ends in the device's numbering
+(`outside_end` in the book's state file), and the library turns a place newer than
+both the stock reader's and noface's into a percent by it (`library/builder.zig`
+`merged`). A book noface hasn't opened since has no end saved and shows the catalog's
+percent. With the place's sync turned off in the panel, the library leaves these
+places out, and the index is built again.
+
 ## Layout
 
 Code is split by who owns it. `zig build check` fails if a file imports across these lines.

@@ -814,8 +814,9 @@ const Browser = struct {
         assert(!a.input.locked); // Awake, back in front
         a.note_battery(); // What sleeping (or charging) did
         a.quick = lipc.read(a.quick); // The clock and battery may be hours old
-        // A download may have finished while the Kindle slept
-        if (b.lib.downloading_count() > 0) b.reload(.export_first);
+        // A download may have finished while the Kindle slept, or another device read a
+        // book on: its place shows by the catalog written out afresh
+        b.reload(.export_first);
         return .everything;
     }
 };

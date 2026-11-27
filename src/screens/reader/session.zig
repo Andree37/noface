@@ -16,6 +16,7 @@ const icons = @import("../../ui/icons.zig");
 const catalog = @import("../../model/catalog.zig");
 const os = @import("../../sys/os.zig");
 const state = @import("../../sys/state.zig");
+const platform = @import("../../platform.zig");
 const file = @import("../../sys/file.zig");
 const text = @import("../../layout/text.zig");
 const now_us = os.now_us;
@@ -636,6 +637,7 @@ pub fn save_progress(progress: *catalog.Progress, s: *Session, percent_read: ?u3
     saved.back_byte = if (back) |b| b.byte else 0;
     saved.back_turns = s.back.turns_since_jump;
     saved.numbering = state.numbering_now; // The places above are numbered as now
+    saved.outside_end = platform.reading_place.end(s.paragraphs);
     const place_saved = state.save(&s.place, saved);
     s.saved = saved; // What the next save changes, whether this one landed or not
     s.app.user.save_speed();

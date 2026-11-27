@@ -12,7 +12,7 @@ const check = @import("../base/check.zig");
 const Note = @import("../model/highlights.zig").Note;
 
 /// Where stock keeps the database: a folder per account, so the shell finds it.
-const database_glob = "/mnt/us/system/ksdk/.annotations/*/ksdk_annotation_v1.db";
+const database_glob = paths.annotations_dir ++ "/*/" ++ paths.annotations_name;
 
 /// Starts a command with the one database it works on in `$db`: the one changed last,
 /// the current account's, where an earlier account's folder can be there too and the

@@ -70,6 +70,11 @@ pub const catalog_copy = "/tmp/kf-cc.db";
 /// Kindle rather than bought or sent (`SIDELOAD`); and where the export copies it.
 pub const assets = "/var/local/ksdk.asset.db";
 pub const assets_copy = "/tmp/kf-assets.db";
+/// Amazon's notes and reading places: a folder per account, each with its database
+/// (src/kindle/annotation_db.zig); and where the export copies the current one.
+pub const annotations_dir = "/mnt/us/system/ksdk/.annotations";
+pub const annotations_name = "ksdk_annotation_v1.db";
+pub const annotations_copy = "/tmp/kf-notes.db";
 /// There once the launcher has looked at starting noface this boot (/tmp is in RAM).
 pub const autostart_ran = "/tmp/noface-autostart-ran";
 

@@ -129,6 +129,18 @@ pub fn start_over(entry: *const catalog.Entry, when_s: u64) bool {
     return annotation_db.run_annotation_sql(sql);
 }
 
+/// Where the book ends in Amazon's positions: the end of the last paragraph it numbers,
+/// or null for a book it numbers none of (an EPUB copied over the cable).
+pub fn end(paragraphs: []const book_model.Paragraph) ?u32 {
+    var para = paragraphs.len;
+    while (para > 0) { // Bounded by the paragraph count
+        para -= 1;
+        const p = &paragraphs[para];
+        if (highlights.short_at(p, @intCast(p.text.len))) |short| return short;
+    }
+    return null;
+}
+
 /// Amazon's position for a book's start.
 const book_start = 0;
 

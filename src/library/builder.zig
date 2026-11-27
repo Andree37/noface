@@ -65,6 +65,9 @@ pub const Places = struct {
     /// build of thousands outlasts its two minutes before noface's loop first turns.
     /// Null in the tests, which leave the watchdog's file alone.
     heartbeat: ?[*:0]const u8,
+    /// Whether places made outside noface are shown (`catalog.Entry.outside`): the
+    /// reader's setting, so turning it either way builds the index again.
+    outside_places: bool,
 };
 
 /// What an index built now would be built from: the catalog's and the series file's
@@ -120,6 +123,7 @@ fn places_hash(places: Places) u64 {
     hasher.update(std.mem.span(places.catalog_path));
     hasher.update("\x00");
     hasher.update(places.documents);
+    hasher.update(&.{@intFromBool(places.outside_places)});
     return hasher.final();
 }
 
@@ -290,6 +294,7 @@ fn add_kindle_books(b: *Build) void {
             continue;
         // The catalog's flag can stay set long after a download ended: the file decides
         if (e.availability == .downloading and is_complete_book(e.path)) e.availability = .local;
+        if (!b.places.outside_places) e.outside = null; // The reader turned them off
         if (b.last) |*last| {
             if (has_path(e)) {
                 if (last.find(e.path)) |id| kept_reading(&e, last.reading(id));
@@ -920,7 +925,12 @@ fn merged(r: *index.Record, saved: state.State) void {
     }
     r.percent = r.kindle_percent;
     r.last = r.kindle_last;
-    if (state.prefer_outside(saved, r.kindle_last)) {
+    // Read on another device since the stock reader here: as far in as its place is
+    if (outside_percent(r, saved)) |percent| {
+        r.percent = percent;
+        r.last = r.outside_last;
+    }
+    if (state.prefer_outside(saved, r.last)) {
         // The place is the stock reader's, so what noface counted from its own is old
         r.set_words_left(null);
         return;
@@ -928,6 +938,18 @@ fn merged(r: *index.Record, saved: state.State) void {
     if (saved.percent) |p| r.percent = @intCast(@min(p, 100));
     r.last = @max(r.last, saved.opened);
     assert(r.percent <= 100);
+}
+
+/// How far in the device's latest place from any device is, when it's later than the
+/// stock reader's own and noface saved where the book ends in the device's numbering.
+fn outside_percent(r: *const index.Record, saved: state.State) ?u8 {
+    assert(r.flags & index.Record.epub == 0); // A Kindle book's
+    if (r.outside_last <= r.kindle_last) return null; // The stock reader's is as new
+    const end = saved.outside_end orelse return null;
+    if (end == 0) return null; // A book of one place: nothing to say how far
+    const percent = @min(@as(u64, r.outside_short) * 100 / end, 100);
+    assert(percent <= 100);
+    return @intCast(percent);
 }
 
 /// A line for the log, but not from the tests, where it would read as a failure.
@@ -972,4 +994,43 @@ test "a saved place's words left are kept, unless the stock reader read the book
     r = index.record_of(&an_epub, 0, 0);
     merged(&r, saved);
     try std.testing.expectEqual(@as(u64, 9000), r.words_left);
+}
+
+test "a place read on another device since shows how far in it is, by the book's end noface saved" {
+    const book: catalog.Entry = .{
+        .path = "/mnt/us/documents/Dune.kfx",
+        .title = "Dune",
+        .author = "",
+        .percent = 10,
+        .last = 0,
+        .kindle_percent = 10,
+        .kindle_last = 1_700_000_000,
+        .outside = .{ .short = 6000, .last = 1_900_000_000 },
+    };
+    const saved: state.State = .{
+        .para = 4,
+        .percent = 40,
+        .opened = 1_800_000_000,
+        .words_left = 9000,
+        .outside_end = 10_000,
+    };
+    // The phone read it last: its place, 60% in, and no words left from noface's
+    var r = index.record_of(&book, 0, 0);
+    merged(&r, saved);
+    try std.testing.expectEqual(@as(u8, 60), r.percent);
+    try std.testing.expectEqual(@as(u64, 1_900_000_000), r.last);
+    try std.testing.expect(r.flags & index.Record.words_known == 0);
+    // Without the book's end there's no saying how far: the stock reader's or noface's
+    var no_end = saved;
+    no_end.outside_end = null;
+    r = index.record_of(&book, 0, 0);
+    merged(&r, no_end);
+    try std.testing.expectEqual(@as(u8, 40), r.percent);
+    // The place noface kept outside, with its own save's time, is noface's
+    var kept = book;
+    kept.outside = .{ .short = 6000, .last = 1_800_000_000 };
+    r = index.record_of(&kept, 0, 0);
+    merged(&r, saved);
+    try std.testing.expectEqual(@as(u8, 40), r.percent);
+    try std.testing.expect(r.flags & index.Record.words_known != 0);
 }

@@ -25,6 +25,10 @@ pub const State = struct {
     /// 0.2.0's (`numbering_0_2`), whose numbers some EPUBs map (book.zig
     /// `text_index_from_0_2`).
     numbering: u32 = numbering_now,
+    /// Where the book ends in the device's own numbering of places, saved with the
+    /// place: the library turns a place made outside noface into how far in it is by it
+    /// (library/builder.zig `merged`). Null for a book the device doesn't number.
+    outside_end: ?u32 = null,
 };
 
 /// The paragraphs as 0.2.0 numbered them, and as noface does since.

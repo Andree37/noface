@@ -380,7 +380,9 @@ const running_top = theme_note_baseline + running_gap;
 const running_gap = style.space.medium; // Between the note's baseline and the Running button
 /// The tiles side by side, from the left margin.
 const themes_width = themes.len * theme_width + (themes.len - 1) * theme_gap;
-const running_height = style.space.band;
+/// Its two lines, and under the second as much room as its text has from its left: the
+/// height comes from what's in it.
+const running_height = running_note_drop + running_text_inset;
 /// A tile's or the Running button's edge when it's what's in use, and the sheet's black
 /// edge along its foot.
 const chosen_edge = 2 * style.border;
@@ -424,6 +426,9 @@ comptime {
     assert(theme_note_baseline < height_for(.themes));
     // The Running button is a fingertip and more, under the note, above the sheet's edge
     assert(running_height >= style.fingertip);
+    // Both its lines inside it, the second above its foot
+    assert(running_label_drop < running_note_drop);
+    assert(running_note_drop < running_height);
     assert(running_top + running_height + 4 <= height_for(.themes));
     for (switches, 0..) |sw, i| {
         assert(switch_top(i) + toggle_height + toggle_reach <= height_for(sw.tab));
@@ -735,8 +740,14 @@ fn draw_running(fonts: Fonts, page: Page, running: bool) !void {
     else
         "A sentence at a time, large and still, at your pace, for a treadmill";
     const text_left = margin + running_text_inset;
+    // Its letters inside its edge, the line under them too, however the fonts set them
+    const note_baseline = running_top + running_note_drop;
+    const note_foot = @as(i64, note_baseline) + fonts.caption.descent + edge;
+    assert(note_foot <= running_top + running_height);
+    const note_width = try fonts.caption.measure(note);
+    assert(note_width <= @as(f32, @floatFromInt(width - 2 * running_text_inset)));
     try fonts.title.draw(page, text_left, running_top + running_label_drop, label);
-    try fonts.caption.draw(page, text_left, running_top + running_note_drop, note);
+    try fonts.caption.draw(page, text_left, note_baseline, note);
 }
 
 /// One theme's tile: rounded, with a thick edge and a tick in its corner when in use.

@@ -36,12 +36,17 @@ pub const all = [_]Scenario{
                 const a_word = try word_held(.{}, &.{forward});
                 const text_settings = tool(.text);
                 const font_tab = tap_on(aa.place(.themes, .{ .tab = .font }));
+                const themes_tab = tap_on(aa.place(.themes, .{ .tab = .themes }));
                 const shots = .{
                     .{ Snapshot.page, &[_]Step{forward} },
                     .{ Snapshot.toolbar, &[_]Step{ forward, top } },
                     .{
                         Snapshot.@"aa-font",
                         &[_]Step{ forward, top, text_settings, font_tab },
+                    },
+                    .{
+                        Snapshot.@"aa-themes",
+                        &[_]Step{ forward, top, text_settings, themes_tab },
                     },
                     .{ Snapshot.definition, &[_]Step{ forward, a_word, lift } },
                     // A book without a cover: its title on white

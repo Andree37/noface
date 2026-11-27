@@ -1,4 +1,5 @@
-//! The quick panel: light, warmth, airplane mode, Bluetooth and sync, over a book or the library.
+//! The quick panel: light, warmth, airplane mode, Bluetooth, sync and the place's sync,
+//! over a book or the library.
 const std = @import("std");
 const assert = std.debug.assert;
 const drag = @import("drag.zig");
@@ -182,7 +183,7 @@ fn panel_control(
             try show_row(a, row, level);
             set_row_value(a, row, level);
         },
-        .airplane, .wifi, .bluetooth, .sync => try panel_control_shortcut(a, choice),
+        .airplane, .wifi, .bluetooth, .sync, .place => try panel_control_shortcut(a, choice),
         .schedule => {
             a.quick.schedule = !a.quick.schedule;
             try draw_menu(a, background, null);
@@ -196,8 +197,8 @@ fn panel_control(
 }
 
 /// A round shortcut at the top of the panel: airplane mode, Wi-Fi (airplane mode's
-/// other side), Bluetooth or sync. Its tile is redrawn first, and the Kindle told
-/// while the screen shows it.
+/// other side), Bluetooth, sync or the place's sync. Its tile is redrawn first, and the
+/// Kindle told while the screen shows it.
 fn panel_control_shortcut(a: *app.App, choice: menu.Hit) !void {
     assert(menu.tile_of(choice) != null); // One of the round tiles
     a.quick = tapped(a.quick, choice);
@@ -218,6 +219,11 @@ fn panel_control_shortcut(a: *app.App, choice: menu.Hit) !void {
             wifi_saver.restore();
             a.wifi_pause.reader_took_charge();
             lipc.sync_now();
+        },
+        .place => {
+            // A setting of noface's own: kept with the rest, read as the next book opens
+            a.user.settings.sync_place = a.quick.place_sync;
+            a.user.save_settings();
         },
         .none,
         .close,
@@ -287,6 +293,7 @@ fn tapped(quick: quick_model.Quick, choice: menu.Hit) quick_model.Quick {
         },
         .bluetooth => next.bluetooth = !quick.bluetooth,
         .sync => next.syncing = true,
+        .place => next.place_sync = !quick.place_sync,
         .none,
         .close,
         .dimmer,
@@ -323,6 +330,7 @@ fn redraw_tile(a: *app.App, tile: menu.Hit) !void {
 pub fn open(a: *app.App, background: display.Backdrop) Panel {
     assert(background.holds(&a.display));
     a.quick.wifi_paused = paused_by_noface(a.quick.airplane);
+    a.quick.place_sync = a.user.settings.sync_place; // The setting, as the tile shows it
     return .{ .a = a, .background = background };
 }
 
@@ -434,6 +442,7 @@ pub const Panel = struct {
             .wifi,
             .bluetooth,
             .sync,
+            .place,
             => unreachable,
         };
     }
@@ -469,4 +478,13 @@ test "turning the radio off with Bluetooth on warns first; on, or without Blueto
     try std.testing.expect(!warns_first(&flying, .wifi)); // Wi-Fi back on
     try std.testing.expect(!warns_first(&quick_model.Quick{}, .wifi)); // No Bluetooth
     try std.testing.expect(!warns_first(&listening, .bluetooth));
+}
+
+test "the place's tile switches the place's sync, and touches nothing else" {
+    const synced = quick_model.Quick{ .place_sync = true };
+    const off = tapped(synced, .place);
+    try std.testing.expect(!off.place_sync);
+    try std.testing.expect(tapped(off, .place).place_sync);
+    try std.testing.expect(off.airplane == synced.airplane);
+    try std.testing.expect(off.bluetooth == synced.bluetooth);
 }

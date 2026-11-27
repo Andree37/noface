@@ -15,11 +15,11 @@ const Step = taps.Step;
 const book_series = taps.book_series;
 const font_tab = taps.font_tab;
 const forward = taps.forward;
-const more_tab = taps.more_tab;
 const hold_in = taps.hold_in;
 const lift = taps.lift;
 const lock_it = taps.lock_it;
 const pause_tap = taps.pause_tap;
+const pull_down = taps.pull_down;
 const pause_text_settings = taps.pause_text_settings;
 const size_step = taps.size_step;
 const start_running = taps.start_running;
@@ -51,10 +51,6 @@ pub const all = [_]Scenario{
                         Snapshot.@"aa-themes",
                         &[_]Step{ forward, top, text_settings_button, themes_tab },
                     },
-                    .{
-                        Snapshot.@"aa-more",
-                        &[_]Step{ forward, top, text_settings_button, more_tab },
-                    },
                     // A size no theme has: the note under the tiles says so
                     .{
                         Snapshot.@"aa-own-settings",
@@ -68,6 +64,8 @@ pub const all = [_]Scenario{
                         Snapshot.@"aa-running",
                         &(start_running ++ [_]Step{ pause_tap, pause_text_settings }),
                     },
+                    // Over a page, its status read from the pretend Kindle
+                    .{ Snapshot.panel, &[_]Step{ forward, pull_down, wait(500) } },
                     .{ Snapshot.definition, &[_]Step{ forward, a_word, lift } },
                     // A book without a cover: its title on white
                     .{ Snapshot.lock, &[_]Step{ forward, lock_it, wait(3_000) } },

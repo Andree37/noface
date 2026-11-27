@@ -31,6 +31,9 @@ pub const Quick = struct {
     wifi_paused: bool = false,
     bluetooth: bool = false,
     syncing: bool = false,
+    /// A book's place kept in step with the device's own software: the reader's
+    /// setting, shown on its tile.
+    place_sync: bool = false,
     battery: u32 = 0,
     plugged: bool = false, // On a charger or a computer: the status bar shows a bolt
     wifi_on: bool = false, // Connected

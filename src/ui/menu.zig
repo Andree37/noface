@@ -104,12 +104,13 @@ pub const Hit = enum {
     wifi,
     kindle,
     sync,
+    place,
 };
 
 const Quick = quick_model.Quick;
 
 /// The icon on a tile.
-const Glyph = enum { airplane, wifi, bluetooth, sync, smile };
+const Glyph = enum { airplane, wifi, bluetooth, sync, place, smile };
 
 /// A field of Quick, by name: each a tile reads is a bool (checked below).
 const QuickBool = std.meta.FieldEnum(Quick);
@@ -181,6 +182,14 @@ const tiles = [_]Tile{
         .fills = false,
         .label_on = "Syncing",
         .label_off = "Sync",
+    },
+    // A book's place kept in step with the Kindle's own, and so with other devices
+    .{
+        .hit = .place,
+        .glyph = .place,
+        .state = .place_sync,
+        .label_on = "Place synced",
+        .label_off = "Not synced",
     },
     // Back to the Kindle's own home
     .{ .hit = .kindle, .glyph = .smile, .label_on = "Kindle", .label_off = "Kindle" },
@@ -296,6 +305,7 @@ fn draw_glyph(page: Page, quick: *const Quick, glyph: Glyph, x: f32, y: f32) voi
         .wifi => icons.wifi(page, x, y - wifi_rise, wifi_scale, quick.wifi_shown()),
         .bluetooth => icons.bluetooth(page, x, y),
         .sync => icons.sync(page, x, y),
+        .place => icons.bookmark(page, x, y),
         .smile => icons.smile(page, x, y),
     }
 }
@@ -378,7 +388,7 @@ pub fn place(h: Hit) ?style.Point {
             .x = @divTrunc(schedule_left + style.screen_width, 2),
             .y = @divTrunc(schedule_top + schedule_bottom, 2),
         },
-        .airplane, .bluetooth, .wifi, .kindle, .sync => tile: for (tiles, 0..) |t, i| {
+        .airplane, .bluetooth, .wifi, .kindle, .sync, .place => tile: for (tiles, 0..) |t, i| {
             if (t.hit != h) continue;
             const c = tile_center(@intCast(i));
             break :tile .{ .x = c.x, .y = c.y };
@@ -688,8 +698,13 @@ test "sync and the Kindle button never show as on" {
     const busy = quick_model.Quick{ .syncing = true };
     try std.testing.expect(!tile_on(3, &busy));
     try std.testing.expectEqualStrings("Syncing", tile_label(3, &busy));
-    try std.testing.expect(!tile_on(4, &busy));
-    try std.testing.expectEqualStrings("Kindle", tile_label(4, &busy));
+    try std.testing.expect(!tile_on(5, &busy));
+    try std.testing.expectEqualStrings("Kindle", tile_label(5, &busy));
+}
+
+test "the place's tile shows the place's sync, on and off" {
+    try std.testing.expect(tile_on(4, &quick_model.Quick{ .place_sync = true }));
+    try std.testing.expectEqualStrings("Not synced", tile_label(4, &quick_model.Quick{}));
 }
 
 test "toggles report their state" {
@@ -740,13 +755,12 @@ test "bluetooth toggle shows its state" {
     try std.testing.expectEqualStrings("Off", tile_label(2, &off));
 }
 
-test "a row of tiles is spread evenly, and a short row centred" {
+test "a row of tiles is spread evenly, and the next row under it, column by column" {
     const first = tile_center(0);
     const second = tile_center(1);
     try std.testing.expectEqual(@as(i32, tile_step_x), first.x);
     try std.testing.expectEqual(@as(i32, tile_step_x), second.x - first.x);
     const fourth = tile_center(3);
-    const fifth = tile_center(4);
-    try std.testing.expectEqual(@as(i32, screen_width), fourth.x + fifth.x);
+    try std.testing.expectEqual(first.x, fourth.x);
     try std.testing.expectEqual(@as(i32, first_row_y + row_step_y), fourth.y);
 }

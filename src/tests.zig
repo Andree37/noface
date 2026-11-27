@@ -1,4 +1,8 @@
 test {
+    _ = @import("screens/reader/book_open.zig");
+    _ = @import("platform.zig");
+    _ = @import("model/place.zig");
+    _ = @import("kindle/reading_place.zig");
     _ = @import("screens/reader/note_store.zig");
     _ = @import("epub/epub.zig");
     _ = @import("epub/picture.zig");

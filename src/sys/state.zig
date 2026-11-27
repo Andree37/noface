@@ -214,21 +214,24 @@ pub fn mark(saved: *State, done: bool, kindle_last: u64) void {
     saved.numbering = numbering_now;
     // Saturating: both times come from files, and a broken one mustn't stop this
     saved.opened = @max(saved.opened, kindle_last) +| 1;
-    assert(!prefer_kindle(saved.*, kindle_last));
+    assert(!prefer_outside(saved.*, kindle_last));
 }
 
-/// True when the Kindle's own position should win over ours: we have nothing
-/// saved, or the stock reader had the book open more recently.
-pub fn prefer_kindle(saved: State, kindle_last: u64) bool {
+/// True when a place kept outside noface, made at `outside_last` (the device's own
+/// reader's, or another device's), should win over ours: we have nothing saved, or it
+/// was made after noface last read the book.
+pub fn prefer_outside(saved: State, outside_last: u64) bool {
     // Older files have no time, so only an empty one gives way.
     if (saved.opened == 0) return saved.para == 0 and saved.byte == 0;
-    return kindle_newer(kindle_last, saved.opened);
+    return outside_newer(outside_last, saved.opened);
 }
 
-/// Whether the stock reader read a book after noface last did, by their two dates: the
-/// one rule for whose reading a book shows, its place merged or its record kept.
-pub fn kindle_newer(kindle_last: u64, noface_last: u64) bool {
-    return kindle_last > noface_last;
+/// Whether a book was read outside noface after noface last read it, by their two
+/// dates: the one rule for whose reading a book shows, its place merged or its record
+/// kept. Equal dates are noface's: a place noface kept outside reads back with the time
+/// of its own save.
+pub fn outside_newer(outside_last: u64, noface_last: u64) bool {
+    return outside_last > noface_last;
 }
 
 /// Another file about the same book, beside its state file: "<dir>/<kind>-<book>" for
@@ -357,10 +360,10 @@ test "a book's files keep the names they have on the drive" {
 }
 
 test "kindle position wins until we have our own" {
-    try std.testing.expect(prefer_kindle(.{}, 100));
-    try std.testing.expect(prefer_kindle(.{ .para = 5, .opened = 100 }, 200));
-    try std.testing.expect(!prefer_kindle(.{ .para = 5, .opened = 300 }, 200));
-    try std.testing.expect(!prefer_kindle(.{ .para = 5 }, 200));
+    try std.testing.expect(prefer_outside(.{}, 100));
+    try std.testing.expect(prefer_outside(.{ .para = 5, .opened = 100 }, 200));
+    try std.testing.expect(!prefer_outside(.{ .para = 5, .opened = 300 }, 200));
+    try std.testing.expect(!prefer_outside(.{ .para = 5 }, 200));
 }
 
 test "a value a file doesn't have reads as its default" {

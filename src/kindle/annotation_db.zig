@@ -8,6 +8,7 @@ const failed = os.failed;
 const annotations = @import("annotations.zig");
 const process = @import("../sys/process.zig");
 const safe = @import("safe.zig");
+const check = @import("../base/check.zig");
 const Note = @import("../model/highlights.zig").Note;
 
 /// Where stock keeps the database: a folder per account, so the shell finds it.
@@ -172,6 +173,58 @@ pub fn read_page(key: []const u8, kind: annotations.Kind, page: *Page, after: *A
         after.len = @intCast(last_id.len);
     }
     return .{ .lines = lines, .rows = rows };
+}
+
+/// The shell command that asks the database `sql`, read-only, and says `end_mark` once
+/// sqlite3 has answered whole. Waits a moment for a database busy with a write, never
+/// longer: a reader that holds it makes the stock reader's own saves fail.
+const ask_format = find_database ++ "sqlite3 -separator '|' -cmd '.timeout 1000' " ++
+    "\"file:$db?mode=ro\" \"{s}\" && echo " ++ end_mark;
+/// Room for `ask_format` with the longest question asked through it.
+pub const ask_command_bytes_max = 2048;
+
+/// The database's answer to `sql`, its whole lines without the end mark, or null when
+/// there's no whole answer by `deadline_us` (locked, missing, cut short, too slow).
+/// `sql` is put inside the command's double quotes, so it holds none, nor `$` or a
+/// backquote, which the shell would read.
+pub fn ask(sql: []const u8, out: []u8, deadline_us: u64) ?[]const u8 {
+    assert(sql.len > 0);
+    check.that(shell_leaves(sql), "a question the shell leaves as it is");
+    var buf: [ask_command_bytes_max]u8 = undefined;
+    const command = std.fmt.bufPrintSentinel(&buf, ask_format, .{sql}, 0) catch return null;
+    const argv = [_:null]?[*:0]const u8{ "/bin/sh", "-c", command };
+    const output_size = process.run_until(&argv, out, deadline_us) orelse return null;
+    assert(output_size <= out.len);
+    const answer = out[0..output_size];
+    if (!std.mem.endsWith(u8, answer, end_line)) return null;
+    const lines = answer[0 .. answer.len - end_line.len];
+    if (lines.len > 0 and lines[lines.len - 1] != '\n') return null; // Whole lines only
+    return lines;
+}
+
+/// Whether text inside the shell's double quotes reaches sqlite3 as it is: no quote to
+/// end them, no backquote or backslash, and no `$` the shell expands. A `$` before what
+/// can't start a name, as in a JSON path's `'$.position'`, it leaves.
+pub fn shell_leaves(text: []const u8) bool {
+    if (std.mem.indexOfAny(u8, text, "\"`\\") != null) return false;
+    for (text, 0..) |c, i| {
+        if (c != '$') continue;
+        const next = if (i + 1 < text.len) text[i + 1] else return false;
+        // What the shell reads after a `$`: a name, a number, or one of its own signs
+        const expands = "_{(@*#?!$-";
+        if (std.ascii.isAlphanumeric(next)) return false;
+        if (std.mem.indexOfScalar(u8, expands, next) != null) return false;
+    }
+    return true;
+}
+
+test "the shell leaves a JSON path's dollar, and nothing it would expand" {
+    try std.testing.expect(shell_leaves("select json_extract(p, '$.book_data') from t"));
+    try std.testing.expect(!shell_leaves("select $HOME"));
+    try std.testing.expect(!shell_leaves("select ${x}"));
+    try std.testing.expect(!shell_leaves("select $(id)"));
+    try std.testing.expect(!shell_leaves("select \"x\""));
+    try std.testing.expect(!shell_leaves("ends in $"));
 }
 
 /// Runs a SQL statement against the annotation database.

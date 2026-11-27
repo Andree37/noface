@@ -196,6 +196,35 @@ zig-out/bin/build_dictionary kaikki.org-dictionary-Portuguese.jsonl.gz dict-pt
 Then put `dict-en` (about 95 MB) and `dict-pt` (about 38 MB) in `/mnt/us/noface-data/`.
 A book's language is worked out from its text.
 
+## Reading places on a device
+
+Where a book was left is kept by the device's own software too, so its reader and
+other devices go on from noface's place, and noface from theirs. `src/platform.zig`
+picks each device family's code for it at build time (`model/models.zig` `Family`);
+every family's module has the same declarations, which the build checks for all of
+them. The reader only sees places in its own numbering (`model/place.zig`): one asked
+once as a book opens, which is taken when this device's own reader made it later than
+noface's save, and offered on a card when another device did; and noface's own, kept
+as the book closes or the device locks, stamped with its save's time so it never reads
+back as a later one.
+
+On a Kindle (`kindle/reading_place.zig`, found on firmware 5.20) a book's places are
+rows of its annotation database:
+
+- `kindle.local_most_recent_read` (dataset 8, in `nonsyncable_annotations`): this
+  Kindle's own, never sent.
+- `kindle.most_recent_read` (dataset 4) and `kindle.last_read` (dataset 9, the furthest
+  read, which only moves forward): Amazon's, from every device, with the device's name
+  (`Local` for this Kindle). They're sent from the `local_edit` outbox, a row the same
+  shape as Amazon's own, as highlights are.
+
+A book is named as the database already names it: its dataset id (whose last digit is
+whether you own it) and its `book_data` are copied from its own rows, so one the Kindle
+has never named is left alone. The database is asked once, read-only, with a short wait
+for a write: a reader that holds it makes the stock reader's own saves fail. The stock
+reader on the same Kindle opens at a place of its own, in each book's `.sdr` sidecar,
+not at these, so a place noface keeps reaches it only through Amazon.
+
 ## Layout
 
 Code is split by who owns it. `zig build check` fails if a file imports across these lines.

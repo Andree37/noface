@@ -34,6 +34,8 @@ const lock = @import("lock.zig");
 const screen = @import("screen.zig");
 const sess = @import("reader/session.zig");
 const book_open = @import("reader/book_open.zig");
+const outside_place = @import("reader/outside_place.zig");
+const platform = @import("../platform.zig");
 const note_store = @import("reader/note_store.zig");
 const hl = @import("reader/highlight.zig");
 const view_rules = @import("reader/view.zig");
@@ -140,11 +142,19 @@ fn open_book(r: *Reader) !void {
     if (adopted.unsettled.count() > 0) std.debug.print("open: 0.2.0's files not settled\n", .{});
     // Kept in the reader, as the session points to it while it lays out
     r.progress = null;
+    // Asked once, before the place to open at is chosen
+    const outside = platform.reading_place.look(entry, book_text.paragraphs);
     const opened = try book_open.find_pages(a, r.alloc, entry, book_text, .{
         .book_bytes = r.data.len,
         .state_path = state_path,
         .adopted = adopted,
         .progress = &r.progress,
+        .outside = outside.answer,
+    });
+    r.outside = .{ .book = outside.book, .offer = opened.offer };
+    std.debug.print("outside place: {s}{s}\n", .{
+        @tagName(outside.answer),
+        if (opened.offer != null) ", offered" else "",
     });
     std.debug.print("open {s}: {d} pages, parsed in {d} ms, {s} in {d} ms\n", .{
         entry.title,
@@ -228,6 +238,9 @@ pub const Reader = struct {
     run: ?run_mode.Run = null,
     /// Running's pause card: its line, and the phrase screen kept under it.
     pause: run_mode.Pause = .{},
+    /// The book's place outside noface: kept as it closes or locks, and another
+    /// device's later one, offered as it opens.
+    outside: outside_place.OutsidePlace = .{},
 
     /// The screens a book opens over itself.
     const Over = union(enum) {
@@ -237,6 +250,7 @@ pub const Reader = struct {
         searching: screen.Child(search.Search),
         going: screen.Child(goto.GoTo),
         pause: screen.Child(card_screen.Card), // Running's card: resume, text, or stop
+        offer: screen.Child(card_screen.Card), // Another device's later place, offered
         define: screen.Child(define.Define),
         panel: screen.Child(panel.Panel),
         controls,
@@ -271,7 +285,11 @@ pub const Reader = struct {
         if (r.failed) |err| return r.fail(err);
         assert(r.reading_started);
         assert(r.view == .page);
-        return r.ready();
+        if (r.outside.offer == null) return r.ready();
+        // Read further on another device: asked over the first page, as stock asks
+        const c = r.outside.open_offer(r.a, r.alloc, r.s) catch |err| return r.fail(err);
+        r.open_child(.{ .offer = .{ .screen = c } });
+        return r.after();
     }
 
     /// The input modes for the view on screen, and how often to tick: often while a
@@ -363,6 +381,7 @@ pub const Reader = struct {
             .searching => |c| try r.paged(c.ended()),
             .going => |c| try r.paged(c.ended()),
             .pause => |c| try r.paused(c.ended()),
+            .offer => |c| if (try r.outside.offered(r.a, c.ended())) |at| try r.to_place(at),
         }
         return r.after();
     }
@@ -493,7 +512,9 @@ pub const Reader = struct {
                 .failed, .stopped => null,
             };
             r.place_saved = sess.save_progress(&r.read_so_far, r.s, percent);
+            if (r.place_saved) r.outside.keep(r.s);
             wifi_saver.restore(); // Leaving the book, Wi-Fi comes back
+            r.outside.send(); // With Wi-Fi back, as the book closes
         }
         r.release();
         assert(r.a.regions.book.empty());
@@ -607,6 +628,14 @@ pub const Reader = struct {
         try controls.draw_toolbar(r.a, r.s, r.toolbar_book(), drawn);
     }
 
+    /// Back to the page alone, at the page holding `at`, every page laid out first.
+    fn to_place(r: *Reader, at: book_model.Pos) !void {
+        assert(at.para < r.s.paragraphs.len);
+        try r.s.finish_layout();
+        const target: u32 = @intCast(book_model.page_containing(r.s.pages, at.para, at.byte));
+        try r.to_page(target); // Saved as the jump it is, in `ready`
+    }
+
     /// Back to the page alone, at `target`, from whatever was over it.
     fn to_page(r: *Reader, target: u32) !void {
         assert(target < r.s.pages.len);
@@ -629,6 +658,7 @@ pub const Reader = struct {
         }
         r.save(); // A lock is a natural stop, and anything after it may end noface
         assert(r.since_save == 0);
+        if (r.place_saved) r.outside.keep(r.s);
         r.open_child(.{ .lock = .{ .screen = lock.make(r.a, r.entry, .{}) } });
         return r.after();
     }

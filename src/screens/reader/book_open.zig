@@ -17,6 +17,7 @@ const note_store = @import("note_store.zig");
 const paginate = @import("paginate.zig");
 const sess = @import("session.zig");
 const hl = @import("highlight.zig");
+const outside_model = @import("../../model/place.zig");
 
 /// The book's text and contents, from its file, and its language, as far as its text
 /// tells.
@@ -55,6 +56,8 @@ pub const Opened = struct {
     place: file.Kept, // The place's file, as read: never saved over if unreadable
     /// The place as read, renumbered as the book is now: what each save changes.
     saved: state.State,
+    /// A later place another device read the book to, asked about as it opens.
+    offer: ?outside_model.Outside,
 };
 
 /// The pages: saved ones, or a first few laid out from the reader's place (the rest
@@ -69,6 +72,8 @@ pub fn find_pages(
         state_path: [:0]const u8,
         adopted: state.Adopted, // Which of 0.2.0's files are settled: the place's or not
         progress: *?paginate.Progressive,
+        /// What the device keeps of the book's place outside noface.
+        outside: outside_model.Answer,
     },
 ) !Opened {
     assert(options.progress.* == null);
@@ -84,12 +89,16 @@ pub fn find_pages(
     const own = state.open_own(try alloc.dupeSentinel(u8, options.state_path, 0), options.adopted);
     const place = own.kept;
     const saved = renumbered(own.saved, paragraphs);
-    const from_kindle = state.prefer_kindle(saved, entry.kindle_last);
+    const went = outside_place(saved, paragraphs, options.outside);
+    // The catalog's percent is a page's width at best: only when the device kept no
+    // exact place for the book
+    const exact = options.outside == .found;
+    const from_kindle = !exact and state.prefer_outside(saved, entry.kindle_last);
     // Without saved breaks, lay out a little from the reader's place and show it at
     // once; the rest follows in idle moments. Stock's place is a percent of the
     // pages, so that one needs them all first.
     if (stored_pages == null and !from_kindle) {
-        options.progress.* = try progressive(a, alloc, book_text, saved);
+        options.progress.* = try progressive(a, alloc, book_text, went.open_at);
     }
     var pages: []const book_model.Pos = &.{};
     var source: PagesSource = .@"laid out";
@@ -109,12 +118,12 @@ pub fn find_pages(
     const from: StartFrom = if (source == .@"first pages")
         .first_laid_out
     else if (from_kindle) .kindle_percent else .saved_place;
-    const start = start_page(pages, paragraphs, entry, &saved, from);
+    const start = start_page(pages, paragraphs, entry, &went.open_at, from);
     assert(start < pages.len);
-    // Stock's reader on the book since: its place is elsewhere, and so is Back's
+    // Read elsewhere since: the place is elsewhere, and so is Back's
     var back: ?book_model.Pos = null;
     if (saved.back_para) |para| {
-        if (!from_kindle) back = place_in(paragraphs, para, saved.back_byte);
+        if (!from_kindle and !went.moved) back = place_in(paragraphs, para, saved.back_byte);
     }
     return .{
         .pages = pages,
@@ -126,7 +135,50 @@ pub fn find_pages(
         .back_turns = saved.back_turns,
         .place = place,
         .saved = saved,
+        .offer = went.offer,
     };
+}
+
+/// Where a book opens when a place kept outside noface is later than its own: one the
+/// device's own reader made is taken at once, exactly; one made on another device is
+/// only offered, the reader asked as the book opens, as the stock reader asks.
+const Went = struct { open_at: state.State, moved: bool, offer: ?outside_model.Outside };
+
+fn outside_place(
+    saved: state.State,
+    paragraphs: []const book_model.Paragraph,
+    answer: outside_model.Answer,
+) Went {
+    assert(paragraphs.len > 0);
+    const stay: Went = .{ .open_at = saved, .moved = false, .offer = null };
+    const o = switch (answer) {
+        .found => |o| o,
+        .none, .unknown => return stay,
+    };
+    assert(o.at.para < paragraphs.len);
+    if (!state.prefer_outside(saved, o.when_s)) return stay;
+    return switch (o.from) {
+        .this_device => .{
+            .open_at = at_place(saved, paragraphs, o.at),
+            .moved = true,
+            .offer = null,
+        },
+        .elsewhere => .{ .open_at = saved, .moved = false, .offer = o },
+    };
+}
+
+/// `saved` with its place moved to `at`, numbered as the place file numbers it.
+fn at_place(
+    saved: state.State,
+    paragraphs: []const book_model.Paragraph,
+    at: book_model.Pos,
+) state.State {
+    assert(at.para < paragraphs.len);
+    assert(at.byte <= paragraphs[at.para].text.len);
+    var moved = saved;
+    moved.para = book_model.text_index(paragraphs, at.para);
+    moved.byte = at.byte;
+    return moved;
 }
 
 /// `saved`'s places numbered as the book is now: those 0.2.0 saved, which numbered
@@ -211,4 +263,42 @@ pub fn read_notes(
     assert(session.words.before.len == paragraphs.len + 1);
     try session.notes.load(alloc, entry, files, paragraphs);
     try hl.refresh_marks(a, session, alloc);
+}
+
+test "a later place from the device's own reader is opened at; another device's is offered" {
+    const paragraphs = [_]book_model.Paragraph{
+        .{ .text = "First paragraph." },
+        .{ .text = "Second paragraph, read further." },
+    };
+    const saved: state.State = .{ .para = 0, .byte = 0, .opened = 100 };
+    const there: book_model.Pos = .{ .para = 1, .byte = 7 };
+    const here: outside_model.Outside = .{ .at = there, .when_s = 200, .from = .this_device };
+    const local = outside_place(saved, &paragraphs, .{ .found = here });
+    try std.testing.expect(local.moved);
+    try std.testing.expect(local.offer == null);
+    try std.testing.expectEqual(@as(u32, 7), local.open_at.byte);
+    var phone = here;
+    phone.from = .{ .elsewhere = outside_model.Name.of("Phone") };
+    const offered = outside_place(saved, &paragraphs, .{ .found = phone });
+    try std.testing.expect(!offered.moved);
+    try std.testing.expect(offered.offer != null);
+    try std.testing.expectEqual(saved.byte, offered.open_at.byte);
+}
+
+test "noface's own place stays when it's as late, or the device couldn't say" {
+    const paragraphs = [_]book_model.Paragraph{.{ .text = "One paragraph." }};
+    const saved: state.State = .{ .para = 0, .byte = 4, .opened = 200 };
+    const same: outside_model.Outside = .{ .at = .{}, .when_s = 200, .from = .this_device };
+    // Equal times are noface's own place, read back from where it kept it
+    const echo = outside_place(saved, &paragraphs, .{ .found = same });
+    try std.testing.expect(!echo.moved);
+    try std.testing.expectEqual(@as(u32, 4), echo.open_at.byte);
+    for ([_]outside_model.Answer{ .none, .unknown }) |answer| {
+        const kept = outside_place(saved, &paragraphs, answer);
+        try std.testing.expect(!kept.moved);
+        try std.testing.expect(kept.offer == null);
+    }
+    // A file from before places had times only gives way when it holds no place
+    const old: state.State = .{ .para = 0, .byte = 4, .opened = 0 };
+    try std.testing.expect(!outside_place(old, &paragraphs, .{ .found = same }).moved);
 }

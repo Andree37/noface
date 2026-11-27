@@ -432,9 +432,9 @@ fn kept_reading(e: *catalog.Entry, last: Kept) void {
     assert(last.progress.percent <= 100);
     e.seconds_read = last.progress.seconds_read;
     // The record's date the Kindle's own then: the catalog's numbers are the newer
-    if (!state.kindle_newer(last.progress.last, last.kindle_last)) return;
+    if (!state.outside_newer(last.progress.last, last.kindle_last)) return;
     // The stock reader read it since
-    if (state.kindle_newer(e.kindle_last, last.progress.last)) return;
+    if (state.outside_newer(e.kindle_last, last.progress.last)) return;
     e.percent = last.progress.percent;
     e.last = last.progress.last;
     e.words_left = last.progress.words_left;
@@ -920,7 +920,7 @@ fn merged(r: *index.Record, saved: state.State) void {
     }
     r.percent = r.kindle_percent;
     r.last = r.kindle_last;
-    if (state.prefer_kindle(saved, r.kindle_last)) {
+    if (state.prefer_outside(saved, r.kindle_last)) {
         // The place is the stock reader's, so what noface counted from its own is old
         r.set_words_left(null);
         return;

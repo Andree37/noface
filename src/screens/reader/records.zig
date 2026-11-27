@@ -4,6 +4,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const book_model = @import("../../model/book.zig");
 const annotations = @import("../../kindle/annotations.zig");
+const highlights = @import("../../model/highlights.zig");
 const sess = @import("session.zig");
 
 /// Amazon's position for a place in the text. Null for paragraphs it doesn't number,
@@ -17,12 +18,9 @@ pub fn point_for(s: *sess.Session, para: u32, byte: u32) ?annotations.Point {
 
 fn point_in(p: *const book_model.Paragraph, byte: u32) ?annotations.Point {
     assert(byte <= p.text.len);
-    const position = p.position orelse return null; // Not numbered
+    const short = highlights.short_at(p, byte) orelse return null;
     const chars = book_model.char_offset(p.text, byte);
-    assert(chars <= byte); // A character takes at least a byte
-    // A KFX's positions are sums of its own numbers, which stop at the largest
-    const short = std.math.add(u32, position, chars) catch return null;
-    assert(short >= position);
+    assert(short >= chars); // The paragraph's own position comes first
     return .{ .element = p.element, .offset = chars, .short = short };
 }
 

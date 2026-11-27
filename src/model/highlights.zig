@@ -104,6 +104,21 @@ pub fn excerpt(s: []const u8, max: u32) []const u8 {
     return trimmed[0..end];
 }
 
+/// Amazon's short position for a place in paragraph `p`: its first position plus the
+/// characters before `byte`. Null for a paragraph Amazon doesn't number, and for a
+/// place past the largest position, which only a damaged book has. `locate` turns it
+/// back into a place.
+pub fn short_at(p: *const book_model.Paragraph, byte: u32) ?u32 {
+    assert(byte <= p.text.len);
+    const position = p.position orelse return null; // Not numbered
+    const chars = book_model.char_offset(p.text, byte);
+    assert(chars <= byte); // A character takes at least a byte
+    // A KFX's positions are sums of its own numbers, which stop at the largest
+    const short = std.math.add(u32, position, chars) catch return null;
+    assert(short >= position);
+    return short;
+}
+
 /// Finds the paragraph and byte for one of Amazon's short positions.
 pub fn locate(
     paragraphs: []const book_model.Paragraph,

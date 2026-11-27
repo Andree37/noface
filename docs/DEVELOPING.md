@@ -326,20 +326,21 @@ and takes the same time in both, so it's left out.
   real app on a screen in memory, a clock it moves itself and a pretend Kindle that
   starts no programs. GitHub runs them on every push; on the Kindle they're part of
   `noface selftest`.
-- The scenarios compare thirteen screens with reference images, and where the test
-  book's pages break with recorded digests (`breaks.txt`), in
+- The scenarios compare screens with reference images, and where the test book's
+  pages break with recorded digests (`breaks.txt`), in
   `src/testdata/recorded/<model>/`, for every Kindle `zig build layouts` lays out, so
-  a change that moves anything on any of them is seen. The screens: a page, the toolbar, Aa, a definition, a book's search,
-  the lock screen, running, the library, its search, a series list, a selected
-  highlight, a note's panel and a picture shown whole. The last two are of
+  a change that moves anything on any of them is seen. The screens are the
+  `Snapshot` list in `src/scenarios/harness.zig`: among them a page, the toolbar,
+  Aa's tabs, running, the library, a note's panel and a picture shown whole. The last
+  two are of
   `src/testdata/notes.epub`, a book with a footnote and a picture, which a scenario
   opens with `.book = .notes`. When a screen changes on purpose, write new ones for
   each Kindle (`-Dlayout=<model>`), look at them, and convert them. When the page
   breaks move on purpose, the scenario that compares them prints the new digests for
   `breaks.txt`. A Kindle added to `device.Model` starts from another's folder copied
   as its own, so it builds; its screens are then written over and its digests put in
-  as printed. Write them on this computer, not on a Kindle: a large screen's thirteen
-  images (the Scribe's are 57 MB) don't fit the Kindle's `/tmp`.
+  as printed. Write them on this computer, not on a Kindle: a large screen's images
+  don't fit the Kindle's `/tmp`.
 
 ```sh
 zig build -Dlayout=<model> scenarios host-tools   # zig-out/bin/noface-scenarios-host

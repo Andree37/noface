@@ -20,6 +20,7 @@ const phrases = @import("../../model/phrases.zig");
 const book_model = @import("../../model/book.zig");
 const card = @import("../../ui/card.zig");
 const app = @import("../../app.zig");
+const display = @import("../../display.zig");
 const sess = @import("session.zig");
 const view = @import("run_view.zig");
 const run_icons = @import("../../ui/run_icons.zig");
@@ -381,9 +382,11 @@ pub const Pause = struct {
     /// The card closed: the phrase screen back as it was, and what was chosen, carrying
     /// on for a card closed without a choice.
     /// None when something else took over (the lock): running stays as it was, paused.
+    /// The phrase screen is shown again only when running carries on there: the text
+    /// settings and a stop each draw a whole screen of their own next, so the panel
+    /// refreshes once, for that.
     pub fn closed(p: *Pause, a: *app.App, ending: screen.Ending(u32)) !?Paused {
         assert(p.under.len == a.display.screen.pixels.len); // Kept as the card opened
-        try card_screen.closed(a, .{ .pixels = p.under });
         const choice: ?Paused = switch (ending) {
             .done => |row| @fromBackingInt(@intCast(row)),
             // Closed by a tap: on again. Ended by the lock: left paused, so a reader who
@@ -391,7 +394,16 @@ pub const Pause = struct {
             .closed => .resume_running,
             .interrupted => null,
         };
-        if (choice) |c| std.debug.print("running: {s}\n", .{@tagName(c)});
+        const under: display.Backdrop = .{ .pixels = p.under };
+        if (choice) |c| {
+            std.debug.print("running: {s}\n", .{@tagName(c)});
+            switch (c) {
+                .resume_running => try card_screen.closed(a, under),
+                .text_settings, .stop => card_screen.closed_quietly(a, under),
+            }
+        } else {
+            try card_screen.closed(a, under);
+        }
         return choice;
     }
 };

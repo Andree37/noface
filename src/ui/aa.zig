@@ -426,10 +426,7 @@ comptime {
     assert(theme_note_baseline < height_for(.themes));
     // The Running button is a fingertip and more, under the note, above the sheet's edge
     assert(running_height >= style.fingertip);
-    // Both its lines inside it, the second above its foot
-    assert(running_label_drop < running_note_drop);
-    assert(running_note_drop < running_height);
-    assert(running_top + running_height + 4 <= height_for(.themes));
+    assert(running_top + running_height + sheet_edge <= height_for(.themes));
     for (switches, 0..) |sw, i| {
         assert(switch_top(i) + toggle_height + toggle_reach <= height_for(sw.tab));
         // A slider row and a switch never take the same taps: `hit` asks sliders first
@@ -740,13 +737,19 @@ fn draw_running(fonts: Fonts, page: Page, running: bool) !void {
     else
         "A sentence at a time, large and still, at your pace, for a treadmill";
     const text_left = margin + running_text_inset;
-    // Its letters inside its edge, the line under them too, however the fonts set them
+    const label_baseline = running_top + running_label_drop;
     const note_baseline = running_top + running_note_drop;
+    // Both lines inside its edge, one under the other, however the fonts set them: the
+    // label below its top, the note under the label, and the note above its foot
+    const text_room: f32 = @floatFromInt(width - 2 * running_text_inset);
+    assert(@as(i64, label_baseline) - fonts.title.ascent >= running_top + edge);
+    const label_foot = @as(i64, label_baseline) + fonts.title.descent;
+    assert(label_foot <= @as(i64, note_baseline) - fonts.caption.cap_height);
     const note_foot = @as(i64, note_baseline) + fonts.caption.descent + edge;
     assert(note_foot <= running_top + running_height);
-    const note_width = try fonts.caption.measure(note);
-    assert(note_width <= @as(f32, @floatFromInt(width - 2 * running_text_inset)));
-    try fonts.title.draw(page, text_left, running_top + running_label_drop, label);
+    assert(try fonts.title.measure(label) <= text_room);
+    assert(try fonts.caption.measure(note) <= text_room);
+    try fonts.title.draw(page, text_left, label_baseline, label);
     try fonts.caption.draw(page, text_left, note_baseline, note);
 }
 
@@ -756,8 +759,6 @@ fn draw_themes_tile(fonts: Fonts, page: Page, t: Theme, left: u32, active: bool)
     assert(left + theme_width <= screen_width - margin);
     const edge: u32 = if (active) chosen_edge else style.stroke;
     draw.box_with(page, left, theme_top, theme_width, theme_height, edge, style.button_corner);
-    const tick = tile.tick_inset;
-    if (active) icons.check(page, @floatFromInt(left + theme_width - tick), theme_top + tick);
     // Text lines drawn to scale, so the choice shows rather than tells: a step of the
     // setting is this much more of each
     const gap: u32 = tile.line_gap + t.spacing * tile.line_gap_step;
@@ -767,6 +768,9 @@ fn draw_themes_tile(fonts: Fonts, page: Page, t: Theme, left: u32, active: bool)
     while (y < theme_top + tile.lines_bottom) : (y += gap + thick) {
         page.fill_rect(left + inset, y, theme_width - 2 * inset, thick, style.quiet);
     }
+    // The tick over the lines, its white ring clearing them round it
+    const tick = tile.tick_inset;
+    if (active) icons.check(page, @floatFromInt(left + theme_width - tick), theme_top + tick);
     const centre: f32 = @floatFromInt(left + theme_width / 2);
     try draw.centered(fonts.small, page, centre, theme_top + tile.label_drop, t.label);
 }

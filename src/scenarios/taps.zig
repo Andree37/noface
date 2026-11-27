@@ -110,13 +110,21 @@ pub const running_middle = tap_on(places.running_mode.middle);
 /// pause card's rows.
 pub const text_settings_button = tool(.text);
 pub const themes_tab = tap_on(aa.place(.themes, .{ .tab = .themes }));
+pub const font_tab = tap_on(aa.place(.themes, .{ .tab = .font }));
 pub const running_button = tap_on(aa.place(.themes, .running));
 pub const start_running = [_]Step{ top, text_settings_button, themes_tab, running_button };
 pub const pause_tap = tap_on(places.running_mode.top);
 /// The pause button, at the left of running's footer (screens/reader/run.zig).
 pub const pause_button = tap_on(run_view.pause_place(height));
-pub const pause_resume = card_row(3, 0);
-pub const pause_stop = card_row(3, 2);
+pub const pause_resume = pause_row(.resume_running);
+pub const pause_text_settings = pause_row(.text_settings);
+pub const pause_stop = pause_row(.stop);
+
+/// The pause card's row for `choice`, its rows in the order of its choices.
+fn pause_row(choice: run_mode.Paused) Step {
+    const rows: u32 = std.enums.values(run_mode.Paused).len;
+    return card_row(rows, @backingInt(choice));
+}
 
 /// A finger moved, still down, to the middle of `word`.
 pub fn drag_to(word: book_model.Word) Step {
@@ -163,6 +171,8 @@ comptime {
     assert(toolbar.hit(text.x, text.y, null) == .text);
     const tab = themes_tab.act.tap;
     assert(std.meta.eql(aa.hit(.themes, .{}, tab.x, tab.y), aa.Hit{ .tab = .themes }));
+    const font = font_tab.act.tap;
+    assert(std.meta.eql(aa.hit(.themes, .{}, font.x, font.y), aa.Hit{ .tab = .font }));
     const run = running_button.act.tap;
     assert(aa.hit(.themes, .{}, run.x, run.y) == .running);
     // While running, taps in the top band pause, as `forward` and `back` turn

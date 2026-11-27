@@ -907,9 +907,11 @@ pub const Reader = struct {
                 run.stopped_at = null;
                 r.view = .{ .toolbar = .{ .sheet_open = true } };
                 a.input.apply(r.setting(), false);
-                try r.draw_toolbar(false);
+                // Over the book's page, shown whole: the phrase screen the card was
+                // closed over isn't shown first, and none of it is left between the bars
+                try r.draw_toolbar(true);
             },
-            .stop => try r.stop_running(),
+            .stop => try r.stop_running(), // The page, shown whole
         }
     }
 

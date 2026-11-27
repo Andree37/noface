@@ -2,7 +2,6 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const library_ui = @import("../ui/library.zig");
-const aa = @import("../ui/aa.zig");
 const keyboard = @import("../ui/keyboard.zig");
 const harness = @import("harness.zig");
 const Kindle = harness.Kindle;
@@ -14,12 +13,18 @@ const word_held = harness.word_held;
 const taps = @import("taps.zig");
 const Step = taps.Step;
 const book_series = taps.book_series;
+const font_tab = taps.font_tab;
 const forward = taps.forward;
 const hold_in = taps.hold_in;
 const lift = taps.lift;
 const lock_it = taps.lock_it;
+const pause_tap = taps.pause_tap;
+const pause_text_settings = taps.pause_text_settings;
+const size_step = taps.size_step;
 const start_running = taps.start_running;
 const tap_on = taps.tap_on;
+const text_settings_button = taps.text_settings_button;
+const themes_tab = taps.themes_tab;
 const tool = taps.tool;
 const top = taps.top;
 const typed = taps.typed;
@@ -34,19 +39,29 @@ pub const all = [_]Scenario{
         .run = struct {
             fn run() !void {
                 const a_word = try word_held(.{}, &.{forward});
-                const text_settings = tool(.text);
-                const font_tab = tap_on(aa.place(.themes, .{ .tab = .font }));
-                const themes_tab = tap_on(aa.place(.themes, .{ .tab = .themes }));
                 const shots = .{
                     .{ Snapshot.page, &[_]Step{forward} },
                     .{ Snapshot.toolbar, &[_]Step{ forward, top } },
                     .{
                         Snapshot.@"aa-font",
-                        &[_]Step{ forward, top, text_settings, font_tab },
+                        &[_]Step{ forward, top, text_settings_button, font_tab },
                     },
                     .{
                         Snapshot.@"aa-themes",
-                        &[_]Step{ forward, top, text_settings, themes_tab },
+                        &[_]Step{ forward, top, text_settings_button, themes_tab },
+                    },
+                    // A size no theme has: the note under the tiles says so
+                    .{
+                        Snapshot.@"aa-own-settings",
+                        &[_]Step{
+                            forward,      top,  text_settings_button, font_tab,
+                            size_step(3), lift, themes_tab,
+                        },
+                    },
+                    // From running's pause card: the button stops it
+                    .{
+                        Snapshot.@"aa-running",
+                        &(start_running ++ [_]Step{ pause_tap, pause_text_settings }),
                     },
                     .{ Snapshot.definition, &[_]Step{ forward, a_word, lift } },
                     // A book without a cover: its title on white

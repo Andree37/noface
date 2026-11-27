@@ -33,10 +33,15 @@ noface replaces the home screen and the reader on an e-reader. It was written be
 the device's own reader takes about a third of a second to show the next page; noface
 takes under a tenth of a second on the same device.
 
-It works with the books already on your device and with EPUBs you copy over USB.
-Highlights on books from the device's store still sync with its apps, and Wi‑Fi, sync
-and the dictionary keep working. noface doesn't change the device's own software: you
-can go back to it from noface's panel at any time.
+noface is opinionated. It is a place to read: your books, the page, and the few
+controls reading needs. There is no store, no recommendations and nothing to scroll
+past, and where the device's own software does something better, noface leaves it to
+it rather than copying it.
+
+It works with the books already on your device and with EPUBs you copy over USB, and
+it keeps the parts of the device you'd miss working (see
+[What keeps working](#what-keeps-working)). noface doesn't change the device's own
+software: you can go back to it from noface's panel at any time.
 
 ## Features
 
@@ -62,6 +67,25 @@ can go back to it from noface's panel at any time.
   and hyphenation, a clock, full-screen pictures with zoom, reading stats, your own
   picture on the lock screen, and a pull-down panel for Wi‑Fi, Bluetooth, sync, light
   and warmth.
+
+## What keeps working
+
+noface sits on top of the device's own software instead of replacing all of it, so
+what the device does well carries on. Each device keeps its own list; more join it as
+more devices are supported.
+
+### Kindle
+
+| | With noface |
+|---|---|
+| Books from Amazon and Send to Kindle | In noface's library with the rest, and they open in noface when they have no DRM. |
+| Books with DRM | Open in the Kindle's own reader, as before. noface never works around DRM. |
+| Highlights and bookmarks | On books from Amazon they sync with the Kindle apps both ways. On EPUBs copied over USB they stay with noface, as Amazon doesn't know those books. |
+| Wi‑Fi, Bluetooth, sync, light, warmth | In noface's pull-down panel. Wi‑Fi is off while a book is open, to save battery, and comes back when you leave the book, so syncing happens between books. |
+| Typefaces | The Kindle's own, and any you add. |
+| Dictionary | noface's own, built from Wiktionary, downloaded the first time you look up a word. The Kindle's dictionaries aren't used. |
+| The store | Not part of noface. Buy in the Kindle's own screens or on Amazon, and the book shows up in noface's library. |
+| The Kindle's own screens | A button in noface's panel takes you back to them, whenever you want. |
 
 ## Install
 

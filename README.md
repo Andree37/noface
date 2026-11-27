@@ -88,7 +88,7 @@ more devices are supported.
 | Wi‑Fi, Bluetooth, sync, light, warmth | In noface's pull-down panel. Wi‑Fi is off while a book is open, to save battery, and comes back when you leave the book, so syncing happens between books. |
 | Typefaces | The Kindle's own, and any you add. |
 | Dictionary | noface's own, built from Wiktionary, downloaded the first time you look up a word. The Kindle's dictionaries aren't used. |
-| The store | Not part of noface. Buy in the Kindle's own screens or on Amazon, and the book shows up in noface's library. |
+| The store | Not part of noface. Buy in the Kindle's own screens or on Amazon, and the book shows up in noface's library. Most bought books have DRM, so they open in the Kindle's own reader. |
 | The Kindle's own screens | A button in noface's panel takes you back to them, whenever you want. |
 
 ## Install
@@ -120,8 +120,9 @@ noface is described for each device in [Supported devices](docs/DEVICES.md).
 worked on.
 
 **Can it open books I bought?**
-Only books without DRM. noface doesn't remove or work around DRM, so protected books
-open in the device's own reader.
+Bought books show up in noface's library with the rest. Those with DRM, which is most
+of them, open in the device's own reader, as noface doesn't remove or work around DRM.
+Books without DRM, and books you send or copy to the device, open in noface.
 
 **How do I report a problem?**
 Run `noface doctor` and `noface selftest`; the

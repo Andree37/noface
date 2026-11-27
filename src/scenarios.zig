@@ -37,13 +37,14 @@ const kindle = @import("scenarios/kindle.zig");
 const looks = @import("scenarios/looks.zig");
 const running = @import("scenarios/running.zig");
 const resilience = @import("scenarios/resilience.zig");
+const elsewhere = @import("scenarios/elsewhere.zig");
 
 /// Shown a crash's message even mid-scenario (main.zig's panic handler calls it).
 pub const show_crashes = harness.show_crashes;
 
 /// Every scenario, by what it's about.
 const scenarios = reading.all ++ words.all ++ sheets.all ++ library.all ++ kindle.all ++
-    looks.all ++ running.all ++ resilience.all;
+    looks.all ++ running.all ++ resilience.all ++ elsewhere.all;
 
 comptime {
     // Each scenario is reported by its name, so no two may share one

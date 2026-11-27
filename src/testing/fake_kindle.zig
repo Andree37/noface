@@ -32,6 +32,11 @@ pub const FakeKindle = struct {
     bookmarks: []const u8 = "",
     /// The notes database locked: every read of it fails, as sqlite3 does then.
     notes_unreadable: bool = false,
+    /// The database's answer to the question of a book's places as it opens
+    /// (kindle/reading_place.zig): "<dataset>|<position>|<time ms>|<device>" lines.
+    places: []const u8 = "",
+    /// Writes to the annotation database: noted, as they're only queued for Amazon.
+    writes: u32 = 0,
 
     /// A Kindle awake, on Wi-Fi, Bluetooth off, not in airplane mode.
     pub fn init(alloc: std.mem.Allocator) !FakeKindle {
@@ -127,6 +132,8 @@ pub const FakeKindle = struct {
         if (std.mem.eql(u8, program, "date")) return answer_copy(date_fixed, out);
         if (std.mem.eql(u8, program, "sh") and args.len == 2) {
             if (k.answer_notes(args[1], out)) |n| return n;
+            if (answer_places(k, args[1], out)) |n| return n;
+            if (is_write(args[1])) k.writes += 1;
         }
         k.ran.append(k.alloc, k.alloc.dupe(u8, program) catch return null) catch return null;
         return 0;
@@ -193,6 +200,26 @@ pub const FakeKindle = struct {
             }
         }
         return null;
+    }
+
+    /// The question of a book's places: the places given, then the end mark the
+    /// command asks for. Null for any other command.
+    fn answer_places(k: *const FakeKindle, command: []const u8, out: []u8) ?u32 {
+        if (std.mem.indexOf(u8, command, "sqlite3") == null) return null;
+        if (std.mem.indexOf(u8, command, "dataset in (4, 9)") == null) return null;
+        if (k.places.len > 0) assert(k.places[k.places.len - 1] == '\n'); // Whole lines
+        const said = "echo " ++ annotation_db.end_mark;
+        const asks = std.mem.indexOf(u8, command, said) != null;
+        const mark = annotation_db.end_mark ++ "\n";
+        const n = answer_parts(&.{ k.places, if (asks) mark else "" }, out);
+        assert(n <= out.len);
+        return n;
+    }
+
+    /// A command that writes to the annotation database, from the SQL file.
+    fn is_write(command: []const u8) bool {
+        assert(command.len > 0);
+        return std.mem.indexOf(u8, command, "sqlite3 -bail") != null;
     }
 
     /// The rows of `lines` a command's "annotation_id > '<id>' ... limit N" asks for,

@@ -45,6 +45,7 @@ const snapshot_pixels_per_miss = 5000;
 /// any run, so a book opened in one reads later.
 const read_before_opened = 1_700_000_000;
 const go_regular = @embedFile("../testdata/fonts/Go-Regular.ttf");
+const kfx_book = @import("../testing/kfx_book.zig");
 const go_bold = @embedFile("../testdata/fonts/Go-Bold.ttf");
 const taps = @import("taps.zig");
 const Step = taps.Step;
@@ -59,11 +60,24 @@ const width = taps.width;
 pub const TestBook = enum {
     scenario,
     notes,
+    /// A book sent to the Kindle: in Amazon's format, named and numbered by the
+    /// device's own software (testing/kfx_book.zig). Its file ends in ".kfx".
+    sent,
 
-    fn bytes(b: TestBook) []const u8 {
+    fn bytes(b: TestBook, alloc: std.mem.Allocator) ![]const u8 {
         return switch (b) {
             .scenario => test_books.scenario,
             .notes => test_books.notes,
+            .sent => kfx_book.make(alloc),
+        };
+    }
+
+    /// How the device's own software names the book, as its catalog lists it: none
+    /// for an EPUB copied over the cable.
+    fn names(b: TestBook) struct { key: []const u8, kind: []const u8, guid: []const u8 } {
+        return switch (b) {
+            .scenario, .notes => .{ .key = "", .kind = "EPUB", .guid = "" },
+            .sent => .{ .key = "SENTBOOK0001", .kind = "PDOC", .guid = "noface-tests" },
         };
     }
 };
@@ -108,6 +122,9 @@ pub const Outcome = struct {
     /// Every "service property value" noface set on the Kindle, in order, as
     /// `Kindle.sets_into` asks; none otherwise.
     sets: []const []const u8,
+    /// Writes queued in the device's annotation database: a place kept outside noface,
+    /// or a note.
+    annotation_writes: u32,
     settings: settings_model.Settings, // In use at the end
     saved_settings: settings_model.Settings, // As the settings file has them
 };
@@ -178,6 +195,10 @@ pub const Kindle = struct {
     text_size: u32 = (settings_model.Settings{}).size,
     /// Compares the screen at the end with the reference image of this name.
     snapshot: ?Snapshot = null,
+    /// The device's own places for the first book, as its database answers as the book
+    /// opens: "<dataset>|<position>|<time ms>|<device>" lines (kindle/reading_place.zig).
+    /// Only a book the device names is asked about (`TestBook.sent`).
+    outside_places: []const u8 = "",
     /// The reader's speed, as learned before the run: a new reader's by default.
     speed: stats.Speed = .{},
     /// "Show time left" (Aa, More), on as shipped.
@@ -258,6 +279,7 @@ pub const Snapshot = enum {
     note,
     picture,
     highlight,
+    offer,
 };
 
 /// Whether `pixels` match the reference image `name`, allowing for anti-aliasing:
@@ -542,6 +564,7 @@ pub fn play_on_fake(alloc: std.mem.Allocator, kindle: Kindle) !FakeKindle {
     if (kindle.airplane) try fake.put(wifi_key, "0");
     if (kindle.bluetooth) try fake.put("com.lab126.btfd BTstate", "1");
     if (kindle.radio_slow) fake.busy_after_set = wifi_key;
+    fake.places = kindle.outside_places;
     if (kindle.real_book) |real| {
         fake.highlights = real.highlights;
         fake.bookmarks = real.bookmarks;
@@ -676,7 +699,7 @@ pub fn play_on_folder(
     assert(std.mem.startsWith(u8, dir, "/tmp/"));
     for (kindle.books, 0..) |name, i| {
         book_paths[i] = try std.fmt.allocPrintSentinel(alloc, "{s}/{s}", .{ dir, name }, 0);
-        if (kindle.real_book == null) try write_file(book_paths[i], kindle.book.bytes());
+        if (kindle.real_book == null) try write_file(book_paths[i], try kindle.book.bytes(alloc));
     }
     if (kindle.real_book) |real| book_paths[0] = real.entry.path;
     var library_buf: [128]u8 = undefined;
@@ -793,14 +816,16 @@ pub fn play_on_start(
 pub fn play_on_run(a: *app.App, kindle: Kindle, book_path: [:0]const u8, dir: []const u8) !Played {
     assert(book_path.len > 0);
     assert(hidden_stderr == -1); // One scenario at a time
-    const kind = if (std.mem.endsWith(u8, book_path, ".epub")) "EPUB" else "KFX";
+    const names = kindle.book.names();
     var entry = if (kindle.real_book) |real| real.entry else catalog.Entry{
         .path = book_path,
         .title = "Scenario Book",
         .author = "noface tests",
         .percent = 0,
         .last = 0,
-        .kind = kind,
+        .key = names.key,
+        .kind = names.kind,
+        .guid = names.guid,
     };
     assert(std.mem.eql(u8, entry.path, book_path));
     // The app reports as it goes; a run shows only its results
@@ -908,6 +933,7 @@ pub fn play_on_outcome(
     const wifi_key = "com.lab126.cmd wirelessEnable";
     return .{
         .sets = if (kindle.sets_into) |into| try sets_kept(into, ran.fake) else &.{},
+        .annotation_writes = ran.fake.writes,
         .placed = try placed_logged(ran.dir),
         .ms = ran.ms,
         .looks_right = looks_right,

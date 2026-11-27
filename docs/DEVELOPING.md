@@ -379,8 +379,8 @@ and takes the same time in both, so it's left out.
   (`.book = .sent`); with it the pretend Kindle answers the device's own places for
   it (`.outside_places`), so `src/scenarios/elsewhere.zig` plays the place kept in
   step with the Kindle and other devices, and the card offering another's. When a
-  screen changes on purpose, write new ones for each Kindle (`-Dlayout=<model>`), look at them, and convert them. When the page
-  breaks move on purpose, the scenario that compares them prints the new digests for
+  screen changes on purpose, write new ones for each Kindle (`-Dlayout=<model>`),
+  look at them, and convert them. When the page breaks move on purpose, the scenario that compares them prints the new digests for
   `breaks.txt`. A Kindle added to `device.Model` starts from another's folder copied
   as its own, so it builds; its screens are then written over and its digests put in
   as printed. Write them on this computer, not on a Kindle: a large screen's images

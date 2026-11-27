@@ -4,6 +4,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const catalog = @import("../model/catalog.zig");
 const os = @import("../sys/os.zig");
+const file = @import("../sys/file.zig");
 const library = @import("../ui/library.zig");
 const catalog_db = @import("../kindle/catalog.zig");
 const lipc = @import("../kindle/lipc.zig");
@@ -220,6 +221,9 @@ const Browser = struct {
     /// The minute (since 1970) the status was last read in: the strip along the top is
     /// read again once a new one has begun, however often the library ticks.
     status_minute: u64 = 0,
+    /// Woken and drawn as it was before sleeping: the status and the list are read
+    /// again on the first tick, a moment after it's shown (`on_woken_read`).
+    woken: bool = false,
 
     /// The screens the library opens over itself, each kept with its ending.
     const Over = union(enum) {
@@ -272,12 +276,14 @@ const Browser = struct {
     pub fn setting(b: *const Browser) input_mod.Input.Scope {
         const now = now_us();
         var tick_us: u64 = idle_tick_us;
-        if (b.watching(now)) {
+        if (b.woken) {
+            tick_us = woken_read_after_us;
+        } else if (b.watching(now)) {
             tick_us = download_poll_us;
         } else if (now < b.status_until) {
             tick_us = status_poll_us;
         }
-        assert(tick_us >= download_poll_us);
+        if (!b.woken) assert(tick_us >= download_poll_us);
         assert(tick_us <= idle_tick_us);
         return .{ .modes = touches, .tick_us = tick_us };
     }
@@ -764,6 +770,7 @@ const Browser = struct {
     fn on_tick_next(b: *Browser) !Next {
         assert(b.index < library.page_count(b.lib.count())); // A page of the books shown
         assert(b.over == .none); // In front, ticking
+        if (b.woken) return b.on_woken_read();
         const now = now_us();
         // The status: the whole screen while it's settling after a book; else just the
         // strip, once a new minute has begun, the clock showing minutes, even while a
@@ -778,6 +785,28 @@ const Browser = struct {
         const until = b.watch_until orelse return .nothing;
         if (now >= until) b.watch_until = null;
         return b.reload_if_downloaded();
+    }
+
+    /// The first tick after waking: the catalog written out afresh, for a download that
+    /// finished or a book another device read on while the Kindle slept, and the status.
+    /// A list that changed is shown whole, with the status; else only the status strip,
+    /// if it moved on.
+    fn on_woken_read(b: *Browser) !Next {
+        assert(b.woken);
+        b.woken = false;
+        const a = b.a;
+        const listed = file.facts_of(a.library_path);
+        catalog_db.export_library();
+        // Written over only when it says something new (catalog_export.zig)
+        if (std.meta.eql(listed, file.facts_of(a.library_path))) {
+            try b.refresh_status(.strip);
+            return .nothing;
+        }
+        a.quick = lipc.read(a.quick); // Drawn with the books
+        b.status_minute = os.unix_time() / std.time.s_per_min;
+        b.reload(.as_is);
+        assert(!b.woken);
+        return .everything;
     }
 
     /// The library read again, kept if a book has arrived or the index was built again
@@ -813,13 +842,18 @@ const Browser = struct {
         if (ending != .done) return .nothing;
         assert(!a.input.locked); // Awake, back in front
         a.note_battery(); // What sleeping (or charging) did
-        a.quick = lipc.read(a.quick); // The clock and battery may be hours old
-        // A download may have finished while the Kindle slept, or another device read a
-        // book on: its place shows by the catalog written out afresh
-        b.reload(.export_first);
+        // Drawn at once, as it was before sleeping: the status and the list are read on
+        // the first tick, once it's shown, so the wake waits for neither
+        b.woken = true;
         return .everything;
     }
 };
+
+/// How soon after waking, drawn, the library reads the status and the list: at once,
+/// once it's shown. A screen counts as shown once it's drawn, and a tap touched before
+/// that is dropped, so reading them while drawing would lose the taps of a reader who
+/// saw the library and went on.
+const woken_read_after_us = 1000;
 
 /// What the library says, once, as the books are put in `order`.
 fn sorted_notice(order: catalog.Order) []const u8 {

@@ -111,6 +111,7 @@ pub const running_middle = tap_on(places.running_mode.middle);
 pub const text_settings_button = tool(.text);
 pub const themes_tab = tap_on(aa.place(.themes, .{ .tab = .themes }));
 pub const font_tab = tap_on(aa.place(.themes, .{ .tab = .font }));
+pub const more_tab = tap_on(aa.place(.themes, .{ .tab = .more }));
 pub const running_button = tap_on(aa.place(.themes, .running));
 pub const start_running = [_]Step{ top, text_settings_button, themes_tab, running_button };
 pub const pause_tap = tap_on(places.running_mode.top);
@@ -173,6 +174,9 @@ comptime {
     assert(std.meta.eql(aa.hit(.themes, .{}, tab.x, tab.y), aa.Hit{ .tab = .themes }));
     const font = font_tab.act.tap;
     assert(std.meta.eql(aa.hit(.themes, .{}, font.x, font.y), aa.Hit{ .tab = .font }));
+    const more_tab_tap = more_tab.act.tap;
+    const more_hit = aa.hit(.themes, .{}, more_tab_tap.x, more_tab_tap.y);
+    assert(std.meta.eql(more_hit, aa.Hit{ .tab = .more }));
     const run = running_button.act.tap;
     assert(aa.hit(.themes, .{}, run.x, run.y) == .running);
     // While running, taps in the top band pause, as `forward` and `back` turn

@@ -7,7 +7,7 @@ const card = @import("../ui/card.zig");
 const catalog = @import("../model/catalog.zig");
 const book_actions = @import("../ui/book_actions.zig");
 const state = @import("../sys/state.zig");
-const platform = @import("../platform.zig");
+const outside_place = @import("reader/outside_place.zig");
 const file = @import("../sys/file.zig");
 const store = @import("../kindle/store.zig");
 const app = @import("../app.zig");
@@ -95,7 +95,7 @@ fn save_marked(a: *app.App, e: *const catalog.Entry, done: bool, place: Place) !
     // later than the mark, would otherwise win as the book next opens
     if (done) return;
     assert(marked_at > 0); // `state.mark` dates a book marked unread
-    if (!platform.reading_place.start_over(e, marked_at)) {
+    if (!outside_place.start_over(a, e, marked_at)) {
         std.debug.print("marked unread: its place outside noface not started over\n", .{});
     }
 }

@@ -15,6 +15,7 @@ const Step = taps.Step;
 const book_series = taps.book_series;
 const font_tab = taps.font_tab;
 const forward = taps.forward;
+const more_tab = taps.more_tab;
 const hold_in = taps.hold_in;
 const lift = taps.lift;
 const lock_it = taps.lock_it;
@@ -49,6 +50,10 @@ pub const all = [_]Scenario{
                     .{
                         Snapshot.@"aa-themes",
                         &[_]Step{ forward, top, text_settings_button, themes_tab },
+                    },
+                    .{
+                        Snapshot.@"aa-more",
+                        &[_]Step{ forward, top, text_settings_button, more_tab },
                     },
                     // A size no theme has: the note under the tiles says so
                     .{

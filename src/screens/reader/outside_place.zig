@@ -8,6 +8,7 @@ const assert = std.debug.assert;
 const app = @import("../../app.zig");
 const platform = @import("../../platform.zig");
 const book_model = @import("../../model/book.zig");
+const catalog = @import("../../model/catalog.zig");
 const place = @import("../../model/place.zig");
 const card = @import("../../ui/card.zig");
 const line_of = @import("../../text/line.zig").of;
@@ -28,6 +29,28 @@ const Offered = enum { go, stay };
 
 comptime {
     assert(offer_rows.len == std.enums.values(Offered).len);
+}
+
+/// What the device keeps of `entry`'s place, asked once as it opens: nothing is asked
+/// with syncing the place turned off, so nothing is offered or kept.
+pub fn look(
+    a: *const app.App,
+    entry: *const catalog.Entry,
+    paragraphs: []const book_model.Paragraph,
+) reading_place.Found {
+    assert(paragraphs.len > 0);
+    if (!a.user.settings.sync_place) return .{ .answer = .none, .book = null };
+    const found = reading_place.look(entry, paragraphs);
+    if (found.answer == .unknown) assert(found.book == null); // Nothing written unseen
+    return found;
+}
+
+/// A book marked unread starts over outside noface too, at `marked_at`, the mark's
+/// time; unless syncing the place is off. Whether it did, or had nothing to do.
+pub fn start_over(a: *const app.App, entry: *const catalog.Entry, marked_at: u64) bool {
+    assert(marked_at > 0);
+    if (!a.user.settings.sync_place) return true;
+    return reading_place.start_over(entry, marked_at);
 }
 
 pub const OutsidePlace = struct {

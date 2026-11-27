@@ -35,7 +35,6 @@ const screen = @import("screen.zig");
 const sess = @import("reader/session.zig");
 const book_open = @import("reader/book_open.zig");
 const outside_place = @import("reader/outside_place.zig");
-const platform = @import("../platform.zig");
 const note_store = @import("reader/note_store.zig");
 const hl = @import("reader/highlight.zig");
 const view_rules = @import("reader/view.zig");
@@ -143,7 +142,7 @@ fn open_book(r: *Reader) !void {
     // Kept in the reader, as the session points to it while it lays out
     r.progress = null;
     // Asked once, before the place to open at is chosen
-    const outside = platform.reading_place.look(entry, book_text.paragraphs);
+    const outside = outside_place.look(a, entry, book_text.paragraphs);
     const opened = try book_open.find_pages(a, r.alloc, entry, book_text, .{
         .book_bytes = r.data.len,
         .state_path = state_path,

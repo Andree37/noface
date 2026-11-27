@@ -244,6 +244,7 @@ pub const Snapshot = enum {
     toolbar,
     @"aa-font",
     @"aa-themes",
+    @"aa-more",
     @"aa-own-settings",
     @"aa-running",
     definition,

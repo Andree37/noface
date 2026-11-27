@@ -137,6 +137,12 @@ pub const switches = [_]Switch{
         .effect = .nothing,
         .guard = .lock_picture,
     },
+    .{
+        .tab = .more,
+        .field = .sync_place,
+        .label = "Sync my place with other devices",
+        .effect = .nothing,
+    },
 };
 
 comptime {
@@ -403,7 +409,12 @@ pub const themes = [_]Theme{
 
 const margin_names = [_][]const u8{ "Narrow", "Medium", "Wide", "Widest" };
 
+/// The build's own steps for checking the sheet's layout below: each switch places
+/// itself by every switch before it, against each slider row.
+const layout_check_branches = 1000 * switches.len * switches.len;
+
 comptime {
+    @setEvalBranchQuota(layout_check_branches);
     assert(tab_labels.len == std.enums.values(Tab).len);
     assert(row_height >= style.fingertip);
     assert(row_baseline < row_bar);

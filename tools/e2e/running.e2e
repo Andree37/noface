@@ -84,3 +84,27 @@ log running: stop
 log running: off
 still
 shot back
+
+# Running again, and from the card its text settings: the toolbar over the page, shown
+# once, whole, with the Themes sheet's button stopping running. Aa opens on the tab it
+# was left on, Themes
+tap page.top
+drawn 200
+still
+tap toolbar.text
+drawn 400
+still
+tap aa.running
+log running: on
+still
+wait 1000
+tap running.top
+log screen: Card opened
+still
+tap card.3.1
+log running: text_settings
+still
+shot settings
+tap aa.running
+log running: off
+still

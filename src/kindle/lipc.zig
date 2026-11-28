@@ -441,6 +441,17 @@ pub fn sync_now() void {
     _ = process.run_until(&argv, &out, lipc_deadline());
 }
 
+/// Whether a sync asked for is still under way, as the Kindle's own Sync button shows
+/// it: null when it can't be asked.
+pub fn syncing() ?bool {
+    var buffer: [8]u8 = undefined;
+    const state = get_text("com.lab126.quickactions", "getSyncState", &buffer, lipc_deadline());
+    assert(state.len <= buffer.len); // Read into `buffer`
+    if (std.mem.eql(u8, state, "0")) return false;
+    if (std.mem.eql(u8, state, "1")) return true;
+    return null;
+}
+
 pub fn set_brightness(level: u32) void {
     set("com.lab126.powerd", "flIntensity", level);
 }

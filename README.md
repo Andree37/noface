@@ -68,8 +68,8 @@ software: you can go back to it from noface's panel at any time.
   highlights and bookmarks, footnotes, contents and Go To, a Back button after jumps,
   search, the device's typefaces and your own, size, spacing, margins, justification
   and hyphenation, a clock, full-screen pictures with zoom, reading stats, your own
-  picture on the lock screen, and a pull-down panel for Wi‑Fi, Bluetooth, sync, light,
-  warmth and keeping your place in step.
+  picture on the lock screen, and a pull-down panel for Wi‑Fi, Bluetooth, sync, light
+  and warmth.
 
 ## What keeps working
 
@@ -84,7 +84,7 @@ more devices are supported.
 | Books from Amazon and Send to Kindle | In noface's library with the rest, and they open in noface when they have no DRM. |
 | Books with DRM | Open in the Kindle's own reader, as before. noface never works around DRM. |
 | Highlights and bookmarks | On books from Amazon they sync with the Kindle apps both ways. On EPUBs copied over USB they stay with noface, as Amazon doesn't know those books. |
-| Where you stopped | On books from Amazon and Send to Kindle, the Kindle apps and your other devices go on from where you left off in noface, and noface from where they, or the Kindle's own reader, did. Read on your phone since, and the library shows how far you got; opening the book, noface asks whether to go there, as the Kindle does. It can be turned off. |
+| Where you stopped | On books from Amazon and Send to Kindle, the Kindle apps and your other devices go on from where you left off in noface, and noface from where they, or the Kindle's own reader, did. Read on your phone since, and the library shows how far you got; opening the book, noface asks whether to go there, as the Kindle does. |
 | Wi‑Fi, Bluetooth, sync, light, warmth | In noface's pull-down panel. Wi‑Fi is off while a book is open, to save battery, and comes back when you leave the book, so syncing happens between books. |
 | Typefaces | The Kindle's own, and any you add. |
 | Dictionary | noface's own, built from Wiktionary, downloaded the first time you look up a word. The Kindle's dictionaries aren't used. |

@@ -373,6 +373,8 @@ const Browser = struct {
             },
             .panel => |c| {
                 b.over = .none;
+                // A sync asked for may bring books: watched for, as a download is
+                if (c.screen.asked_sync) b.watch_until = now_us() + download_watch_us;
                 const leave = try panel.ended(b.a, b.under(), c.ended());
                 return step(if (leave) .leave else .nothing);
             },
@@ -812,8 +814,13 @@ const Browser = struct {
         }
         // A download being watched: the library again, in case it's finished. When the
         // watch runs out, one last look, for one that finished since the last
-        const until = b.watch_until orelse return .nothing;
-        if (now >= until) b.watch_until = null;
+        if (b.watch_until) |until| {
+            if (now >= until) b.watch_until = null;
+            return b.reload_if_downloaded();
+        }
+        // Else the catalog alone, at each tick: a book that came by a sync, sent to the
+        // Kindle, shows without anything done here
+        if (!b.lib.catalog_changed()) return .nothing;
         return b.reload_if_downloaded();
     }
 

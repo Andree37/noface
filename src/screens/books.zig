@@ -49,9 +49,6 @@ pub const Sources = struct {
     documents: []const u8, // Where EPUBs are found
     state_dir: []const u8, // Each book's place and cover, and the index's folder
     heartbeat: ?[*:0]const u8, // As `builder.Places.heartbeat`: null in the tests
-    /// The reader's setting to keep places in step with the device's own software,
-    /// read at each load: places made outside noface are shown only while it's on.
-    outside_places: *const bool,
 };
 
 /// What tells that the Kindle's catalog changed without reading it: the size and change
@@ -164,10 +161,10 @@ pub const Library = struct {
         };
     }
 
-    /// Whether a download watched has arrived, looking only at what's downloading: the
-    /// files the index says are coming, or, when it names none yet (the catalog may not
-    /// have marked it when the library was read), whether the catalog changed at all.
-    /// The whole catalog is exported and read again only once either says so.
+    /// Whether a download watched has arrived: a file the index says is coming now
+    /// whole, or the catalog changed at all (it may not have marked one when the library
+    /// was read, a book may have come by a sync, and a flag can stay stuck on one long
+    /// done). The whole catalog is exported and read again only once either says so.
     pub fn watch_download(l: *Library) Download {
         const s = l.state;
         assert(l.shared.in_use);
@@ -182,10 +179,16 @@ pub const Library = struct {
                 const e = ix.entry(@intCast(id));
                 if (builder.is_complete_book(e.path)) return .arrived;
             }
-            return .waiting;
         }
-        if (std.meta.eql(CatalogFacts.read(), s.catalog_seen)) return .waiting;
+        if (!l.catalog_changed()) return .waiting;
         return .catalog_changed;
+    }
+
+    /// Whether the Kindle's catalog changed since the library was read: two looks at
+    /// its files' size and time, cheap enough for every tick.
+    pub fn catalog_changed(l: *const Library) bool {
+        assert(l.shared.in_use);
+        return !std.meta.eql(CatalogFacts.read(), l.state.catalog_seen);
     }
 
     /// Arranges the books for an order, a filter and a search (`words`, empty for none):
@@ -462,7 +465,6 @@ pub fn load_library(a: *app.App) !Library {
         .documents = a.documents,
         .state_dir = a.state_dir,
         .heartbeat = heartbeat.path,
-        .outside_places = &a.user.settings.sync_place,
     });
 }
 
@@ -502,7 +504,6 @@ fn open_index(sources: Sources, s: *State) void {
         .state_dir = sources.state_dir,
         .dir = s.dir(),
         .heartbeat = sources.heartbeat,
-        .outside_places = sources.outside_places.*,
     };
     const items = sources.shared.items;
     const wanted = builder.sources_now(scratch, places);
@@ -707,13 +708,9 @@ const TestLibrary = struct {
             .documents = try std.fmt.bufPrint(&t.paths[1], "{s}/documents", .{root}),
             .state_dir = try std.fmt.bufPrint(&t.paths[2], "{s}/state", .{root}),
             .heartbeat = null,
-            .outside_places = &outside_places_shown,
         };
         assert(t.budget.live > 0); // The shared buffers, for good
     }
-
-    /// Places made outside noface shown, as they are by default.
-    const outside_places_shown = true;
 
     fn deinit(t: *TestLibrary) void {
         assert(t.scratch.empty());

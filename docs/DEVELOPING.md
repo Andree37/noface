@@ -233,8 +233,7 @@ noface saves a place it also saves where the book ends in the device's numbering
 (`outside_end` in the book's state file), and the library turns a place newer than
 both the stock reader's and noface's into a percent by it (`library/builder.zig`
 `merged`). A book noface hasn't opened since has no end saved and shows the catalog's
-percent. With the place's sync turned off in the panel, the library leaves these
-places out, and the index is built again.
+percent.
 
 ## Layout
 

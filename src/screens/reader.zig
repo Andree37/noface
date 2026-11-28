@@ -159,7 +159,7 @@ fn open_book(r: *Reader) !void {
     // Kept in the reader, as the session points to it while it lays out
     r.progress = null;
     // Asked once, before the place to open at is chosen
-    const outside = outside_place.look(a, entry, book_text.paragraphs);
+    const outside = outside_place.look(entry, book_text.paragraphs);
     const opened = try book_open.find_pages(a, r.alloc, entry, book_text, .{
         .book_bytes = r.data.len,
         .state_path = state_path,

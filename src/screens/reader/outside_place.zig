@@ -31,25 +31,22 @@ comptime {
     assert(offer_rows.len == std.enums.values(Offered).len);
 }
 
-/// What the device keeps of `entry`'s place, asked once as it opens: nothing is asked
-/// with syncing the place turned off, so nothing is offered or kept.
+/// What the device keeps of `entry`'s place, asked once as it opens.
 pub fn look(
-    a: *const app.App,
     entry: *const catalog.Entry,
     paragraphs: []const book_model.Paragraph,
 ) reading_place.Found {
     assert(paragraphs.len > 0);
-    if (!a.user.settings.sync_place) return .{ .answer = .none, .book = null };
     const found = reading_place.look(entry, paragraphs);
     if (found.answer == .unknown) assert(found.book == null); // Nothing written unseen
     return found;
 }
 
 /// A book marked unread starts over outside noface too, at `marked_at`, the mark's
-/// time; unless syncing the place is off. Whether it did, or had nothing to do.
-pub fn start_over(a: *const app.App, entry: *const catalog.Entry, marked_at: u64) bool {
+/// time. Whether it did, or had nothing to do.
+pub fn start_over(entry: *const catalog.Entry, marked_at: u64) bool {
     assert(marked_at > 0);
-    if (!a.user.settings.sync_place) return true;
+    assert(entry.path.len > 0);
     return reading_place.start_over(entry, marked_at);
 }
 

@@ -65,9 +65,6 @@ pub const Places = struct {
     /// build of thousands outlasts its two minutes before noface's loop first turns.
     /// Null in the tests, which leave the watchdog's file alone.
     heartbeat: ?[*:0]const u8,
-    /// Whether places made outside noface are shown (`catalog.Entry.outside`): the
-    /// reader's setting, so turning it either way builds the index again.
-    outside_places: bool,
 };
 
 /// What an index built now would be built from: the catalog's and the series file's
@@ -123,7 +120,6 @@ fn places_hash(places: Places) u64 {
     hasher.update(std.mem.span(places.catalog_path));
     hasher.update("\x00");
     hasher.update(places.documents);
-    hasher.update(&.{@intFromBool(places.outside_places)});
     return hasher.final();
 }
 
@@ -294,7 +290,6 @@ fn add_kindle_books(b: *Build) void {
             continue;
         // The catalog's flag can stay set long after a download ended: the file decides
         if (e.availability == .downloading and is_complete_book(e.path)) e.availability = .local;
-        if (!b.places.outside_places) e.outside = null; // The reader turned them off
         if (b.last) |*last| {
             if (has_path(e)) {
                 if (last.find(e.path)) |id| kept_reading(&e, last.reading(id));

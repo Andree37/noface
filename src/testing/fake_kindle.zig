@@ -51,6 +51,7 @@ pub const FakeKindle = struct {
         const others = [_][2][]const u8{
             .{ "com.lab126.powerd state", "active" },
             .{ "com.lab126.volumd useUsbForNetwork", "0" },
+            .{ "com.lab126.quickactions getSyncState", "0" }, // A sync over at once
         };
         for (others) |d| try k.put(d[0], d[1]);
         // Each key once: a later put of the same key replaces it

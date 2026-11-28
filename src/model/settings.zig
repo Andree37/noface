@@ -74,7 +74,6 @@ pub const not_layout = [_][]const u8{
     "autostart",
     "offer_dictionary",
     "lock_picture",
-    "sync_place",
 };
 
 /// Whether a field of Settings changes where pages break.
@@ -139,9 +138,6 @@ pub const Settings = struct {
     bold_starts: bool = false, // The first half of each word's letters in bold
     /// Ask to download a missing dictionary; "Not now" stops it.
     offer_dictionary: bool = true,
-    /// A book's place kept in step with the device's own software, and through it with
-    /// the reader's other devices (screens/reader/outside_place.zig).
-    sync_place: bool = true,
     /// The reader's own picture when locked, instead of the book's cover.
     lock_picture: bool = false,
 
@@ -191,7 +187,6 @@ const saved = [_]Saved{
     .{ .name = "lock-picture", .field = "lock_picture" },
     .{ .name = "bold-starts", .field = "bold_starts" },
     .{ .name = "offer-dictionary", .field = "offer_dictionary" },
-    .{ .name = "sync-place", .field = "sync_place" },
 };
 
 comptime {
@@ -323,7 +318,6 @@ test "settings survive being saved" {
         .lock_picture = true,
         .bold_starts = true,
         .offer_dictionary = false,
-        .sync_place = false,
     };
     try std.testing.expectEqual(s, parse(format(&buf, &s)));
     try std.testing.expectEqual(Settings{}, parse(format(&buf, &Settings{})));

@@ -11,9 +11,11 @@ const display = @import("../display.zig");
 const screen = @import("screen.zig");
 const input_mod = @import("../kindle/input.zig");
 
-/// How often the panel looks whether a sync it shows as under way is over: the
-/// Kindle's own Sync button turns back within a couple of seconds of a tap.
+/// How often the panel looks whether a sync it shows as under way is over, and how many
+/// times at most: the Kindle's own Sync button turns back within a couple of seconds
+/// of a tap, so one not over by then is left to show "Sync" again, tapped or not.
 const sync_check_us = std.time.us_per_s;
+const sync_checks_max = 10;
 
 comptime {
     // A row is told apart from the other by its place alone
@@ -379,6 +381,10 @@ pub const Panel = struct {
     confirming: ?menu.Hit = null,
     /// Sync was tapped: what's on the Kindle may change, for whatever it's open over.
     asked_sync: bool = false,
+    /// The Kindle has said a sync is under way since the tap: only then does its saying
+    /// it isn't mean it's over, not that it hasn't begun.
+    sync_seen: bool = false,
+    sync_checks: u32 = 0, // Looks at the sync so far, up to `sync_checks_max`
 
     /// Touches as a sheet takes them, one tick at once, to read the status, and while
     /// a sync shows as under way, a tick a second to see whether it's over.
@@ -401,8 +407,16 @@ pub const Panel = struct {
             return .stay;
         }
         assert(p.a.quick.syncing); // The only tick asked for after the first
-        // Still under way, or not saying: it goes on showing so
-        if (lipc.syncing() orelse true) return .stay;
+        assert(p.sync_checks < sync_checks_max);
+        p.sync_checks += 1;
+        // Over once the Kindle says so after saying it began. Not saying (an answer
+        // that can't be read), or not done after as long as its own button takes, it's
+        // left to show Sync again, never watched without end
+        const over = if (lipc.syncing()) |under_way| over: {
+            if (under_way) p.sync_seen = true;
+            break :over (!under_way and p.sync_seen) or p.sync_checks == sync_checks_max;
+        } else true;
+        if (!over) return .stay;
         p.a.quick.syncing = false;
         try redraw_tile(p.a, .sync);
         assert(!p.a.quick.syncing);
@@ -423,7 +437,11 @@ pub const Panel = struct {
         // Any tap puts the warning away: only the header drawn again, as the control
         // draws its own part, and a tap that closes the panel needs neither
         if (warned != null and choice != .close and choice != .kindle) try put_warning_away(p.a);
-        if (choice == .sync) p.asked_sync = true;
+        if (choice == .sync) {
+            p.asked_sync = true;
+            p.sync_seen = false; // Looked at afresh for this tap
+            p.sync_checks = 0;
+        }
         switch (try panel_control(p.a, p.background, choice, t.x, &p.slider)) {
             .not_one => {},
             .ran => return .stay, // Drew itself

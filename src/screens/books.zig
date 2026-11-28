@@ -184,6 +184,13 @@ pub const Library = struct {
         return .catalog_changed;
     }
 
+    /// The Kindle's catalog taken as seen as it is now: an export found nothing new in it.
+    pub fn saw_catalog(l: *Library) void {
+        assert(l.shared.in_use);
+        l.state.catalog_seen = CatalogFacts.read();
+        assert(!l.catalog_changed());
+    }
+
     /// Whether the Kindle's catalog changed since the library was read: two looks at
     /// its files' size and time, cheap enough for every tick.
     pub fn catalog_changed(l: *const Library) bool {

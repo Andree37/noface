@@ -277,8 +277,8 @@ const Browser = struct {
     }
 
     /// The library's `touches`, set each time round as a book changes them. It ticks
-    /// often while watching a download or the status, else once a minute for the clock
-    /// and the battery.
+    /// often while watching a download or the status, else once a minute for the clock,
+    /// the battery and the Kindle's catalog (a change to it exports the book list again).
     pub fn setting(b: *const Browser) input_mod.Input.Scope {
         const now = now_us();
         var tick_us: u64 = idle_tick_us;
@@ -374,7 +374,11 @@ const Browser = struct {
             .panel => |c| {
                 b.over = .none;
                 // A sync asked for may bring books: watched for, as a download is
-                if (c.screen.asked_sync) b.watch_until = now_us() + download_watch_us;
+                if (c.screen.asked_sync) {
+                    const until = now_us() + download_watch_us;
+                    b.watch_until = until;
+                    b.a.wifi_pause.download_until(until); // Wi-Fi stays on for it, reading
+                }
                 const leave = try panel.ended(b.a, b.under(), c.ended());
                 return step(if (leave) .leave else .nothing);
             },
@@ -836,6 +840,7 @@ const Browser = struct {
         catalog_db.export_library();
         // Written over only when it says something new (catalog_export.zig)
         if (std.meta.eql(listed, file.facts_of(a.library_path))) {
+            b.lib.saw_catalog(); // Read as it is now: no export again at the next tick
             b.status_stale = false;
             try b.refresh_status(.strip);
             return .nothing;

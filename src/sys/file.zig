@@ -339,6 +339,20 @@ pub fn presence(path: [*:0]const u8) Presence {
 }
 
 /// Appends `text` to the file at `path`, as a shell's `echo text >> path` does.
+/// Adds `text` at the end of the file at `path`, made if it isn't there. Whether all of
+/// it was written.
+pub fn append(path: [*:0]const u8, text: []const u8) bool {
+    assert(path[0] == '/');
+    assert(text.len > 0);
+    const flags: linux.O = .{ .ACCMODE = .WRONLY, .CREAT = true, .APPEND = true, .CLOEXEC = true };
+    const rc = linux.open(path, flags, 0o644);
+    if (failed(rc)) return false;
+    const fd: i32 = @intCast(rc);
+    const written = write_all(fd, text);
+    _ = linux.close(fd); // Ignored: the write said whether it landed
+    return written;
+}
+
 pub fn append_file(path: [*:0]const u8, text: []const u8) void {
     assert(path[0] == '/');
     assert(text.len > 0);

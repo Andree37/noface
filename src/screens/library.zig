@@ -787,6 +787,7 @@ const Browser = struct {
             .reload => b.reload(.as_is),
             .other => b.reload(.export_first),
             .not_marked => b.notice = actions.not_marked_notice,
+            .not_hidden => b.notice = actions.not_hidden_notice,
             .downloading => {
                 // Only a download finishes later, so only it is watched
                 const until = now_us() + download_watch_us;

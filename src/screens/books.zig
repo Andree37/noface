@@ -20,6 +20,7 @@ const process = @import("../sys/process.zig");
 const state = @import("../sys/state.zig");
 const paths = @import("../kindle/paths.zig");
 const heartbeat = @import("../kindle/heartbeat.zig");
+const hidden = @import("../model/hidden.zig");
 const files = @import("../library/files.zig");
 const index = @import("../library/index.zig");
 const builder = @import("../library/builder.zig");
@@ -1097,6 +1098,55 @@ test "a Kindle book whose place can't be read keeps how far it was through a reb
     var library = try load(t.sources);
     defer library.deinit();
     try std.testing.expectEqual(@as(u32, 42), test_percent_of(&library, "Dune"));
+}
+
+test "a book in the cloud hidden from its card is left out, and comes back on the Kindle" {
+    var buffer: [64]u8 = undefined;
+    const root = try test_folder(&buffer, 0, 0, 1 << 10);
+    defer test_folder_remove(root);
+    var path: [file.own_path_bytes_max]u8 = undefined;
+    const catalog_path = try std.fmt.bufPrintSentinel(&path, "{s}/catalog", .{root}, 0);
+    // Two in the cloud, by their keys
+    const cloud = "\tAway\tB\t0\t0\t0\t\t0\t1\tKEYAWAY\tPDOC\tg\n" ++
+        "\tKept\tC\t0\t0\t0\t\t0\t1\tKEYKEPT\tPDOC\tg\n";
+    try test_write(catalog_path, cloud);
+    var t: TestLibrary = undefined;
+    try t.init(root);
+    defer t.deinit();
+    var hidden_buffer: [file.own_path_bytes_max]u8 = undefined;
+    const hidden_path = try hidden.file_path(&hidden_buffer, t.sources.state_dir);
+    try std.testing.expect(file.append(hidden_path, "KEYAWAY\n"));
+    {
+        var library = try load(t.sources);
+        defer library.deinit();
+        library.arrange(.recent, .all, "");
+        try std.testing.expectEqual(@as(u32, 1), library.count());
+        _ = library.page(0); // Read in before its books are looked at
+        try std.testing.expectEqualStrings("Kept", library.book(0).title);
+    }
+    // Downloaded again: on the Kindle, it shows whatever the file says
+    const here = "\tKept\tC\t0\t0\t0\t\t0\t1\tKEYKEPT\tPDOC\tg\n" ++
+        "/mnt/us/documents/Away.kfx\tAway\tB\t0\t0\t0\t\t0\t0\tKEYAWAY\tPDOC\tg\n";
+    try test_write(catalog_path, here);
+    var library = try load(t.sources);
+    defer library.deinit();
+    try std.testing.expect(test_shows(&library, "Away"));
+    try std.testing.expect(test_shows(&library, "Kept"));
+}
+
+/// Whether the library shows the book titled `title`, as the hero or in its list.
+fn test_shows(library: *Library, title: []const u8) bool {
+    assert(title.len > 0);
+    library.arrange(.recent, .all, "");
+    if (library.hero()) |h| assert(h.title.len > 0); // Every test names its books
+    if (library.hero()) |h| {
+        if (std.mem.eql(u8, h.title, title)) return true;
+    }
+    _ = library.page(0);
+    for (0..library.count()) |i| {
+        if (std.mem.eql(u8, library.book(@intCast(i)).title, title)) return true;
+    }
+    return false;
 }
 
 /// The percent the library shows for the book titled `title`, hero or not.

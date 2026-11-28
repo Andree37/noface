@@ -12,6 +12,7 @@ const builtin = @import("builtin");
 const assert = std.debug.assert;
 const catalog = @import("../model/catalog.zig");
 const overrides = @import("../model/series_override.zig");
+const hidden = @import("../model/hidden.zig");
 const memory = @import("../base/memory.zig");
 const calls = @import("../sys/calls.zig");
 const file = @import("../sys/file.zig");
@@ -82,6 +83,12 @@ pub fn sources_now(scratch: *memory.Budget, places: Places) index.Sources {
         file.facts_of(p)
     else |_|
         null;
+    var hidden_buffer: [files.path_bytes_max]u8 = undefined;
+    // Likewise: no hidden books to read
+    const hidden_facts = if (hidden.file_path(&hidden_buffer, places.state_dir)) |p|
+        file.facts_of(p)
+    else |_|
+        null;
     var hash: EpubHash = .{};
     const documents = places.documents;
     const walked = dir.walk(scratch.allocator(), documents, ".epub", &hash, EpubHash.add) catch
@@ -93,6 +100,8 @@ pub fn sources_now(scratch: *memory.Budget, places: Places) index.Sources {
         .catalog_modified = if (catalog_facts) |f| f.modified_s else 0,
         .overrides_size = if (series_facts) |f| f.size else 0,
         .overrides_modified = if (series_facts) |f| f.modified_s else 0,
+        .hidden_size = if (hidden_facts) |f| f.size else 0,
+        .hidden_modified = if (hidden_facts) |f| f.modified_s else 0,
         .epubs = hash.sum,
         .places = places_hash(places),
     };
@@ -269,6 +278,67 @@ fn create_data(folder: []const u8, name: []const u8, generation: u64, buffer: []
 /// The Kindle's books, a line of the exported catalog each.
 fn add_kindle_books(b: *Build) void {
     assert(b.count == 0);
+    assert(b.places.state_dir.len > 0); // Where the hidden books are listed
+    // Read whole first, as the catalog reads through the same buffer
+    const hidden_keys = read_hidden(b) catch {
+        b.incomplete = true; // Listed as they are, the hidden among them, until next time
+        return add_catalog(b, &.{});
+    };
+    add_catalog(b, hidden_keys);
+}
+
+/// The keys of the books hidden, sorted, in the build's scratch: none without a file.
+fn read_hidden(b: *Build) ![]const []const u8 {
+    var path_buffer: [files.path_bytes_max]u8 = undefined;
+    const path = try hidden.file_path(&path_buffer, b.places.state_dir);
+    var lines: files.Lines = .{
+        .reader = files.Reader.open(path, b.buffers.lines) catch |err| switch (err) {
+            error.NotFound => return &.{}, // None hidden
+            else => return err,
+        },
+    };
+    defer lines.close();
+    assert(lines.at == 0);
+    const alloc = b.scratch.allocator();
+    var keys: std.ArrayList([]const u8) = .empty;
+    // Each line moves on through the file, so there are fewer than it has bytes
+    for (0..lines_max(&lines)) |_| {
+        const line = (try lines.next()) orelse break;
+        const key = hidden.key_of(line) orelse continue;
+        try keys.append(alloc, try alloc.dupe(u8, key));
+    }
+    std.mem.sort([]const u8, keys.items, {}, key_less);
+    assert(lines.at <= lines.reader.size);
+    return keys.items;
+}
+
+fn key_less(_: void, a: []const u8, b: []const u8) bool {
+    assert(a.len > 0); // `hidden.key_of` keeps no empty key
+    assert(b.len > 0);
+    return std.mem.lessThan(u8, a, b);
+}
+
+/// Whether book `e`, in the cloud, is hidden: one on the Kindle shows whatever the file
+/// says, as it's there to read.
+fn is_hidden(e: *const catalog.Entry, hidden_keys: []const []const u8) bool {
+    // Sorted, as the search needs (`read_hidden`)
+    if (hidden_keys.len > 1) assert(!key_less({}, hidden_keys[1], hidden_keys[0]));
+    if (e.availability != .cloud) return false;
+    if (e.key.len == 0) return false;
+    const found = std.sort.binarySearch([]const u8, hidden_keys, e.key, key_order);
+    if (found) |at| assert(std.mem.eql(u8, hidden_keys[at], e.key)); // That book's key
+    return found != null;
+}
+
+fn key_order(key: []const u8, item: []const u8) std.math.Order {
+    assert(key.len > 0); // `is_hidden` looks for none empty
+    assert(item.len > 0);
+    return std.mem.order(u8, key, item);
+}
+
+/// The catalog's books, but for those hidden.
+fn add_catalog(b: *Build, hidden_keys: []const []const u8) void {
+    assert(b.count == 0);
     const reader = files.Reader.open(b.places.catalog_path, b.buffers.lines) catch |err| {
         // No catalog: no Kindle books. One that's there but can't be read: some, later
         if (err != error.NotFound) b.incomplete = true;
@@ -290,6 +360,7 @@ fn add_kindle_books(b: *Build) void {
             continue;
         // The catalog's flag can stay set long after a download ended: the file decides
         if (e.availability == .downloading and is_complete_book(e.path)) e.availability = .local;
+        if (is_hidden(&e, hidden_keys)) continue; // The reader's, from the book's card
         if (b.last) |*last| {
             if (has_path(e)) {
                 if (last.find(e.path)) |id| kept_reading(&e, last.reading(id));

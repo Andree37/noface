@@ -31,6 +31,33 @@ const width = taps.width;
 
 pub const all = [_]Scenario{
     .{
+        .name = "a book in the cloud is hidden from its card, which asks first and says " ++
+            "deleting it is the Kindle's own screens', and the library no longer lists it",
+        .run = struct {
+            fn run() !void {
+                const away = "\tAway Book\tSome Author\t0\t0\t0\t\t0\t1\tKEYAWAY\tPDOC\tg\n";
+                const asked_steps = [_]Step{
+                    wait(2_000),
+                    hold_in(library_ui.book_rect(0, 0)), // The grid's first: the cloud book
+                    lift,
+                    wait(2_000),
+                    card_row(3, 2), // Hide from this library
+                    wait(2_000),
+                };
+                const asking: Kindle = .{ .library = true, .catalog = away, .snapshot = .hide };
+                const asked = try play_on(asking, &asked_steps);
+                try expect(asked.looks_right, "the question to hide looks different");
+                try expect(asked.hidden == 0, "it was hidden before it was asked");
+                const hiding: Kindle = .{ .library = true, .catalog = away };
+                const hidden = try play_on(hiding, &(asked_steps ++ [_]Step{
+                    card_row(2, 0), // Hide it
+                    wait(2_000),
+                }));
+                try expect(hidden.hidden == 1, "the book wasn't hidden");
+            }
+        }.run,
+    },
+    .{
         .name = "every key typed in the library's search shows, a space at the end too",
         .run = struct {
             fn run() !void {

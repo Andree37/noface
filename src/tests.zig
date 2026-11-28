@@ -57,6 +57,7 @@ test {
     _ = @import("screens/lock.zig");
     _ = @import("testing/fake_kindle.zig");
     _ = @import("testing/kfx_book.zig");
+    _ = @import("model/hidden.zig");
     _ = @import("screens/screen.zig");
     _ = @import("screens/places.zig");
     _ = @import("screens/drag.zig");

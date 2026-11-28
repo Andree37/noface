@@ -117,7 +117,7 @@ pub const file_head_bytes: u32 = @sizeOf(FileHead);
 
 /// Its version: an index written by a noface that wrote records differently is built
 /// again.
-pub const header_magic = "NFLIB005".*;
+pub const header_magic = "NFLIB006".*;
 
 pub const Header = extern struct {
     magic: [8]u8 = header_magic,
@@ -160,6 +160,8 @@ pub const Sources = extern struct {
     catalog_modified: i64 = 0,
     overrides_size: u64 = 0,
     overrides_modified: i64 = 0,
+    hidden_size: u64 = 0, // The books hidden (model/hidden.zig)
+    hidden_modified: i64 = 0,
     epubs: u64 = 0, // The EPUBs found, by path
     places: u64 = 0, // Where the books are, and this format
 };

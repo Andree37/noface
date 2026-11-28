@@ -10,6 +10,8 @@ const state = @import("../sys/state.zig");
 const outside_place = @import("reader/outside_place.zig");
 const file = @import("../sys/file.zig");
 const store = @import("../kindle/store.zig");
+const safe = @import("../kindle/safe.zig");
+const hidden = @import("../model/hidden.zig");
 const app = @import("../app.zig");
 const sess = @import("reader/session.zig");
 const display = @import("../display.zig");
@@ -103,7 +105,25 @@ fn save_marked(a: *app.App, e: *const catalog.Entry, done: bool, place: Place) !
 /// What a book's actions changed, which decides what the library does next: `reload`
 /// re-reads the library (a series set by hand), `redraw` only repaints it (a screen of
 /// its own was shown and nothing changed), `not_marked` says a mark didn't land.
-pub const Change = enum { none, downloading, other, reload, redraw, not_marked };
+pub const Change = enum { none, downloading, other, reload, redraw, not_marked, not_hidden };
+
+/// Said when a book couldn't be hidden: the drive didn't take it.
+pub const not_hidden_notice = "This book couldn't be hidden.";
+
+/// Hides book `e`, in the cloud, from the library: its key added to the hidden books'
+/// file (model/hidden.zig), which the next library build reads. Whether it landed.
+fn hide(a: *const app.App, e: *const catalog.Entry) bool {
+    assert(e.availability == .cloud); // Only a book in the cloud is offered it
+    assert(e.key.len > 0); // The catalog names every one
+    var path_buffer: [file.own_path_bytes_max]u8 = undefined;
+    const path = hidden.file_path(&path_buffer, a.state_dir) catch return false;
+    var line_buffer: [catalog_key_line_max]u8 = undefined;
+    const line = std.fmt.bufPrint(&line_buffer, "{s}\n", .{e.key}) catch return false;
+    return file.append(path, line);
+}
+
+/// Room for a key and its line's end: a catalog key, as safe.zig bounds one.
+const catalog_key_line_max = safe.id_size_max + 1;
 
 /// Starts a book's actions in `s`, where they stay while open (`screen.open`): a card
 /// of them over `background`, then for a removal the question whether to remove it,
@@ -130,7 +150,8 @@ pub const Sheet = struct {
     e: *const catalog.Entry,
     lib: *books.Library,
     background: display.Backdrop,
-    round: u32 = 0, // Its actions, then for a removal the question
+    round: u32 = 0, // Its actions, then for a removal or hiding the question
+    asking: ?book_actions.Question = null, // The question, on its round
     phase: enum { card, series } = .card,
     list_buffer: [4]book_actions.Option = undefined,
     row_buffer: [4]card.Row = undefined,
@@ -161,13 +182,13 @@ pub const Sheet = struct {
     /// The card for this round: the book's actions, or the question.
     fn show_round(s: *Sheet) screen.Step(Change) {
         assert(s.round < sheet_rounds_max);
-        const confirming = s.round == 1;
+        assert((s.round == 1) == (s.asking != null)); // Asked on the second round only
         const e = s.e;
-        s.list = book_actions.options(e, confirming, &s.list_buffer);
+        s.list = book_actions.options(e, s.asking, &s.list_buffer);
         assert(s.list.len <= s.list_buffer.len);
         // A book being downloaded has nothing to pick: its card says so, and a tap
         // above it closes it
-        const subtitle = book_actions.subtitle(&s.subtitle_buffer, e, confirming);
+        const subtitle = book_actions.subtitle(&s.subtitle_buffer, e, s.asking);
         const rows = book_actions.rows(s.list, &s.row_buffer);
         s.card = card_screen.over(s.a, s.background, e.title, subtitle, rows, null);
         s.phase = .card;
@@ -228,11 +249,11 @@ pub const Sheet = struct {
     fn act(s: *Sheet, option: book_actions.Option) screen.Step(Change) {
         const a = s.a;
         const e = s.e;
-        const confirming = s.round == 1;
         switch (option) {
             .cancel => return .{ .done = .none },
-            .remove => {
-                assert(!confirming);
+            .remove, .hide => |asked| {
+                assert(s.asking == null);
+                s.asking = if (asked == .remove) .remove else .hide;
                 s.round += 1;
                 return s.show_round();
             },
@@ -243,8 +264,14 @@ pub const Sheet = struct {
                 series_screen.begin(&s.series, a, listed, e, scratch);
                 return .{ .push = screen.open(&s.series, &s.series_ending) };
             },
+            .confirm_hide => {
+                assert(s.asking == .hide);
+                if (!hide(a, e)) return .{ .done = .not_hidden };
+                std.debug.print("hidden: {s}\n", .{e.title});
+                return .{ .done = .reload };
+            },
             .confirm_remove => {
-                assert(confirming);
+                assert(s.asking == .remove);
                 store.remove_download(e.key, e.kind);
                 std.debug.print("removed download: {s}\n", .{e.title});
                 return .{ .done = .other };

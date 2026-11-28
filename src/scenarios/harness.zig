@@ -46,6 +46,7 @@ const snapshot_pixels_per_miss = 5000;
 const read_before_opened = 1_700_000_000;
 const go_regular = @embedFile("../testdata/fonts/Go-Regular.ttf");
 const kfx_book = @import("../testing/kfx_book.zig");
+const hidden = @import("../model/hidden.zig");
 const go_bold = @embedFile("../testdata/fonts/Go-Bold.ttf");
 const taps = @import("taps.zig");
 const Step = taps.Step;
@@ -105,6 +106,7 @@ pub const Outcome = struct {
     pages_peak: u64,
     breaks: u64, // A digest of the page breaks saved for the book, 0 when none were
     notes: u64, // A digest of the book's notes file, 0 when it has none
+    hidden: u32, // Books hidden from the library, as its file lists them (model/hidden.zig)
     unreadable_kept: bool, // Every file made unreadable is still there, unread and unwritten
     place_kept: bool, // The first book's place, made unreadable, was never written over
     /// When the book read alone was last opened, as its record says after the run: 0
@@ -199,6 +201,9 @@ pub const Kindle = struct {
     /// opens: "<dataset>|<position>|<time ms>|<device>" lines (kindle/reading_place.zig).
     /// Only a book the device names is asked about (`TestBook.sent`).
     outside_places: []const u8 = "",
+    /// The Kindle's own books, as the catalog export lists them (kindle/catalog.zig):
+    /// lines of library.tsv, such as books in the cloud. None by default.
+    catalog: []const u8 = "",
     /// The reader's speed, as learned before the run: a new reader's by default.
     speed: stats.Speed = .{},
     /// "Show time left" (Aa, More), on as shipped.
@@ -280,6 +285,7 @@ pub const Snapshot = enum {
     picture,
     highlight,
     offer,
+    hide,
 };
 
 /// Whether `pixels` match the reference image `name`, allowing for anti-aliasing:
@@ -373,6 +379,22 @@ pub fn write_dictionary(alloc: std.mem.Allocator, path: [*:0]const u8) !void {
 }
 
 /// How many lines of `kind` the book's notes file holds.
+/// How many books the hidden books' file lists: none when there's no file.
+fn hidden_count(a: *const app.App) u32 {
+    assert(a.state_dir.len > 0);
+    var path_buf: [file.own_path_bytes_max]u8 = undefined;
+    const path = hidden.file_path(&path_buf, a.state_dir) catch return 0;
+    const content = file.map(path) catch return 0;
+    defer file.unmap(content);
+    var n: u32 = 0;
+    var lines = std.mem.tokenizeScalar(u8, content, '\n');
+    while (lines.next()) |l| {
+        if (hidden.key_of(l) != null) n += 1;
+    }
+    assert(n <= content.len);
+    return n;
+}
+
 pub fn count_notes(state_path: []const u8, kind: []const u8) u32 {
     assert(kind.len > 0);
     assert(state_path.len > 0);
@@ -704,7 +726,8 @@ pub fn play_on_folder(
     if (kindle.real_book) |real| book_paths[0] = real.entry.path;
     var library_buf: [128]u8 = undefined;
     const library_path = try std.fmt.bufPrintSentinel(&library_buf, "{s}/library.tsv", .{dir}, 0);
-    try write_file(library_path, "\n"); // No Kindle books: only the EPUBs in the folder
+    // The Kindle's own books as given, or none: only the EPUBs in the folder
+    try write_file(library_path, if (kindle.catalog.len > 0) kindle.catalog else "\n");
     if (kindle.dictionary) {
         var dict_buf: [128]u8 = undefined;
         const dict_path = try std.fmt.bufPrintSentinel(&dict_buf, "{s}/dict-en", .{dir}, 0);
@@ -949,6 +972,7 @@ pub fn play_on_outcome(
         .pages_peak = a.regions.pages_budget.peak,
         .breaks = breaks_digest(state_path),
         .notes = notes_digest(state_path),
+        .hidden = hidden_count(a),
         .unreadable_kept = try unreadable_kept(ran.alloc, kindle, ran.dir),
         // Still the link: nothing was renamed over it
         .place_kept = !kindle.place_unreadable or still_unopened(state_path),

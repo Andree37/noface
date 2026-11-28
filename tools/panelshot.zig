@@ -348,12 +348,12 @@ fn render_sheet(shot: *const Shot) !void {
         shot.quick,
     );
     var list: [4]sheet.Option = undefined;
-    const confirming = shot.argv.len > 2;
+    const asking: ?sheet.Question = if (shot.argv.len > 2) .remove else null;
     const entry = &entries[visible[0]];
-    const options = sheet.options(entry, confirming, &list);
+    const options = sheet.options(entry, asking, &list);
     var row_buffer: [3]core.card.Row = undefined;
     var subtitle_buffer: [320]u8 = undefined;
-    const subtitle = sheet.subtitle(&subtitle_buffer, entry, confirming);
+    const subtitle = sheet.subtitle(&subtitle_buffer, entry, asking);
     const rows = sheet.rows(options, &row_buffer);
     try core.card.render(shot.fonts, shot.page, entry.title, subtitle, rows);
     try write_image(shot.page.buf, screen_width, screen_height);

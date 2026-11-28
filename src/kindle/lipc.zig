@@ -7,6 +7,7 @@ const unicode = @import("../text/unicode.zig");
 const linux = @import("../sys/calls.zig");
 const os = @import("../sys/os.zig");
 const process = @import("../sys/process.zig");
+const archive = @import("archive.zig");
 const quick_model = @import("../model/quick.zig");
 const devices = @import("devices.zig");
 
@@ -430,8 +431,10 @@ pub fn usb_for_network() bool {
     return (get("com.lab126.volumd", "useUsbForNetwork", lipc_deadline()) orelse 0) == 1;
 }
 
-/// Same as the Sync button in the stock panel.
+/// Same as the Sync button in the stock panel, with the service that lists new books
+/// started again first if it had stopped (kindle/archive.zig).
 pub fn sync_now() void {
+    archive.ensure_running();
     const service = "com.lab126.quickactions";
     comptime assert(std.mem.startsWith(u8, service, service_prefix));
     const argv = [_:null]?[*:0]const u8{ lipc_set, "-s", service, "syncAndCheck", "1" };

@@ -37,6 +37,10 @@ pub const FakeKindle = struct {
     places: []const u8 = "",
     /// Writes to the annotation database: noted, as they're only queued for Amazon.
     writes: u32 = 0,
+    /// The `archive` job stopped, as it is after dpmd restarted (kindle/archive.zig);
+    /// and whether noface started it.
+    archive_stopped: bool = false,
+    archive_started: bool = false,
 
     /// A Kindle awake, on Wi-Fi, Bluetooth off, not in airplane mode.
     pub fn init(alloc: std.mem.Allocator) !FakeKindle {
@@ -132,6 +136,13 @@ pub const FakeKindle = struct {
         }
         // A fixed time, so tests see the same screen every run
         if (std.mem.eql(u8, program, "date")) return answer_copy(date_fixed, out);
+        if (std.mem.eql(u8, program, "initctl") and args.len == 2) return k.answer_job(args, out);
+        if (std.mem.eql(u8, program, "lipc-probe") and args.len == 1) {
+            // A service there lists its properties; the archive's, while it runs
+            const listed = std.mem.eql(u8, args[0], "com.lab126.archive") and !k.archive_stopped;
+            if (!listed) return 0; // Not there: nothing printed
+            return answer_copy("\tw\tStr\thandleToDoItem\n", out);
+        }
         if (std.mem.eql(u8, program, "sh") and args.len == 2) {
             if (k.answer_notes(args[1], out)) |n| return n;
             if (answer_places(k, args[1], out)) |n| return n;
@@ -139,6 +150,26 @@ pub const FakeKindle = struct {
         }
         k.ran.append(k.alloc, k.alloc.dupe(u8, program) catch return null) catch return null;
         return 0;
+    }
+
+    /// `initctl status|start <job>`, as upstart answers: every job running but `archive`
+    /// when it's stopped, which a start starts.
+    fn answer_job(k: *FakeKindle, args: []const []const u8, out: []u8) ?u32 {
+        assert(args.len == 2);
+        const archive = std.mem.eql(u8, args[1], "archive");
+        if (std.mem.eql(u8, args[0], "start") and archive) {
+            if (!k.archive_stopped) return 0; // "Job is already running", on stderr
+            k.archive_stopped = false;
+            k.archive_started = true;
+        }
+        var running_buffer: [64]u8 = undefined;
+        const line = if (archive and k.archive_stopped)
+            "archive stop/waiting\n"
+        else
+            std.fmt.bufPrint(&running_buffer, "{s} start/running, process 1\n", .{args[1]}) catch
+                return null;
+        assert(!archive or k.archive_stopped or std.mem.startsWith(u8, line, "archive start/"));
+        return answer_copy(line, out);
     }
 
     /// `lipc-get-prop service prop`: its value, or null for one never set, as lipc fails.

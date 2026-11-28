@@ -21,6 +21,24 @@ const tap_on = taps.tap_on;
 const wait = taps.wait;
 
 pub const all = [_]Scenario{
+    .{
+        .name = "Sync starts the Kindle's archive service first when it has stopped, " ++
+            "and leaves it alone when it runs",
+        .run = struct {
+            fn run() !void {
+                var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+                defer arena.deinit();
+                const sync = [_]Step{ pull_down, wait(100), tap_on(menu_ui.place(.sync).?) };
+                const alloc = arena.allocator();
+                const stopped: Kindle = .{ .archive_stopped = true, .sets_into = alloc };
+                const restarted = try play_on(stopped, &sync);
+                try expect(restarted.archive_started, "archive wasn't started again");
+                try expect(restarted.sets.len > 0, "no sync was asked for");
+                const running = try play_on(.{}, &sync);
+                try expect(!running.archive_started, "archive was started though it ran");
+            }
+        }.run,
+    },
     .{ .name = "leaving noface from the quick panel mid-book keeps the place", .run = struct {
         fn run() !void {
             const plain = try play(&.{ forward, forward });

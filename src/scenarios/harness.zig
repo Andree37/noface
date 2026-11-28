@@ -127,6 +127,7 @@ pub const Outcome = struct {
     /// Writes queued in the device's annotation database: a place kept outside noface,
     /// or a note.
     annotation_writes: u32,
+    archive_started: bool, // noface started the Kindle's `archive` job, found stopped
     settings: settings_model.Settings, // In use at the end
     saved_settings: settings_model.Settings, // As the settings file has them
 };
@@ -204,6 +205,8 @@ pub const Kindle = struct {
     /// The Kindle's own books, as the catalog export lists them (kindle/catalog.zig):
     /// lines of library.tsv, such as books in the cloud. None by default.
     catalog: []const u8 = "",
+    /// The Kindle's `archive` job stopped, as after dpmd restarted (kindle/archive.zig).
+    archive_stopped: bool = false,
     /// The reader's speed, as learned before the run: a new reader's by default.
     speed: stats.Speed = .{},
     /// "Show time left" (Aa, More), on as shipped.
@@ -587,6 +590,7 @@ pub fn play_on_fake(alloc: std.mem.Allocator, kindle: Kindle) !FakeKindle {
     if (kindle.bluetooth) try fake.put("com.lab126.btfd BTstate", "1");
     if (kindle.radio_slow) fake.busy_after_set = wifi_key;
     fake.places = kindle.outside_places;
+    fake.archive_stopped = kindle.archive_stopped;
     if (kindle.real_book) |real| {
         fake.highlights = real.highlights;
         fake.bookmarks = real.bookmarks;
@@ -957,6 +961,7 @@ pub fn play_on_outcome(
     return .{
         .sets = if (kindle.sets_into) |into| try sets_kept(into, ran.fake) else &.{},
         .annotation_writes = ran.fake.writes,
+        .archive_started = ran.fake.archive_started,
         .placed = try placed_logged(ran.dir),
         .ms = ran.ms,
         .looks_right = looks_right,

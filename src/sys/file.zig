@@ -338,21 +338,33 @@ pub fn presence(path: [*:0]const u8) Presence {
     return .here;
 }
 
-/// Appends `text` to the file at `path`, as a shell's `echo text >> path` does.
-/// Adds `text` at the end of the file at `path`, made if it isn't there. Whether all of
-/// it was written.
-pub fn append(path: [*:0]const u8, text: []const u8) bool {
+/// Adds `line` and its end at the end of the file at `path`, made if it isn't there:
+/// on a line of its own, even after a last line a write cut short. Whether all of it
+/// landed, closed whole.
+pub fn append_line(path: [*:0]const u8, line: []const u8) bool {
     assert(path[0] == '/');
-    assert(text.len > 0);
-    const flags: linux.O = .{ .ACCMODE = .WRONLY, .CREAT = true, .APPEND = true, .CLOEXEC = true };
+    assert(line.len > 0);
+    assert(std.mem.indexOfScalar(u8, line, '\n') == null); // One line
+    const flags: linux.O = .{ .ACCMODE = .RDWR, .CREAT = true, .APPEND = true, .CLOEXEC = true };
     const rc = linux.open(path, flags, 0o644);
     if (failed(rc)) return false;
     const fd: i32 = @intCast(rc);
-    const written = write_all(fd, text);
-    _ = linux.close(fd); // Ignored: the write said whether it landed
-    return written;
+    var size: linux.off_t = 0;
+    var ok = !failed(linux.llseek(fd, 0, &size, linux.SEEK.END));
+    if (ok and size > 0) {
+        var last: [1]u8 = undefined;
+        const n = linux.pread(fd, &last, 1, @intCast(size - 1));
+        ok = !failed(n) and n == 1;
+        if (ok and last[0] != '\n') ok = write_all(fd, "\n"); // Ends the line cut short
+    }
+    if (ok) ok = write_all(fd, line);
+    if (ok) ok = write_all(fd, "\n");
+    // A close that fails can mean what was written didn't land
+    const closed = !failed(linux.close(fd));
+    return ok and closed;
 }
 
+/// Appends `text` to the file at `path`, as a shell's `echo text >> path` does.
 pub fn append_file(path: [*:0]const u8, text: []const u8) void {
     assert(path[0] == '/');
     assert(text.len > 0);

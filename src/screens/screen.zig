@@ -493,7 +493,12 @@ const Stack = struct {
             => {},
         }
         // Exactly one screen gets it: the one in front, and only once
-        try stack.settle(try f.kind.call(f.screen, f.ending, .{ .act = action }));
+        const turn = try f.kind.call(f.screen, f.ending, .{ .act = action });
+        // Drawn whole on a tick, no touch asking (a list read again, say): a tap touched
+        // before was meant for the screen as it was, whose places may have moved
+        const redrawn_unasked = action == .tick and turn == .redraw and turn.redraw == .all;
+        try stack.settle(turn);
+        if (redrawn_unasked) stack.mark_shown();
     }
 
     /// Does what the screen in front asked: and as each screen ends, what the one

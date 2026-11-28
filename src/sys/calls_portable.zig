@@ -272,7 +272,8 @@ pub fn mkdir(path: [*:0]const u8, mode: u32) usize { // usize: Linux's syscall A
     return linux_result(c.mkdir(path, @intCast(mode)));
 }
 /// What noface reads of an open file: its size and when it last changed (calls.zig).
-pub const Facts = struct { size: u64, modified_s: i64 };
+/// `modified_ns` within its second: two writes in one second still differ.
+pub const Facts = struct { size: u64, modified_s: i64, modified_ns: u32 = 0 };
 
 /// The size and change time of the file open on `fd`, or null if it can't be read.
 pub fn facts(fd: i32) ?Facts {
@@ -280,7 +281,12 @@ pub fn facts(fd: i32) ?Facts {
     var st: c.Stat = undefined;
     if (c.fstat(fd, &st) != 0) return null;
     if (st.size < 0) return null;
-    const result: Facts = .{ .size = @intCast(st.size), .modified_s = st.mtime().sec };
+    const mtime = st.mtime();
+    const result: Facts = .{
+        .size = @intCast(st.size),
+        .modified_s = mtime.sec,
+        .modified_ns = @intCast(mtime.nsec),
+    };
     assert(result.size == st.size);
     return result;
 }
@@ -291,7 +297,12 @@ pub fn facts_at(path: [*:0]const u8) ?Facts {
     var st: c.Stat = undefined;
     if (c.stat(path, &st) != 0) return null;
     if (st.size < 0) return null;
-    const result: Facts = .{ .size = @intCast(st.size), .modified_s = st.mtime().sec };
+    const mtime = st.mtime();
+    const result: Facts = .{
+        .size = @intCast(st.size),
+        .modified_s = mtime.sec,
+        .modified_ns = @intCast(mtime.nsec),
+    };
     assert(result.size == st.size);
     return result;
 }

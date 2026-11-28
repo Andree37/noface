@@ -93,9 +93,12 @@ pub fn options(e: *const catalog.Entry, asking: ?Question, out: *[4]Option) []Op
     const mark: Option = if (e.is_read()) .mark_unread else .mark_read;
     // No Cancel: tapping above the sheet closes it. The removal question keeps one.
     switch (e.availability) {
-        // Hidden, as only the device's own screens delete it from the store's library
+        // Hidden, as only the device's own screens delete it from the store's library;
+        // by its key, so not one the catalog names none for
         .cloud => {
-            out[0..3].* = .{ .download, mark, .hide };
+            out[0..2].* = .{ .download, mark };
+            if (e.key.len == 0) return out[0..2];
+            out[2] = .hide;
             return out[0..3];
         },
         // Nothing until it's here
@@ -133,6 +136,8 @@ fn entry(availability: catalog.Availability, percent: u32) catalog.Entry {
         .percent = percent,
         .last = 0,
         .availability = availability,
+        .key = "B0TEST", // As the catalog names every book it has
+        .kind = "PDOC",
     };
 }
 

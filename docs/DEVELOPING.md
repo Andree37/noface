@@ -226,8 +226,9 @@ reader on the same Kindle opens at a place of its own, in each book's `.sdr` sid
 not at these, so a place noface keeps reaches it only through Amazon.
 
 The library shows a place made on another device too, without opening the book. The
-catalog export (`noface-launch export`, run as noface starts
-and as the Kindle wakes) copies the database to RAM, as it copies the catalog, and
+catalog export (`noface-launch export`, run as noface starts, as the Kindle wakes and
+whenever the library sees the Kindle's catalog change) copies the database to RAM, as
+it copies the catalog, and
 lists each book's latest `kindle.most_recent_read`: its position and time. Each time
 noface saves a place it also saves where the book ends in the device's numbering
 (`outside_end` in the book's state file), and the library turns a place newer than

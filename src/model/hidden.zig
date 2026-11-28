@@ -1,8 +1,9 @@
 //! Books hidden from the library: books in the cloud the reader no longer wants listed,
-//! by the key the device's own software names them by, one a line. Hidden here only:
-//! they stay in the reader's store library, and on their other devices; deleting one
-//! for good is done in the device's own screens. A book hidden comes back once it's
-//! on the device again.
+//! one a line, "<key>\t<kind>", as the device's own software names them (a sample and
+//! the book bought have one key, but not one kind). Hidden here only: they stay in the
+//! reader's store library, and on their other devices; deleting one for good is done in
+//! the device's own screens. A book hidden comes back once it's on the device again,
+//! and its line is let go of then.
 const std = @import("std");
 const assert = std.debug.assert;
 
@@ -15,16 +16,33 @@ pub fn file_path(buffer: []u8, state_dir: []const u8) ![:0]u8 {
     return p;
 }
 
-/// The key a line of the file names, or null for a line that names none.
-pub fn key_of(line: []const u8) ?[]const u8 {
-    const key = std.mem.trim(u8, line, " \t\r");
-    if (key.len == 0) return null;
-    assert(key.len <= line.len);
-    assert(std.mem.indexOf(u8, line, key) != null); // A part of the line
-    return key;
+/// A book's line, without its end: what a line of the file is matched by.
+pub fn name(buffer: []u8, key: []const u8, kind: []const u8) ![]const u8 {
+    assert(key.len > 0);
+    const line = try std.fmt.bufPrint(buffer, "{s}\t{s}", .{ key, kind });
+    assert(line.len > key.len);
+    return line;
 }
 
-test "a line names a key, trimmed; an empty one names none" {
-    try std.testing.expectEqualStrings("B0ABC", key_of(" B0ABC\r").?);
-    try std.testing.expect(key_of("  ") == null);
+/// The longest name kept: a key and a kind, each as long as the catalog's ids go.
+pub fn name_bytes_max(comptime id_bytes_max: u32) u32 {
+    return 2 * id_bytes_max + 1;
+}
+
+/// What a line of the file names, trimmed, or null for a line that names no book.
+pub fn named(line: []const u8) ?[]const u8 {
+    const trimmed = std.mem.trim(u8, line, " \r");
+    if (std.mem.indexOfScalar(u8, trimmed, '\t') == null) return null; // Not "<key>\t<kind>"
+    assert(trimmed.len > 0);
+    assert(trimmed.len <= line.len);
+    return trimmed;
+}
+
+test "a line names a book by key and kind; one without both names none" {
+    var buffer: [64]u8 = undefined;
+    const book = try name(&buffer, "B0ABC", "EBOK");
+    try std.testing.expectEqualStrings("B0ABC\tEBOK", book);
+    try std.testing.expectEqualStrings(book, named(" B0ABC\tEBOK\r").?);
+    try std.testing.expect(named("B0ABC") == null);
+    try std.testing.expect(named("  ") == null);
 }

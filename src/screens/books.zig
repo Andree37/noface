@@ -54,7 +54,7 @@ pub const Sources = struct {
 
 /// What tells that the Kindle's catalog changed without reading it: the size and change
 /// time of its database and of the log its changes go to first.
-const CatalogFacts = struct {
+pub const CatalogFacts = struct {
     database: ?calls.Facts = null,
     log: ?calls.Facts = null,
 
@@ -68,12 +68,12 @@ const CatalogFacts = struct {
 
 /// What a download being watched is up to.
 pub const Download = enum {
-    /// Its file is still partial, or the catalog hasn't changed since the list was read.
+    /// No file it has as coming is whole, and the catalog hasn't changed since the list
+    /// was exported.
     waiting,
-    /// Its file is whole: read the library again to list it.
+    /// A file it has as coming is whole: build the index again to list it as here.
     arrived,
-    /// The catalog changed, and the list says of no book that it's coming: read it
-    /// again to learn which, if any.
+    /// The catalog changed: export the list and read it again to learn what, if anything.
     catalog_changed,
 };
 
@@ -87,7 +87,13 @@ const State = struct {
     ix: ?index.Index = null, // Null for a library whose index won't read
     dir_buffer: [files.path_bytes_max]u8 = undefined,
     dir_len: u32 = 0,
+    /// The Kindle's catalog as it was just before the book list was last exported, the
+    /// list read from it since: a change after that is new. None as a library opens, so
+    /// its first look at the catalog exports the list once, whatever came meanwhile.
     catalog_seen: CatalogFacts = .{},
+    /// A book the index has as coming down is whole: the next load builds the index
+    /// again, which lists it as here, though nothing it's built from changed.
+    build_again: bool = false,
     order: catalog.Order = .recent,
     filter: catalog.Filter = .all,
     words: search.Query = .{},
@@ -186,10 +192,18 @@ pub const Library = struct {
     }
 
     /// The Kindle's catalog taken as seen as it is now: an export found nothing new in it.
-    pub fn saw_catalog(l: *Library) void {
+    /// `before`, the catalog as read just before an export, taken as seen: what the
+    /// export wrote out is the list read now. Never the catalog read after it, which a
+    /// book landing during the export would leave unseen.
+    pub fn saw_catalog(l: *Library, before: CatalogFacts) void {
         assert(l.shared.in_use);
-        l.state.catalog_seen = CatalogFacts.read();
-        assert(!l.catalog_changed());
+        l.state.catalog_seen = before;
+    }
+
+    /// The index built again at the next reload: a download it has as coming is whole.
+    pub fn arrived(l: *Library) void {
+        assert(l.shared.in_use);
+        l.state.build_again = true;
     }
 
     /// Whether the Kindle's catalog changed since the library was read: two looks at
@@ -423,7 +437,10 @@ pub const Library = struct {
 
     /// Reads the library again, in place: its index built again first if what it's
     /// built from changed; then arranged as it was, and the page last read read again.
-    pub fn reload(l: *Library) void {
+    /// `exported_from` is the catalog as it was just before the book list was exported
+    /// for this reload, or null when it wasn't: then what was seen of it stays.
+    pub fn reload(l: *Library, exported_from: ?CatalogFacts) void {
+        if (exported_from) |before| l.saw_catalog(before);
         const s = l.state;
         assert(l.shared.in_use);
         if (s.opened()) |ix| ix.close();
@@ -499,8 +516,6 @@ pub fn load(sources: Sources) !Library {
 fn open_index(sources: Sources, s: *State) void {
     assert(s.ix == null);
     assert(sources.scratch.live == 0);
-    // Before the list is read, so a change made while it's read shows next time
-    s.catalog_seen = CatalogFacts.read();
     const scratch = sources.scratch;
     scratch.restart(); // Its report this load's own
     // What the load took, said before it's let go of
@@ -517,8 +532,9 @@ fn open_index(sources: Sources, s: *State) void {
     const wanted = builder.sources_now(scratch, places);
     var last: ?index.Index = index.Index.open(places.dir) catch null;
     if (last) |*ix| {
-        if (std.meta.eql(ix.header.sources, wanted)) s.ix = ix.*;
+        if (std.meta.eql(ix.header.sources, wanted) and !s.build_again) s.ix = ix.*;
     }
+    s.build_again = false; // Built again below, or the last build kept
     if (s.ix == null) {
         const t0 = os.now_us();
         const buffers = &sources.shared.buffers;
@@ -776,7 +792,7 @@ test "hundreds of EPUBs list in memory that doesn't grow with them, read once" {
         root,
     }, 0);
     try test_write(extra_path, extra);
-    library.reload();
+    library.reload(null);
     library.arrange(.title, .all, "");
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -1100,38 +1116,38 @@ test "a Kindle book whose place can't be read keeps how far it was through a reb
     try std.testing.expectEqual(@as(u32, 42), test_percent_of(&library, "Dune"));
 }
 
-test "a book in the cloud hidden from its card is left out, and comes back on the Kindle" {
+test "a cloud book hidden from its card is left out, and back for good once on the Kindle" {
     var buffer: [64]u8 = undefined;
     const root = try test_folder(&buffer, 0, 0, 1 << 10);
     defer test_folder_remove(root);
     var path: [file.own_path_bytes_max]u8 = undefined;
     const catalog_path = try std.fmt.bufPrintSentinel(&path, "{s}/catalog", .{root}, 0);
     // Two in the cloud, by their keys
-    const cloud = "\tAway\tB\t0\t0\t0\t\t0\t1\tKEYAWAY\tPDOC\tg\n" ++
-        "\tKept\tC\t0\t0\t0\t\t0\t1\tKEYKEPT\tPDOC\tg\n";
-    try test_write(catalog_path, cloud);
+    const away_cloud = "\tAway\tB\t0\t0\t0\t\t0\t1\tKEYAWAY\tPDOC\tg\n";
+    const kept_cloud = "\tKept\tC\t0\t0\t0\t\t0\t1\tKEYKEPT\tPDOC\tg\n";
+    try test_write(catalog_path, away_cloud ++ kept_cloud);
     var t: TestLibrary = undefined;
     try t.init(root);
     defer t.deinit();
-    var hidden_buffer: [file.own_path_bytes_max]u8 = undefined;
-    const hidden_path = try hidden.file_path(&hidden_buffer, t.sources.state_dir);
-    try std.testing.expect(file.append(hidden_path, "KEYAWAY\n"));
-    {
-        var library = try load(t.sources);
-        defer library.deinit();
-        library.arrange(.recent, .all, "");
-        try std.testing.expectEqual(@as(u32, 1), library.count());
-        _ = library.page(0); // Read in before its books are looked at
-        try std.testing.expectEqualStrings("Kept", library.book(0).title);
-    }
-    // Downloaded again: on the Kindle, it shows whatever the file says
-    const here = "\tKept\tC\t0\t0\t0\t\t0\t1\tKEYKEPT\tPDOC\tg\n" ++
-        "/mnt/us/documents/Away.kfx\tAway\tB\t0\t0\t0\t\t0\t0\tKEYAWAY\tPDOC\tg\n";
-    try test_write(catalog_path, here);
     var library = try load(t.sources);
     defer library.deinit();
     try std.testing.expect(test_shows(&library, "Away"));
+    // Hidden, as the card hides it, and the library read again, as the card has it read
+    var hidden_buffer: [file.own_path_bytes_max]u8 = undefined;
+    const hidden_path = try hidden.file_path(&hidden_buffer, t.sources.state_dir);
+    try std.testing.expect(file.append_line(hidden_path, "KEYAWAY\tPDOC"));
+    library.reload(null);
+    try std.testing.expect(!test_shows(&library, "Away"));
     try std.testing.expect(test_shows(&library, "Kept"));
+    // Downloaded again: on the Kindle it shows, and its line is let go of
+    const away_here = "/mnt/us/documents/Away.kfx\tAway\tB\t0\t0\t0\t\t0\t0\tKEYAWAY\tPDOC\tg\n";
+    try test_write(catalog_path, kept_cloud ++ away_here);
+    library.reload(null);
+    try std.testing.expect(test_shows(&library, "Away"));
+    // Its download removed later, it's in the cloud again, and not hidden again
+    try test_write(catalog_path, kept_cloud ++ away_cloud);
+    library.reload(null);
+    try std.testing.expect(test_shows(&library, "Away"));
 }
 
 /// Whether the library shows the book titled `title`, as the hero or in its list.
@@ -1342,7 +1358,7 @@ test "a build whose files can't be put in place leaves the library empty, not cr
     try std.testing.expectEqual(Download.waiting, library.watch_download());
     try std.testing.expect(library.state.ix == null);
     // A reload, as an action or a wake makes, tries once more
-    library.reload();
+    library.reload(null);
     try std.testing.expect(library.state.ix != null);
     try std.testing.expectEqual(5, library.count() + @intFromBool(library.hero() != null));
 }

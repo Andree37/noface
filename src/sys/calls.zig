@@ -109,7 +109,11 @@ fn statx_facts(fd: i32, path: [*:0]const u8, flags: u32) ?Facts {
     const mask: linux.STATX = .{ .SIZE = true, .MTIME = true };
     const rc = linux.statx(fd, path, flags, mask, &st);
     if (failed(rc)) return null;
-    const result: Facts = .{ .size = st.size, .modified_s = st.mtime.sec };
+    const result: Facts = .{
+        .size = st.size,
+        .modified_s = st.mtime.sec,
+        .modified_ns = st.mtime.nsec,
+    };
     assert(result.size == st.size);
     return result;
 }

@@ -378,7 +378,6 @@ pub fn write_dictionary(alloc: std.mem.Allocator, path: [*:0]const u8) !void {
     try write_file(path, out.items);
 }
 
-/// How many lines of `kind` the book's notes file holds.
 /// How many books the hidden books' file lists: none when there's no file.
 fn hidden_count(a: *const app.App) u32 {
     assert(a.state_dir.len > 0);
@@ -389,12 +388,13 @@ fn hidden_count(a: *const app.App) u32 {
     var n: u32 = 0;
     var lines = std.mem.tokenizeScalar(u8, content, '\n');
     while (lines.next()) |l| {
-        if (hidden.key_of(l) != null) n += 1;
+        if (hidden.named(l) != null) n += 1;
     }
     assert(n <= content.len);
     return n;
 }
 
+/// How many lines of `kind` the book's notes file holds.
 pub fn count_notes(state_path: []const u8, kind: []const u8) u32 {
     assert(kind.len > 0);
     assert(state_path.len > 0);

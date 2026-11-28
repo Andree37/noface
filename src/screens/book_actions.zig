@@ -22,8 +22,8 @@ const style = @import("../ui/style.zig");
 const screen = @import("screen.zig");
 const input_mod = @import("../kindle/input.zig");
 
-/// The rounds a book's sheet can take: its actions, then, for a removal, the question
-/// whether to remove it.
+/// The rounds a book's sheet can take: its actions, then, for a removal or hiding, the
+/// question whether to.
 const sheet_rounds_max = 2;
 
 comptime {
@@ -110,20 +110,20 @@ pub const Change = enum { none, downloading, other, reload, redraw, not_marked, 
 /// Said when a book couldn't be hidden: the drive didn't take it.
 pub const not_hidden_notice = "This book couldn't be hidden.";
 
-/// Hides book `e`, in the cloud, from the library: its key added to the hidden books'
-/// file (model/hidden.zig), which the next library build reads. Whether it landed.
+/// Hides book `e`, in the cloud, from the library: its name added to the hidden books'
+/// file (model/hidden.zig), which the next library build reads. Whether it landed: not
+/// for a book whose ids the file can't hold, which is never offered it.
 fn hide(a: *const app.App, e: *const catalog.Entry) bool {
     assert(e.availability == .cloud); // Only a book in the cloud is offered it
-    assert(e.key.len > 0); // The catalog names every one
+    assert(a.state_dir.len > 0);
+    // Catalog data: names a line holds whole, or nothing written
+    if (!safe.safe_id(e.key) or !safe.safe_id(e.kind)) return false;
     var path_buffer: [file.own_path_bytes_max]u8 = undefined;
     const path = hidden.file_path(&path_buffer, a.state_dir) catch return false;
-    var line_buffer: [catalog_key_line_max]u8 = undefined;
-    const line = std.fmt.bufPrint(&line_buffer, "{s}\n", .{e.key}) catch return false;
-    return file.append(path, line);
+    var name_buffer: [hidden.name_bytes_max(safe.id_size_max)]u8 = undefined;
+    const book = hidden.name(&name_buffer, e.key, e.kind) catch return false;
+    return file.append_line(path, book);
 }
-
-/// Room for a key and its line's end: a catalog key, as safe.zig bounds one.
-const catalog_key_line_max = safe.id_size_max + 1;
 
 /// Starts a book's actions in `s`, where they stay while open (`screen.open`): a card
 /// of them over `background`, then for a removal the question whether to remove it,

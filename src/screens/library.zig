@@ -210,9 +210,9 @@ const Browser = struct {
     query: search.Query = .{},
     index: u32 = 0, // The page of books shown
     notice: []const u8 = "", // A line for the next drawing only
-    /// Set only for a download started here: the library is reloaded every few seconds
-    /// until then, and once more as it runs out. Catalog flags can stay stuck, so they
-    /// never drive this.
+    /// Set for a download started here, or a sync asked for in the panel: the library is
+    /// looked at again every few seconds until then, and once more as it runs out.
+    /// Catalog flags can stay stuck, so they never drive this.
     watch_until: ?u64 = null,
     /// After a book, Wi-Fi takes a while to come back: the status is read again until then.
     status_until: u64 = 0,
@@ -529,8 +529,11 @@ const Browser = struct {
     /// Kindle write it out afresh) and the EPUBs, in place of what was shown.
     fn reload(b: *Browser, how: enum { export_first, as_is }) void {
         assert(b.buf.len == b.a.display.screen.pixels.len);
+        // The catalog as it is before the list is written out from it: a book landing
+        // while it's written is a change still to see
+        const before = books.CatalogFacts.read();
         if (how == .export_first) catalog_db.export_library();
-        b.lib.reload();
+        b.lib.reload(if (how == .export_first) before else null);
         // Fewer books may be let through now: the page kept one there is
         b.arrange();
     }
@@ -838,14 +841,16 @@ const Browser = struct {
         b.list_stale = false;
         const a = b.a;
         const listed = file.facts_of(a.library_path);
+        const before = books.CatalogFacts.read(); // As `reload` reads it, before the export
         catalog_db.export_library();
         // Written over only when it says something new (catalog_export.zig)
         if (std.meta.eql(listed, file.facts_of(a.library_path))) {
-            b.lib.saw_catalog(); // Read as it is now: no export again at the next tick
+            b.lib.saw_catalog(before); // Nothing new in it: no export again at the next tick
             b.status_stale = false;
             try b.refresh_status(.strip);
             return .nothing;
         }
+        b.lib.saw_catalog(before); // Exported just now: read below as it was written
         b.reload(.as_is);
         assert(!b.list_stale);
         return .everything;
@@ -857,7 +862,10 @@ const Browser = struct {
     fn reload_if_downloaded(b: *Browser) Next {
         assert(b.index < library.page_count(b.lib.count())); // A page of the books shown
         // Only what's downloading is looked at, until it says the catalog moved on
-        if (b.lib.watch_download() == .waiting) return .nothing;
+        const watched = b.lib.watch_download();
+        if (watched == .waiting) return .nothing;
+        // Its file whole while the catalog still says it's coming: built again to list it
+        if (watched == .arrived) b.lib.arrived();
         const before = b.lib.shelf();
         const shown_before = b.lib.count();
         b.reload(.export_first);
